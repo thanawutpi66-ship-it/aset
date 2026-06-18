@@ -12,13 +12,35 @@ downsample series → POST ขึ้น cloud (auth ด้วย token)
 """
 import argparse
 import json
+import logging
 import os
+import threading
 import time
 import urllib.request
 import urllib.error
 
 from config import config_manager
 from web_server import _tail_csv_rows, _compute_summary, _run_analysis, _extract_series, _CHANNELS
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_token(explicit: str = "") -> str:
+    """หา ingest token: arg ตรง > env INGEST_TOKEN > ไฟล์ cloud_token.txt (gitignored)"""
+    if explicit:
+        return explicit.strip()
+    env = os.environ.get("INGEST_TOKEN", "").strip()
+    if env:
+        return env
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path in ("cloud_token.txt", os.path.join(here, "cloud_token.txt")):
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    return f.read().strip()
+        except Exception:
+            pass
+    return ""
 
 
 def _downsample(rows, max_points):
@@ -55,7 +77,8 @@ def build_payload(csv_path, max_points):
     }
 
 
-def push(url, token, payload, timeout=30):
+def push(url, token, payload, timeout=120):
+    # timeout เผื่อ cloud cold-start (เช่น Azure B1 ที่ไม่ได้เปิด Always On)
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url.rstrip("/") + "/api/ingest", data=data, method="POST",
@@ -63,6 +86,64 @@ def push(url, token, payload, timeout=30):
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.status, resp.read().decode("utf-8")
+
+
+class CloudPusher:
+    """Background daemon ที่ push CSV ล่าสุดขึ้น cloud เป็นช่วง ๆ (auto-push)
+
+    ให้แอปแล็บสร้าง+start ตอนเริ่ม แล้ว stop ตอนปิด — push ทุก `interval` วินาที
+    (เห็นผลสด ๆ ระหว่างเทสต์ + snapshot สุดท้ายค้างไว้บน dashboard)
+    """
+
+    def __init__(self, url: str, token: str = "", csv_path: str = "",
+                 interval: float = 30.0, max_points: int = 400):
+        self.url = (url or "").strip()
+        self.token = resolve_token(token)
+        self.csv_path = csv_path or config_manager.system.csv_filepath
+        self.interval = max(5.0, float(interval))
+        self.max_points = max_points
+        self._running = False
+        self._thread = None
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.url and self.token)
+
+    def start(self):
+        if self._running:
+            return
+        if not self.enabled:
+            logger.warning("CloudPusher ปิด (ขาด url หรือ token) — ตั้ง env INGEST_TOKEN "
+                           "หรือไฟล์ cloud_token.txt เพื่อเปิด auto-push")
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        logger.info("CloudPusher started -> %s (ทุก %.0fs)", self.url, self.interval)
+
+    def stop(self):
+        self._running = False
+
+    def push_once(self) -> bool:
+        """push หนึ่งครั้ง (best-effort — ไม่ throw)"""
+        try:
+            payload = build_payload(self.csv_path, self.max_points)
+            status, _ = push(self.url, self.token, payload)
+            logger.debug("cloud push -> HTTP %s (rows=%s)",
+                         status, payload["summary"].get("row_count"))
+            return True
+        except Exception as e:
+            logger.warning("cloud push ล้มเหลว: %s", e)
+            return False
+
+    def _loop(self):
+        while self._running:
+            self.push_once()
+            # sleep เป็นช่วงสั้น ๆ เพื่อให้ stop ได้เร็ว
+            slept = 0.0
+            while self._running and slept < self.interval:
+                time.sleep(0.5)
+                slept += 0.5
 
 
 def main():

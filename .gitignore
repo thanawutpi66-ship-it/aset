@@ -26,6 +26,9 @@ cloudflared_quick_tunnel.err
 snapshot.json
 cloud_dashboard/snapshot.json
 
+# Cloud ingest token (อย่า commit secret)
+cloud_token.txt
+
 # Secrets (never commit credentials)
 *.secret
 .env

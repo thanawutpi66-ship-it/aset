@@ -51,6 +51,10 @@ class SystemConfig:
     csv_filepath: str = "battery_data.csv"
     log_level: str = "INFO"
     auto_backup: bool = True
+    # Auto-push ขึ้น cloud dashboard (token อ่านจาก env INGEST_TOKEN / cloud_token.txt — ไม่เก็บใน config)
+    cloud_push_enabled: bool = False
+    cloud_dashboard_url: str = ""
+    cloud_push_interval: float = 30.0
     safety_limits: Dict[str, float] = None
 
     def __post_init__(self):

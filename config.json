@@ -20,6 +20,9 @@
     "csv_filepath": "battery_data.csv",
     "log_level": "INFO",
     "auto_backup": true,
+    "cloud_push_enabled": true,
+    "cloud_dashboard_url": "https://aset-batt-dashboard.azurewebsites.net",
+    "cloud_push_interval": 30.0,
     "safety_limits": {
       "max_voltage": 30.8,
       "min_voltage": 19.2,

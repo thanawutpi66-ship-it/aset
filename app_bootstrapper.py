@@ -177,6 +177,20 @@ class ApplicationBootstrapper:
             except Exception as e:
                 logger.warning(f"Web server failed to start: {e}")
 
+        # Auto-push ขึ้น cloud dashboard (ถ้าเปิดใน config + มี token)
+        self._cloud_pusher = None
+        if getattr(config.system, "cloud_push_enabled", False):
+            try:
+                from cloud_push import CloudPusher
+                self._cloud_pusher = CloudPusher(
+                    url=config.system.cloud_dashboard_url,
+                    csv_path=config.system.csv_filepath,
+                    interval=getattr(config.system, "cloud_push_interval", 30.0),
+                )
+                self._cloud_pusher.start()  # log เองถ้าไม่มี token
+            except Exception as e:
+                logger.warning(f"Cloud auto-push init failed: {e}")
+
         # Setup window close handler
         def on_closing():
             if self._confirm_shutdown():
@@ -234,6 +248,9 @@ class ApplicationBootstrapper:
         logger.info("Starting application cleanup")
 
         try:
+            if getattr(self, "_cloud_pusher", None):
+                self._cloud_pusher.stop()
+
             if self._web_server:
                 self._web_server.stop()
 
