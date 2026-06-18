@@ -310,6 +310,13 @@ class BatteryGrader:
         self.base_r0_mohm = base_r0_mohm
         self._model = None
         self._classes: Optional[List[str]] = None
+        # auto-discover โมเดลที่เทรนไว้ ถ้าไม่ได้ระบุ path มา
+        if model_path is None:
+            for cand in ("grader_model.joblib",
+                         os.path.join(os.path.dirname(__file__), "grader_model.joblib")):
+                if os.path.exists(cand):
+                    model_path = cand
+                    break
         if model_path:
             self.load_model(model_path)
 

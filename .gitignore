@@ -19,8 +19,9 @@ cloudflared_quick_tunnel.err
 # Data / measurement output (regenerate via generate_sample_data.py)
 *.csv
 
-# Trained models
+# Trained models + generated training data
 *.joblib
+data/
 
 # Cloud dashboard runtime snapshot
 snapshot.json
