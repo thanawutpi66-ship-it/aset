@@ -139,8 +139,11 @@ def _run_analysis(config: Any, csv_path: str) -> Dict[str, Any]:
     base_r0 = 25.0
     try:
         from battery_model import BatteryModel
-        bm = BatteryModel(config.battery.battery_type, config.battery.nominal_voltage)
-        base_r0 = bm.rin_params["r0"] * 1000.0
+        bm = BatteryModel(
+            config.battery.battery_type, config.battery.nominal_voltage,
+            config.battery.cells_series, config.battery.cells_parallel,
+        )
+        base_r0 = bm.base_r0_mohm_pack
     except Exception:
         pass
 

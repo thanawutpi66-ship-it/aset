@@ -122,7 +122,8 @@ CSV → BatteryAnalyzer.analyze()
 - เปิดไฟล์แบบ append; เขียน header เฉพาะตอนไฟล์ว่าง
 
 ### 6.2 Config ([config.py](config.py)) — dataclass + JSON ([config.json](config.json))
-- `BatteryConfig` (type, nominal_voltage, rated_capacity, max/min_voltage, max_current, mass_grams …)
+- `BatteryConfig` (type, nominal/max/min_voltage [**ต่อเซลล์**], rated_capacity [**ทั้งแพ็ค**], max_current, mass_grams, `cells_series`/`cells_parallel`). มี properties `pack_nominal/max/min_voltage` = per-cell × series. **ปัจจุบัน: 8S1P LiFePO4 → pack ~25.6V**
+- `safety_limits` เป็น **ระดับแพ็ค** (30.8V / 19.2V / 20A) — ต้องแคบกว่าจุดอันตรายเสมอ
 - `SystemConfig` (simulation_mode, enable_web_server, web_server_port, csv_filepath, **safety_limits**)
 - `HardwareConfig` (psu_port, load_port, esp_port, visa_timeout, baudrate)
 - โหลด/บันทึกผ่าน `ConfigManager`; มี global `config_manager`
@@ -159,9 +160,12 @@ ESP32: thread อ่าน serial หา pattern `"Object = … *C"` → `curren
 - Init ได้จาก voltage (`init_from_voltage`) หรือ manual
 
 ### 8.2 Battery Model ([battery_model.py](battery_model.py))
-- OCV lookup table ต่อ chemistry (LiPO / LiFePO4 / Li-ion) × temperature compensation factor
-- Interpolation 2 มิติ (temp + SoC) ผ่าน `np.interp`
-- `estimate_rin()` — blend Thevenin (จาก V/I) + model base + measured DCIR
+- OCV–SoC lookup ต่อ chemistry (**per-cell**); OCV ถือว่า ~independent ของอุณหภูมิ
+  (entropic เล็กน้อย ระดับ mV/K) — **ไม่คูณ ±%** แบบเดิมแล้ว
+- **Pack scaling:** `series_cells` / `parallel_cells` → แรงดัน/ความต้านทานคูณ series,
+  ความจุคูณ parallel; getters คืนค่า **ระดับแพ็ค** (ตรงกับที่วัดจริง)
+- `estimate_rin()` — Rin: temp (**R สูงเมื่อเย็น, Arrhenius**), SoC (U-shape), aging;
+  blend Thevenin (V/I) + base + measured DCIR
 - IEC helpers: capacity, energy density, DCIR, cycle life
 
 ### 8.3 IEC 61960 Tests ([auto_controller.py](auto_controller.py) + [iec61960_standard.py](iec61960_standard.py))
@@ -189,7 +193,9 @@ capacity / energy-density / internal-resistance / cycle-life / safety — แต
 และ log ลง CSV ให้ dashboard เห็น; `iec61960_standard` validate/report/energy bugs;
 ลบ demo test ซ้ำที่ทำ pytest ล่ม; wire `analysis_module` เข้าระบบจริงแล้ว
 (web `/api/analysis` + การ์ด AI บน dashboard + เมนู "Analyze Last CSV" + dialog
-+ ANALYSIS_COMPLETED event, มี wiring test)
++ ANALYSIS_COMPLETED event, มี wiring test); **แก้ทฤษฎีแบต + รองรับ 8S pack**
+(OCV temp ~independent, Rin temp Arrhenius [R สูงเมื่อเย็น], ตาราง OCV LFP rested
+ตามจริง, safety limits ระดับแพ็ค, series/parallel scaling — มี pack/temp tests)
 
 **ยังเหลือ:**
 

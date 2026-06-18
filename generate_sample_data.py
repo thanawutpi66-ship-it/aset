@@ -26,9 +26,11 @@ def generate(out_path: str, current_a: float, dt_s: float,
     rng = random.Random(seed)
     bat = config_manager.battery
     model = BatteryModel(battery_type=bat.battery_type,
-                         nominal_voltage=bat.nominal_voltage)
-    capacity_ah = bat.rated_capacity
-    v_cutoff = bat.min_voltage
+                         nominal_voltage=bat.nominal_voltage,
+                         series_cells=bat.cells_series,
+                         parallel_cells=bat.cells_parallel)
+    capacity_ah = bat.rated_capacity          # pack total (Ah)
+    v_cutoff = bat.pack_min_voltage           # pack-level cutoff (8S → 20V)
 
     soc = 100.0          # %
     elapsed = 0.0        # s

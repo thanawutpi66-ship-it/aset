@@ -132,8 +132,9 @@ class ApplicationBootstrapper:
             from battery_model import BatteryModel as _BatteryModel
             cfg = self.config_manager
             base_r0_mohm = _BatteryModel(
-                cfg.battery.battery_type, cfg.battery.nominal_voltage
-            ).rin_params["r0"] * 1000.0
+                cfg.battery.battery_type, cfg.battery.nominal_voltage,
+                cfg.battery.cells_series, cfg.battery.cells_parallel,
+            ).base_r0_mohm_pack
             controller.analyzer = BatteryAnalyzer(
                 rated_capacity_ah=cfg.battery.rated_capacity,
                 base_r0_mohm=base_r0_mohm,
@@ -209,7 +210,9 @@ class ApplicationBootstrapper:
         data = DataHandler()
         battery_model = BatteryModel(
             battery_type=config.battery.battery_type,
-            nominal_voltage=config.battery.nominal_voltage
+            nominal_voltage=config.battery.nominal_voltage,
+            series_cells=config.battery.cells_series,
+            parallel_cells=config.battery.cells_parallel,
         )
         estimator = StateEstimator(config.battery.rated_capacity, battery_model)
         controller = AutoController(None, hw, data, estimator, config)

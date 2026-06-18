@@ -11,16 +11,35 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BatteryConfig:
-    """Battery configuration parameters"""
+    """Battery configuration parameters
+
+    แรงดัน (nominal/max/min) เป็นค่า "ต่อเซลล์"; ใช้ pack_* properties สำหรับ
+    ค่าระดับแพ็คที่ scale ด้วย cells_series แล้ว (วัด/ตัดไฟที่ระดับแพ็ค)
+    rated_capacity เป็นความจุ "ทั้งแพ็ค" (Ah)
+    """
     battery_type: str = "LiPO"  # Changed default to LiPO
-    nominal_voltage: float = 3.7  # LiPO nominal voltage
-    rated_capacity: float = 2.0  # 2Ah typical for LiPO
-    max_voltage: float = 4.2     # LiPO max voltage
-    min_voltage: float = 2.75    # LiPO min voltage (3.0V for discharge cutoff)
-    max_current: float = 5.0     # 2.5C typical discharge rate
+    nominal_voltage: float = 3.7  # per-cell nominal voltage
+    rated_capacity: float = 2.0  # pack total capacity (Ah)
+    max_voltage: float = 4.2     # per-cell max voltage
+    min_voltage: float = 2.75    # per-cell min voltage (discharge cutoff)
+    max_current: float = 5.0     # max discharge current (A)
     mass_grams: float = 100.0    # Battery mass for energy density calculation
+    cells_series: int = 1        # จำนวนเซลล์อนุกรม (8 = 8S)
+    cells_parallel: int = 1      # จำนวนเซลล์ขนาน
     temperature_compensation: bool = True
     iec61960_compliant: bool = True  # Enable IEC 61960 standard compliance
+
+    @property
+    def pack_nominal_voltage(self) -> float:
+        return self.nominal_voltage * self.cells_series
+
+    @property
+    def pack_max_voltage(self) -> float:
+        return self.max_voltage * self.cells_series
+
+    @property
+    def pack_min_voltage(self) -> float:
+        return self.min_voltage * self.cells_series
 
 @dataclass
 class SystemConfig:

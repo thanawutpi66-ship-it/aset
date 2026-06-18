@@ -7,6 +7,8 @@
     "min_voltage": 2.5,
     "max_current": 15.0,
     "mass_grams": 1000.0,
+    "cells_series": 8,
+    "cells_parallel": 1,
     "temperature_compensation": true,
     "iec61960_compliant": true
   },
@@ -19,9 +21,9 @@
     "log_level": "INFO",
     "auto_backup": true,
     "safety_limits": {
-      "max_voltage": 4.5,
-      "min_voltage": 2.0,
-      "max_current": 15.0,
+      "max_voltage": 30.8,
+      "min_voltage": 19.2,
+      "max_current": 20.0,
       "max_temperature": 60.0,
       "min_temperature": -10.0
     }

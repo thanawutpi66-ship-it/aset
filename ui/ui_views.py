@@ -32,7 +32,7 @@ class BatteryAppUI:
         self.iec_standard = IEC61960Standard(
             self.config.battery.rated_capacity,
             self.config.battery.battery_type,
-            self.config.battery.nominal_voltage,
+            self.config.battery.pack_nominal_voltage,  # pack-level (8S → 25.6V)
         )
         self._profile_map = {}
         self._selected_profile_type = None

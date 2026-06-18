@@ -11,19 +11,26 @@ logger = logging.getLogger(__name__)
 class BatteryModel:
     """Advanced battery electrical model ด้วย temperature compensation"""
 
-    def __init__(self, battery_type: str = "LiPO", nominal_voltage: float = 3.7):
+    def __init__(self, battery_type: str = "LiPO", nominal_voltage: float = 3.7,
+                 series_cells: int = 1, parallel_cells: int = 1):
         self.battery_type = battery_type
-        self.nominal_voltage = nominal_voltage
-        self.base_rin = 0.025  # Base internal resistance (Ohm) ที่ 25°C สำหรับ LiPO
+        self.nominal_voltage = nominal_voltage  # per-cell (V)
+        # โครงสร้างแพ็ค: series คูณแรงดัน+ความต้านทาน, parallel คูณความจุ/หารความต้านทาน
+        self.series_cells = max(1, int(series_cells))
+        self.parallel_cells = max(1, int(parallel_cells))
 
         # Temperature range สำหรับ interpolation
         self.temp_range = [-10, 0, 10, 25, 40, 60]  # °C
 
-        # Temperature-dependent OCV tables
+        # Temperature-dependent OCV tables (ต่อเซลล์)
         self.ocv_tables = self._generate_ocv_tables()
 
-        # Internal resistance model parameters
+        # Internal resistance model parameters (ต่อเซลล์)
         self.rin_params = self._get_rin_parameters()
+
+        # base internal resistance ระดับแพ็ค (Ohm) + mΩ สำหรับ grader
+        self.base_rin = self.rin_params["r0"] * self.series_cells / self.parallel_cells
+        self.base_r0_mohm_pack = self.base_rin * 1000.0
 
         # Aging model (สำหรับ SoH estimation)
         self.aging_factor = 1.0  # 1.0 = new battery
@@ -60,22 +67,22 @@ class BatteryModel:
                 60:  0.90    # -10%
             }
 
-            # สร้าง tables สำหรับแต่ละอุณหภูมิ
-            tables = {}
-            for temp in self.temp_range:
-                factor = temp_factors[temp]
-                tables[temp] = {soc: ocv * factor for soc, ocv in base_table.items()}
-
+            # OCV ขึ้นกับอุณหภูมิ "น้อยมาก" (entropic ~mV/K) → ถือว่า ~independent
+            # ผลของอุณหภูมิที่มีนัยสำคัญอยู่ที่ internal resistance (ดู _calculate_base_rin)
+            # (เดิมคูณ ±6–12% = +หลายร้อย mV ซึ่งไม่ถูกตามฟิสิกส์ จึงเอาออก)
+            tables = {temp: dict(base_table) for temp in self.temp_range}
             return tables
 
         elif self.battery_type == "LiFePO4":
-            # Base table ที่ 25°C
+            # Base table ที่ 25°C — rested OCV ต่อเซลล์ (ไม่ใช่แรงดันขณะชาร์จ)
+            # LFP มี plateau ~3.25–3.30V ช่วงกลาง, knee ที่ปลาย, rested 100% ~3.40V
+            # ค่า strictly-increasing เพื่อให้ reverse lookup (OCV→SoC) เสถียร
             base_table = {
-                0:   2.50,   5:   2.79,   10:  2.95,  15:  3.08,  20:  3.14,
-                25:  3.17,  30:  3.19,  35:  3.20,  40:  3.21,  45:  3.22,
-                50:  3.225, 55:  3.23,  60:  3.24,  65:  3.26,  70:  3.29,
-                75:  3.33,  80:  3.38,  85:  3.47,  90:  3.58,  95:  3.70,
-                100: 3.80
+                0:   2.50,   5:   2.90,   10:  3.10,   15:  3.18,   20:  3.22,
+                25:  3.245,  30:  3.255,  35:  3.262,  40:  3.268,  45:  3.273,
+                50:  3.278,  55:  3.283,  60:  3.288,  65:  3.293,  70:  3.300,
+                75:  3.308,  80:  3.318,  85:  3.330,  90:  3.345,  95:  3.365,
+                100: 3.400
             }
 
             # Temperature compensation factors
@@ -88,12 +95,10 @@ class BatteryModel:
                 60:  0.95    # -5%
             }
 
-            # สร้าง tables สำหรับแต่ละอุณหภูมิ
-            tables = {}
-            for temp in self.temp_range:
-                factor = temp_factors[temp]
-                tables[temp] = {soc: ocv * factor for soc, ocv in base_table.items()}
-
+            # OCV ขึ้นกับอุณหภูมิ "น้อยมาก" (entropic ~mV/K) → ถือว่า ~independent
+            # ผลของอุณหภูมิที่มีนัยสำคัญอยู่ที่ internal resistance (ดู _calculate_base_rin)
+            # (เดิมคูณ ±6–12% = +หลายร้อย mV ซึ่งไม่ถูกตามฟิสิกส์ จึงเอาออก)
+            tables = {temp: dict(base_table) for temp in self.temp_range}
             return tables
 
         else:  # Li-ion default
@@ -114,11 +119,8 @@ class BatteryModel:
                 60:  0.93    # -7%
             }
 
-            tables = {}
-            for temp in self.temp_range:
-                factor = temp_factors[temp]
-                tables[temp] = {soc: ocv * factor for soc, ocv in base_table.items()}
-
+            # OCV ~independent ของอุณหภูมิ (ดูหมายเหตุด้านบน)
+            tables = {temp: dict(base_table) for temp in self.temp_range}
             return tables
 
     def _get_rin_parameters(self) -> Dict[str, float]:
@@ -183,18 +185,25 @@ class BatteryModel:
 
             data = {'soc_keys': data1['soc_keys'], 'ocv_vals': ocv_vals}
 
-        # Interpolate ใน SoC domain
-        return float(np.interp(soc, data['soc_keys'], data['ocv_vals']))
+        # Interpolate ใน SoC domain (per-cell) แล้วคูณจำนวน series → แรงดันแพ็ค
+        cell_ocv = float(np.interp(soc, data['soc_keys'], data['ocv_vals']))
+        return cell_ocv * self.series_cells
 
     def get_soc_from_ocv(self, ocv: float, temp: float = 25.0) -> float:
-        """Reverse lookup: OCV -> SoC พร้อม temperature compensation"""
+        """Reverse lookup: OCV (แพ็ค) -> SoC
+
+        รับแรงดันระดับแพ็ค หารด้วย series ก่อน lookup per-cell
+        หมายเหตุ: ช่วง plateau ของ LFP มี dOCV/dSoC ≈ 0 → SoC ที่ได้ ill-conditioned
+        (V คลาดนิดเดียว SoC เพี้ยนมาก) — ควรใช้เฉพาะหลัง rest นานพอ
+        """
         temp = self._clamp_temperature(temp)
+        cell_ocv = ocv / self.series_cells
 
         # ใช้ table ที่ใกล้เคียงที่สุดสำหรับ reverse lookup
         closest_temp = min(self.temp_range, key=lambda x: abs(x - temp))
         data = self._interp_data[closest_temp]
 
-        soc = float(np.interp(ocv, data['ocv_vals'], data['soc_keys']))
+        soc = float(np.interp(cell_ocv, data['ocv_vals'], data['soc_keys']))
         return max(0.0, min(100.0, soc))
 
     def _clamp_temperature(self, temp: float) -> float:
@@ -231,14 +240,18 @@ class BatteryModel:
         if measured_dcir > 0:
             rin = 0.7 * rin + 0.3 * measured_dcir
 
-        return max(0.001, min(0.5, rin))
+        # clamp ขอบบนสเกลตามแพ็ค (series เพิ่ม R, parallel ลด R)
+        r_max = 0.5 * self.series_cells / self.parallel_cells
+        return max(0.001, min(r_max, rin))
 
     def _calculate_base_rin(self, soc: float, temp: float) -> float:
-        """คำนวณ base internal resistance จาก temperature และ SoC"""
+        """คำนวณ base internal resistance (ระดับแพ็ค) จาก temperature และ SoC"""
         params = self.rin_params
 
-        # Temperature factor (ลดลงเมื่ออุณหภูมิสูงขึ้น)
-        temp_factor = params['temp_coeff'] * (temp - 25.0)
+        # Temperature factor: R "เพิ่มขึ้นเมื่ออุณหภูมิต่ำลง" (Arrhenius — ionic/
+        # charge-transfer ช้าลงตอนเย็น) จึงใช้ (25 - temp) ไม่ใช่ (temp - 25)
+        # NB: เป็น linear approximation; ของจริงโตแบบ exponential ที่อุณหภูมิต่ำ
+        temp_factor = params['temp_coeff'] * (25.0 - temp)
 
         # SoC factor (สูงขึ้นเมื่อ SoC ต่ำหรือสูง)
         soc_factor = params['soc_coeff'] * abs(soc - 50.0)
@@ -246,8 +259,10 @@ class BatteryModel:
         # Aging factor
         aging_factor = params['aging_coeff'] * (1.0 - self.aging_factor)
 
-        rin = params['r0'] * (1 + temp_factor) * (1 + soc_factor) * (1 + aging_factor)
-        return max(0.001, rin)
+        rin_cell = params['r0'] * (1 + temp_factor) * (1 + soc_factor) * (1 + aging_factor)
+        # scale เป็นระดับแพ็ค: อนุกรมบวกกัน, ขนานหารกัน
+        rin_pack = rin_cell * self.series_cells / self.parallel_cells
+        return max(0.001, rin_pack)
 
     def get_voltage_from_state(self, soc: float, current: float,
                                temp: float = 25.0, rin: Optional[float] = None) -> float:
@@ -257,9 +272,9 @@ class BatteryModel:
 
         ocv = self.get_ocv_from_soc(soc, temp)
 
-        # เพิ่ม polarization effects ที่อุณหภูมิต่ำ
+        # เพิ่ม polarization effects ที่อุณหภูมิต่ำ (ต่อเซลล์ → คูณ series เป็นแพ็ค)
         if temp < 10:
-            polarization = 0.02 * abs(current) * (10 - temp) / 10
+            polarization = 0.02 * abs(current) * (10 - temp) / 10 * self.series_cells
             return ocv - current * rin - polarization
         else:
             return ocv - current * rin

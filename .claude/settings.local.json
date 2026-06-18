@@ -6,7 +6,8 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(git rm *)",
-      "mcp__Claude_Preview__preview_start"
+      "mcp__Claude_Preview__preview_start",
+      "Bash(./venv/Scripts/python.exe generate_sample_data.py --current 10 --dt 20)"
     ]
   }
 }

@@ -429,8 +429,8 @@ class AutoController:
                 state["soc"], state["rin"] * 1000, temp
             )
 
-            # Check end condition
-            if voltage <= self.config.battery.min_voltage:
+            # Check end condition (เทียบกับ cutoff ระดับแพ็ค)
+            if voltage <= self.config.battery.pack_min_voltage:
                 break
 
             time.sleep(1.0)  # 1Hz sampling
@@ -502,7 +502,7 @@ class AutoController:
             if hasattr(self.hw, 'set_charge'):
                 self.hw.set_charge(True, profile.charge_rate * self.config.battery.rated_capacity)
                 # Monitor จน charge เต็ม
-                while self.hw.read_measurements()[0] < self.config.battery.max_voltage and self.is_profile_running:
+                while self.hw.read_measurements()[0] < self.config.battery.pack_max_voltage and self.is_profile_running:
                     time.sleep(10)
 
             # Discharge phase
@@ -512,7 +512,7 @@ class AutoController:
             start_time = time.time()
             while self.is_profile_running:
                 voltage = self.hw.read_measurements()[0]
-                if voltage <= self.config.battery.min_voltage:
+                if voltage <= self.config.battery.pack_min_voltage:
                     break
                 time.sleep(10)
 
