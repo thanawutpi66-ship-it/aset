@@ -131,6 +131,23 @@ def _render_main_plot(rows: List[Dict[str, str]]) -> bytes:
     return buf.getvalue()
 
 
+def _run_analysis(config: Any, csv_path: str) -> Dict[str, Any]:
+    """รัน BatteryAnalyzer บนไฟล์ CSV แล้วคืนผลเป็น dict (สำหรับ /api/analysis)"""
+    from analysis_module import BatteryAnalyzer
+
+    rated = getattr(config.battery, "rated_capacity", 2.0)
+    base_r0 = 25.0
+    try:
+        from battery_model import BatteryModel
+        bm = BatteryModel(config.battery.battery_type, config.battery.nominal_voltage)
+        base_r0 = bm.rin_params["r0"] * 1000.0
+    except Exception:
+        pass
+
+    analyzer = BatteryAnalyzer(rated_capacity_ah=rated, base_r0_mohm=base_r0)
+    return analyzer.analyze(csv_path).to_dict()
+
+
 class ASETWebServer:
     def __init__(self, config: Any, host: str = "0.0.0.0", port: int = 8000):
         self.config = config
@@ -142,6 +159,10 @@ class ASETWebServer:
         self._plot_cache: Dict[str, Any] = {"ts": 0.0, "data": b""}
         self._plot_lock = threading.Lock()
         self._plot_ttl = 3.0  # วินาที
+        # cache สำหรับผลวิเคราะห์ AI (analyze หนัก -> เก็บนานกว่า plot)
+        self._analysis_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
+        self._analysis_lock = threading.Lock()
+        self._analysis_ttl = 15.0  # วินาที
 
     def start(self) -> None:
         if self._server is not None:
@@ -205,6 +226,20 @@ class ASETWebServer:
                         rows = _tail_csv_rows(csv_path, limit=limit)
                         payload = _compute_summary(rows)
                         payload["csv_path"] = csv_path
+                        self._send_json(payload)
+                        return
+
+                    if path == "/api/analysis":
+                        now = time.time()
+                        with server._analysis_lock:
+                            cache = server._analysis_cache
+                            if cache["data"] is not None and (now - cache["ts"]) < server._analysis_ttl:
+                                payload = cache["data"]
+                            else:
+                                csv_path = _get_latest_csv_path(server.config)
+                                payload = _run_analysis(server.config, csv_path)
+                                cache["data"] = payload
+                                cache["ts"] = now
                         self._send_json(payload)
                         return
 
@@ -345,6 +380,21 @@ class ASETWebServer:
           <pre id="preview">-</pre>
         </div>
       </div>
+
+      <div class="card" style="flex: 1 1 240px;">
+        <div class="k">AI Grade (offline analysis)</div>
+        <div class="v" id="aiGrade" style="font-size:42px; line-height:1.1;">–</div>
+        <div class="mm" id="aiMeta"></div>
+        <table style="margin:8px 0 10px;">
+          <tr><td>SoH</td><td><b id="aiSoH">-</b> %</td></tr>
+          <tr><td>R0 (ohmic)</td><td><b id="aiR0">-</b> mΩ</td></tr>
+          <tr><td>Rp (polar.)</td><td><b id="aiRp">-</b> mΩ</td></tr>
+          <tr><td>τ (RC)</td><td><b id="aiTau">-</b> s</td></tr>
+          <tr><td>Pulses fitted</td><td><b id="aiPulses">-</b></td></tr>
+        </table>
+        <button id="analyzeBtn">Run AI analysis</button>
+        <div class="mm" id="aiNotes" style="margin-top:6px;"></div>
+      </div>
     </div>
   </div>
 
@@ -395,8 +445,41 @@ class ASETWebServer:
     }
   }
 
+  async function fetchAnalysis() {
+    const btn = document.getElementById('analyzeBtn');
+    btn.disabled = true; btn.textContent = 'Analyzing…';
+    try {
+      const r = await fetch('/api/analysis?t=' + Date.now());
+      const a = await r.json();
+      const grade = document.getElementById('aiGrade');
+      if (!a.success) {
+        grade.textContent = '!';
+        document.getElementById('aiMeta').textContent = 'error: ' + (a.error || 'failed');
+      } else {
+        grade.textContent = a.grade;
+        grade.style.color = ({A:'#34d399',B:'#a3e635',C:'#f59e0b',D:'#ef4444'})[a.grade] || '#e5e7eb';
+        document.getElementById('aiMeta').textContent =
+          (a.method === 'ml' ? 'ML model' : 'heuristic') +
+          ' · confidence ' + Math.round((a.confidence || 0) * 100) + '%';
+        const f = a.features || {};
+        document.getElementById('aiSoH').textContent = f1(f.soh_pct, 1);
+        document.getElementById('aiR0').textContent = f1(f.r0_mohm, 2);
+        document.getElementById('aiRp').textContent = f1(f.rp_mohm, 2);
+        document.getElementById('aiTau').textContent = f1(f.tau_s, 2);
+        document.getElementById('aiPulses').textContent = f.num_pulses ?? '-';
+        document.getElementById('aiNotes').textContent = (a.notes || []).join(' · ');
+      }
+    } catch (e) {
+      document.getElementById('aiMeta').textContent = 'error: ' + e;
+    } finally {
+      btn.disabled = false; btn.textContent = 'Run AI analysis';
+    }
+  }
+
   document.getElementById('refreshBtn').addEventListener('click', refresh);
+  document.getElementById('analyzeBtn').addEventListener('click', fetchAnalysis);
   refresh();
+  fetchAnalysis();
   setInterval(refresh, 2000);
 </script>
 </body>

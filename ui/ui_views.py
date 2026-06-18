@@ -4,6 +4,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from collections import deque
 import logging
+import threading
 import webbrowser
 import os
 
@@ -237,6 +238,7 @@ class BatteryAppUI:
             tools_menu = tk.Menu(menu_bar, tearoff=0)
             tools_menu.add_command(label="Refresh Ports", command=self.refresh_ports)
             tools_menu.add_command(label="Recalibrate OCV", command=self.calibrate_soc_from_ocv)
+            tools_menu.add_command(label="Analyze Last CSV (AI Grade)", command=self.analyze_last_csv)
             tools_menu.add_command(label="Open Web Dashboard", command=self.open_web_dashboard)
             menu_bar.add_cascade(label="Tools", menu=tools_menu)
 
@@ -817,3 +819,51 @@ class BatteryAppUI:
     def open_web_dashboard(self):
         port = getattr(self.config.system, "web_server_port", 8000)
         webbrowser.open(f"http://127.0.0.1:{port}/")
+
+    # =========================================================
+    # AI analysis (analysis_module)
+    # =========================================================
+    def analyze_last_csv(self):
+        """รัน BatteryAnalyzer บนไฟล์ CSV ปัจจุบันใน background thread"""
+        analyzer = getattr(self.controller, "analyzer", None)
+        if analyzer is None:
+            messagebox.showwarning("AI Analysis", "Analysis subsystem not available.")
+            return
+        csv_path = self.config.system.csv_filepath
+        if not os.path.exists(csv_path):
+            messagebox.showwarning("AI Analysis", f"CSV not found:\n{csv_path}")
+            return
+        self.status_text.set("Analyzing CSV (AI grading)...")
+        # analyzer.analyze() จะ post ANALYSIS_COMPLETED -> handle_analysis_completed
+        threading.Thread(target=analyzer.analyze, args=(csv_path,), daemon=True).start()
+
+    def handle_analysis_completed(self, result):
+        """แสดงผลการวิเคราะห์ (เรียกจาก event ผ่าน root.after — thread-safe)"""
+        if not getattr(result, "success", False):
+            self.status_text.set("Analysis failed")
+            messagebox.showerror(
+                "AI Analysis", f"Analysis failed:\n{getattr(result, 'error', 'unknown error')}"
+            )
+            return
+
+        self.status_text.set(f"Analysis complete — Grade {result.grade}")
+        if "Run Status" in self.summary_items:
+            self.summary_items["Run Status"].set(f"Graded: {result.grade}")
+
+        f = result.features
+        lines = [
+            f"Grade: {result.grade}   "
+            f"(confidence {result.confidence * 100:.0f}%, {result.method})",
+            "",
+            f"SoH:            {f.soh_pct:.1f} %",
+            f"Capacity:       {f.capacity_ah:.3f} Ah",
+            f"Energy:         {f.energy_wh:.2f} Wh",
+            f"R0 (ohmic):     {f.r0_mohm:.2f} mOhm",
+            f"Rp (polar.):    {f.rp_mohm:.2f} mOhm",
+            f"tau (RC):       {f.tau_s:.2f} s",
+            f"Pulses fitted:  {f.num_pulses}",
+            f"Avg temp:       {f.avg_temp_c:.1f} C",
+        ]
+        if result.notes:
+            lines += ["", "Notes:"] + [f"  - {n}" for n in result.notes]
+        messagebox.showinfo("AI Battery Grade", "\n".join(lines))

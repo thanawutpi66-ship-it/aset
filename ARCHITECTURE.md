@@ -104,7 +104,7 @@ battery_data.csv → web_server._tail_csv_rows()
    └→ /api/last, /plot/soc.png
 ```
 
-### 5.3 Offline analysis (subsystem ใหม่ — ยังไม่ถูกเรียกอัตโนมัติ)
+### 5.3 Offline analysis (AI grading) — เรียกผ่าน `/api/analysis` + เมนู "Analyze Last CSV"
 ```
 CSV → BatteryAnalyzer.analyze()
    ├→ RandlesModelExtractor: detect_pulses → fit_pulse (1RC)  → RCParameters
@@ -176,7 +176,7 @@ capacity / energy-density / internal-resistance / cycle-life / safety — แต
 
 ## 9. Remote Access (dashboard)
 
-- `ASETWebServer` (ThreadingHTTPServer, daemon) อ่าน CSV → serve `/`, `/api/last`, `/api/summary`, `/plot/main.png`, `/plot/soc.png`, `/api/health`
+- `ASETWebServer` (ThreadingHTTPServer, daemon) อ่าน CSV → serve `/`, `/api/last`, `/api/summary`, `/api/analysis`, `/plot/main.png`, `/plot/soc.png`, `/api/health`
 - เปิด public ผ่าน **Tailscale Funnel** → `https://thana.taildd719e.ts.net` (forward → localhost:8000)
 - ⚠️ ต้องรันแอป **ตรงบน host** (`python main.py`) ไม่ใช่ผ่าน preview manager; ถ้า Funnel ขึ้น 502 ให้รีสตาร์ท instance
 
@@ -187,13 +187,16 @@ capacity / energy-density / internal-resistance / cycle-life / safety — แต
 **✅ แก้แล้ว (commit ล่าสุด):** current sign convention รวมเป็น "discharge = บวก" ทุกจุด
 (+regression test `tests/test_sign_convention.py`); IEC capacity test ใช้ temp จริงจาก ESP
 และ log ลง CSV ให้ dashboard เห็น; `iec61960_standard` validate/report/energy bugs;
-ลบ demo test ซ้ำที่ทำ pytest ล่ม
+ลบ demo test ซ้ำที่ทำ pytest ล่ม; wire `analysis_module` เข้าระบบจริงแล้ว
+(web `/api/analysis` + การ์ด AI บน dashboard + เมนู "Analyze Last CSV" + dialog
++ ANALYSIS_COMPLETED event, มี wiring test)
 
 **ยังเหลือ:**
 
 | ระดับ | ประเด็น | ตำแหน่ง |
 |---|---|---|
-| 🟠 | `analysis_module` ยังไม่ถูก wire เข้ากับ controller/UI (ไม่มี caller จริง) + ยังไม่มี unit test; threshold ของ grader ยังไม่ calibrate | analysis_module |
+| 🟠 | `BatteryGrader` heuristic thresholds ยังไม่ calibrate ด้วยข้อมูลจริง + ยังไม่มีโมเดล ML (`.joblib`) ที่เทรนแล้ว (วาง path แล้ว grader โหลดเอง) | analysis_module / train_grader |
+| 🟡 | AI analysis ยังเป็น on-demand (กดปุ่ม/เรียก endpoint) — ยังไม่ auto-run หลัง test จบ | auto_controller |
 | 🟠 | IEC test ชนิดอื่น (DCIR / cycle-life / safety) ยังไม่ log ลง CSV — มีเฉพาะ capacity/energy test | `_run_internal_resistance_test`, `_run_cycle_life_test` |
 | 🟡 | sign convention "discharge = บวก" ถูกรวมแล้วในซอฟต์แวร์ แต่ **ควร verify กับ wiring จริง** ของ PSU/Load อีกครั้ง | hardware bring-up |
 | 🟡 | UI update มี 2 ทาง: controller เรียก `update_display(...)` ตรงๆ ส่วน event `UPDATE_DISPLAY` แทบไม่ถูก post (dead path) | event_system / auto_controller |

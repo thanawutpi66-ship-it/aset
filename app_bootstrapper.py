@@ -125,6 +125,25 @@ class ApplicationBootstrapper:
         except Exception:
             logger.debug("Could not attach UI callbacks to event handler")
 
+        # Offline analysis subsystem (AI grading) -> wire analyzer to controller + UI
+        controller.analyzer = None
+        try:
+            from analysis_module import BatteryAnalyzer
+            from battery_model import BatteryModel as _BatteryModel
+            cfg = self.config_manager
+            base_r0_mohm = _BatteryModel(
+                cfg.battery.battery_type, cfg.battery.nominal_voltage
+            ).rin_params["r0"] * 1000.0
+            controller.analyzer = BatteryAnalyzer(
+                rated_capacity_ah=cfg.battery.rated_capacity,
+                base_r0_mohm=base_r0_mohm,
+                event_bus=self.event_handler.event_bus,
+            )
+            self.event_handler.handle_analysis_completed = app_ui.handle_analysis_completed
+            logger.info("Analysis subsystem wired (BatteryAnalyzer)")
+        except Exception as e:
+            logger.warning(f"Analysis subsystem init failed: {e}")
+
         # Auto-connect mock hardware in simulation mode
         config = self.config_manager
         if config.system.simulation_mode:

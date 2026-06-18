@@ -128,6 +128,9 @@ class UIEventHandler:
         # Profile completed event
         self.event_bus.add_listener(EventType.PROFILE_COMPLETED, self._handle_profile_completed)
 
+        # Analysis completed event
+        self.event_bus.add_listener(EventType.ANALYSIS_COMPLETED, self._handle_analysis_completed)
+
     def _handle_update_display(self, event: Event):
         """Handle display update events"""
         if hasattr(self, 'update_display'):
@@ -158,6 +161,11 @@ class UIEventHandler:
         """Handle profile completion events"""
         if hasattr(self, 'handle_profile_completed'):
             self.root.after(0, self.handle_profile_completed, event.data)
+
+    def _handle_analysis_completed(self, event: Event):
+        """Handle analysis (AI grading) completion events"""
+        if hasattr(self, 'handle_analysis_completed'):
+            self.root.after(0, self.handle_analysis_completed, event.data)
 
     def _show_error_message(self, title: str, message: str):
         """Show error message dialog"""
