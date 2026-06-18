@@ -5,7 +5,8 @@
       "Bash(exit 1)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "mcp__Claude_Preview__preview_start"
     ]
   }
 }
