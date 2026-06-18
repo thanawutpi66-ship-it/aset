@@ -29,6 +29,7 @@ class AutoController:
 
         # เวลาเริ่มต้นสำหรับคำนวณ elapsed time ใน CSV
         self._start_time = None
+        self._last_update_time = None  # ใช้คำนวณ dt จริงต่อรอบ (coulomb counting)
 
         # Get event handler from service locator (registered after UI bootstrap)
         self.event_handler = None
@@ -97,6 +98,7 @@ class AutoController:
         """เริ่มลูปอ่านค่าจาก Hardware"""
         if not self.monitor_running:
             self._start_time = time.time()
+            self._last_update_time = None
             self.monitor_running = True
             # เริ่ม data logging ทันทีที่ connect
             csv_path = self.config.system.csv_filepath
@@ -139,9 +141,12 @@ class AutoController:
                     if not self.check_safety_limits(v, i_net, self.hw.current_temp):
                         break
 
-                    # อัปเดต State Estimator
+                    # อัปเดต State Estimator ด้วย dt จริงต่อรอบ (ไม่ hardcode 0.1)
+                    now = time.time()
+                    dt = (now - self._last_update_time) if self._last_update_time else 0.1
+                    self._last_update_time = now
                     state = self.estimator.update(
-                        v, i_net, dt=0.1, temp=self.hw.current_temp
+                        v, i_net, dt=dt, temp=self.hw.current_temp
                     )
 
                     # ส่งค่าไปอัปเดต UI (thread-safe ผ่าน root.after)
@@ -241,6 +246,10 @@ class AutoController:
                 self.hw.load_inst.write(":INP OFF")
         except Exception:
             pass
+
+        # auto-analyze หลังจบโปรไฟล์ (ถ้าไม่ได้ถูกสั่งหยุดกลางคัน)
+        if not self.safety_triggered:
+            self._auto_analyze()
 
         if self.ui and self.root:
             self.root.after(0, lambda: self.ui.set_loading_state("btn_start_profile", False))
@@ -359,6 +368,9 @@ class AutoController:
 
             logger.info(f"IEC 61960 test completed: {profile.name}")
 
+            # auto-analyze: ให้ AI grade ผลที่เพิ่ง log ลง CSV
+            self._auto_analyze()
+
             # ส่ง event completion
             if self.event_handler:
                 self.event_handler.post_event(
@@ -456,6 +468,7 @@ class AutoController:
         # วัด DCIR ที่ discharge current ต่างๆ
         test_currents = [0.5, 1.0, 2.0, 5.0]  # A
         dcir_results = []
+        self._ensure_logging()
 
         for current in test_currents:
             if not self.is_profile_running:
@@ -471,6 +484,7 @@ class AutoController:
 
             # วัด voltage ขณะ discharge
             voltage_after = self.hw.read_measurements()[0]
+            self._log_sample(voltage_after, current)  # ให้ dashboard เห็นจุดวัด DCIR
 
             # หยุด discharge
             self.hw.set_load(False)
@@ -506,12 +520,15 @@ class AutoController:
                     time.sleep(10)
 
             # Discharge phase
-            self.hw.set_load(True, profile.discharge_rate.value * self.config.battery.rated_capacity)
+            discharge_current = profile.discharge_rate.value * self.config.battery.rated_capacity
+            self.hw.set_load(True, discharge_current)
+            self._ensure_logging()
 
             # Monitor discharge
             start_time = time.time()
             while self.is_profile_running:
                 voltage = self.hw.read_measurements()[0]
+                self._log_sample(voltage, discharge_current)  # ให้ dashboard เห็น cycle-life
                 if voltage <= self.config.battery.pack_min_voltage:
                     break
                 time.sleep(10)
@@ -596,6 +613,37 @@ class AutoController:
                 results = iec_standard.assess_cycle_life(test_data["capacity_history"])
 
         return results
+
+    # ------------------------------------------------------------------
+    # Logging / auto-analysis helpers
+    # ------------------------------------------------------------------
+    def _ensure_logging(self):
+        """เปิด CSV logging + ตั้งเวลาเริ่ม ถ้ายังไม่ได้เปิด (ให้ IEC test โผล่บน dashboard)"""
+        if not self.data.is_recording:
+            self.data.start_logging(self.config.system.csv_filepath)
+        if self._start_time is None:
+            self._start_time = time.time()
+
+    def _log_sample(self, voltage: float, current: float):
+        """log หนึ่งแถว ใช้ค่า SoC/Rin ล่าสุดจาก estimator (สำหรับ IEC test ที่ไม่ผ่าน monitor loop)"""
+        try:
+            self.data.log_row(
+                time.time() - self._start_time, voltage, current,
+                self.estimator.soc, self.estimator.rin * 1000.0,
+                self.hw.current_temp,
+            )
+        except Exception as e:
+            logger.debug("log_sample error: %s", e)
+
+    def _auto_analyze(self):
+        """รัน AI analysis อัตโนมัติหลัง test จบ (analyzer จะ post ANALYSIS_COMPLETED -> UI)"""
+        analyzer = getattr(self, "analyzer", None)
+        if analyzer is None:
+            return
+        try:
+            analyzer.analyze(self.config.system.csv_filepath)
+        except Exception as e:
+            logger.warning("auto-analyze ล้มเหลว: %s", e)
 
     # ------------------------------------------------------------------
     # Shutdown

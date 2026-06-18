@@ -49,12 +49,13 @@ class BatteryModel:
         """สร้าง OCV lookup tables สำหรับอุณหภูมิต่างๆ"""
         if self.battery_type == "LiPO":
             # Base table ที่ 25°C สำหรับ LiPO (LiCoO2 chemistry)
+            # rested OCV ต่อเซลล์ (LiCoO2) — top ~4.20V (ไม่ใช่ 4.30 ที่เป็นแรงดันขณะชาร์จ)
             base_table = {
-                0:   3.00,   5:   3.40,   10:  3.60,  15:  3.70,  20:  3.75,
-                25:  3.78,  30:  3.82,  35:  3.85,  40:  3.88,  45:  3.92,
-                50:  3.95,  55:  3.98,  60:  4.00,  65:  4.05,  70:  4.10,
-                75:  4.15,  80:  4.18,  85:  4.20,  90:  4.22,  95:  4.25,
-                100: 4.30
+                0:   3.00,   5:   3.45,   10:  3.55,  15:  3.62,  20:  3.67,
+                25:  3.71,  30:  3.75,  35:  3.78,  40:  3.81,  45:  3.84,
+                50:  3.87,  55:  3.90,  60:  3.93,  65:  3.96,  70:  3.99,
+                75:  4.03,  80:  4.07,  85:  4.11,  90:  4.15,  95:  4.18,
+                100: 4.20
             }
 
             # Temperature compensation factors สำหรับ LiPO
@@ -102,12 +103,13 @@ class BatteryModel:
             return tables
 
         else:  # Li-ion default
+            # rested OCV ต่อเซลล์ (generic Li-ion/NMC) — top ~4.20V
             base_table = {
-                0:   2.50,   5:   3.00,   10:  3.20,  15:  3.40,  20:  3.50,
-                25:  3.58,  30:  3.62,  35:  3.65,  40:  3.68,  45:  3.70,
-                50:  3.72,  55:  3.74,  60:  3.75,  65:  3.77,  70:  3.80,
-                75:  3.84,  80:  3.90,  85:  4.00,  90:  4.10,  95:  4.18,
-                100: 4.25
+                0:   3.00,   5:   3.40,   10:  3.50,  15:  3.58,  20:  3.63,
+                25:  3.67,  30:  3.70,  35:  3.73,  40:  3.76,  45:  3.79,
+                50:  3.82,  55:  3.85,  60:  3.88,  65:  3.92,  70:  3.96,
+                75:  4.00,  80:  4.05,  85:  4.10,  90:  4.14,  95:  4.17,
+                100: 4.20
             }
 
             temp_factors = {
@@ -188,6 +190,19 @@ class BatteryModel:
         # Interpolate ใน SoC domain (per-cell) แล้วคูณจำนวน series → แรงดันแพ็ค
         cell_ocv = float(np.interp(soc, data['soc_keys'], data['ocv_vals']))
         return cell_ocv * self.series_cells
+
+    def ocv_slope(self, soc: float, temp: float = 25.0, dsoc: float = 1.0) -> float:
+        """|dOCV/dSoC| ต่อเซลล์ (V ต่อ %SoC) ที่ SoC ที่กำหนด
+
+        ใช้ตรวจช่วง plateau ที่ flat (slope ต่ำ) ของ LFP ซึ่ง OCV→SoC ill-conditioned
+        คืนค่า "ต่อเซลล์" (หาร series) เพื่อให้ threshold ไม่ขึ้นกับขนาดแพ็ค
+        """
+        s1 = max(0.0, soc - dsoc)
+        s2 = min(100.0, soc + dsoc)
+        if s2 <= s1:
+            return 0.0
+        d_pack = abs(self.get_ocv_from_soc(s2, temp) - self.get_ocv_from_soc(s1, temp))
+        return d_pack / (s2 - s1) / self.series_cells
 
     def get_soc_from_ocv(self, ocv: float, temp: float = 25.0) -> float:
         """Reverse lookup: OCV (แพ็ค) -> SoC

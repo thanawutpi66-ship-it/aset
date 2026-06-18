@@ -132,10 +132,15 @@ class UIEventHandler:
         self.event_bus.add_listener(EventType.ANALYSIS_COMPLETED, self._handle_analysis_completed)
 
     def _handle_update_display(self, event: Event):
-        """Handle display update events"""
-        if hasattr(self, 'update_display'):
-            v, i, soc, rin = event.data
-            self.root.after(0, self.update_display, v, i, soc, rin)
+        """Handle display update events.
+
+        หมายเหตุ: เส้นทางหลักคือ AutoController เรียก ui.update_display ตรงผ่าน
+        root.after; handler นี้รองรับเผื่อมีการ post UPDATE_DISPLAY event โดยส่งผ่าน
+        อาร์กิวเมนต์ทั้งหมด (ไม่ fix 4 ตัว → ตรงกับ signature ปัจจุบัน v,i,soc,rin,temp,soh)
+        """
+        if hasattr(self, 'update_display') and isinstance(event.data, (list, tuple)):
+            data = tuple(event.data)
+            self.root.after(0, lambda: self.update_display(*data))
 
     def _handle_update_status(self, event: Event):
         """Handle status update events"""

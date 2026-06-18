@@ -34,6 +34,9 @@ class StateEstimator:
         self.alpha = 0.05
         self.soc_filtered = 50.0
 
+        # ข้าม OCV correction เมื่ออยู่บน plateau ที่ flat (slope ต่ำ → SoC ill-conditioned)
+        self.min_ocv_slope = 0.003  # V ต่อ %SoC (ต่อเซลล์)
+
     # ------------------------------------------------------------------
     # Initialization helpers
     # ------------------------------------------------------------------
@@ -85,9 +88,12 @@ class StateEstimator:
         """
 
         # === 1. Coulomb Counting ===
-        # current > 0 = discharge → SoC ลดลง
-        # current < 0 = charge   → SoC เพิ่มขึ้น
-        dah = current * (dt / 3600.0) * self.coulomb_efficiency
+        # current > 0 = discharge → SoC ลดลง ; current < 0 = charge → SoC เพิ่มขึ้น
+        # coulombic efficiency ใช้กับ "charge" เท่านั้น (ประจุที่ใส่เข้าไม่ได้เก็บหมด);
+        # ตอน discharge ประจุที่จ่ายออกนับเต็ม
+        dah = current * (dt / 3600.0)
+        if current < 0:  # charge
+            dah *= self.coulomb_efficiency
         self.ah_accumulated += dah
 
         # ใช้ soc_initial เป็นฐาน ไม่ hardcode 50%
@@ -95,9 +101,9 @@ class StateEstimator:
         soc_cc = self.soc_initial - (self.ah_accumulated / self.rated_capacity) * 100.0
         soc_cc = max(0.0, min(100.0, soc_cc))
 
-        # === 2. Update Internal Resistance ===
+        # === 2. Update Internal Resistance (forward temp + measured_dcir ให้ถูก) ===
         self.rin = self.battery_model.estimate_rin(
-            voltage, current, self.soc, measured_dcir
+            voltage, current, self.soc, temp=temp, measured_dcir=measured_dcir
         )
 
         # === 3. OCV-Based Correction (Periodic, เมื่อกระแสน้อย) ===
@@ -108,7 +114,14 @@ class StateEstimator:
                 if time_since_correction >= self.ocv_correction_interval:
                     ocv_soc = self.battery_model.get_soc_from_ocv(voltage, temp)
                     drift = abs(self.soc_filtered - ocv_soc)
-                    if drift > 3.0:
+                    # guard: ข้ามถ้าอยู่บน plateau ที่ flat (slope ต่ำ → V คลาดนิดเดียว SoC เพี้ยนมาก)
+                    slope = self.battery_model.ocv_slope(ocv_soc, temp)
+                    if slope < self.min_ocv_slope:
+                        logger.debug(
+                            "ข้าม OCV correction: plateau flat (slope=%.4f V/%% < %.4f)",
+                            slope, self.min_ocv_slope
+                        )
+                    elif drift > 3.0:
                         # Blend 80% OCV, 20% Coulomb
                         corrected = 0.8 * ocv_soc + 0.2 * soc_cc
                         logger.info(
