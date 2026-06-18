@@ -27,6 +27,10 @@ python cloud_push.py --url http://127.0.0.1:8011 --token devtoken
 # เปิด http://127.0.0.1:8011
 ```
 
+## Deploy: Microsoft Azure ⭐ (มีเครดิต $100 จาก Student Pack)
+ดูคู่มือละเอียด → **[DEPLOY_AZURE.md](DEPLOY_AZURE.md)** (Azure CLI / Portal / Container + custom domain + troubleshooting)
+สั้น ๆ: App Service (Python 3.11, Linux), startup command `python server.py`, ตั้ง app setting `INGEST_TOKEN`
+
 ## Deploy: Heroku
 ```bash
 cd cloud_dashboard
