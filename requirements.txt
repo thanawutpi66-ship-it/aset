@@ -1,0 +1,18 @@
+# --- Core (required to run the app) ---
+numpy>=1.26.0
+matplotlib>=3.10.0
+pillow>=12.0.0
+pyvisa>=1.16.0
+pyserial>=3.5
+
+# --- Analysis / ML (optional) ---
+# analysis_module.py runs on numpy alone (graceful fallback);
+# install these to enable accurate 1RC curve_fit, fast CSV loading,
+# and the ML grader / train_grader.py.
+scipy>=1.11.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+joblib>=1.3.0
+
+# --- Dev / test ---
+pytest>=7.0.0

@@ -1,0 +1,34 @@
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Python caches / build
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Logs & runtime output
+logs/
+*.log
+cloudflared_quick_tunnel.out
+cloudflared_quick_tunnel.err
+
+# Data / measurement output (regenerate via generate_sample_data.py)
+*.csv
+
+# Trained models
+*.joblib
+
+# Secrets (never commit credentials)
+*.secret
+.env
+secrets.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

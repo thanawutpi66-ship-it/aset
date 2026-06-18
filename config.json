@@ -1,0 +1,37 @@
+{
+  "battery": {
+    "battery_type": "LiFePO4",
+    "nominal_voltage": 3.2,
+    "rated_capacity": 50.0,
+    "max_voltage": 3.8,
+    "min_voltage": 2.5,
+    "max_current": 15.0,
+    "mass_grams": 1000.0,
+    "temperature_compensation": true,
+    "iec61960_compliant": true
+  },
+  "system": {
+    "max_points": 100,
+    "simulation_mode": true,
+    "enable_web_server": true,
+    "web_server_port": 8000,
+    "csv_filepath": "battery_data.csv",
+    "log_level": "INFO",
+    "auto_backup": true,
+    "safety_limits": {
+      "max_voltage": 4.5,
+      "min_voltage": 2.0,
+      "max_current": 15.0,
+      "max_temperature": 60.0,
+      "min_temperature": -10.0
+    }
+  },
+  "hardware": {
+    "psu_port": "MOCK::PSU::INSTR",
+    "load_port": "MOCK::LOAD::INSTR",
+    "esp_port": "COM_MOCK",
+    "visa_timeout": 5000,
+    "serial_baudrate": 115200,
+    "auto_detect_ports": true
+  }
+}
