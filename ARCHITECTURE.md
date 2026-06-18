@@ -89,7 +89,7 @@
 ### 5.1 Live monitoring (เส้นทางหลัก)
 ```
 HW.read_vi() → (v, psu_i, load_i)
-  └ i_net = psu_i - load_i
+  └ i_net = load_i - psu_i        # convention: discharge = บวก
      ├→ check_safety_limits(v, i_net, temp)        # ตัดไฟถ้าเกิน limit
      ├→ StateEstimator.update(v, i_net, dt=0.1, temp)  → {soc, soh, rin}
      ├→ root.after → ui.update_display(...)        # อัปเดตจอ
@@ -184,15 +184,21 @@ capacity / energy-density / internal-resistance / cycle-life / safety — แต
 
 ## 10. Tech Debt / ความเสี่ยงที่ต้องรู้ร่วมกัน
 
+**✅ แก้แล้ว (commit ล่าสุด):** current sign convention รวมเป็น "discharge = บวก" ทุกจุด
+(+regression test `tests/test_sign_convention.py`); IEC capacity test ใช้ temp จริงจาก ESP
+และ log ลง CSV ให้ dashboard เห็น; `iec61960_standard` validate/report/energy bugs;
+ลบ demo test ซ้ำที่ทำ pytest ล่ม
+
+**ยังเหลือ:**
+
 | ระดับ | ประเด็น | ตำแหน่ง |
 |---|---|---|
-| 🔴 | **Current sign convention ไม่สอดคล้องกัน** — monitor loop ใช้ `i_net = psu_i − load_i` (charge บวก) แต่ `StateEstimator` ถือ "บวก = discharge" → ขณะ discharge SoC อาจขยับผิดทาง **ต้อง verify** | auto_controller `_monitor_loop` vs state_estimator `update` |
-| 🟠 | IEC capacity test hardcode temp = 25°C ใน `check_safety_limits` (ไม่ใช้ค่าจาก ESP) | `_run_capacity_test` |
-| 🟠 | IEC tests เก็บ array เอง **ไม่ log ผ่าน DataHandler** → dashboard (อ่าน CSV) มองไม่เห็นข้อมูล IEC test เว้นแต่ monitor loop รันคู่กัน | `_run_*_test` |
 | 🟠 | `analysis_module` ยังไม่ถูก wire เข้ากับ controller/UI (ไม่มี caller จริง) + ยังไม่มี unit test; threshold ของ grader ยังไม่ calibrate | analysis_module |
-| 🟡 | UI update มี 2 ทาง: controller เรียก `update_display(v,i,soc,rin,temp,soh)` 6 args ตรงๆ ขณะ `UIEventHandler._handle_update_display` unpack แค่ 4 → ทางผ่าน event ใช้ไม่ได้กับ signature ปัจจุบัน | event_system / auto_controller |
+| 🟠 | IEC test ชนิดอื่น (DCIR / cycle-life / safety) ยังไม่ log ลง CSV — มีเฉพาะ capacity/energy test | `_run_internal_resistance_test`, `_run_cycle_life_test` |
+| 🟡 | sign convention "discharge = บวก" ถูกรวมแล้วในซอฟต์แวร์ แต่ **ควร verify กับ wiring จริง** ของ PSU/Load อีกครั้ง | hardware bring-up |
+| 🟡 | UI update มี 2 ทาง: controller เรียก `update_display(...)` ตรงๆ ส่วน event `UPDATE_DISPLAY` แทบไม่ถูก post (dead path) | event_system / auto_controller |
 | 🟡 | `dt=0.1` hardcode ใน monitor loop (ไม่ชดเชยเวลาอ่านจริงของ VISA) → coulomb counting คลาดเคลื่อนเมื่อ I/O ช้า | `_monitor_loop` |
-| 🟡 | test ซ้ำซ้อน (root + `tests/`), dashboard ไม่มี auth | repo |
+| 🟡 | dashboard ไม่มี auth (เปิด public ผ่าน Funnel) | web_server |
 
 ---
 

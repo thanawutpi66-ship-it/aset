@@ -779,7 +779,7 @@ class BatteryAppUI:
     def _read_current_measurements(self):
         try:
             v, psu_i, load_i = self.hw.read_vi()
-            return v, psu_i - load_i
+            return v, load_i - psu_i  # discharge = positive
         except Exception:
             return 0.0, 0.0
 

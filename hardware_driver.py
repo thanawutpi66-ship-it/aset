@@ -182,9 +182,11 @@ class HardwareController:
             self.load_inst = None
 
     def read_measurements(self):
-        """Return (voltage, current) for IEC test routines."""
+        """Return (voltage, current) for IEC test routines.
+
+        Convention: discharge = positive (load_i − psu_i)."""
         v, psu_i, load_i = self.read_vi()
-        return v, psu_i - load_i
+        return v, load_i - psu_i
 
     def set_charge(self, state, current_val="0"):
         """Optional charge control hook for IEC cycle-life tests."""

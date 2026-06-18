@@ -98,8 +98,9 @@ class MockHardwareController:
         self.load_inst = _MockInst()
 
     def read_measurements(self):
+        # Convention: discharge = positive (load_i − psu_i)
         v, psu_i, load_i = self.read_vi()
-        return v, psu_i - load_i
+        return v, load_i - psu_i
 
     def set_charge(self, state, current_val="0"):
         if state:

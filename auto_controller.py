@@ -129,8 +129,11 @@ class AutoController:
             if self.hw.is_connected:
                 try:
                     # อ่านค่าจาก Hardware
+                    # Convention: discharge = บวก (ให้ตรงกับ StateEstimator,
+                    # CSV/dashboard และ generate_sample_data)
+                    # load_i = กระแส discharge ที่ load ดึงออก, psu_i = กระแสชาร์จเข้า
                     v, psu_i, load_i = self.hw.read_vi()
-                    i_net = psu_i - load_i
+                    i_net = load_i - psu_i
 
                     # Check safety limits
                     if not self.check_safety_limits(v, i_net, self.hw.current_temp):
@@ -394,6 +397,12 @@ class AutoController:
         # เริ่ม discharge จาก max voltage จนถึง min voltage
         self.hw.set_load(True, discharge_current)
 
+        # ให้ dashboard เห็นข้อมูล IEC test แบบ live -> เปิด logging + อ้างอิงเวลาเริ่ม
+        if not self.data.is_recording:
+            self.data.start_logging(self.config.system.csv_filepath)
+        if self._start_time is None:
+            self._start_time = time.time()
+
         # Monitor จนกระทั่ง voltage ตกลงถึง cutoff
         start_time = time.time()
         voltage_data = []
@@ -402,15 +411,23 @@ class AutoController:
 
         while self.is_profile_running:
             voltage, current = self.hw.read_measurements()
+            temp = self.hw.current_temp  # ใช้อุณหภูมิจริงจาก ESP (ไม่ hardcode 25°C)
             elapsed = time.time() - start_time
 
             voltage_data.append(voltage)
             current_data.append(current)
             time_data.append(elapsed)
 
-            # Check safety limits
-            if not self.check_safety_limits(voltage, current, 25.0):  # Assume 25°C
+            # Check safety limits ด้วยอุณหภูมิจริง
+            if not self.check_safety_limits(voltage, current, temp):
                 break
+
+            # อัปเดต SoC/Rin แล้ว log ลง CSV เพื่อให้ dashboard เห็นผล IEC test
+            state = self.estimator.update(voltage, current, dt=1.0, temp=temp)
+            self.data.log_row(
+                time.time() - self._start_time, voltage, current,
+                state["soc"], state["rin"] * 1000, temp
+            )
 
             # Check end condition
             if voltage <= self.config.battery.min_voltage:
