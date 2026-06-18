@@ -559,7 +559,8 @@ class AutoController:
                 )
                 energy_results = iec_standard.calculate_energy_density(
                     capacity_results['capacity_ah'],
-                    self.config.battery.mass_grams
+                    self.config.battery.mass_grams,
+                    avg_voltage=capacity_results.get('average_voltage'),
                 )
                 results = {**capacity_results, **energy_results}
 

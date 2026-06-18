@@ -28,7 +28,11 @@ class BatteryAppUI:
         self.data = controller.data
         self.config = controller.config
 
-        self.iec_standard = IEC61960Standard(self.config.battery.rated_capacity)
+        self.iec_standard = IEC61960Standard(
+            self.config.battery.rated_capacity,
+            self.config.battery.battery_type,
+            self.config.battery.nominal_voltage,
+        )
         self._profile_map = {}
         self._selected_profile_type = None
         self._selected_profile_id = None

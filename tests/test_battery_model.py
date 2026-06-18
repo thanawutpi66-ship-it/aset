@@ -23,7 +23,6 @@ class TestBatteryModel(unittest.TestCase):
         soc_back = self.model.get_soc_from_ocv(ocv)
         self.assertAlmostEqual(soc_back, 50.0, delta=1.0)
 
-from battery_model import BatteryModel
 
 class TestStateEstimator(unittest.TestCase):
     def setUp(self):

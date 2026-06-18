@@ -2,7 +2,7 @@
 IEC 61960 Test Profiles and Procedures for LiPO Battery Testing
 ตามมาตรฐาน IEC 61960 สำหรับ secondary lithium cells and batteries
 """
-from typing import Dict, List, Optional, Any, Tuple, Tuple
+from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum
 import logging
@@ -54,8 +54,12 @@ class IEC61960TestProfile:
 class IEC61960Standard:
     """IEC 61960 Standard Implementation สำหรับ LiPO Battery Testing"""
 
-    def __init__(self, battery_capacity_ah: float = 2.0):
+    def __init__(self, battery_capacity_ah: float = 2.0,
+                 battery_type: str = "Li-ion",
+                 nominal_voltage: float = 3.7):
         self.battery_capacity_ah = battery_capacity_ah  # Rated capacity
+        self.battery_type = battery_type
+        self.nominal_voltage = nominal_voltage
         self.test_profiles = self._create_standard_profiles()
         self.test_results = {}
 
@@ -173,12 +177,17 @@ class IEC61960Standard:
             "discharge_time_hours": time_data[-1] / 3600.0 if time_data else 0
         }
 
-    def calculate_energy_density(self, capacity_ah: float, mass_g: float) -> Dict[str, float]:
+    def calculate_energy_density(self, capacity_ah: float, mass_g: float,
+                                 avg_voltage: Optional[float] = None) -> Dict[str, float]:
         """
         คำนวณ energy density ตาม IEC 61960
         Energy Density = Energy / Mass (Wh/kg)
+
+        ใช้ avg_voltage จริงจากการ discharge ถ้ามี ไม่งั้น fallback เป็น nominal voltage
+        ของ chemistry ที่ตั้งไว้ (ไม่ hardcode 3.7V อีกต่อไป)
         """
-        energy_wh = capacity_ah * 3.7  # Approximate average voltage for LiPO
+        v = avg_voltage if (avg_voltage and avg_voltage > 0) else self.nominal_voltage
+        energy_wh = capacity_ah * v
 
         return {
             "gravimetric_energy_density_wh_kg": energy_wh / (mass_g / 1000) if mass_g > 0 else 0,
@@ -248,7 +257,7 @@ IEC 61960 TEST REPORT
 Test: {profile.name}
 Description: {profile.description}
 Date: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-Battery Type: LiPO
+Battery Type: {self.battery_type}
 Rated Capacity: {self.battery_capacity_ah} Ah
 
 TEST CONDITIONS:
@@ -265,7 +274,14 @@ RESULTS:
             else:
                 report += f"- {key}: {value}\n"
 
-        report += "\nCOMPLIANCE: PASSED (IEC 61960 Compliant)\n"
+        # อย่าฟันธง PASSED เสมอ — อิงผลจริงจาก results['iec61960_compliant'] ถ้ามี
+        compliant = results.get("iec61960_compliant")
+        if compliant is True:
+            report += "\nCOMPLIANCE: PASSED (IEC 61960)\n"
+        elif compliant is False:
+            report += "\nCOMPLIANCE: FAILED (IEC 61960)\n"
+        else:
+            report += "\nCOMPLIANCE: NOT EVALUATED (no compliance flag in results)\n"
         return report
 
     def validate_test_conditions(self, profile: IEC61960TestProfile,
@@ -274,20 +290,37 @@ RESULTS:
         ตรวจสอบว่าการทดสอบเป็นไปตาม IEC 61960 หรือไม่
         """
         violations = []
+        limits = profile.safety_limits or {}
 
         # ตรวจสอบ temperature tolerance (±2°C)
-        if abs(actual_conditions.get('temperature', 25) - profile.temperature) > 2:
-            violations.append(".1f")
+        temp = actual_conditions.get('temperature', profile.temperature)
+        if abs(temp - profile.temperature) > 2:
+            violations.append(
+                f"Temperature {temp:.1f}°C deviates >2°C from target "
+                f"{profile.temperature:.1f}°C"
+            )
 
-        # ตรวจสอบ voltage limits
-        if actual_conditions.get('max_voltage', 0) > profile.safety_limits['max_voltage']:
-            violations.append(".2f")
+        # ตรวจสอบ voltage limits (ใช้ .get เพื่อไม่ให้ KeyError เมื่อ profile ไม่ระบุ limit)
+        max_v = actual_conditions.get('max_voltage')
+        max_v_limit = limits.get('max_voltage')
+        if max_v is not None and max_v_limit is not None and max_v > max_v_limit:
+            violations.append(
+                f"Max voltage {max_v:.2f}V exceeds limit {max_v_limit:.2f}V"
+            )
 
-        if actual_conditions.get('min_voltage', 5) < profile.safety_limits['min_voltage']:
-            violations.append(".2f")
+        min_v = actual_conditions.get('min_voltage')
+        min_v_limit = limits.get('min_voltage')
+        if min_v is not None and min_v_limit is not None and min_v < min_v_limit:
+            violations.append(
+                f"Min voltage {min_v:.2f}V below limit {min_v_limit:.2f}V"
+            )
 
         # ตรวจสอบ current limits
-        if abs(actual_conditions.get('current', 0)) > profile.safety_limits['max_current']:
-            violations.append(".1f")
+        cur = actual_conditions.get('current')
+        max_i_limit = limits.get('max_current')
+        if cur is not None and max_i_limit is not None and abs(cur) > max_i_limit:
+            violations.append(
+                f"Current {abs(cur):.1f}A exceeds limit {max_i_limit:.1f}A"
+            )
 
         return violations
