@@ -184,6 +184,11 @@ capacity / energy-density / internal-resistance / cycle-life / safety — แต
 - เปิด public ผ่าน **Tailscale Funnel** → `https://thana.taildd719e.ts.net` (forward → localhost:8000)
 - ⚠️ ต้องรันแอป **ตรงบน host** (`python main.py`) ไม่ใช่ผ่าน preview manager; ถ้า Funnel ขึ้น 502 ให้รีสตาร์ท instance
 
+**Cloud dashboard (24 ชม.)** — [cloud_dashboard/](cloud_dashboard/) เป็น service แยก (stdlib ล้วน,
+Chart.js) สำหรับดูผลแม้เครื่องแล็บปิด: เครื่องแล็บรัน [cloud_push.py](cloud_push.py) →
+`POST /api/ingest` (auth token) ขึ้น Heroku/DO → เพื่อนเปิดดู. snapshot เก็บ in-memory
+(ประวัติถาวรต้องต่อ DB — follow-up). ดู [cloud_dashboard/README.md](cloud_dashboard/README.md)
+
 ---
 
 ## 10. Tech Debt / ความเสี่ยงที่ต้องรู้ร่วมกัน

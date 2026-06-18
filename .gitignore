@@ -22,6 +22,10 @@ cloudflared_quick_tunnel.err
 # Trained models
 *.joblib
 
+# Cloud dashboard runtime snapshot
+snapshot.json
+cloud_dashboard/snapshot.json
+
 # Secrets (never commit credentials)
 *.secret
 .env

@@ -1,0 +1,2 @@
+# ASET Cloud Dashboard ใช้ Python standard library ล้วน — ไม่มี third-party deps
+# (ไฟล์นี้มีไว้ให้ Heroku ตรวจจับว่าเป็นโปรเจกต์ Python และเปิด buildpack)
