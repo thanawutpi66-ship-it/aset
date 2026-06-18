@@ -462,44 +462,45 @@ class AutoController:
         self._run_capacity_test(profile, test_data)
 
     def _run_internal_resistance_test(self, profile, test_data: dict):
-        """รัน internal resistance measurement"""
-        logger.info("Running internal resistance test")
+        """วัด DCIR ตาม IEC 61960 Clause 6.4 — two-pulse method
 
-        # วัด DCIR ที่ discharge current ต่างๆ
-        test_currents = [0.5, 1.0, 2.0, 5.0]  # A
-        dcir_results = []
+        discharge 0.2C นาน 10s (วัด V1,I1) → สลับเป็น 1C นาน 1s ทันที (วัด V2,I2)
+        → DCIR = (V1−V2)/(I2−I1).  กระแสถูก clamp ที่ max_current ของ rig เพื่อความปลอดภัย
+        (ยังใช้สูตร two-point เดิมกับกระแสที่จ่ายจริง)
+        """
+        logger.info("Running IEC 61960 DCIR test (two-pulse 0.2C/1C)")
         self._ensure_logging()
 
-        for current in test_currents:
-            if not self.is_profile_running:
-                break
+        rated = self.config.battery.rated_capacity
+        max_i = self.config.battery.max_current
+        i1_set = min(0.2 * rated, max_i)        # 0.2C
+        i2_set = min(1.0 * rated, max_i)        # 1C (clamp ตาม rig)
+        if i2_set <= i1_set:
+            i2_set = min(max_i, i1_set * 1.5)
 
-            # วัด voltage ก่อน discharge
-            voltage_before = self.hw.read_measurements()[0]
-            time.sleep(0.1)
+        if not self.is_profile_running:
+            return
 
-            # เริ่ม discharge
-            self.hw.set_load(True, current)
-            time.sleep(0.5)  # Stabilization
+        # Pulse 1: 0.2C นาน 10s
+        self.hw.set_load(True, i1_set)
+        t_end = time.time() + 10.0
+        while time.time() < t_end and self.is_profile_running:
+            v, i = self.hw.read_measurements()
+            if not self.check_safety_limits(v, i, self.hw.current_temp):
+                self.hw.set_load(False)
+                return
+            self._log_sample(v, i)
+            time.sleep(1.0)
+        v1, i1 = self.hw.read_measurements()
 
-            # วัด voltage ขณะ discharge
-            voltage_after = self.hw.read_measurements()[0]
-            self._log_sample(voltage_after, current)  # ให้ dashboard เห็นจุดวัด DCIR
+        # Pulse 2: 1C นาน 1s (สลับทันทีเพื่อลด relaxation effect ตามมาตรฐาน)
+        self.hw.set_load(True, i2_set)
+        time.sleep(1.0)
+        v2, i2 = self.hw.read_measurements()
+        self._log_sample(v2, i2)
+        self.hw.set_load(False)
 
-            # หยุด discharge
-            self.hw.set_load(False)
-            time.sleep(1.0)  # Recovery
-
-            # คำนวณ DCIR
-            dcir = abs((voltage_before - voltage_after) / current) * 1000  # mΩ
-            dcir_results.append({
-                'current_a': current,
-                'voltage_before_v': voltage_before,
-                'voltage_after_v': voltage_after,
-                'dcir_mohm': dcir
-            })
-
-        test_data['dcir_results'] = dcir_results
+        test_data['dcir_pulses'] = {"v1": v1, "i1": i1, "v2": v2, "i2": i2}
 
     def _run_cycle_life_test(self, profile, test_data: dict):
         """รัน cycle life test"""
@@ -599,13 +600,10 @@ class AutoController:
                 results = {**capacity_results, **energy_results}
 
         elif profile.test_type == TestType.INTERNAL_RESISTANCE:
-            if 'dcir_results' in test_data and test_data['dcir_results']:
-                # ใช้ค่าเฉลี่ย
-                avg_dcir = sum(r['dcir_mohm'] for r in test_data['dcir_results']) / len(test_data['dcir_results'])
-                results = iec_standard.calculate_internal_resistance(
-                    test_data['dcir_results'][0]['voltage_before_v'],
-                    test_data['dcir_results'][0]['voltage_after_v'],
-                    test_data['dcir_results'][0]['current_a']
+            p = test_data.get('dcir_pulses')
+            if p:
+                results = iec_standard.calculate_dcir_two_pulse(
+                    p["v1"], p["i1"], p["v2"], p["i2"]
                 )
 
         elif profile.test_type == TestType.CYCLE_LIFE:

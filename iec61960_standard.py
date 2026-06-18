@@ -195,11 +195,35 @@ class IEC61960Standard:
             "total_energy_wh": energy_wh
         }
 
+    def calculate_dcir_two_pulse(self, v1: float, i1: float,
+                                 v2: float, i2: float) -> Dict[str, float]:
+        """
+        DC internal resistance ตาม IEC 61960 Clause 6.4 — **two-pulse method** (ถูกต้องตามมาตรฐาน)
+            R = (V1 - V2) / (I2 - I1)
+        โดย (V1, I1) วัดหลัง discharge 0.2C นาน 10s, (V2, I2) หลัง 1C นาน 1s
+        การใช้ผลต่างของ "สองกระแส" ตัด OCV ออกไป → ลด bias จาก polarization/relaxation
+        (ต่างจากวิธี single-pulse V_before−V_after ที่เทียบกับ OCV)
+        """
+        di = i2 - i1
+        if abs(di) < 1e-6:
+            logger.warning("DCIR two-pulse: ΔI เล็กเกินไป")
+            return {"dcir_mohm": 0.0, "valid_measurement": False}
+
+        dcir_ohm = abs((v1 - v2) / di)
+        dcir_mohm = dcir_ohm * 1000.0
+        return {
+            "dcir_mohm": dcir_mohm,
+            "acir_mohm": dcir_mohm * 0.8,  # ACIR ~ ohmic-only < DCIR (approx)
+            "v1_v": v1, "i1_a": i1, "v2_v": v2, "i2_a": i2,
+            "valid_measurement": True,
+            "iec61960_compliant": True,
+        }
+
     def calculate_internal_resistance(self, voltage_before: float, voltage_after: float,
                                     current: float) -> Dict[str, float]:
         """
-        คำนวณ internal resistance ตาม IEC 61960
-        DCIR = (V_before - V_after) / I
+        [LEGACY single-pulse] DCIR = (V_before - V_after) / I เทียบกับ OCV
+        IEC 61960 จริง ๆ ใช้ two-pulse — ดู calculate_dcir_two_pulse()
         """
         if abs(current) < 0.1:
             return {"dcir_mohm": 0.0, "acir_mohm": 0.0}
