@@ -102,6 +102,19 @@ class BatteryModel:
             tables = {temp: dict(base_table) for temp in self.temp_range}
             return tables
 
+        elif self.battery_type == "LeadAcid":
+            # rested OCV ต่อเซลล์ 2V (VRLA/AGM) — เส้น sloped → SoC จาก OCV ทำได้ดี
+            # 6S → pack: เต็ม ~12.78V, 50% ~12.36V, หมด ~11.76V
+            base_table = {
+                0:   1.960,  5:   1.980,  10:  1.995,  15:  2.005,  20:  2.015,
+                25:  2.025,  30:  2.033,  35:  2.040,  40:  2.047,  45:  2.053,
+                50:  2.060,  55:  2.066,  60:  2.072,  65:  2.078,  70:  2.085,
+                75:  2.092,  80:  2.100,  85:  2.108,  90:  2.115,  95:  2.122,
+                100: 2.130
+            }
+            tables = {temp: dict(base_table) for temp in self.temp_range}
+            return tables
+
         else:  # Li-ion default
             # rested OCV ต่อเซลล์ (generic Li-ion/NMC) — top ~4.20V
             base_table = {
@@ -140,6 +153,13 @@ class BatteryModel:
                 'temp_coeff': 0.003,
                 'soc_coeff': 0.0005,
                 'aging_coeff': 0.002
+            }
+        elif self.battery_type == "LeadAcid":
+            return {
+                'r0': 0.005,        # ต่อเซลล์ 2V (~30 mΩ ที่ 6S สำหรับ AGM ~7Ah)
+                'temp_coeff': 0.005,
+                'soc_coeff': 0.0010,
+                'aging_coeff': 0.003,  # lead-acid เสื่อม (sulfation) -> R ขึ้นเร็วกว่า
             }
         else:  # Li-ion
             return {

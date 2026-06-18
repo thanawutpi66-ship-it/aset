@@ -1,13 +1,13 @@
 {
   "battery": {
-    "battery_type": "LiFePO4",
-    "nominal_voltage": 3.2,
-    "rated_capacity": 50.0,
-    "max_voltage": 3.8,
-    "min_voltage": 2.5,
-    "max_current": 15.0,
-    "mass_grams": 1000.0,
-    "cells_series": 8,
+    "battery_type": "LeadAcid",
+    "nominal_voltage": 2.0,
+    "rated_capacity": 7.0,
+    "max_voltage": 2.45,
+    "min_voltage": 1.75,
+    "max_current": 10.0,
+    "mass_grams": 2400.0,
+    "cells_series": 6,
     "cells_parallel": 1,
     "temperature_compensation": true,
     "iec61960_compliant": true
@@ -24,9 +24,9 @@
     "cloud_dashboard_url": "https://aset-batt-dashboard.azurewebsites.net",
     "cloud_push_interval": 30.0,
     "safety_limits": {
-      "max_voltage": 30.8,
-      "min_voltage": 19.2,
-      "max_current": 20.0,
+      "max_voltage": 15.0,
+      "min_voltage": 10.0,
+      "max_current": 30.0,
       "max_temperature": 60.0,
       "min_temperature": -10.0
     }
