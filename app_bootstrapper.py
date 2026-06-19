@@ -93,47 +93,11 @@ class ApplicationBootstrapper:
 
         logger.info("Core services registered")
 
-    def create_ui(self, root):
-        """Create and initialize the UI with event handling"""
-        from auto_controller import AutoController
-        from ui.ui_views import BatteryAppUI
-
-        # Create event handler
-        self.event_handler = UIEventHandler(root)
-        self.event_handler.start()
-
-        # Register event handler as service
-        self.service_provider.register(UIEventHandler, self.event_handler)
-
-        # Create core components
-        self._create_core_components()
-
-        # Create controller
-        controller = ServiceLocator.get(AutoController)
-        controller.root = root
-
-        # Create UI
-        app_ui = BatteryAppUI(root, controller)
-        controller.set_ui(app_ui)
-
-        # Shared runtime wiring (event callbacks, analyzer, hw auto-connect, web, cloud)
-        self._wire_runtime(app_ui, root, controller)
-
-        # Setup window close handler
-        def on_closing():
-            if self._confirm_shutdown():
-                self.cleanup()
-                root.destroy()
-
-        root.protocol("WM_DELETE_WINDOW", on_closing)
-
-        return app_ui
-
     def _wire_runtime(self, app_ui, root, controller):
-        """Wiring ที่ใช้ร่วมกันทั้ง Tk และ Qt: event callbacks, analyzer,
-        auto-connect mock hardware, web server, cloud push. UI ทั้งสอง framework
-        ต้องมี method ชื่อเดียวกัน (update_display, _update_connection_status,
-        handle_safety_trigger, handle_profile_completed, handle_analysis_completed)
+        """Wiring ที่ใช้ร่วมกัน: event callbacks, analyzer, auto-connect mock
+        hardware, web server, cloud push. UI ต้องมี method ชื่อ update_display,
+        _update_connection_status, handle_safety_trigger, handle_profile_completed,
+        handle_analysis_completed
         """
         # Attach UI callbacks to the event handler so events route to the UI
         try:
@@ -210,9 +174,9 @@ class ApplicationBootstrapper:
             except Exception as e:
                 logger.warning(f"Cloud auto-push init failed: {e}")
 
-    def create_ui_qt(self, root, window):
-        """Qt variant: เหมือน create_ui แต่ใช้ Qt window (สร้างแล้วจากภายนอก)
-        และ marshaling ผ่าน QtRootShim (root) แทน Tk root"""
+    def create_ui(self, root, window):
+        """สร้าง event handler + core components + wire Qt window เข้ากับ controller
+        (root = QtRootShim สำหรับ marshaling cross-thread แทน Tk root)"""
         from auto_controller import AutoController
 
         self.event_handler = UIEventHandler(root)
@@ -267,11 +231,6 @@ class ApplicationBootstrapper:
         self.service_provider.register(StateEstimator, estimator)
         self.service_provider.register(AutoController, controller)
 
-    def _confirm_shutdown(self) -> bool:
-        """Confirm application shutdown"""
-        from tkinter import messagebox
-        return messagebox.askokcancel("Quit", "Do you want to safely shut down the test?")
-
     def cleanup(self):
         """Cleanup application resources"""
         logger.info("Starting application cleanup")
@@ -314,36 +273,3 @@ class ApplicationBootstrapper:
             yield self
         finally:
             self.cleanup()
-
-def create_application():
-    """Factory function to create the application"""
-    bootstrapper = ApplicationBootstrapper()
-
-    # Initialize application
-    if not bootstrapper.initialize():
-        logger.error("Failed to initialize application")
-        return
-
-    try:
-        import tkinter as tk
-
-        # Create root window
-        root = tk.Tk()
-        root.title("🔬 ASET - Advanced Battery Characterization System v2.0")
-
-        # Create UI
-        app_ui = bootstrapper.create_ui(root)
-
-        # Start the application
-        logger.info("Entering Tk mainloop")
-        root.mainloop()
-        logger.info("Exited Tk mainloop")
-
-    except Exception as e:
-        logger.critical(f"Application error: {e}", exc_info=True)
-    finally:
-        # Cleanup after application closes
-        bootstrapper.cleanup()
-
-if __name__ == "__main__":
-    create_application()

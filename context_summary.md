@@ -12,7 +12,7 @@
 - ควบคุม DC Power Supply + Electronic Load ผ่าน **SCPI/PyVISA**
 - อ่านอุณหภูมิจาก **MLX90614 → ESP32 → UART**
 - คำนวณ **DCIR / SoC / SoH** + **แยกชนิดเคมี (AI ด่าน 1)** + **คัดเกรดดี/เสีย (AI ด่าน 2)**
-- แสดงผล GUI (Tkinter) + บันทึก CSV + dashboard (local + cloud)
+- แสดงผล GUI (PySide6 desktop) + บันทึก CSV + dashboard (local + cloud)
 
 > **มหาวิทยาลัยอุบลราชธานี — Capstone Design วิศวกรรมไฟฟ้า (A19/2568)** ทีม 5 คน
 > อาจารย์ที่ปรึกษา: ดร.อาทิตย์ ฤทธิแผลง / ผศ.ดร.บงกช สุขอนันต์
@@ -50,7 +50,7 @@
   └─ ตัดวงจร   ← software (SCPI OFF) + MCB LUMIRA (passive)
                    │
             [PC / Python]
-   System A: GUI (Tkinter)            ← ui/ui_views.py
+   System A: GUI (PySide6)            ← ui/qt_views.py
    System B: Central Control          ← auto_controller.py
    System C: Acquisition + HAL        ← hardware_driver.py / mock_hardware.py
    System D: Processing+Logging+Safety+Web ← state_estimator, data_utils,

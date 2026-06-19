@@ -1,4 +1,4 @@
-"""UI package for ASET Battery app - exports main UI classes"""
-from .ui_views import BatteryAppUI
+"""UI package for ASET Battery app — PySide6 GUI"""
+from .qt_views import BatteryQtWindow, QtRootShim
 
-__all__ = ["BatteryAppUI"]
+__all__ = ["BatteryQtWindow", "QtRootShim"]

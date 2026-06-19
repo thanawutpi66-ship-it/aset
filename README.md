@@ -89,10 +89,10 @@ Extensible to other battery chemistries.
 
 ```
 ┌─────────────────────────────────────┐
-│         GUI (Tkinter)               │
+│         GUI (PySide6 5-panel)       │
 │  - Dashboard (V,I,SoC,Rin,T,SoH)   │
-│  - Controls                         │
-│  - Graphs (5 subplots)             │
+│  - Controls + Charge + E-Stop       │
+│  - Live plots (PyQtGraph)          │
 └────────────┬────────────────────────┘
              │
 ┌────────────┴──────────────────────────┐
