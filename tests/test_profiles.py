@@ -37,6 +37,20 @@ class TestChemistryRegistry(unittest.TestCase):
         self.assertEqual(p.cells_series, 6)
         self.assertGreater(p.cca_a, 0)
 
+    def test_products_carry_voltage_window(self):
+        """กัน regression: สลับรุ่นต้องตั้งหน้าต่างแรงดัน+safety ให้สอดคล้องเคมีใหม่
+        (ไม่งั้น pack_max/min_voltage ค้างค่ารุ่นเดิม)"""
+        for name in battery_profiles.list_products():
+            p = battery_profiles.get_product(name)
+            self.assertGreater(p.max_voltage_per_cell, p.min_voltage_per_cell,
+                               f"{name}: max ต้อง > min")
+            self.assertGreater(p.safety_ovp_pack, p.safety_uvp_pack,
+                               f"{name}: OVP ต้อง > UVP")
+            # OVP ต้องครอบแรงดันชาร์จเต็มของแพ็ค
+            pack_max = p.max_voltage_per_cell * p.cells_series
+            self.assertGreaterEqual(p.safety_ovp_pack, pack_max - 1.0,
+                                    f"{name}: OVP ต่ำกว่าแรงดันเต็มแพ็ค")
+
 
 class TestModelMatchesProfile(unittest.TestCase):
     """BatteryModel หลัง refactor ต้องคืน OCV เดิม (ค่าที่ test อื่นผูกไว้)"""

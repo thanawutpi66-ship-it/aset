@@ -659,6 +659,16 @@ class BatteryQtWindow(QMainWindow):
         b.rated_capacity = prod.rated_capacity_ah
         if prod.mass_grams:
             b.mass_grams = prod.mass_grams
+        # ตั้งหน้าต่างแรงดันให้สอดคล้องเคมีใหม่ (กัน pack_max/min_voltage ค้างค่ารุ่นเดิม)
+        if prod.max_voltage_per_cell:
+            b.max_voltage = prod.max_voltage_per_cell
+        if prod.min_voltage_per_cell:
+            b.min_voltage = prod.min_voltage_per_cell
+        # อัปเดต safety window ระดับแพ็คให้ตรงรุ่น
+        if prod.safety_ovp_pack and self.config.system.safety_limits:
+            self.config.system.safety_limits["max_voltage"] = prod.safety_ovp_pack
+        if prod.safety_uvp_pack and self.config.system.safety_limits:
+            self.config.system.safety_limits["min_voltage"] = prod.safety_uvp_pack
         # rebuild model + re-point estimator (ถ้า controller bound แล้ว)
         try:
             from battery_model import BatteryModel

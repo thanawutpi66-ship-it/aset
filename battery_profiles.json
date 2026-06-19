@@ -25,12 +25,14 @@
   "products": {
     "YTZ7V (12V 7Ah VRLA)": {
       "chemistry": "LeadAcid", "nominal_voltage_per_cell": 2.0, "cells_series": 6, "cells_parallel": 1,
-      "rated_capacity_ah": 7.0, "mass_grams": 2400.0, "cca_a": 130.0,
+      "rated_capacity_ah": 7.0, "max_voltage_per_cell": 2.45, "min_voltage_per_cell": 1.75,
+      "safety_ovp_pack": 15.0, "safety_uvp_pack": 10.0, "mass_grams": 2400.0, "cca_a": 130.0,
       "notes": "RB Battery YTZ7V มอเตอร์ไซค์ lead-acid AGM"
     },
     "Generic 4S LiFePO4 (12.8V)": {
       "chemistry": "LiFePO4", "nominal_voltage_per_cell": 3.2, "cells_series": 4, "cells_parallel": 1,
-      "rated_capacity_ah": 7.0, "mass_grams": 1100.0, "cca_a": 0.0,
+      "rated_capacity_ah": 7.0, "max_voltage_per_cell": 3.65, "min_voltage_per_cell": 2.50,
+      "safety_ovp_pack": 15.0, "safety_uvp_pack": 9.0, "mass_grams": 1100.0, "cca_a": 0.0,
       "notes": "แบตมอเตอร์ไซค์ lithium 4S (drop-in replacement)"
     }
   }

@@ -49,13 +49,22 @@ class ChemistryProfile:
 
 @dataclass
 class ProductProfile:
-    """แบตรุ่นจริงที่ผู้ใช้เลือกจาก dropdown — map ไป chemistry + ขนาดแพ็ค"""
+    """แบตรุ่นจริงที่ผู้ใช้เลือกจาก dropdown — map ไป chemistry + ขนาดแพ็ค
+
+    max/min_voltage_per_cell + safety_*_pack จำเป็นเพื่อให้การสลับรุ่นตั้ง "หน้าต่าง
+    แรงดันให้สอดคล้องกับเคมีใหม่" (ไม่งั้น pack_max/min_voltage + safety window จะค้าง
+    ค่าของรุ่นเดิม ทำให้ IEC test / OCV init / safety ผิด)
+    """
     name: str
     chemistry: str
     nominal_voltage_per_cell: float
     cells_series: int
     cells_parallel: int
     rated_capacity_ah: float
+    max_voltage_per_cell: float = 0.0    # 0 = ไม่ระบุ (ผู้เรียกจะไม่แก้ค่าเดิม)
+    min_voltage_per_cell: float = 0.0
+    safety_ovp_pack: float = 0.0         # over-voltage protection ระดับแพ็ค (V)
+    safety_uvp_pack: float = 0.0         # under-voltage protection ระดับแพ็ค (V)
     mass_grams: float = 0.0
     cca_a: float = 0.0                   # Cold Cranking Amps (0 = ไม่มี/ไม่ใช่ starter)
     notes: str = ""
@@ -136,13 +145,17 @@ _DEFAULT_PRODUCTS: Dict[str, ProductProfile] = {
     "YTZ7V (12V 7Ah VRLA)": ProductProfile(
         name="YTZ7V (12V 7Ah VRLA)", chemistry="LeadAcid",
         nominal_voltage_per_cell=2.0, cells_series=6, cells_parallel=1,
-        rated_capacity_ah=7.0, mass_grams=2400.0, cca_a=130.0,
+        rated_capacity_ah=7.0, max_voltage_per_cell=2.45, min_voltage_per_cell=1.75,
+        safety_ovp_pack=15.0, safety_uvp_pack=10.0,
+        mass_grams=2400.0, cca_a=130.0,
         notes="RB Battery YTZ7V มอเตอร์ไซค์ lead-acid AGM",
     ),
     "Generic 4S LiFePO4 (12.8V)": ProductProfile(
         name="Generic 4S LiFePO4 (12.8V)", chemistry="LiFePO4",
         nominal_voltage_per_cell=3.2, cells_series=4, cells_parallel=1,
-        rated_capacity_ah=7.0, mass_grams=1100.0, cca_a=0.0,
+        rated_capacity_ah=7.0, max_voltage_per_cell=3.65, min_voltage_per_cell=2.50,
+        safety_ovp_pack=15.0, safety_uvp_pack=9.0,
+        mass_grams=1100.0, cca_a=0.0,
         notes="แบตมอเตอร์ไซค์ lithium 4S (drop-in replacement)",
     ),
 }

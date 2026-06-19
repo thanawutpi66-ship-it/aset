@@ -183,6 +183,12 @@ class ChargeController:
                     if d.stage == FLOAT:
                         float_entered_at = time.time()
 
+                # re-check abort ทันทีก่อน "จ่ายไฟ" — กัน race กับ emergency shutdown
+                # (ถ้า safety ทริกเกอร์หลังเช็คตอนต้นรอบ จะได้ไม่สั่ง OUTP ON ซ้ำหลังตัดไฟ)
+                if should_stop and should_stop():
+                    logger.info("ChargeController: abort ก่อนจ่ายไฟ (safety/stop)")
+                    break
+
                 if d.output_on:
                     self.hw.set_psu_cccv(d.set_voltage, d.set_current)
                 else:
