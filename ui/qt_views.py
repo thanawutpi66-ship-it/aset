@@ -245,9 +245,14 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_battery_readout.setStyleSheet(f"color:{MUTED};")
         form.addWidget(self.lbl_battery_readout)
 
+        drow = QHBoxLayout()
         self.btn_detect = _btn("Detect Chemistry (AI)", bg="#374151", hover="#1f2937")
         self.btn_detect.clicked.connect(self._on_detect_chemistry)
-        form.addWidget(self.btn_detect)
+        self.btn_save_default = _btn("Save as Default", bg="#6b7280", hover="#4b5563")
+        self.btn_save_default.clicked.connect(self._on_save_default)
+        drow.addWidget(self.btn_detect, 2)
+        drow.addWidget(self.btn_save_default, 1)
+        form.addLayout(drow)
 
         # Connections
         form.addWidget(self._hline())
@@ -683,9 +688,18 @@ class BatteryQtWindow(QMainWindow):
             self._populate_profiles()
         except Exception as e:
             logger.error(f"apply product: {e}")
-        self.config.save_config()
+        # apply เฉพาะ session — ไม่เขียนทับ config.json อัตโนมัติ (กันเลือกดูแล้ว
+        # default ถาวรเปลี่ยนโดยไม่ตั้งใจ); persist ผ่านปุ่ม Save as Default เท่านั้น
         self._refresh_battery_readout()
-        self._log_alarm(f"เลือกแบต: {name} → {prod.chemistry} {prod.cells_series}S")
+        self._log_alarm(f"เลือกแบต (session): {name} → {prod.chemistry} {prod.cells_series}S")
+
+    def _on_save_default(self):
+        """persist battery/safety config ปัจจุบันลง config.json (ผู้ใช้สั่งเอง)"""
+        if self.config.save_config():
+            self._log_alarm("บันทึกเป็นค่าเริ่มต้นแล้ว (config.json)")
+            QMessageBox.information(self, "Save as Default", "บันทึก config.json แล้ว")
+        else:
+            QMessageBox.critical(self, "Save as Default", "บันทึกไม่สำเร็จ")
 
     def _on_detect_chemistry(self):
         if self.estimator is None:

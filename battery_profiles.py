@@ -207,7 +207,20 @@ def _load_registry() -> Tuple[Dict[str, ChemistryProfile], Dict[str, ProductProf
         return chemistries, products
 
     for name, d in data.get("chemistries", {}).items():
-        chemistries[name] = _chemistry_from_dict(name, d, chemistries.get(name))
+        try:
+            prof = _chemistry_from_dict(name, d, chemistries.get(name))
+            # validate: chemistry ใหม่ใน JSON ต้องมี ocv_curve >=2 จุด + rin.r0
+            # (ไม่งั้น BatteryModel ทำ np.interp บน array ว่าง → crash)
+            if len(prof.ocv_curve) < 2:
+                raise ValueError("ocv_curve ต้องมีอย่างน้อย 2 จุด")
+            if "r0" not in prof.rin:
+                raise ValueError("rin ต้องมีคีย์ 'r0'")
+            chemistries[name] = prof
+        except (ValueError, TypeError) as e:
+            if name in chemistries:
+                logger.error(f"chemistry '{name}' ใน JSON ไม่ถูกต้อง ({e}) — ใช้ค่า built-in เดิม")
+            else:
+                logger.error(f"chemistry '{name}' ใน JSON ไม่ถูกต้อง ({e}) — ข้าม")
 
     for name, d in data.get("products", {}).items():
         try:

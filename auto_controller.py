@@ -28,6 +28,7 @@ class AutoController:
         self.safety_triggered = False
         self.profile_data = []
         self._charge_ctrl = None
+        self._shutdown_done = False   # กัน shutdown ทำงานซ้ำ (idempotent)
 
         # เวลาเริ่มต้นสำหรับคำนวณ elapsed time ใน CSV
         self._start_time = None
@@ -695,7 +696,12 @@ class AutoController:
     # ------------------------------------------------------------------
 
     def shutdown(self):
-        """Graceful shutdown of all systems"""
+        """Graceful shutdown of all systems (idempotent — เรียกซ้ำได้ปลอดภัย:
+        closeEvent ของ Qt เรียกตัดไฟทันที + bootstrapper.cleanup() เรียกอีกครั้ง)"""
+        if self._shutdown_done:
+            logger.debug("Controller shutdown ทำไปแล้ว — ข้าม")
+            return
+        self._shutdown_done = True
         logger.info("Starting controller shutdown")
 
         self.monitor_running = False
