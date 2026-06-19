@@ -79,6 +79,18 @@ class BatteryAppUI:
             widget.config(text=state["original_text"], state="normal")
             state["loading"] = False
 
+    # --- framework-agnostic UI interface (controller เรียกผ่านชื่อเหล่านี้) ---
+    def set_profile_status(self, text: str, color: str = None):
+        self.lbl_profile_status.config(text=text, foreground=color or "#a3a3a3")
+
+    def set_button_enabled(self, key: str, enabled: bool):
+        widget = getattr(self, key, None)
+        if widget is not None:
+            widget.config(state="normal" if enabled else "disabled")
+
+    def set_charge_status(self, text: str):
+        self.lbl_profile_status.config(text=text)
+
     def handle_safety_trigger(self, reason: str):
         self.set_loading_state("btn_start_monitor", False)
         self.set_loading_state("btn_start_profile", False)

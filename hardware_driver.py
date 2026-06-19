@@ -98,6 +98,14 @@ class HardwareController:
             except Exception as e:
                 logger.error(f"load_off error: {e}")
 
+    def psu_off(self):
+        """ปิด output ของ PSU (ใช้โดย emergency shutdown + ChargeController)"""
+        with self.inst_lock:
+            try:
+                self.psu_inst.write(":OUTP OFF")
+            except Exception as e:
+                logger.error(f"psu_off error: {e}")
+
     def read_vi(self):
         with self.inst_lock:
             v = float(self.psu_inst.query("MEAS:VOLT?").strip())
@@ -201,3 +209,20 @@ class HardwareController:
                     self.psu_inst.write(":OUTP OFF")
             except Exception as e:
                 logger.error(f"Charge control error: {e}")
+
+    def set_psu_cccv(self, voltage, current):
+        """ตั้ง PSU เป็น CC-CV: voltage = แรงดันเป้า (CV limit), current = กระแสจำกัด (CC limit)
+
+        PSU ทำ CC↔CV ในฮาร์ดแวร์เอง: ถ้าแบตดึงกระแสถึง limit → CC ที่ current,
+        เมื่อแรงดันแตะ voltage → CV ที่ voltage (กระแส taper ลง). ใช้โดย ChargeController
+        (3-stage lead-acid / CC-CV lithium) — สั่งทั้งสอง limit พร้อมกันในคำสั่งเดียว
+        """
+        if not self.is_connected:
+            return
+        with self.inst_lock:
+            try:
+                self.psu_inst.write(f":VOLT {voltage}")
+                self.psu_inst.write(f":CURR {current}")
+                self.psu_inst.write(":OUTP ON")
+            except Exception as e:
+                logger.error(f"set_psu_cccv error: {e}")

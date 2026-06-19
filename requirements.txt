@@ -5,6 +5,12 @@ pillow>=12.0.0
 pyvisa>=1.16.0
 pyserial>=3.5
 
+# --- GUI (PySide6 desktop — run: python main_qt.py) ---
+# Tkinter GUI (python main.py) ยังรันได้โดยไม่ต้องมีสามตัวนี้
+PySide6>=6.6.0
+pyqtgraph>=0.13.0
+reportlab>=4.0.0
+
 # --- Analysis / ML (optional) ---
 # analysis_module.py runs on numpy alone (graceful fallback);
 # install these to enable accurate 1RC curve_fit, fast CSV loading,

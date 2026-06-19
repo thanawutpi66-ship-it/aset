@@ -6,6 +6,8 @@ import logging
 import numpy as np
 from typing import Optional, Dict, Tuple, List
 
+import battery_profiles
+
 logger = logging.getLogger(__name__)
 
 class BatteryModel:
@@ -22,11 +24,18 @@ class BatteryModel:
         # Temperature range สำหรับ interpolation
         self.temp_range = [-10, 0, 10, 25, 40, 60]  # °C
 
+        # ดึงโปรไฟล์เคมีจาก registry (battery_profiles.json + built-in fallback)
+        # — แทนการ hardcode พารามิเตอร์แบบ if/elif เดิม
+        self.chemistry = battery_profiles.get_chemistry(battery_type)
+
         # Temperature-dependent OCV tables (ต่อเซลล์)
         self.ocv_tables = self._generate_ocv_tables()
 
         # Internal resistance model parameters (ต่อเซลล์)
         self.rin_params = self._get_rin_parameters()
+
+        # กลยุทธ์การชาร์จ (ต่อเซลล์) — ใช้โดย 3-stage / CC-CV charger ใน auto_controller
+        self.charge_profile = self.chemistry.charge
 
         # base internal resistance ระดับแพ็ค (Ohm) + mΩ สำหรับ grader
         self.base_rin = self.rin_params["r0"] * self.series_cells / self.parallel_cells
@@ -46,128 +55,23 @@ class BatteryModel:
         self._prepare_interpolation_tables()
 
     def _generate_ocv_tables(self) -> Dict[int, Dict[int, float]]:
-        """สร้าง OCV lookup tables สำหรับอุณหภูมิต่างๆ"""
-        if self.battery_type == "LiPO":
-            # Base table ที่ 25°C สำหรับ LiPO (LiCoO2 chemistry)
-            # rested OCV ต่อเซลล์ (LiCoO2) — top ~4.20V (ไม่ใช่ 4.30 ที่เป็นแรงดันขณะชาร์จ)
-            base_table = {
-                0:   3.00,   5:   3.45,   10:  3.55,  15:  3.62,  20:  3.67,
-                25:  3.71,  30:  3.75,  35:  3.78,  40:  3.81,  45:  3.84,
-                50:  3.87,  55:  3.90,  60:  3.93,  65:  3.96,  70:  3.99,
-                75:  4.03,  80:  4.07,  85:  4.11,  90:  4.15,  95:  4.18,
-                100: 4.20
-            }
+        """สร้าง OCV lookup tables สำหรับอุณหภูมิต่างๆ จาก chemistry profile
 
-            # Temperature compensation factors สำหรับ LiPO
-            temp_factors = {
-                -10: 1.12,   # +12% ที่อุณหภูมิต่ำ (polarization เพิ่มมาก)
-                0:   1.06,   # +6%
-                10:  1.02,   # +2%
-                25:  1.00,   # Reference
-                40:  0.96,   # -4% ที่อุณหภูมิสูง
-                60:  0.90    # -10%
-            }
-
-            # OCV ขึ้นกับอุณหภูมิ "น้อยมาก" (entropic ~mV/K) → ถือว่า ~independent
-            # ผลของอุณหภูมิที่มีนัยสำคัญอยู่ที่ internal resistance (ดู _calculate_base_rin)
-            # (เดิมคูณ ±6–12% = +หลายร้อย mV ซึ่งไม่ถูกตามฟิสิกส์ จึงเอาออก)
-            tables = {temp: dict(base_table) for temp in self.temp_range}
-            return tables
-
-        elif self.battery_type == "LiFePO4":
-            # Base table ที่ 25°C — rested OCV ต่อเซลล์ (ไม่ใช่แรงดันขณะชาร์จ)
-            # LFP มี plateau ~3.25–3.30V ช่วงกลาง, knee ที่ปลาย, rested 100% ~3.40V
-            # ค่า strictly-increasing เพื่อให้ reverse lookup (OCV→SoC) เสถียร
-            base_table = {
-                0:   2.50,   5:   2.90,   10:  3.10,   15:  3.18,   20:  3.22,
-                25:  3.245,  30:  3.255,  35:  3.262,  40:  3.268,  45:  3.273,
-                50:  3.278,  55:  3.283,  60:  3.288,  65:  3.293,  70:  3.300,
-                75:  3.308,  80:  3.318,  85:  3.330,  90:  3.345,  95:  3.365,
-                100: 3.400
-            }
-
-            # Temperature compensation factors
-            temp_factors = {
-                -10: 1.08,   # +8% ที่อุณหภูมิต่ำ (polarization เพิ่ม)
-                0:   1.04,   # +4%
-                10:  1.01,   # +1%
-                25:  1.00,   # Reference
-                40:  0.98,   # -2% ที่อุณหภูมิสูง (conductivity เพิ่ม)
-                60:  0.95    # -5%
-            }
-
-            # OCV ขึ้นกับอุณหภูมิ "น้อยมาก" (entropic ~mV/K) → ถือว่า ~independent
-            # ผลของอุณหภูมิที่มีนัยสำคัญอยู่ที่ internal resistance (ดู _calculate_base_rin)
-            # (เดิมคูณ ±6–12% = +หลายร้อย mV ซึ่งไม่ถูกตามฟิสิกส์ จึงเอาออก)
-            tables = {temp: dict(base_table) for temp in self.temp_range}
-            return tables
-
-        elif self.battery_type == "LeadAcid":
-            # rested OCV ต่อเซลล์ 2V (VRLA/AGM) — เส้น sloped → SoC จาก OCV ทำได้ดี
-            # 6S → pack: เต็ม ~12.78V, 50% ~12.36V, หมด ~11.76V
-            base_table = {
-                0:   1.960,  5:   1.980,  10:  1.995,  15:  2.005,  20:  2.015,
-                25:  2.025,  30:  2.033,  35:  2.040,  40:  2.047,  45:  2.053,
-                50:  2.060,  55:  2.066,  60:  2.072,  65:  2.078,  70:  2.085,
-                75:  2.092,  80:  2.100,  85:  2.108,  90:  2.115,  95:  2.122,
-                100: 2.130
-            }
-            tables = {temp: dict(base_table) for temp in self.temp_range}
-            return tables
-
-        else:  # Li-ion default
-            # rested OCV ต่อเซลล์ (generic Li-ion/NMC) — top ~4.20V
-            base_table = {
-                0:   3.00,   5:   3.40,   10:  3.50,  15:  3.58,  20:  3.63,
-                25:  3.67,  30:  3.70,  35:  3.73,  40:  3.76,  45:  3.79,
-                50:  3.82,  55:  3.85,  60:  3.88,  65:  3.92,  70:  3.96,
-                75:  4.00,  80:  4.05,  85:  4.10,  90:  4.14,  95:  4.17,
-                100: 4.20
-            }
-
-            temp_factors = {
-                -10: 1.06,   # +6%
-                0:   1.03,   # +3%
-                10:  1.01,   # +1%
-                25:  1.00,   # Reference
-                40:  0.97,   # -3%
-                60:  0.93    # -7%
-            }
-
-            # OCV ~independent ของอุณหภูมิ (ดูหมายเหตุด้านบน)
-            tables = {temp: dict(base_table) for temp in self.temp_range}
-            return tables
+        Base table = rested OCV ต่อเซลล์ ณ 25°C (จาก battery_profiles).
+        OCV ถือว่า ~independent ของอุณหภูมิ (entropic ~mV/K เล็กน้อย) — ผลของอุณหภูมิ
+        ที่มีนัยสำคัญอยู่ที่ internal resistance (ดู _calculate_base_rin) จึงใช้ table
+        เดียวกันทุกอุณหภูมิ
+        """
+        base_table = self.chemistry.ocv_curve
+        return {temp: dict(base_table) for temp in self.temp_range}
 
     def _get_rin_parameters(self) -> Dict[str, float]:
-        """Parameters สำหรับ internal resistance model"""
-        if self.battery_type == "LiPO":
-            return {
-                'r0': 0.025,      # Base resistance ที่ 25°C, 50% SoC (Ohm) - LiPO มี Rin ต่ำกว่า
-                'temp_coeff': 0.004,  # Temperature coefficient (%/°C) - LiPO sensitive กับ temp มากกว่า
-                'soc_coeff': 0.0008,  # SoC coefficient (Ohm/%)
-                'aging_coeff': 0.001  # Aging coefficient (%/cycle)
-            }
-        elif self.battery_type == "LiFePO4":
-            return {
-                'r0': 0.045,
-                'temp_coeff': 0.003,
-                'soc_coeff': 0.0005,
-                'aging_coeff': 0.002
-            }
-        elif self.battery_type == "LeadAcid":
-            return {
-                'r0': 0.005,        # ต่อเซลล์ 2V (~30 mΩ ที่ 6S สำหรับ AGM ~7Ah)
-                'temp_coeff': 0.005,
-                'soc_coeff': 0.0010,
-                'aging_coeff': 0.003,  # lead-acid เสื่อม (sulfation) -> R ขึ้นเร็วกว่า
-            }
-        else:  # Li-ion
-            return {
-                'r0': 0.035,
-                'temp_coeff': 0.004,
-                'soc_coeff': 0.0003,
-                'aging_coeff': 0.0015
-            }
+        """Parameters สำหรับ internal resistance model (จาก chemistry profile)
+
+        r0 = base resistance ต่อเซลล์ ที่ 25°C/50% SoC (Ohm);
+        temp_coeff (Arrhenius, R สูงเมื่อเย็น), soc_coeff (U-shape), aging_coeff
+        """
+        return dict(self.chemistry.rin)
 
     def _prepare_interpolation_tables(self):
         """เตรียมข้อมูลสำหรับ interpolation ที่เร็วขึ้น"""

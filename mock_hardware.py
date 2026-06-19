@@ -66,6 +66,9 @@ class MockHardwareController:
     def load_off(self):
         self._load_current = 0.0
 
+    def psu_off(self):
+        self._psu_voltage = 0.0
+
     # ------------------------------------------------------------------
     # Measurement — จำลองแบตเตอรี่ลดแรงดันตามเวลา
     # ------------------------------------------------------------------
@@ -105,6 +108,11 @@ class MockHardwareController:
     def set_charge(self, state, current_val="0"):
         if state:
             self._psu_voltage = min(4.2, self._psu_voltage + 0.01)
+
+    def set_psu_cccv(self, voltage, current):
+        """จำลอง CC-CV charge: เก็บ setpoint ให้ read_vi สะท้อนการชาร์จแบบหยาบ"""
+        self._cccv_v = float(voltage)
+        self._cccv_i = float(current)
 
 
 class _MockInst:

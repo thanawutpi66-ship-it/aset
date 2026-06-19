@@ -62,7 +62,9 @@
 ### โมดูลหลัก
 | ไฟล์ | หน้าที่ |
 |---|---|
-| `battery_model.py` | OCV/Rin หลายเคมี: LiPO, LiFePO4, Li-ion, **LeadAcid**; pack scaling (series/parallel); แก้ทฤษฎีแล้ว (OCV temp-independent, Rin Arrhenius, plateau guard) |
+| `battery_profiles.py` / `battery_profiles.json` | **ฐานข้อมูลโปรไฟล์แบต** (chemistry: OCV/Rin/charge-strategy + products เช่น YTZ7V) โหลดจาก JSON + built-in fallback; แทน hardcode if/elif เดิม |
+| `charge_controller.py` | **state machine การชาร์จ**: 3-stage (lead-acid Bulk→Absorption→Float) / CC-CV (lithium); `decide()` pure + `run()` loop; PSU ทำ CC↔CV เองผ่าน `set_psu_cccv` |
+| `battery_model.py` | OCV/Rin หลายเคมี: LiPO, LiFePO4, Li-ion, **LeadAcid** (ดึงจาก `battery_profiles`); pack scaling (series/parallel); แก้ทฤษฎีแล้ว (OCV temp-independent, Rin Arrhenius, plateau guard); expose `charge_profile` |
 | `state_estimator.py` | SoC = coulomb counting + OCV correction + EMA (coulombic charge-only, plateau guard, dt จริง) |
 | `analysis_module.py` | `RandlesModelExtractor` (1RC fit), `BatteryGrader` (heuristic+ML auto-load), `BatteryAnalyzer`, **`ChemistryDetector`** |
 | `auto_controller.py` | orchestrator: monitor loop, profile, IEC tests (**two-pulse DCIR**), auto-analyze |

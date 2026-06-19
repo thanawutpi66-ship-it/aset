@@ -1,0 +1,37 @@
+{
+  "_comment": "ฐานข้อมูลโปรไฟล์แบตเตอรี่ — แก้ไฟล์นี้เพื่อเพิ่ม/ปรับเคมีหรือรุ่นแบต โดยไม่ต้องแตะโค้ด. ocv_curve เป็น [SoC%, OCV ต่อเซลล์]. แรงดันใน charge เป็น 'ต่อเซลล์' (คูณ cells_series เป็นแพ็ค).",
+  "chemistries": {
+    "LiPO": {
+      "ocv_curve": [[0,3.00],[5,3.45],[10,3.55],[15,3.62],[20,3.67],[25,3.71],[30,3.75],[35,3.78],[40,3.81],[45,3.84],[50,3.87],[55,3.90],[60,3.93],[65,3.96],[70,3.99],[75,4.03],[80,4.07],[85,4.11],[90,4.15],[95,4.18],[100,4.20]],
+      "rin": {"r0": 0.025, "temp_coeff": 0.004, "soc_coeff": 0.0008, "aging_coeff": 0.001},
+      "charge": {"strategy": "cc_cv", "bulk_c_rate": 0.5, "cv_voltage_per_cell": 4.20, "tail_current_c_rate": 0.05, "stage_timeout_min": 120.0}
+    },
+    "LiFePO4": {
+      "ocv_curve": [[0,2.50],[5,2.90],[10,3.10],[15,3.18],[20,3.22],[25,3.245],[30,3.255],[35,3.262],[40,3.268],[45,3.273],[50,3.278],[55,3.283],[60,3.288],[65,3.293],[70,3.300],[75,3.308],[80,3.318],[85,3.330],[90,3.345],[95,3.365],[100,3.400]],
+      "rin": {"r0": 0.045, "temp_coeff": 0.003, "soc_coeff": 0.0005, "aging_coeff": 0.002},
+      "charge": {"strategy": "cc_cv", "bulk_c_rate": 0.5, "cv_voltage_per_cell": 3.65, "tail_current_c_rate": 0.05, "stage_timeout_min": 120.0}
+    },
+    "LeadAcid": {
+      "ocv_curve": [[0,1.960],[5,1.980],[10,1.995],[15,2.005],[20,2.015],[25,2.025],[30,2.033],[35,2.040],[40,2.047],[45,2.053],[50,2.060],[55,2.066],[60,2.072],[65,2.078],[70,2.085],[75,2.092],[80,2.100],[85,2.108],[90,2.115],[95,2.122],[100,2.130]],
+      "rin": {"r0": 0.005, "temp_coeff": 0.005, "soc_coeff": 0.0010, "aging_coeff": 0.003},
+      "charge": {"strategy": "three_stage", "bulk_c_rate": 0.10, "absorption_voltage_per_cell": 2.40, "float_voltage_per_cell": 2.275, "tail_current_c_rate": 0.02, "stage_timeout_min": 240.0}
+    },
+    "Li-ion": {
+      "ocv_curve": [[0,3.00],[5,3.40],[10,3.50],[15,3.58],[20,3.63],[25,3.67],[30,3.70],[35,3.73],[40,3.76],[45,3.79],[50,3.82],[55,3.85],[60,3.88],[65,3.92],[70,3.96],[75,4.00],[80,4.05],[85,4.10],[90,4.14],[95,4.17],[100,4.20]],
+      "rin": {"r0": 0.035, "temp_coeff": 0.004, "soc_coeff": 0.0003, "aging_coeff": 0.0015},
+      "charge": {"strategy": "cc_cv", "bulk_c_rate": 0.5, "cv_voltage_per_cell": 4.20, "tail_current_c_rate": 0.05, "stage_timeout_min": 120.0}
+    }
+  },
+  "products": {
+    "YTZ7V (12V 7Ah VRLA)": {
+      "chemistry": "LeadAcid", "nominal_voltage_per_cell": 2.0, "cells_series": 6, "cells_parallel": 1,
+      "rated_capacity_ah": 7.0, "mass_grams": 2400.0, "cca_a": 130.0,
+      "notes": "RB Battery YTZ7V มอเตอร์ไซค์ lead-acid AGM"
+    },
+    "Generic 4S LiFePO4 (12.8V)": {
+      "chemistry": "LiFePO4", "nominal_voltage_per_cell": 3.2, "cells_series": 4, "cells_parallel": 1,
+      "rated_capacity_ah": 7.0, "mass_grams": 1100.0, "cca_a": 0.0,
+      "notes": "แบตมอเตอร์ไซค์ lithium 4S (drop-in replacement)"
+    }
+  }
+}

@@ -116,6 +116,25 @@ class ApplicationBootstrapper:
         app_ui = BatteryAppUI(root, controller)
         controller.set_ui(app_ui)
 
+        # Shared runtime wiring (event callbacks, analyzer, hw auto-connect, web, cloud)
+        self._wire_runtime(app_ui, root, controller)
+
+        # Setup window close handler
+        def on_closing():
+            if self._confirm_shutdown():
+                self.cleanup()
+                root.destroy()
+
+        root.protocol("WM_DELETE_WINDOW", on_closing)
+
+        return app_ui
+
+    def _wire_runtime(self, app_ui, root, controller):
+        """Wiring ที่ใช้ร่วมกันทั้ง Tk และ Qt: event callbacks, analyzer,
+        auto-connect mock hardware, web server, cloud push. UI ทั้งสอง framework
+        ต้องมี method ชื่อเดียวกัน (update_display, _update_connection_status,
+        handle_safety_trigger, handle_profile_completed, handle_analysis_completed)
+        """
         # Attach UI callbacks to the event handler so events route to the UI
         try:
             self.event_handler.update_display = app_ui.update_display
@@ -191,15 +210,25 @@ class ApplicationBootstrapper:
             except Exception as e:
                 logger.warning(f"Cloud auto-push init failed: {e}")
 
-        # Setup window close handler
-        def on_closing():
-            if self._confirm_shutdown():
-                self.cleanup()
-                root.destroy()
+    def create_ui_qt(self, root, window):
+        """Qt variant: เหมือน create_ui แต่ใช้ Qt window (สร้างแล้วจากภายนอก)
+        และ marshaling ผ่าน QtRootShim (root) แทน Tk root"""
+        from auto_controller import AutoController
 
-        root.protocol("WM_DELETE_WINDOW", on_closing)
+        self.event_handler = UIEventHandler(root)
+        self.event_handler.start()
+        self.service_provider.register(UIEventHandler, self.event_handler)
 
-        return app_ui
+        self._create_core_components()
+
+        controller = ServiceLocator.get(AutoController)
+        controller.root = root
+
+        window.bind_controller(controller)
+        controller.set_ui(window)
+
+        self._wire_runtime(window, root, controller)
+        return window
 
     def _create_core_components(self):
         """Create and register core application components"""

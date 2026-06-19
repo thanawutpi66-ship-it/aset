@@ -24,8 +24,10 @@ class AutoController:
         # System States
         self.monitor_running = False
         self.is_profile_running = False
+        self.is_charging = False
         self.safety_triggered = False
         self.profile_data = []
+        self._charge_ctrl = None
 
         # เวลาเริ่มต้นสำหรับคำนวณ elapsed time ใน CSV
         self._start_time = None
@@ -193,11 +195,7 @@ class AutoController:
             return
         if not self.profile_data:
             if self.ui:
-                self.root.after(
-                    0, lambda: self.ui.lbl_profile_status.config(
-                        text="Status: No profile loaded"
-                    )
-                )
+                self.root.after(0, self.ui.set_profile_status, "Status: No profile loaded")
             return
 
         self.is_profile_running = True
@@ -206,7 +204,7 @@ class AutoController:
         # Set loading state
         if self.ui and self.root:
             self.root.after(0, lambda: self.ui.set_loading_state("btn_start_profile", True, "RUNNING PROFILE..."))
-            self.root.after(0, lambda: self.ui.btn_start_profile.config(state="disabled"))
+            self.root.after(0, lambda: self.ui.set_button_enabled("btn_start_profile", False))
 
         threading.Thread(target=self._run_profile_loop, daemon=True).start()
 
@@ -219,12 +217,7 @@ class AutoController:
                 break
 
             if self.ui and self.root:
-                self.root.after(
-                    0,
-                    lambda: self.ui.lbl_profile_status.config(
-                        text="Status: RUNNING", foreground="#f97316"
-                    ),
-                )
+                self.root.after(0, self.ui.set_profile_status, "Status: RUNNING", "#f97316")
 
             delta_I = current_target - prev_current
             if abs(delta_I) > 0.05:
@@ -253,12 +246,9 @@ class AutoController:
 
         if self.ui and self.root:
             self.root.after(0, lambda: self.ui.set_loading_state("btn_start_profile", False))
-            self.root.after(0, lambda: self.ui.btn_start_profile.config(state="normal"))
+            self.root.after(0, lambda: self.ui.set_button_enabled("btn_start_profile", True))
             if not self.safety_triggered:
-                self.root.after(
-                    0,
-                    lambda: self.ui.lbl_profile_status.config(text="Status: Profile Completed"),
-                )
+                self.root.after(0, self.ui.set_profile_status, "Status: Profile Completed")
 
     def stop_profile(self):
         """Stop running profile"""
@@ -273,13 +263,80 @@ class AutoController:
         # Reset UI state
         if self.ui and self.root:
             self.root.after(0, lambda: self.ui.set_loading_state("btn_start_profile", False))
-            self.root.after(0, lambda: self.ui.btn_start_profile.config(state="normal"))
-            self.root.after(
-                0,
-                lambda: self.ui.lbl_profile_status.config(
-                    text="Status: Profile Stopped", foreground="#dc2626"
-                ),
+            self.root.after(0, lambda: self.ui.set_button_enabled("btn_start_profile", True))
+            self.root.after(0, self.ui.set_profile_status, "Status: Profile Stopped", "#dc2626")
+
+    # ------------------------------------------------------------------
+    # Chemistry-aware Charging (3-stage lead-acid / CC-CV lithium)
+    # ------------------------------------------------------------------
+
+    def start_charge(self, float_hold_s: float = 0.0):
+        """เริ่มชาร์จตามชนิดเคมีของแบต (เลือก strategy จาก battery profile อัตโนมัติ)
+
+        - LeadAcid  → 3-stage (Bulk→Absorption→Float)
+        - Lithium   → CC-CV แล้วตัดไฟ
+        รันใน thread แยก; monitor loop เดิมยังคง log + enforce safety ระหว่างชาร์จ
+        """
+        if self.is_charging:
+            logger.info("Charge already running")
+            return False
+        if not self.hw.is_connected:
+            logger.error("Cannot charge: hardware not connected")
+            return False
+        if self.safety_triggered:
+            logger.error("Cannot charge: safety triggered — reset ก่อน")
+            return False
+        if self.estimator is None or self.estimator.battery_model is None:
+            logger.error("Cannot charge: battery model unavailable")
+            return False
+
+        self.is_charging = True
+        threading.Thread(target=self._run_charge_loop,
+                         args=(float_hold_s,), daemon=True).start()
+        return True
+
+    def _run_charge_loop(self, float_hold_s: float):
+        from charge_controller import ChargeController
+        logger.info("Charge loop started")
+        try:
+            # ปิด load ก่อนชาร์จ (กันชาร์จ-ดิสชาร์จพร้อมกัน)
+            self.hw.load_off()
+            self._charge_ctrl = ChargeController(
+                self.hw, self.config, self.estimator.battery_model,
+                on_update=self._on_charge_update,
             )
+            final_stage = self._charge_ctrl.run(
+                should_stop=lambda: (self.safety_triggered or not self.is_charging),
+                float_hold_s=float_hold_s,
+            )
+            logger.info(f"Charge loop finished at stage: {final_stage}")
+        except Exception as e:
+            logger.error(f"Charge loop error: {e}")
+        finally:
+            self.is_charging = False
+            self._charge_ctrl = None
+
+    def _on_charge_update(self, stage: str, voltage: float, i_charge: float, note: str):
+        """callback จาก ChargeController — อัปเดต UI ผ่าน root.after (thread-safe)"""
+        if self.ui and self.root:
+            txt = f"Charging [{stage}]: {voltage:.2f}V  {i_charge:.2f}A"
+            setter = getattr(self.ui, "set_charge_status", None) or \
+                getattr(self.ui, "set_profile_status", None)
+            if setter is not None:
+                self.root.after(0, setter, txt)
+
+    def stop_charge(self):
+        """หยุดชาร์จ + ปิด PSU"""
+        if not self.is_charging:
+            return
+        logger.info("Stopping charge")
+        self.is_charging = False
+        if self._charge_ctrl is not None:
+            self._charge_ctrl.stop()
+        try:
+            self.hw.psu_off()
+        except Exception as e:
+            logger.error(f"psu_off during stop_charge failed: {e}")
 
     # ------------------------------------------------------------------
     # IEC 61960 Standard Tests
@@ -311,13 +368,8 @@ class AutoController:
 
             # อัปเดต UI status
             if self.ui and self.root:
-                self.root.after(
-                    0,
-                    lambda: self.ui.lbl_profile_status.config(
-                        text="Running IEC 61960 Test", foreground="#059669"
-                    ),
-                )
-                self.root.after(0, lambda: self.ui.btn_start_profile.config(state="disabled"))
+                self.root.after(0, self.ui.set_profile_status, "Running IEC 61960 Test", "#059669")
+                self.root.after(0, lambda: self.ui.set_button_enabled("btn_start_profile", False))
 
             # ส่ง event ไปยัง UI
             if self.event_handler:
@@ -332,7 +384,7 @@ class AutoController:
         except Exception as e:
             logger.error(f"Error starting IEC 61960 test: {e}")
             if self.ui:
-                self.ui.lbl_profile_status.config(text="❌ Test Failed", foreground="#dc2626")
+                self.ui.set_profile_status("❌ Test Failed", "#dc2626")
             raise
 
     def _run_iec61960_test(self, test_data: dict):
@@ -391,13 +443,8 @@ class AutoController:
         finally:
             self.is_profile_running = False
             if self.ui and self.root:
-                self.root.after(
-                    0,
-                    lambda: self.ui.lbl_profile_status.config(
-                        text="Test Completed", foreground="#059669"
-                    ),
-                )
-                self.root.after(0, lambda: self.ui.btn_start_profile.config(state="normal"))
+                self.root.after(0, self.ui.set_profile_status, "Test Completed", "#059669")
+                self.root.after(0, lambda: self.ui.set_button_enabled("btn_start_profile", True))
 
     def _run_capacity_test(self, profile, test_data: dict):
         """รัน capacity measurement test ตาม IEC 61960"""
@@ -653,6 +700,9 @@ class AutoController:
 
         self.monitor_running = False
         self.is_profile_running = False
+        self.is_charging = False
+        if self._charge_ctrl is not None:
+            self._charge_ctrl.stop()
         time.sleep(0.2)
 
         try:
