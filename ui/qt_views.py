@@ -22,7 +22,7 @@ from collections import deque
 from datetime import datetime
 
 from PySide6.QtCore import QObject, Signal, Slot, QTimer, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QComboBox, QLineEdit, QListWidget,
     QGroupBox, QGridLayout, QVBoxLayout, QHBoxLayout, QFormLayout, QTabWidget,
@@ -75,26 +75,33 @@ class QtRootShim(QObject):
 
 
 # ===========================================================================
-# Theme
+# Theme — dark instrument palette (สไตล์ซอฟต์แวร์เครื่องมือวัดระดับสากล)
 # ===========================================================================
-PRIMARY = "#005a9e"
-SUCCESS = "#107c10"
-DANGER = "#c50f1f"
-WARNING = "#d83b01"
-BG = "#f3f4f6"
-CARD = "#ffffff"
-TEXT = "#1a1a1a"
-MUTED = "#6b7280"
+ACCENT = "#2dd4bf"     # teal สว่าง — ค่าตัวเลข / ไฮไลต์ / เส้นกราฟหลัก
+PRIMARY = "#0d9488"    # teal เข้ม — พื้นปุ่มหลัก (ตัวอักษรขาวอ่านชัด)
+PRIMARY_HOVER = "#0f766e"
+SUCCESS = "#22c55e"
+SUCCESS_HOVER = "#16a34a"
+DANGER = "#ef4444"
+DANGER_HOVER = "#dc2626"
+WARNING = "#f59e0b"
+BG = "#0b1220"         # พื้นหน้าต่าง (deep navy)
+PANEL = "#131c2e"      # พื้น group/panel
+CARD = "#1a2436"       # พื้นการ์ดตัวเลข / header
+BORDER = "#243044"
+TEXT = "#e6edf3"
+MUTED = "#8b98a9"
 
 _BTN_CSS = """
-QPushButton {{ background:{bg}; color:{fg}; border:none; border-radius:4px;
-    padding:7px 10px; font-weight:600; }}
+QPushButton {{ background:{bg}; color:{fg}; border:none; border-radius:5px;
+    padding:8px 10px; font-weight:600; }}
 QPushButton:hover {{ background:{hover}; }}
-QPushButton:disabled {{ background:#cbd5e1; color:#6b7280; }}
+QPushButton:pressed {{ background:{hover}; }}
+QPushButton:disabled {{ background:#2a3650; color:#5b6679; }}
 """
 
 
-def _btn(text, bg=PRIMARY, fg="white", hover="#004578"):
+def _btn(text, bg=PRIMARY, fg="white", hover=PRIMARY_HOVER):
     b = QPushButton(text)
     b.setStyleSheet(_BTN_CSS.format(bg=bg, fg=fg, hover=hover))
     b.setCursor(Qt.PointingHandCursor)
@@ -168,51 +175,127 @@ class BatteryQtWindow(QMainWindow):
     # UI construction
     # -------------------------------------------------------------------
     def _build_ui(self):
-        self.setWindowTitle("ASET Universal Battery Tester — PySide6")
-        self.resize(1600, 950)
-        self.setStyleSheet(f"QMainWindow {{ background:{BG}; }} QWidget {{ color:{TEXT}; }}"
-                           f"QGroupBox {{ font-weight:600; border:1px solid #d1d5db;"
-                           f" border-radius:6px; margin-top:8px; background:{CARD}; }}"
-                           f"QGroupBox::title {{ subcontrol-origin:margin; left:10px;"
-                           f" padding:0 4px; color:{PRIMARY}; }}")
+        self.setWindowTitle("ASET Universal Battery Tester")
+        self.resize(1620, 960)
+        self.setStyleSheet(f"""
+            QMainWindow, QWidget {{ background:{BG}; color:{TEXT};
+                font-family:'Segoe UI','Inter',sans-serif; font-size:13px; }}
+            QGroupBox {{ font-weight:700; border:1px solid {BORDER};
+                border-radius:8px; margin-top:14px; padding:10px 8px 8px 8px;
+                background:{PANEL}; }}
+            QGroupBox::title {{ subcontrol-origin:margin; left:12px; top:1px;
+                padding:2px 8px; color:{ACCENT}; background:{PANEL};
+                font-size:12px; letter-spacing:1px; }}
+            QLabel {{ background:transparent; }}
+            QComboBox, QLineEdit {{ background:{CARD}; border:1px solid {BORDER};
+                border-radius:5px; padding:5px 8px; color:{TEXT}; selection-background-color:{PRIMARY}; }}
+            QComboBox:hover, QLineEdit:focus {{ border:1px solid {ACCENT}; }}
+            QComboBox QAbstractItemView {{ background:{CARD}; color:{TEXT};
+                selection-background-color:{PRIMARY}; border:1px solid {BORDER}; outline:0; }}
+            QComboBox::drop-down {{ border:0; width:18px; }}
+            QListWidget {{ background:{CARD}; border:1px solid {BORDER};
+                border-radius:5px; padding:3px; outline:0; }}
+            QListWidget::item {{ padding:5px 6px; border-radius:4px; }}
+            QListWidget::item:selected {{ background:{PRIMARY}; color:white; }}
+            QListWidget::item:hover {{ background:{BORDER}; }}
+            QTextEdit {{ background:#0a0f1a; border:1px solid {BORDER};
+                border-radius:6px; color:{TEXT}; }}
+            QTabWidget::pane {{ border:1px solid {BORDER}; border-radius:8px;
+                background:{PANEL}; top:-1px; }}
+            QTabBar::tab {{ background:transparent; color:{MUTED}; padding:8px 16px;
+                border-top-left-radius:6px; border-top-right-radius:6px;
+                font-weight:600; margin-right:2px; }}
+            QTabBar::tab:selected {{ background:{PANEL}; color:{ACCENT};
+                border-bottom:2px solid {ACCENT}; }}
+            QTabBar::tab:hover {{ color:{TEXT}; }}
+            QScrollBar:vertical {{ background:{BG}; width:10px; margin:0; }}
+            QScrollBar::handle:vertical {{ background:{BORDER}; border-radius:5px; min-height:24px; }}
+            QScrollBar::handle:vertical:hover {{ background:{MUTED}; }}
+            QScrollBar::add-line, QScrollBar::sub-line {{ height:0; }}
+            QToolTip {{ background:{CARD}; color:{TEXT}; border:1px solid {BORDER}; }}
+        """)
 
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(8, 8, 8, 8)
+        root.setContentsMargins(10, 10, 10, 6)
+        root.setSpacing(8)
 
         root.addWidget(self._build_header())
 
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(8)
         splitter.addWidget(self._build_left_panel())
         splitter.addWidget(self._build_right_panel())
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([380, 1220])
+        splitter.setSizes([390, 1210])
         root.addWidget(splitter, 1)
 
         self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet(f"color:{MUTED}; padding:4px;")
+        self.status_label.setStyleSheet(
+            f"color:{MUTED}; padding:5px 10px; background:{PANEL};"
+            f" border:1px solid {BORDER}; border-radius:6px;")
         root.addWidget(self.status_label)
+
+    def _logo(self, filename, h=46):
+        """โหลดโลโก้คณะเป็น QLabel (scale ตามความสูง, รักษาสัดส่วน)"""
+        lbl = QLabel()
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+        pix = QPixmap(path)
+        if not pix.isNull():
+            lbl.setPixmap(pix.scaledToHeight(h, Qt.SmoothTransformation))
+        else:
+            logger.warning(f"โหลดโลโก้ไม่ได้: {path}")
+        return lbl
 
     def _build_header(self):
         bar = QFrame()
-        bar.setStyleSheet(f"background:{CARD}; border-radius:6px;")
+        bar.setFixedHeight(72)
+        bar.setStyleSheet(
+            f"background:{CARD}; border:1px solid {BORDER}; border-radius:10px;")
         lay = QHBoxLayout(bar)
+        lay.setContentsMargins(16, 8, 16, 8)
+        lay.setSpacing(14)
+
+        # โลโก้คณะ 2 รูป
+        lay.addWidget(self._logo("00021f2021030914260622.png", 48))
+        lay.addWidget(self._logo("00021b2021031713352962.png", 44))
+
+        # คั่นเส้นตั้ง
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setStyleSheet(f"color:{BORDER};")
+        lay.addWidget(sep)
+
         title = QLabel("ASET LABORATORY")
-        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        title.setFont(QFont("Segoe UI", 17, QFont.Bold))
+        title.setStyleSheet(f"color:{TEXT}; letter-spacing:1px;")
         sub = QLabel("Universal Battery Tester · IEC 61960")
-        sub.setStyleSheet(f"color:{MUTED};")
+        sub.setStyleSheet(f"color:{ACCENT}; font-size:11px; letter-spacing:2px;")
         box = QVBoxLayout()
-        box.setSpacing(0)
+        box.setSpacing(1)
         box.addWidget(title)
         box.addWidget(sub)
         lay.addLayout(box)
+
         lay.addStretch(1)
+
+        # connection LED + ข้อความ
+        self.conn_led = QLabel("●")
+        self.conn_led.setStyleSheet(f"color:{MUTED}; font-size:16px;")
+        self.conn_text = QLabel("Disconnected")
+        self.conn_text.setStyleSheet(f"color:{MUTED}; font-weight:600;")
+        lay.addWidget(self.conn_led)
+        lay.addWidget(self.conn_text)
+
         mode = "SIMULATION" if self.config.system.simulation_mode else "HARDWARE"
+        mcol = WARNING if self.config.system.simulation_mode else SUCCESS
         badge = QLabel(f"  {mode}  ")
-        badge.setStyleSheet(f"background:{PRIMARY}; color:white; border-radius:4px;"
-                            f" padding:6px; font-weight:600;")
+        badge.setStyleSheet(
+            f"background:transparent; color:{mcol}; border:1px solid {mcol};"
+            f" border-radius:5px; padding:5px 10px; font-weight:700;"
+            f" font-size:11px; letter-spacing:1px;")
         lay.addWidget(badge)
         return bar
 
@@ -389,22 +472,15 @@ class BatteryQtWindow(QMainWindow):
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(0, 0, 0, 0)
 
-        # metric cards
-        cards = QFrame()
-        cards.setStyleSheet(f"background:{CARD}; border-radius:6px;")
-        grid = QGridLayout(cards)
+        # metric cards (การ์ดอ่านค่าแบบเครื่องมือวัด)
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(8)
         self.metric_labels = {}
         metrics = [("Voltage", "V"), ("Current", "A"), ("SoC", "%"),
                    ("Rin", "mΩ"), ("Temp", "°C"), ("SoH", "%")]
-        for col, (name, unit) in enumerate(metrics):
-            t = QLabel(name)
-            t.setStyleSheet(f"color:{MUTED}; font-size:11px; font-weight:600;")
-            v = QLabel(f"0.0 {unit}")
-            v.setFont(QFont("Consolas", 18, QFont.Bold))
-            grid.addWidget(t, 0, col)
-            grid.addWidget(v, 1, col)
-            self.metric_labels[name] = (v, unit)
-        lay.addWidget(cards)
+        for name, unit in metrics:
+            cards_row.addWidget(self._metric_card(name, unit), 1)
+        lay.addLayout(cards_row)
 
         tabs = QTabWidget()
         tabs.addTab(self._tab_plots(), "2 · Live Plots")
@@ -413,27 +489,58 @@ class BatteryQtWindow(QMainWindow):
         lay.addWidget(tabs, 1)
         return panel
 
+    def _metric_card(self, name, unit):
+        card = QFrame()
+        card.setStyleSheet(
+            f"QFrame {{ background:{CARD}; border:1px solid {BORDER};"
+            f" border-top:2px solid {ACCENT}; border-radius:8px; }}")
+        v = QVBoxLayout(card)
+        v.setContentsMargins(12, 9, 12, 9)
+        v.setSpacing(2)
+        t = QLabel(name.upper())
+        t.setStyleSheet(f"color:{MUTED}; font-size:10px; font-weight:700;"
+                        f" letter-spacing:1px; border:0;")
+        val = QLabel(f"0.0 {unit}")
+        val.setFont(QFont("Consolas", 19, QFont.Bold))
+        val.setStyleSheet(f"color:{ACCENT}; border:0;")
+        v.addWidget(t)
+        v.addWidget(val)
+        self.metric_labels[name] = (val, unit)
+        return card
+
     def _tab_plots(self):
-        pg.setConfigOptions(antialias=True, background=CARD, foreground=TEXT)
+        pg.setConfigOptions(antialias=True, background=PANEL, foreground=MUTED)
         w = QWidget()
         lay = QGridLayout(w)
+        lay.setSpacing(8)
         self._curves = {}
-        specs = [("Voltage (V)", "v", PRIMARY), ("Current (A)", "i", WARNING),
-                 ("SoC (%)", "soc", SUCCESS), ("Rin (mΩ)", "rin", "#6b7280"),
-                 ("Temperature (°C)", "temp", "#8b0000")]
+        specs = [("Voltage (V)", "v", "#38bdf8"), ("Current (A)", "i", "#f59e0b"),
+                 ("SoC (%)", "soc", "#22c55e"), ("Rin (mΩ)", "rin", "#a78bfa"),
+                 ("Temperature (°C)", "temp", "#fb7185")]
         for idx, (title, key, color) in enumerate(specs):
             p = pg.PlotWidget(title=title)
-            p.showGrid(x=True, y=True, alpha=0.3)
+            p.setStyleSheet(f"border:1px solid {BORDER}; border-radius:8px;")
+            p.showGrid(x=True, y=True, alpha=0.18)
             curve = p.plot(pen=pg.mkPen(color, width=2))
             self._curves[key] = curve
             lay.addWidget(p, idx // 2, idx % 2)
 
-        # temp gauge
+        # temp gauge (สี เขียว/เหลือง/แดง ตามอุณหภูมิ)
+        gbox = QFrame()
+        gbox.setStyleSheet(f"background:{CARD}; border:1px solid {BORDER}; border-radius:8px;")
+        gl = QVBoxLayout(gbox)
+        gl.setContentsMargins(10, 8, 10, 10)
+        gcap = QLabel("CASE TEMPERATURE")
+        gcap.setAlignment(Qt.AlignCenter)
+        gcap.setStyleSheet(f"color:{MUTED}; font-size:10px; font-weight:700;"
+                           f" letter-spacing:1px; border:0;")
         self.gauge = QLabel("-- °C")
         self.gauge.setAlignment(Qt.AlignCenter)
-        self.gauge.setFont(QFont("Consolas", 22, QFont.Bold))
-        self.gauge.setStyleSheet("background:#16a34a; color:white; border-radius:8px; padding:14px;")
-        lay.addWidget(self.gauge, 2, 1)
+        self.gauge.setFont(QFont("Consolas", 26, QFont.Bold))
+        self.gauge.setStyleSheet("background:#16a34a; color:white; border-radius:8px; padding:16px;")
+        gl.addWidget(gcap)
+        gl.addWidget(self.gauge, 1)
+        lay.addWidget(gbox, 2, 1)
         return w
 
     def _tab_analytics(self):
@@ -465,7 +572,7 @@ class BatteryQtWindow(QMainWindow):
     def _hline(self):
         ln = QFrame()
         ln.setFrameShape(QFrame.HLine)
-        ln.setStyleSheet("color:#e5e7eb;")
+        ln.setStyleSheet(f"color:{BORDER}; background:{BORDER}; max-height:1px;")
         return ln
 
     # -------------------------------------------------------------------
@@ -581,6 +688,11 @@ class BatteryQtWindow(QMainWindow):
     @Slot()
     def _slot_conn(self):
         connected = getattr(self.hw, "is_connected", False)
+        led = SUCCESS if connected else MUTED
+        self.conn_led.setStyleSheet(f"color:{led}; font-size:16px;")
+        self.conn_text.setText("Connected" if connected else "Disconnected")
+        self.conn_text.setStyleSheet(
+            f"color:{SUCCESS if connected else MUTED}; font-weight:600;")
         self.status_label.setText("Hardware connected" if connected
                                   else "Ready — connect hardware to begin")
 
