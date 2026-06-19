@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "aset-app",
-      "runtimeExecutable": "python",
+      "runtimeExecutable": "./venv/Scripts/python.exe",
       "runtimeArgs": ["main.py"],
       "port": 8000,
       "autoPort": false
