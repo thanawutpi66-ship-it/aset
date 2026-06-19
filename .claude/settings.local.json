@@ -7,7 +7,16 @@
       "Bash(git commit *)",
       "Bash(git rm *)",
       "mcp__Claude_Preview__preview_start",
-      "Bash(./venv/Scripts/python.exe generate_sample_data.py --current 10 --dt 20)"
+      "Bash(./venv/Scripts/python.exe generate_sample_data.py --current 10 --dt 20)",
+      "Bash(QT_QPA_PLATFORM=offscreen PYTHONPATH=\"C:/Users/boatl/OneDrive/ASET_BATT\" timeout 40 venv/Scripts/python.exe /tmp/smoke_ui.py)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(QT_QPA_PLATFORM=offscreen PYTHONPATH=\"C:/Users/boatl/OneDrive/ASET_BATT\" timeout 40 venv/Scripts/python.exe -u /tmp/smoke_ui.py)",
+      "Read(//tmp/**)",
+      "Bash(sed -i '/win._on_detect_chemistry\\(\\)  # should not raise/d' /tmp/smoke_ui.py)",
+      "Bash(QT_QPA_PLATFORM=offscreen PYTHONIOENCODING=utf-8 PYTHONPATH=\"C:/Users/boatl/OneDrive/ASET_BATT\" timeout 40 venv/Scripts/python.exe -u /tmp/smoke_ui.py)",
+      "Bash(venv/Scripts/python.exe -m pytest -q)",
+      "Bash(venv/Scripts/python.exe -c \"import main, main_qt, app_bootstrapper, charge_controller, report_generator, battery_profiles; from ui import qt_views, ui_views; print\\('all entry points + modules import OK'\\)\")",
+      "Bash(git checkout *)"
     ]
   }
 }
