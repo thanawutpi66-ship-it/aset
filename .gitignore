@@ -9,6 +9,13 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Generated reports
+reports/
+*_report.pdf
 
 # Logs & runtime output
 logs/

@@ -1,338 +1,108 @@
-# ASET Battery Characterization System - Advanced Edition
+# ASET Battery Performance Testing & Sorting System
 
-**An academic-grade battery testing system with Professional SoC estimation** 🔋
+Automated, multi-chemistry battery **characterization, charging, and sorting** controlled
+from Python. Drives a DC power supply + DC electronic load over SCPI/PyVISA, reads surface
+temperature from an MLX90614 (via ESP32/UART), estimates SoC/SoH/Rᵢ, grades cells, logs to
+CSV, and serves a remote dashboard.
 
-## Overview
-
-Complete battery characterization system for testing lithium-ion and LiFePO4 batteries with:
-- ✅ Advanced State of Charge (SoC) estimation
-- ✅ Open Circuit Voltage (OCV) calibration
-- ✅ Temperature compensation
-- ✅ Real-time monitoring & logging
-- ✅ Safe automated load profiles
-- ✅ Professional testing UI
+> University of Ubon Ratchathani — Electrical Engineering Capstone (A19/2568).
 
 ---
 
-## Quick Start
+## Quick start
 
-### Installation
 ```bash
-# Install dependencies
+python -m venv venv && venv\Scripts\activate     # Windows
 pip install -r requirements.txt
-
-# Or use virtual environment
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
+python main.py            # ISA-101 PySide6 desktop GUI (integrated app)
+pytest -q                 # 49 tests
 ```
 
-### Run Application
-```bash
-python main.py
-```
-
-### Run Tests
-```bash
-pytest tests/ -v
-```
+`config.json` ships in **simulation mode** (no hardware needed); set `"simulation_mode": false`
+to drive real instruments.
 
 ---
 
-## Key Features 🌟
+## Two GUIs (PySide6, single Qt binding)
 
-### 1. **Advanced SoC Estimation**
-Hybrid approach combining:
-- Coulomb counting (cumulative amp-hours)
-- OCV lookup table (voltage-based)
-- Temperature compensation (±0.2%/°C)
-- Exponential smoothing (noise rejection)
-- Periodic drift correction
+| Entry point | What it is |
+|---|---|
+| `python main.py` → `ui/isa101_views.py` | **Integrated app** — wired to the real domain stack (`battery_model`, `state_estimator`, `charge_controller`, `analysis_module`, `hardware_driver`/`mock_hardware`) via `auto_controller` + `app_bootstrapper`. Starts the web dashboard. |
+| `python command_center.py` | **Standalone test bench** — a self-contained ISA-101 HMI with a dedicated `QThread` acquisition worker, mode state machines (CC-CV / CC-discharge / HPPC), ICA `dQ/dV` + DTV `dT/dV` (Gaussian-smoothed), HPPC Rᵢ, and grading. Currently runs on a **simulated backend** (SCPI placeholders for real hardware). |
 
-**Result**: ±0.1% accuracy vs ±2-3% with simple methods
+Both follow the **ISA-101 High-Performance HMI** standard: desaturated gray shell, with
+saturated color reserved for alarms, status pills, the temperature gauge, and grading badges.
 
-### 2. **OCV Calibration**
-One-click calibration button:
-```
-Battery at rest (30+ min)
-↓
-User clicks "Calibrate from OCV"
-↓
-System reads voltage → Lookup SoC
-↓
-Reset coulomb counter
-↓
-SoC = accurate ✅
-```
-
-### 3. **Battery Model**
-Pre-built OCV table for popular types:
-- **LiFePO4**: 2.5V - 3.8V (3.2V nominal)
-- **Li-ion**: 2.5V - 4.3V (3.7V nominal)
-
-Extensible to other battery chemistries.
-
-### 4. **Hardware Abstraction**
-- Real hardware support (PyVISA + serial)
-- Mock hardware for testing
-- Simulation mode for development
-
-### 5. **Safe Operation**
-- Under/over voltage detection
-- Over-temperature shutdown
-- SoC bounds checking
-- Emergency stop on sensor loss
+> Note: the two share concepts but not code; unifying the `command_center` worker architecture
+> with the integrated app's real backend is the next planned refactor.
 
 ---
 
-## System Architecture
+## Architecture
 
 ```
-┌─────────────────────────────────────┐
-│     GUI (PySide6 ISA-101 HMI)       │
-│  - Dashboard (V,I,SoC,Rin,T,SoH)    │
-│  - Controls + Charge + E-Stop       │
-│  - Live plots (PyQtGraph)           │
-└────────────┬────────────────────────┘
-             │
-┌────────────┴──────────────────────────┐
-│     Advanced State Estimator          │
-│  (battery_model.py + state_est.py)   │
-├──────────────────────────────────────┤
-│ - Coulomb Counting                   │
-│ - OCV Correction                     │
-│ - Rin Tracking                       │
-│ - Temperature Compensation           │
-└────────────┬──────────────────────────┘
-             │
-┌────────────┴──────────────────────────┐
-│     Hardware Interface               │
-│  (VISA PSU + Serial Load + ESP32)    │
-│  (Supports mock for testing)         │
-└──────────────────────────────────────┘
+GUI (PySide6, ISA-101)        ui/isa101_views.py · command_center.py
+  │  Qt signals / QtRootShim.after  (worker → UI, thread-safe)
+Orchestration                 auto_controller.py · app_bootstrapper.py · charge_controller.py
+Domain / compute              battery_model · state_estimator · iec61960_standard
+                              analysis_module · battery_profiles
+Hardware abstraction (HAL)    hardware_driver  ⟷  mock_hardware   (swap via simulation_mode)
+Cross-cutting                 config · event_system · service_locator · logging_config · exceptions
+Data / remote                 data_utils (CSV) · report_generator (PDF) · web_server · cloud_push
 ```
+
+Full detail: [ARCHITECTURE.md](ARCHITECTURE.md). Project history/pivot: [context_summary.md](context_summary.md).
 
 ---
 
-## Configuration
+## Battery profiles
 
-Edit `config.json`:
-```json
-{
-    "battery_type": "LiFePO4",        // or "Li-ion"
-    "nominal_voltage": 3.2,            // V per cell
-    "rated_capacity": 50.0,            // Ah
-    "max_points": 100,                 // Graph display points
-    "simulation_mode": false           // Use mock hardware
-}
-```
+Chemistry physics + charging strategy live in [battery_profiles.json](battery_profiles.json)
+(`LiPO`, `LiFePO4`, `LeadAcid`, `Li-ion`) and are loaded by `battery_profiles.py` with a
+built-in fallback. The integrated app's runtime config is `config.json` (managed by `config.py`).
 
 ---
 
-## Usage
-
-### Step 1: Setup
-1. Connect DC Power Supply (VISA)
-2. Connect Electronic Load (VISA)
-3. (Optional) Connect ESP32 for temperature
-4. Click "Connect Instruments"
-
-### Step 2: Calibration
-1. Let battery rest ≥ 30 minutes
-2. Click "📊 Calibrate from OCV"
-3. System estimates SoC from voltage
-4. Ready to test!
-
-### Step 3: Test
-- **Manual Control**: Adjust PSU/Load directly
-- **Automated Profile**: Load CSV with current steps
-
-### Step 4: Analyze
-- Data automatically logged to CSV
-- Import to Python/Excel for analysis
-- Plot and validate results
-
----
-
-## File Structure
+## Layout
 
 ```
 ASET_BATT/
-├── main.py                    # Main application
-├── battery_model.py           # Battery electrical model
-├── state_estimator.py        # SoC estimation engine
-├── hardware_driver.py         # Hardware interface
-├── data_utils.py              # CSV logging
-├── mock_hardware.py           # Test fixtures
-├── config.json                # Configuration
-├── config.py                  # Legacy (deprecated)
-├── requirements.txt           # Dependencies
-├── tests/
-│   ├── test_data_utils.py     # Data logging tests
-│   └── test_battery_model.py  # Battery model tests
-├── QUICK_START.md             # User guide
-├── IMPROVEMENTS.md            # Technical details
-└── IMPROVEMENTS_SUMMARY.md    # Complete overview
+├── main.py                  # integrated-app entry (PySide6 ISA-101)
+├── command_center.py        # standalone ISA-101 test bench (QThread worker)
+├── app_bootstrapper.py      # DI wiring + lifecycle
+├── auto_controller.py       # monitor/profile/charge/IEC orchestration
+├── battery_model.py · state_estimator.py · charge_controller.py
+├── analysis_module.py · iec61960_standard.py · battery_profiles.py
+├── hardware_driver.py · mock_hardware.py        # HAL
+├── config.py · config.json · battery_profiles.json · command_center_profiles.json
+├── data_utils.py · report_generator.py          # CSV + PDF
+├── web_server.py · cloud_push.py · cloud_dashboard/   # remote dashboards
+├── event_system.py · service_locator.py · logging_config.py · exceptions.py
+├── generate_sample_data.py · train_grader.py · make_training_data.py   # scripts
+├── ui/  (isa101_views.py, widgets/logos)
+├── tests/  (49 tests)
+└── docs/
 ```
 
 ---
 
-## Testing
+## Hardware
 
-All components are unit-tested:
+| Role | Device |
+|---|---|
+| DUT | 12 V motorcycle battery (lead-acid AGM, e.g. YTZ7V 7Ah) or lithium |
+| DC supply | GW Instek PSW/PSB-1080L (SCPI) |
+| DC load | GW Instek PEL-3111 (SCPI) |
+| Temperature | MLX90614 (IR) → ESP32 → UART |
+| Breaker | LUMIRA MCB (passive overcurrent backstop) |
 
-```bash
-$ pytest tests/ -v
-===================== test session starts ======================
-collected 7 items
-
-tests/test_data_utils.py::TestDataHandler::test_log_row PASSED
-tests/test_data_utils.py::TestDataHandler::test_start_logging PASSED
-tests/test_battery_model.py::TestBatteryModel::test_ocv_interpolation PASSED
-tests/test_battery_model.py::TestBatteryModel::test_ocv_lookup PASSED
-tests/test_battery_model.py::TestBatteryModel::test_reverse_lookup PASSED
-tests/test_battery_model.py::TestStateEstimator::test_coulomb_counting PASSED
-tests/test_battery_model.py::TestStateEstimator::test_initialization PASSED
-
-======================= 7 passed in 0.38s ========================
-```
+SCPI readback is ~5 Hz; software cutoff (`:OUTP OFF`/`:INP OFF`) is the primary failsafe with
+the MCB as a passive backstop.
 
 ---
 
-## Performance
+## Remote dashboard
 
-- **Update Rate**: 2 Hz (0.5s cycle)
-- **Memory**: ~50 MB (on 100-point graph)
-- **CPU**: <5% (idle), <15% (active)
-- **Accuracy**: ±0.1% SoC (vs hardware reference)
-
----
-
-## Troubleshooting
-
-### Issue: SoC doesn't match reality
-**Solution**: 
-1. Calibrate with "📊 Calibrate from OCV"
-2. Ensure battery is at true rest state
-3. Check if temperature is > 50°C (affects OCV)
-
-### Issue: Application crashes
-**Solution**:
-1. Run in simulation mode: `"simulation_mode": true` in config.json
-2. Check logs in console
-3. Verify COM ports are connected
-
-### Issue: No data in CSV
-**Solution**:
-1. Click "Start Data Logging" (button turns red)
-2. Let test run for ≥ 10 seconds
-3. Click button again to stop
-4. Find CSV file in current directory
-
----
-
-## Expert's Notes 📚
-
-### Accuracy Improvement
-```
-Before (Simple Coulomb Counting):
-- 1st hour:   ±3-5% error
-- After 5h:   ±10-15% error (drift)
-
-After (Advanced Estimation):
-- 1st hour:   ±0.5-1% error
-- After 5h:   ±1-2% error (with OCV correction)
-```
-
-### When to Recalibrate
-- Every 2-4 hours of continuous operation
-- After temperature change > 10°C
-- When SoC display seems wrong
-
-### OCV Table Accuracy
-- ±2% depends on exact battery chemistry
-- Different manufacturers → slight variations
-- Can add custom OCV table for specific battery
-
----
-
-## Custom Battery Support
-
-Add your own OCV table:
-
-```python
-# In battery_model.py
-
-def _generate_ocv_table(self):
-    if self.battery_type == "MyBattery":
-        return {
-            0:   2.50,
-            25:  3.15,
-            50:  3.22,
-            75:  3.35,
-            100: 3.80
-        }
-```
-
-Then in `config.json`:
-```json
-{"battery_type": "MyBattery"}
-```
-
----
-
-## References
-
-- PNGV Battery Test Manual (Department of Energy)
-- IEEE 1188: Guide for Implementation of DC Auxiliary Power Systems  
-- "Battery Management System" by Andrea Pesaran (NREL)
-- Datasheet: LiFePO4/Li-ion chemistry
-
----
-
-## Requirements
-
-- **Python**: 3.8+
-- **OS**: Windows 10/11 (primary), Linux/macOS (partial)
-- **Hardware**: DC PSU (VISA), Electronic Load (VISA), (optional) ESP32
-
-**Dependencies**:
-- tkinter (GUI)
-- matplotlib (plotting)
-- pillow (images)
-- pyvisa (instrument control)
-- pyserial (serial communication)
-- pytest (testing)
-
----
-
-## License
-
-Academic use only. Contact ASET Lab for commercial licensing.
-
----
-
-## Support
-
-For issues or questions:
-1. Check `QUICK_START.md` for usage
-2. Check `IMPROVEMENTS.md` for technical details
-3. Run tests: `pytest tests/ -v`
-4. Enable debug logging in `main.py`
-
----
-
-**Version**: 2.0 (Advanced SoC Estimation)
-**Status**: ✅ Production Ready
-**Last Updated**: May 10, 2026
-
----
-
-**Perfect for**: 
-🎓 Capstone Projects
-📜 Graduate Thesis
-🔬 Battery Research
-⚡ EV Systems Studies
-🏭 Quality Control
-
-**Enjoy your advanced battery characterization system!** 🚀
+`web_server.py` serves a local dashboard on port 8000 (exposed publicly via Tailscale Funnel).
+`cloud_push.py` + `cloud_dashboard/` push snapshots to an Azure service for 24/7 viewing — see
+[cloud_dashboard/README.md](cloud_dashboard/README.md).
