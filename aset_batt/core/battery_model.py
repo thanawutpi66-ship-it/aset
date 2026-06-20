@@ -6,8 +6,7 @@ import logging
 import numpy as np
 from typing import Optional, Dict, Tuple, List
 
-import battery_profiles
-
+import aset_batt.core.battery_profiles as battery_profiles
 logger = logging.getLogger(__name__)
 
 class BatteryModel:

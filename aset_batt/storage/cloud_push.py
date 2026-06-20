@@ -19,8 +19,8 @@ import time
 import urllib.request
 import urllib.error
 
-from config import config_manager
-from web_server import _tail_csv_rows, _compute_summary, _run_analysis, _extract_series, _CHANNELS
+from aset_batt.core.config import config_manager
+from aset_batt.web.web_server import _tail_csv_rows, _compute_summary, _run_analysis, _extract_series, _CHANNELS
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 import unittest
 import os
-from data_utils import DataHandler
+from aset_batt.storage.data_utils import DataHandler
 
 class TestDataHandler(unittest.TestCase):
     def setUp(self):

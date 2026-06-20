@@ -16,8 +16,8 @@ import math
 import os
 import random
 
-from battery_model import BatteryModel
-from config import config_manager
+from aset_batt.core.battery_model import BatteryModel
+from aset_batt.core.config import config_manager
 
 OUT_DIR = os.path.join("data", "train")
 HEADER = ["Timestamp", "Elapsed_s", "Voltage_V", "Current_A",

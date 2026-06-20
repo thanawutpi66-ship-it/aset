@@ -28,7 +28,7 @@ from typing import List, Tuple
 
 import numpy as np
 
-from analysis_module import BatteryAnalyzer, FEATURE_NAMES
+from aset_batt.core.analysis_module import BatteryAnalyzer, FEATURE_NAMES
 
 logger = logging.getLogger(__name__)
 

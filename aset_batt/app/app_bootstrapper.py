@@ -8,11 +8,11 @@ import os
 from typing import Optional
 from contextlib import contextmanager
 
-from config import ConfigManager
-from logging_config import ASETLogger
-from service_locator import ServiceLocator, ServiceProvider
-from event_system import UIEventHandler
-from exceptions import ASETError, ConfigurationError
+from aset_batt.core.config import ConfigManager
+from aset_batt.services.logging_config import ASETLogger
+from aset_batt.services.service_locator import ServiceLocator, ServiceProvider
+from aset_batt.services.event_system import UIEventHandler
+from aset_batt.services.exceptions import ASETError, ConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +111,8 @@ class ApplicationBootstrapper:
         # Offline analysis subsystem (AI grading) -> wire analyzer to controller + UI
         controller.analyzer = None
         try:
-            from analysis_module import BatteryAnalyzer
-            from battery_model import BatteryModel as _BatteryModel
+            from aset_batt.core.analysis_module import BatteryAnalyzer
+            from aset_batt.core.battery_model import BatteryModel as _BatteryModel
             cfg = self.config_manager
             base_r0_mohm = _BatteryModel(
                 cfg.battery.battery_type, cfg.battery.nominal_voltage,
@@ -147,7 +147,7 @@ class ApplicationBootstrapper:
         self._web_server = None
         if config.system.enable_web_server:
             try:
-                from web_server import ASETWebServer
+                from aset_batt.web.web_server import ASETWebServer
                 self._web_server = ASETWebServer(
                     config,
                     port=config.system.web_server_port,
@@ -164,7 +164,7 @@ class ApplicationBootstrapper:
         self._cloud_pusher = None
         if getattr(config.system, "cloud_push_enabled", False):
             try:
-                from cloud_push import CloudPusher
+                from aset_batt.storage.cloud_push import CloudPusher
                 self._cloud_pusher = CloudPusher(
                     url=config.system.cloud_dashboard_url,
                     csv_path=config.system.csv_filepath,
@@ -177,7 +177,7 @@ class ApplicationBootstrapper:
     def create_ui(self, root, window):
         """สร้าง event handler + core components + wire Qt window เข้ากับ controller
         (root = QtRootShim สำหรับ marshaling cross-thread แทน Tk root)"""
-        from auto_controller import AutoController
+        from aset_batt.app.auto_controller import AutoController
 
         self.event_handler = UIEventHandler(root)
         self.event_handler.start()
@@ -196,12 +196,12 @@ class ApplicationBootstrapper:
 
     def _create_core_components(self):
         """Create and register core application components"""
-        from hardware_driver import HardwareController
-        from data_utils import DataHandler
-        from battery_model import BatteryModel
-        from state_estimator import StateEstimator
-        from auto_controller import AutoController
-        from mock_hardware import MockHardwareController
+        from aset_batt.hardware.hardware_driver import HardwareController
+        from aset_batt.storage.data_utils import DataHandler
+        from aset_batt.core.battery_model import BatteryModel
+        from aset_batt.core.state_estimator import StateEstimator
+        from aset_batt.app.auto_controller import AutoController
+        from aset_batt.hardware.mock_hardware import MockHardwareController
 
         config = self.config_manager
 
@@ -248,7 +248,7 @@ class ApplicationBootstrapper:
 
             # Shutdown services
             if self.service_provider:
-                from auto_controller import AutoController
+                from aset_batt.app.auto_controller import AutoController
                 # Get controller and shutdown
                 try:
                     controller = ServiceLocator.get(AutoController)

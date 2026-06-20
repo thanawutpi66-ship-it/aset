@@ -39,9 +39,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import battery_profiles
-from analysis_module import ChemistryDetector
-from iec61960_standard import IEC61960Standard
+import aset_batt.core.battery_profiles as battery_profiles
+from aset_batt.core.analysis_module import ChemistryDetector
+from aset_batt.core.iec61960_standard import IEC61960Standard
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +228,7 @@ class _PdfTask(QRunnable):
 
     def run(self):
         try:
-            from report_generator import generate_pdf_report
+            from aset_batt.storage.report_generator import generate_pdf_report
 
             generate_pdf_report(
                 self.path,
@@ -843,7 +843,7 @@ class BatteryQtWindow(QMainWindow):
             if prod.safety_uvp_pack:
                 self.config.system.safety_limits["min_voltage"] = prod.safety_uvp_pack
         try:
-            from battery_model import BatteryModel
+            from aset_batt.core.battery_model import BatteryModel
 
             model = BatteryModel(b.battery_type, b.nominal_voltage, b.cells_series, b.cells_parallel)
             if self.estimator is not None:

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aset-batt"
+version = "1.0.0"
+description = "Automated battery performance testing & sorting system (PySide6, ISA-101 HMI)"
+readme = "README.md"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[project.scripts]
+aset-batt = "aset_batt.app.run:run"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["aset_batt*"]
+
+[tool.setuptools.package-data]
+"aset_batt.core" = ["*.json"]
+"aset_batt.ui" = ["*.png"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

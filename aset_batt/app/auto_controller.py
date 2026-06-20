@@ -3,10 +3,10 @@ import time
 import logging
 from typing import Optional, Dict, Any
 
-from service_locator import ServiceLocator
-from event_system import EventType, UIEventHandler
-from exceptions import SafetyError, HardwareError
-from iec61960_standard import IEC61960Standard, TestType
+from aset_batt.services.service_locator import ServiceLocator
+from aset_batt.services.event_system import EventType, UIEventHandler
+from aset_batt.services.exceptions import SafetyError, HardwareError
+from aset_batt.core.iec61960_standard import IEC61960Standard, TestType
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +297,7 @@ class AutoController:
         return True
 
     def _run_charge_loop(self, float_hold_s: float):
-        from charge_controller import ChargeController
+        from aset_batt.core.charge_controller import ChargeController
         logger.info("Charge loop started")
         try:
             # ปิด load ก่อนชาร์จ (กันชาร์จ-ดิสชาร์จพร้อมกัน)
@@ -346,7 +346,7 @@ class AutoController:
     def start_iec61960_test(self, test_id: str, iec_standard):
         """เริ่ม IEC 61960 standard test"""
         try:
-            from iec61960_standard import TestType
+            from aset_batt.core.iec61960_standard import TestType
             profile = iec_standard.get_test_profile(test_id)
             if not profile:
                 raise ValueError(f"IEC 61960 test profile '{test_id}' not found")

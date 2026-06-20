@@ -17,8 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-import battery_profiles
-
+import aset_batt.core.battery_profiles as battery_profiles
 logger = logging.getLogger(__name__)
 
 # Stages

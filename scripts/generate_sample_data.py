@@ -14,8 +14,8 @@ import math
 import random
 from datetime import datetime, timedelta
 
-from battery_model import BatteryModel
-from config import config_manager
+from aset_batt.core.battery_model import BatteryModel
+from aset_batt.core.config import config_manager
 
 HEADER = ["Timestamp", "Elapsed_s", "Voltage_V", "Current_A",
           "SoC_pct", "Resistance_mOhm", "Temperature_C"]

@@ -2,7 +2,7 @@
 Advanced State Estimation: SoC estimation ด้วย Coulomb counting + OCV correction
 """
 import time
-from battery_model import BatteryModel
+from aset_batt.core.battery_model import BatteryModel
 import logging
 
 logger = logging.getLogger(__name__)

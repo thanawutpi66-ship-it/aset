@@ -4,7 +4,7 @@ R = (V1 - V2) / (I2 - I1)
 """
 import unittest
 
-from iec61960_standard import IEC61960Standard
+from aset_batt.core.iec61960_standard import IEC61960Standard
 
 
 class TestDCIRTwoPulse(unittest.TestCase):

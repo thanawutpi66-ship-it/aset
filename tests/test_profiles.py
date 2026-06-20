@@ -9,8 +9,8 @@ import os
 import tempfile
 import unittest
 
-import battery_profiles
-from battery_model import BatteryModel
+import aset_batt.core.battery_profiles as battery_profiles
+from aset_batt.core.battery_model import BatteryModel
 
 
 class TestChemistryRegistry(unittest.TestCase):

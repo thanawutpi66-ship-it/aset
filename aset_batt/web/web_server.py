@@ -133,12 +133,12 @@ def _render_main_plot(rows: List[Dict[str, str]]) -> bytes:
 
 def _run_analysis(config: Any, csv_path: str) -> Dict[str, Any]:
     """รัน BatteryAnalyzer บนไฟล์ CSV แล้วคืนผลเป็น dict (สำหรับ /api/analysis)"""
-    from analysis_module import BatteryAnalyzer
+    from aset_batt.core.analysis_module import BatteryAnalyzer
 
     rated = getattr(config.battery, "rated_capacity", 2.0)
     base_r0 = 25.0
     try:
-        from battery_model import BatteryModel
+        from aset_batt.core.battery_model import BatteryModel
         bm = BatteryModel(
             config.battery.battery_type, config.battery.nominal_voltage,
             config.battery.cells_series, config.battery.cells_parallel,

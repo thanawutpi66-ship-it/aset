@@ -1,6 +1,6 @@
 import unittest
-from battery_model import BatteryModel
-from state_estimator import StateEstimator
+from aset_batt.core.battery_model import BatteryModel
+from aset_batt.core.state_estimator import StateEstimator
 
 
 class TestBatteryModel(unittest.TestCase):

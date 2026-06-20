@@ -9,8 +9,8 @@ import tempfile
 import threading
 import unittest
 
-from event_system import EventBus, EventType
-from analysis_module import BatteryAnalyzer, AnalysisResult
+from aset_batt.services.event_system import EventBus, EventType
+from aset_batt.core.analysis_module import BatteryAnalyzer, AnalysisResult
 
 
 def _write_discharge_csv(path: str, rows: int = 30) -> None:

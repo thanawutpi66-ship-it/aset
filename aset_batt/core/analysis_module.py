@@ -621,7 +621,7 @@ class BatteryAnalyzer:
             return
         try:
             # import แบบ lazy เพื่อตัด circular import
-            from event_system import Event, EventType
+            from aset_batt.services.event_system import Event, EventType
             self.event_bus.post_event(
                 Event(EventType.ANALYSIS_COMPLETED, data=result)
             )

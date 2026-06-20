@@ -5,8 +5,8 @@ Tests สำหรับแนวใหม่ (แบตมอเตอร์ไ
 """
 import unittest
 
-from battery_model import BatteryModel
-from analysis_module import ChemistryDetector
+from aset_batt.core.battery_model import BatteryModel
+from aset_batt.core.analysis_module import ChemistryDetector
 
 
 class TestLeadAcidModel(unittest.TestCase):

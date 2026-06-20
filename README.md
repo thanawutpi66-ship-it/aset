@@ -65,23 +65,29 @@ built-in fallback. The integrated app's runtime config is `config.json` (managed
 
 ## Layout
 
+Clean package layout — `python main.py` (root shim) or `python -m aset_batt`.
+
 ```
 ASET_BATT/
-├── main.py                  # integrated-app entry (PySide6 ISA-101)
-├── command_center.py        # standalone ISA-101 test bench (QThread worker)
-├── app_bootstrapper.py      # DI wiring + lifecycle
-├── auto_controller.py       # monitor/profile/charge/IEC orchestration
-├── battery_model.py · state_estimator.py · charge_controller.py
-├── analysis_module.py · iec61960_standard.py · battery_profiles.py
-├── hardware_driver.py · mock_hardware.py        # HAL
-├── config.py · config.json · battery_profiles.json · command_center_profiles.json
-├── data_utils.py · report_generator.py          # CSV + PDF
-├── web_server.py · cloud_push.py · cloud_dashboard/   # remote dashboards
-├── event_system.py · service_locator.py · logging_config.py · exceptions.py
-├── generate_sample_data.py · train_grader.py · make_training_data.py   # scripts
-├── ui/  (isa101_views.py, widgets/logos)
-├── tests/  (49 tests)
-└── docs/
+├── main.py                     # thin shim → aset_batt.app.run
+├── command_center.py           # standalone ISA-101 test bench (QThread worker)
+├── pyproject.toml              # packaging + pytest/ruff config
+├── config.json                 # runtime config (cwd-relative)
+├── aset_batt/                  # application package
+│   ├── __main__.py             # python -m aset_batt
+│   ├── app/        run.py · app_bootstrapper.py · auto_controller.py
+│   ├── core/       battery_model · state_estimator · charge_controller
+│   │               analysis_module · iec61960_standard · battery_profiles(+json) · config
+│   ├── hardware/   hardware_driver(HAL) · mock_hardware
+│   ├── acquisition/  worker.py        # unified QThread acquisition worker
+│   ├── ui/         isa101_views.py · logos
+│   ├── services/   event_system · service_locator · logging_config · exceptions
+│   ├── storage/    data_utils(CSV) · report_generator(PDF) · cloud_push
+│   └── web/        web_server.py
+├── scripts/        generate_sample_data · train_grader · make_training_data
+├── tests/          (49 tests)
+├── docs/ · cloud_dashboard/
+└── logs/  data/    (gitignored runtime output)
 ```
 
 ---
