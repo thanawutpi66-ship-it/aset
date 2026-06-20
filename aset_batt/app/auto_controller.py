@@ -271,12 +271,10 @@ class AutoController:
     # Chemistry-aware Charging (3-stage lead-acid / CC-CV lithium)
     # ------------------------------------------------------------------
 
-    def start_charge(self, float_hold_s: float = 0.0):
-        """เริ่มชาร์จตามชนิดเคมีของแบต (เลือก strategy จาก battery profile อัตโนมัติ)
-
-        - LeadAcid  → 3-stage (Bulk→Absorption→Float)
-        - Lithium   → CC-CV แล้วตัดไฟ
-        รันใน thread แยก; monitor loop เดิมยังคง log + enforce safety ระหว่างชาร์จ
+    def start_charge(self, float_hold_s: float = 0.0, strategy: str = None):
+        """เริ่มชาร์จ; strategy=None → เลือกตามเคมีของแบตอัตโนมัติ
+        (LeadAcid → 3-stage, Lithium → CC-CV). ส่ง strategy เพื่อ override จาก dropdown:
+        "three_stage" หรือ "cc_cv". รันใน thread แยก; monitor loop ยัง log+safety ระหว่างชาร์จ
         """
         if self.is_charging:
             logger.info("Charge already running")
@@ -293,18 +291,18 @@ class AutoController:
 
         self.is_charging = True
         threading.Thread(target=self._run_charge_loop,
-                         args=(float_hold_s,), daemon=True).start()
+                         args=(float_hold_s, strategy), daemon=True).start()
         return True
 
-    def _run_charge_loop(self, float_hold_s: float):
+    def _run_charge_loop(self, float_hold_s: float, strategy: str = None):
         from aset_batt.core.charge_controller import ChargeController
-        logger.info("Charge loop started")
+        logger.info("Charge loop started (strategy=%s)", strategy or "auto")
         try:
             # ปิด load ก่อนชาร์จ (กันชาร์จ-ดิสชาร์จพร้อมกัน)
             self.hw.load_off()
             self._charge_ctrl = ChargeController(
                 self.hw, self.config, self.estimator.battery_model,
-                on_update=self._on_charge_update,
+                on_update=self._on_charge_update, strategy=strategy,
             )
             final_stage = self._charge_ctrl.run(
                 should_stop=lambda: (self.safety_triggered or not self.is_charging),

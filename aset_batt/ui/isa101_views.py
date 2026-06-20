@@ -492,6 +492,14 @@ class BatteryQtWindow(QMainWindow):
         g = QGroupBox("4 · OPERATIONS")
         lay = QVBoxLayout(g)
 
+        # charge-mode selector — Auto follows battery chemistry, or force a strategy
+        mrow0 = QHBoxLayout()
+        mrow0.addWidget(QLabel("Charge mode:"))
+        self.cb_charge_mode = QComboBox()
+        self.cb_charge_mode.addItems(["Auto (by chemistry)", "CC-CV", "3-Stage (Lead-Acid)"])
+        mrow0.addWidget(self.cb_charge_mode, 1)
+        lay.addLayout(mrow0)
+
         crow = QHBoxLayout()
         self.btn_charge = _btn("CHARGE", bg=OK, fg="white", hover="#266a2a")
         self.btn_stop_charge = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
@@ -936,8 +944,11 @@ class BatteryQtWindow(QMainWindow):
             if not self._headless:
                 QMessageBox.warning(self, "Charge", "Connect hardware first")
             return
-        ok = self.controller.start_charge()
-        self._log_alarm("Charge started." if ok else "Charge start failed.")
+        strategy = {"CC-CV": "cc_cv",
+                    "3-Stage (Lead-Acid)": "three_stage"}.get(self.cb_charge_mode.currentText())
+        ok = self.controller.start_charge(strategy=strategy)
+        mode = self.cb_charge_mode.currentText()
+        self._log_alarm(f"Charge started ({mode})." if ok else "Charge start failed.")
 
     def _on_stop_charge(self):
         if self.controller:
