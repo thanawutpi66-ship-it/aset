@@ -1,7 +1,7 @@
 """
 Automated Battery Performance Testing & Sorting — Command Center
 ================================================================
-Industrial-grade HMI (PyQt6) following the ISA-101 High-Performance HMI standard:
+Industrial-grade HMI (PySide6) following the ISA-101 High-Performance HMI standard:
 a desaturated gray shell where bright color is reserved exclusively for alarms,
 status indicators, the temperature gauge, and the sorting grade.
 
@@ -37,12 +37,12 @@ from typing import Optional
 
 import numpy as np
 
-from PyQt6.QtCore import (
-    Qt, QThread, QObject, pyqtSignal, QMutex, QMutexLocker, QTimer,
+from PySide6.QtCore import (
+    Qt, QThread, QObject, Signal, QMutex, QMutexLocker, QTimer,
     QRunnable, QThreadPool,
 )
-from PyQt6.QtGui import QFont, QDoubleValidator, QPixmap
-from PyQt6.QtWidgets import (
+from PySide6.QtGui import QFont, QDoubleValidator, QPixmap
+from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QComboBox,
     QLineEdit, QGroupBox, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
     QTabWidget, QTextEdit, QFrame, QSizePolicy, QMessageBox, QFileDialog,
@@ -297,10 +297,10 @@ class SimulatedBackend(InstrumentBackend):
 # Background acquisition worker (lives on a QThread)
 # ===========================================================================
 class AcquisitionWorker(QObject):
-    telemetry = pyqtSignal(object)     # dict per sample
-    alarm = pyqtSignal(str, str)       # (severity, message)
-    state = pyqtSignal(str)            # RUNNING / PAUSED / STOPPED / ESTOP
-    finished = pyqtSignal(object)      # results dict for analytics
+    telemetry = Signal(object)     # dict per sample
+    alarm = Signal(str, str)       # (severity, message)
+    state = Signal(str)            # RUNNING / PAUSED / STOPPED / ESTOP
+    finished = Signal(object)      # results dict for analytics
 
     def __init__(self, backend: InstrumentBackend, cfg: TestConfig, csv_path: str):
         super().__init__()

@@ -89,10 +89,10 @@ Extensible to other battery chemistries.
 
 ```
 ┌─────────────────────────────────────┐
-│         GUI (PySide6 5-panel)       │
-│  - Dashboard (V,I,SoC,Rin,T,SoH)   │
+│     GUI (PySide6 ISA-101 HMI)       │
+│  - Dashboard (V,I,SoC,Rin,T,SoH)    │
 │  - Controls + Charge + E-Stop       │
-│  - Live plots (PyQtGraph)          │
+│  - Live plots (PyQtGraph)           │
 └────────────┬────────────────────────┘
              │
 ┌────────────┴──────────────────────────┐

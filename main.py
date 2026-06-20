@@ -21,7 +21,7 @@ def main():
     try:
         from app_bootstrapper import ApplicationBootstrapper
         from PySide6.QtWidgets import QApplication
-        from ui.qt_views import BatteryQtWindow, QtRootShim
+        from ui.isa101_views import BatteryQtWindow, QtRootShim
     except ImportError as e:
         print(f"Import error: {e}")
         print("ติดตั้ง dependencies ก่อน: pip install -r requirements.txt")
