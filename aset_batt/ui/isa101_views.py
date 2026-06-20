@@ -607,7 +607,7 @@ class BatteryQtWindow(QMainWindow):
         self.btn_pdf = _btn("Generate PDF Report", bg=PANEL2, hover=FIELD)
         self.btn_pdf.clicked.connect(self._on_pdf_report)
         lay.addWidget(self.btn_pdf)
-        btn_dash = _btn("Open Web Dashboard", bg="#d0d4d7", hover="#c2c6ca")
+        btn_dash = _btn("Open Cloud Dashboard", bg="#d0d4d7", hover="#c2c6ca")
         btn_dash.clicked.connect(self._on_open_dashboard)
         lay.addWidget(btn_dash)
         return g
@@ -1191,6 +1191,10 @@ class BatteryQtWindow(QMainWindow):
                 QMessageBox.critical(self, "PDF Report", payload)
 
     def _on_open_dashboard(self):
+        url = getattr(self.config.system, "cloud_dashboard_url", "").strip()
+        if url:
+            webbrowser.open(url)
+            return
         port = getattr(self.config.system, "web_server_port", 8000)
         webbrowser.open(f"http://127.0.0.1:{port}/")
 
