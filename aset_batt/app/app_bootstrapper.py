@@ -143,22 +143,8 @@ class ApplicationBootstrapper:
             except Exception as e:
                 logger.warning(f"Simulation auto-connect failed: {e}")
 
-        # Start optional web server when enabled in config
+        # Local web server removed — cloud dashboard is the primary interface
         self._web_server = None
-        if config.system.enable_web_server:
-            try:
-                from aset_batt.web.web_server import ASETWebServer
-                self._web_server = ASETWebServer(
-                    config,
-                    port=config.system.web_server_port,
-                )
-                self._web_server.start()
-                logger.info(
-                    "Web server started on port %s",
-                    config.system.web_server_port,
-                )
-            except Exception as e:
-                logger.warning(f"Web server failed to start: {e}")
 
         # Auto-push ขึ้น cloud dashboard (ถ้าเปิดใน config + มี token)
         self._cloud_pusher = None
@@ -239,8 +225,6 @@ class ApplicationBootstrapper:
             if getattr(self, "_cloud_pusher", None):
                 self._cloud_pusher.stop()
 
-            if self._web_server:
-                self._web_server.stop()
 
             # Stop event handler
             if self.event_handler:

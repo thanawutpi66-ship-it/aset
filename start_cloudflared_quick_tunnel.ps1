@@ -18,7 +18,7 @@ $procApp = Start-Process -FilePath $python -ArgumentList "main.py" -NoNewWindow 
 
 Start-Sleep -Seconds 4
 
-Write-Host "Starting cloudflared Quick Tunnel for http://localhost:8000 ..."
+Write-Host "cloudflared Quick Tunnel is deprecated for this project — local dashboard removed. See README for cloud dashboard usage."
 # cloudflared output is streamed; we parse the first URL line.
 $procCloud = Start-Process -FilePath "cloudflared" -ArgumentList "http", "8000" -NoNewWindow -PassThru -RedirectStandardOutput "cloudflared_quick_tunnel.out" -RedirectStandardError "cloudflared_quick_tunnel.err"
 
