@@ -28,13 +28,23 @@ to drive real instruments.
 | Entry point | What it is |
 |---|---|
 | `python main.py` → `ui/isa101_views.py` | **Integrated app** — wired to the real domain stack (`battery_model`, `state_estimator`, `charge_controller`, `analysis_module`, `hardware_driver`/`mock_hardware`) via `auto_controller` + `app_bootstrapper`. Starts the web dashboard. |
-| `python command_center.py` | **Standalone test bench** — a self-contained ISA-101 HMI with a dedicated `QThread` acquisition worker, mode state machines (CC-CV / CC-discharge / HPPC), ICA `dQ/dV` + DTV `dT/dV` (Gaussian-smoothed), HPPC Rᵢ, and grading. Currently runs on a **simulated backend** (SCPI placeholders for real hardware). |
+| `python command_center.py` | **Standalone test bench** — thin ISA-101 HMI over the shared `aset_batt.acquisition` engine: a dedicated `QThread` worker, mode state machines (CC-CV / CC-discharge / HPPC), ICA `dQ/dV` + DTV `dT/dV` (Gaussian-smoothed), HPPC Rᵢ, and grading. Defaults to the simulated backend. |
 
 Both follow the **ISA-101 High-Performance HMI** standard: desaturated gray shell, with
 saturated color reserved for alarms, status pills, the temperature gauge, and grading badges.
 
-> Note: the two share concepts but not code; unifying the `command_center` worker architecture
-> with the integrated app's real backend is the next planned refactor.
+### Unified acquisition engine (`aset_batt/acquisition/`)
+
+The `QThread` worker, instrument backends, and analytics are now one reusable package:
+
+- **`worker.py`** — `AcquisitionWorker` (mutex-guarded I/O, immediate E-Stop override, safety
+  interlocks) + `ReportTask` (PDF off the UI thread). Optionally takes a `StateEstimator` for
+  live OCV-corrected SoC/SoH.
+- **`backends.py`** — `HardwareBackend` (drives the project **real HAL** → SCPI/VISA + ESP32
+  temperature), `VisaSerialBackend` (direct reference), `SimulatedBackend` (no hardware).
+- **`analytics.py`** — HPPC Rᵢ, ICA, DTV (Gaussian-smoothed), grading.
+
+So driving real instruments is just `AcquisitionWorker(HardwareBackend(hw), cfg, csv, estimator)`.
 
 ---
 

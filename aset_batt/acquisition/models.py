@@ -1,0 +1,74 @@
+"""Acquisition value objects — operation modes, battery test profile, test config,
+and dynamic profile loading. Shared by the worker, backends, and the command-center UI."""
+from __future__ import annotations
+
+import os
+import json
+import logging
+from dataclasses import dataclass
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+
+class OperationMode(Enum):
+    CC_CV_CHARGE = "CC-CV Charge"
+    CC_DISCHARGE = "Constant Current Discharge"
+    HPPC = "HPPC Pulse Test"
+
+
+@dataclass
+class BatteryProfile:
+    """Test profile for one battery model — pack-level limits + safety interlocks."""
+    name: str
+    chemistry: str
+    nominal_v: float
+    series: int
+    capacity_ah: float
+    max_charge_v: float
+    cutoff_v: float
+    max_charge_a: float
+    max_discharge_a: float
+    ovp: float           # over-voltage trip
+    uvp: float           # under-voltage trip
+    otp_warn: float      # over-temperature warning
+    otp_crit: float      # over-temperature critical (triggers E-Stop)
+    internal_r: float = 0.03
+
+
+@dataclass
+class TestConfig:
+    profile: BatteryProfile
+    mode: OperationMode
+    sample_hz: float = 10.0
+
+
+# Not a pytest test class (name starts with "Test") — tell the collector to skip it.
+TestConfig.__test__ = False
+
+
+_FALLBACK = {
+    "LiFePO4 25.6V (8S, 50Ah)": BatteryProfile(
+        "LiFePO4 25.6V (8S, 50Ah)", "LiFePO4", 25.6, 8, 50.0,
+        29.2, 20.0, 25.0, 50.0, 30.0, 18.0, 45.0, 55.0, 0.030),
+    "Lead-Acid 12V (6S, 7Ah)": BatteryProfile(
+        "Lead-Acid 12V (6S, 7Ah)", "Lead-Acid", 12.0, 6, 7.0,
+        14.4, 10.5, 1.4, 7.0, 15.0, 10.0, 45.0, 55.0, 0.030),
+}
+
+
+def load_profiles(path: str = "command_center_profiles.json") -> dict[str, BatteryProfile]:
+    """Load test profiles from an external JSON structure (cwd-relative) with a
+    built-in fallback so the bench always has at least two profiles."""
+    if not os.path.exists(path):
+        logger.warning("profiles file '%s' missing — using built-in fallback", path)
+        return dict(_FALLBACK)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        out = {name: BatteryProfile(name=name, **d)
+               for name, d in data.get("profiles", {}).items()}
+        return out or dict(_FALLBACK)
+    except Exception as e:
+        logger.error("profile load failed (%s) — fallback", e)
+        return dict(_FALLBACK)
