@@ -15,7 +15,11 @@ from collections import deque
 from datetime import datetime
 
 import pyqtgraph as pg
-from PySide6.QtCore import QObject, Signal, Slot, QTimer, Qt, QRunnable, QThreadPool
+from PySide6.QtCore import QObject, Signal, Slot, QTimer, Qt, QThread, QRunnable, QThreadPool
+
+from aset_batt.acquisition.models import TestConfig, OperationMode, BatteryProfile as AcqProfile
+from aset_batt.acquisition.backends import HardwareBackend
+from aset_batt.acquisition.worker import AcquisitionWorker
 from PySide6.QtGui import QDoubleValidator, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -286,6 +290,8 @@ class BatteryQtWindow(QMainWindow):
         self._buttons = {}
         self._profile_map = {}
         self._last_analysis = None
+        self._test_thread = None      # characterization worker (QThread)
+        self._test_worker = None
 
         self._build_ui()
         self._connect_signals()
@@ -525,6 +531,26 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_charge.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_charge)
 
+        # Characterization test — worker-driven (CC-CV / Discharge / HPPC) → ICA/DTV/grade
+        lay.addWidget(_hline())
+        trow = QHBoxLayout()
+        trow.addWidget(QLabel("Test mode:"))
+        self.cb_op_mode = QComboBox()
+        self.cb_op_mode.addItems([m.value for m in OperationMode])
+        trow.addWidget(self.cb_op_mode, 1)
+        lay.addLayout(trow)
+        crow2 = QHBoxLayout()
+        self.btn_run_test = _btn("RUN TEST", bg=INFO, fg="white", hover="#0d4a89")
+        self.btn_run_test.clicked.connect(self._on_run_test)
+        self.btn_stop_test = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_stop_test.clicked.connect(self._on_stop_test)
+        crow2.addWidget(self.btn_run_test, 2)
+        crow2.addWidget(self.btn_stop_test, 1)
+        lay.addLayout(crow2)
+        self.lbl_test_status = QLabel("Test idle")
+        self.lbl_test_status.setStyleSheet(f"color:{MUTED};")
+        lay.addWidget(self.lbl_test_status)
+
         lay.addWidget(_hline())
         self.lst_profiles = QListWidget()
         self.lst_profiles.setMaximumHeight(120)
@@ -606,9 +632,28 @@ class BatteryQtWindow(QMainWindow):
 
         tabs = QTabWidget()
         tabs.addTab(self._tab_analytics(), "Analytics")
+        tabs.addTab(self._tab_diagnostics(), "Diagnostics (ICA/DTV)")
         tabs.addTab(self._tab_alarms(), "Alarm Log")
         lay.addWidget(tabs, 1)
         return panel
+
+    def _tab_diagnostics(self):
+        """Post-test ICA dQ/dV + DTV dT/dV curves (populated by the worker)."""
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        self.plot_ica = pg.PlotWidget()
+        self.plot_ica.setBackground(PANEL2)
+        self.plot_ica.setLabel("bottom", "Voltage", units="V")
+        self.plot_ica.setLabel("left", "dQ/dV")
+        self.plot_ica.setTitle("ICA (Incremental Capacity)")
+        self.plot_dtv = pg.PlotWidget()
+        self.plot_dtv.setBackground(PANEL2)
+        self.plot_dtv.setLabel("bottom", "Voltage", units="V")
+        self.plot_dtv.setLabel("left", "dT/dV")
+        self.plot_dtv.setTitle("DTV (Differential Thermal)")
+        lay.addWidget(self.plot_ica, 1)
+        lay.addWidget(self.plot_dtv, 1)
+        return w
 
     def _metric_card(self, name, unit):
         card = QFrame()
@@ -968,7 +1013,107 @@ class BatteryQtWindow(QMainWindow):
             self.controller.stop_charge()
             self._log_alarm("Charge stopped.")
 
+    # ---- characterization test (acquisition worker on the real HAL) -------
+    def _acq_profile(self) -> AcqProfile:
+        """Map the runtime config (battery + safety window) to a worker profile."""
+        b = self.config.battery
+        s = self.config.system.safety_limits or {}
+        rin = getattr(getattr(self.estimator, "battery_model", None), "base_rin", 0.03) or 0.03
+        otp = float(s.get("max_temperature", 55.0))
+        return AcqProfile(
+            name=b.battery_type, chemistry=b.battery_type,
+            nominal_v=b.pack_nominal_voltage, series=b.cells_series,
+            capacity_ah=b.rated_capacity,
+            max_charge_v=b.pack_max_voltage, cutoff_v=b.pack_min_voltage,
+            max_charge_a=b.max_current, max_discharge_a=b.max_current,
+            ovp=float(s.get("max_voltage", b.pack_max_voltage + 1)),
+            uvp=float(s.get("min_voltage", b.pack_min_voltage - 1)),
+            otp_warn=max(0.0, otp - 10.0), otp_crit=otp, internal_r=float(rin),
+        )
+
+    def _on_run_test(self):
+        if self._test_thread is not None:
+            return
+        if not getattr(self.hw, "is_connected", False):
+            if not self._headless:
+                QMessageBox.warning(self, "Run Test", "Connect hardware first")
+            return
+        if self.controller and (self.controller.is_charging or self.controller.monitor_running):
+            if not self._headless:
+                QMessageBox.warning(self, "Run Test", "Stop charge/monitor before running a test")
+            return
+
+        cfg = TestConfig(self._acq_profile(), OperationMode(self.cb_op_mode.currentText()))
+        self.buf_t.clear(); self.buf_v.clear(); self.buf_i.clear()
+        self.buf_soc.clear(); self.buf_temp.clear()
+        os.makedirs("logs", exist_ok=True)
+        csv_path = os.path.join("logs", f"test_{datetime.now():%Y%m%d_%H%M%S}.csv")
+
+        backend = HardwareBackend(self.hw)
+        self._test_thread = QThread()
+        self._test_worker = AcquisitionWorker(backend, cfg, csv_path, estimator=self.estimator)
+        self._test_worker.moveToThread(self._test_thread)
+        self._test_thread.started.connect(self._test_worker.run)
+        self._test_worker.telemetry.connect(self._on_test_telemetry)
+        self._test_worker.alarm.connect(lambda sev, msg: self._log_alarm(f"[{sev}] {msg}"))
+        self._test_worker.state.connect(lambda st: self.lbl_test_status.setText(f"Test: {st}"))
+        self._test_worker.finished.connect(self._on_test_finished)
+        self._test_worker.finished.connect(self._test_thread.quit)
+        self._test_thread.finished.connect(self._cleanup_test_thread)
+        self._test_thread.start()
+        self.btn_run_test.setEnabled(False)
+        self._log_alarm(f"Characterization started: {cfg.mode.value}")
+
+    def _on_stop_test(self):
+        if self._test_worker:
+            self._test_worker.stop()
+            self._log_alarm("Test stop requested.")
+
+    def _on_test_telemetry(self, row: dict):
+        self.buf_t.append(row["elapsed"]); self.buf_v.append(row["v"])
+        self.buf_i.append(row["i"]); self.buf_temp.append(row["temp"])
+        v_lbl = self.metric_labels.get("Voltage")
+        if v_lbl:
+            self.metric_labels["Voltage"][0].setText(f'{row["v"]:.3f} {self.metric_labels["Voltage"][1]}')
+            self.metric_labels["Current"][0].setText(f'{row["i"]:.3f} {self.metric_labels["Current"][1]}')
+            if row.get("soc") == row.get("soc"):  # not NaN
+                self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} {self.metric_labels["SoC"][1]}')
+            self.metric_labels["Temp"][0].setText(f'{row["temp"]:.1f} {self.metric_labels["Temp"][1]}')
+        self._temp_gauge.update_temp(
+            row["temp"], self.config.system.safety_limits.get("max_temperature", 55) - 10,
+            self.config.system.safety_limits.get("max_temperature", 55))
+        self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
+
+    def _on_test_finished(self, results: dict):
+        self.metric_labels["SoH"][0].setText(f'{results["soh"]:.1f} {self.metric_labels["SoH"][1]}')
+        self.metric_labels["Rin"][0].setText(f'{results["ri_mohm"]:.1f} {self.metric_labels["Rin"][1]}')
+        grade = results["grade"]
+        gc = {"A": OK, "B": INFO, "C": WARN, "REJECT": CRIT}.get(grade, NEUTRAL)
+        self.lbl_grade.setText(grade)
+        self.lbl_grade.setStyleSheet(
+            f"background:{gc}; color:white; border:1px solid {BORDER}; border-radius:6px; padding:10px;")
+        self.lbl_analytics.setText(
+            f"Grade {grade} · SoH {results['soh']:.1f}% · Rᵢ {results['ri_mohm']:.1f} mΩ · "
+            f"Cap {results['capacity_ah']:.3f} Ah")
+        iv, ic = results["ica"]
+        if len(iv):
+            self.plot_ica.clear(); self.plot_ica.plot(iv, ic, pen=pg.mkPen("#1f4e79", width=2))
+        dv, dt = results["dtv"]
+        if len(dv):
+            self.plot_dtv.clear(); self.plot_dtv.plot(dv, dt, pen=pg.mkPen("#7a2020", width=2))
+        self._log_alarm(f"Test complete — Grade {grade}, SoH {results['soh']:.1f}%")
+
+    def _cleanup_test_thread(self):
+        if self._test_thread:
+            self._test_thread.deleteLater()
+        self._test_thread = None
+        self._test_worker = None
+        self.btn_run_test.setEnabled(True)
+        self.lbl_test_status.setText("Test idle")
+
     def _on_estop(self):
+        if self._test_worker:
+            self._test_worker.emergency_stop()   # immediate instrument override
         if self.controller:
             self.controller._trigger_safety("E-STOP pressed by operator")
         self._log_alarm("⛔ E-STOP issued.")

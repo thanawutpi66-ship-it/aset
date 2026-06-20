@@ -23,35 +23,41 @@ to drive real instruments.
 
 ---
 
-## Two GUIs (PySide6, single Qt binding)
+## One unified GUI (PySide6, ISA-101)
 
-| Entry point | What it is |
-|---|---|
-| `python main.py` → `ui/isa101_views.py` | **Integrated app** — wired to the real domain stack (`battery_model`, `state_estimator`, `charge_controller`, `analysis_module`, `hardware_driver`/`mock_hardware`) via `auto_controller` + `app_bootstrapper`. Starts the web dashboard. |
-| `python command_center.py` | **Standalone test bench** — thin ISA-101 HMI over the shared `aset_batt.acquisition` engine: a dedicated `QThread` worker, mode state machines (CC-CV / CC-discharge / HPPC), ICA `dQ/dV` + DTV `dT/dV` (Gaussian-smoothed), HPPC Rᵢ, and grading. Defaults to the simulated backend. |
+**One program:** `python main.py` → `aset_batt/ui/isa101_views.py` — the integrated
+ISA-101 HMI wired to the real domain stack (`battery_model`, `state_estimator`,
+`charge_controller`, `analysis_module`, `hardware_driver`) via `app_bootstrapper`.
+Run on real instruments with `"simulation_mode": false`; develop without hardware via
+`MockHardwareController` (`"simulation_mode": true`). Follows the **ISA-101 High-Performance
+HMI** standard: desaturated gray shell, color reserved for alarms, status pills, the
+temperature gauge, and grading badges.
 
-Both follow the **ISA-101 High-Performance HMI** standard: desaturated gray shell, with
-saturated color reserved for alarms, status pills, the temperature gauge, and grading badges.
+It covers the full test flow: connect, manual control, **chemistry-aware charge**
+(Auto / CC-CV / 3-Stage), **characterization test** (CC-CV / CC-discharge / **HPPC**) driven
+by the QThread acquisition worker, IEC 61960 profiles, live multi-axis V/I/T trend + digital
+readouts + temperature gauge, **ICA `dQ/dV` + DTV `dT/dV`** diagnostics, SoH / Rᵢ / capacity,
+**A/B/C/Reject grading**, a prominent E-Stop, CSV logging, and a PDF report.
 
-### Unified acquisition engine (`aset_batt/acquisition/`)
+### Acquisition engine (`aset_batt/acquisition/`)
 
-The `QThread` worker, instrument backends, and analytics are now one reusable package:
+The `QThread` worker, instrument backends, and analytics are a reusable package:
 
 - **`worker.py`** — `AcquisitionWorker` (mutex-guarded I/O, immediate E-Stop override, safety
-  interlocks) + `ReportTask` (PDF off the UI thread). Optionally takes a `StateEstimator` for
-  live OCV-corrected SoC/SoH.
+  interlocks) + `ReportTask` (PDF off the UI thread). Takes a `StateEstimator` for live
+  OCV-corrected SoC/SoH.
 - **`backends.py`** — `HardwareBackend` (drives the project **real HAL** → SCPI/VISA + ESP32
-  temperature), `VisaSerialBackend` (direct reference), `SimulatedBackend` (no hardware).
+  temperature; use with `MockHardwareController` for no-hardware dev) and `VisaSerialBackend`.
 - **`analytics.py`** — HPPC Rᵢ, ICA, DTV (Gaussian-smoothed), grading.
 
-So driving real instruments is just `AcquisitionWorker(HardwareBackend(hw), cfg, csv, estimator)`.
+The GUI runs a test with `AcquisitionWorker(HardwareBackend(hw), cfg, csv, estimator)`.
 
 ---
 
 ## Architecture
 
 ```
-GUI (PySide6, ISA-101)        ui/isa101_views.py · command_center.py
+GUI (PySide6, ISA-101)        ui/isa101_views.py  +  acquisition/worker (QThread)
   │  Qt signals / QtRootShim.after  (worker → UI, thread-safe)
 Orchestration                 auto_controller.py · app_bootstrapper.py · charge_controller.py
 Domain / compute              battery_model · state_estimator · iec61960_standard
@@ -80,7 +86,6 @@ Clean package layout — `python main.py` (root shim) or `python -m aset_batt`.
 ```
 ASET_BATT/
 ├── main.py                     # thin shim → aset_batt.app.run
-├── command_center.py           # standalone ISA-101 test bench (QThread worker)
 ├── pyproject.toml              # packaging + pytest/ruff config
 ├── config.json                 # runtime config (cwd-relative)
 ├── aset_batt/                  # application package
