@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTextEdit,
     QTabWidget,
@@ -395,7 +396,8 @@ class BatteryQtWindow(QMainWindow):
     def _build_left_panel(self):
         panel = QWidget()
         lay = QVBoxLayout(panel)
-        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setContentsMargins(0, 0, 0, 4)
+        lay.setSpacing(8)
         lay.addWidget(self._block_config())
         lay.addWidget(self._block_connection())
         lay.addWidget(self._block_manual())
@@ -403,7 +405,18 @@ class BatteryQtWindow(QMainWindow):
         lay.addWidget(self._block_safety())
         lay.addWidget(self._block_data())
         lay.addStretch(1)
-        return panel
+
+        # Wrap in a scroll area so the sidebar never compresses its widgets when the
+        # window is too short (e.g. maximized on a low-height screen) — it scrolls
+        # instead of overlapping comboboxes/lists with their labels.
+        scroll = QScrollArea()
+        scroll.setWidget(panel)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setMinimumWidth(340)
+        scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        return scroll
 
     def _block_config(self):
         g = QGroupBox("1 · TEST CONFIGURATION")
