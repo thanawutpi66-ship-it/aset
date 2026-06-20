@@ -70,7 +70,7 @@
 | `auto_controller.py` | orchestrator: monitor loop, profile, IEC tests (**two-pulse DCIR**), auto-analyze |
 | `iec61960_standard.py` | DCIR two-pulse, capacity, energy density, cycle-life |
 | `hardware_driver.py` / `mock_hardware.py` | HAL — SCPI/VISA + ESP32 temp (สลับด้วย simulation_mode) |
-| `web_server.py` | dashboard (ThreadingHTTPServer): `/`, `/api/summary`, `/api/analysis`, `/plot/main.png` |
+| Local web dashboard removed; cloud_dashboard + cloud_push used for remote viewing |
 | `cloud_dashboard/` + `cloud_push.py` | cloud service (Azure) + auto-push จากเครื่องแล็บ |
 | `train_grader.py` / `make_training_data.py` | เทรน ML grader (RandomForest) |
 | `generate_sample_data.py` | สร้างข้อมูลจำลอง (config-driven) |

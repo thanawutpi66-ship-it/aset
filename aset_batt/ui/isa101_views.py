@@ -1195,8 +1195,11 @@ class BatteryQtWindow(QMainWindow):
         if url:
             webbrowser.open(url)
             return
-        port = getattr(self.config.system, "web_server_port", 8000)
-        webbrowser.open(f"http://127.0.0.1:{port}/")
+        # Local web server removed; inform the user instead of opening localhost
+        if not self._headless:
+            QMessageBox.information(self, "Cloud Dashboard", "Cloud dashboard URL not configured. See cloud_dashboard/README.md for deployment instructions.")
+        else:
+            logger.warning("Cloud dashboard URL not configured")
 
     def _on_analyze_csv(self):
         analyzer = getattr(self.controller, "analyzer", None)

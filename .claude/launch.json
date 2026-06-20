@@ -7,12 +7,5 @@
       "runtimeArgs": ["main.py"],
       "port": 8000,
       "autoPort": false
-    },
-    {
-      "name": "cloudflared-tunnel",
-      "runtimeExecutable": "C:\\Users\\boatl\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Cloudflare.cloudflared_Microsoft.Winget.Source_8wekyb3d8bbwe\\cloudflared.exe",
-      "runtimeArgs": ["tunnel", "--url", "http://localhost:8000"],
-      "port": 8001
-    }
   ]
 }

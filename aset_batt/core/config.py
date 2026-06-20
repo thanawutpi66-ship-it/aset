@@ -47,7 +47,6 @@ class SystemConfig:
     max_points: int = 100
     simulation_mode: bool = False
     enable_web_server: bool = False
-    web_server_port: int = 8000
     csv_filepath: str = "battery_data.csv"
     log_level: str = "INFO"
     auto_backup: bool = True

@@ -64,7 +64,7 @@ Domain / compute              battery_model · state_estimator · iec61960_stand
                               analysis_module · battery_profiles
 Hardware abstraction (HAL)    hardware_driver  ⟷  mock_hardware   (swap via simulation_mode)
 Cross-cutting                 config · event_system · service_locator · logging_config · exceptions
-Data / remote                 data_utils (CSV) · report_generator (PDF) · web_server · cloud_push
+Data / remote                 data_utils (CSV) · report_generator (PDF) · cloud_push
 ```
 
 Full detail: [ARCHITECTURE.md](ARCHITECTURE.md). Project history/pivot: [context_summary.md](context_summary.md).
@@ -98,7 +98,6 @@ ASET_BATT/
 │   ├── ui/         isa101_views.py · logos
 │   ├── services/   event_system · service_locator · logging_config · exceptions
 │   ├── storage/    data_utils(CSV) · report_generator(PDF) · cloud_push
-│   └── web/        web_server.py
 ├── scripts/        generate_sample_data · train_grader · make_training_data
 ├── tests/          (49 tests)
 ├── docs/ · cloud_dashboard/

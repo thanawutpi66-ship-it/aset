@@ -16,7 +16,6 @@
     "max_points": 100,
     "simulation_mode": true,
     "enable_web_server": false,
-    "web_server_port": 8000,
     "csv_filepath": "battery_data.csv",
     "log_level": "INFO",
     "auto_backup": true,

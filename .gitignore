@@ -20,8 +20,6 @@ reports/
 # Logs & runtime output
 logs/
 *.log
-cloudflared_quick_tunnel.out
-cloudflared_quick_tunnel.err
 
 # Data / measurement output (regenerate via generate_sample_data.py)
 *.csv

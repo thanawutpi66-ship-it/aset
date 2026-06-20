@@ -17,7 +17,7 @@
 - **Instrument I/O:** PyVISA (PSU/Load), pyserial (ESP32 temperature)
 - **Compute:** numpy (core), scipy/pandas/scikit-learn/joblib (optional — analysis/ML)
 - **Plotting/Web:** matplotlib (Agg), `http.server` (stdlib)
-- **Remote:** Tailscale Funnel (permanent) / cloudflared (temp) → port 8000
+- **Remote:** Cloud dashboard (Azure) — use cloud_push to send snapshots to the cloud
 
 ---
 
@@ -25,7 +25,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Presentation         ui/qt_views.py (PySide6)  +  web_server │
+│  Presentation         ui/qt_views.py (PySide6)  │
 ├─────────────────────────────────────────────────────────────┤
 │  Orchestration        auto_controller.AutoController          │
 │                       (monitor loop / profile / IEC tests)    │
@@ -99,7 +99,7 @@ HW.read_vi() → (v, psu_i, load_i)
 
 ### 5.2 CSV → Dashboard (เส้นทาง read-only)
 ```
-battery_data.csv → web_server._tail_csv_rows()
+battery_data.csv → storage.data_utils._tail_csv_rows()
    ├→ /api/summary  → _compute_summary()  (latest, min/max/avg, capacity, energy)
    ├→ /plot/main.png → _render_main_plot() (6 แผง, cache 3s)
    └→ /api/last, /plot/soc.png
