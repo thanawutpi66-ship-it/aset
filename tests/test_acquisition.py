@@ -50,6 +50,18 @@ class TestHardwareBackend(unittest.TestCase):
     def test_temperature_reads_from_hal(self):
         self.assertTrue(np.isfinite(self.be.read_temperature()))
 
+    def test_hppc_durations_respected(self):
+        import dataclasses
+        p = dataclasses.replace(_profile(), hppc_pulse_duration=5.0,
+                                hppc_relaxation_duration=5.0)   # cycle = 10 s
+        self.be.start_mode(TestConfig(p, OperationMode.HPPC))
+        self.be.step(0.1, 2.0)                 # phase 2 < relax 5 → rest
+        self.assertEqual(self.hw._load_current, 0.0)
+        self.be.step(0.1, 7.0)                 # phase 7 ≥ relax 5 → pulse
+        self.assertGreater(self.hw._load_current, 0.0)
+        self.be.step(0.1, 12.0)                # next cycle, phase 2 → rest (relaxation tail)
+        self.assertEqual(self.hw._load_current, 0.0)
+
 
 class TestAnalytics(unittest.TestCase):
     def test_hppc_internal_resistance(self):

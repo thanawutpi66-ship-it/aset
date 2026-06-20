@@ -34,6 +34,10 @@ class BatteryProfile:
     otp_warn: float      # over-temperature warning
     otp_crit: float      # over-temperature critical (triggers E-Stop)
     internal_r: float = 0.03
+    # HPPC timing — pulse should be ≳ 3·τ and the relaxation long enough to capture
+    # the full RC tail, so R1/C1 are not truncated/under-resolved by a short pulse.
+    hppc_pulse_duration: float = 30.0       # seconds of constant-current load
+    hppc_relaxation_duration: float = 30.0  # seconds of rest (relaxation tail) per cycle
 
 
 @dataclass

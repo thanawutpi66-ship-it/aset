@@ -42,6 +42,8 @@ class HardwareBackend(InstrumentBackend):
         self.hw = hw
         self._cfg: Optional[TestConfig] = None
         self._hppc_loaded = False
+        self._hppc_pulse = 30.0
+        self._hppc_relax = 30.0
 
     def connect(self):
         pass  # HAL is connected by the application bootstrapper
@@ -60,11 +62,16 @@ class HardwareBackend(InstrumentBackend):
             self.hw.psu_off()
             self.hw.load_off()
             self._hppc_loaded = False
+            self._hppc_pulse = max(1.0, float(p.hppc_pulse_duration))
+            self._hppc_relax = max(1.0, float(p.hppc_relaxation_duration))
 
     def step(self, dt, elapsed):
-        # HPPC: 10 s rest / 10 s discharge pulse, toggling the load only on edges.
+        # HPPC cycle = relax (rest) → pulse. The leading rest establishes the OCV
+        # baseline; the trailing rest of each cycle is the relaxation tail. Load is
+        # toggled only on edges. Durations come from the battery profile.
         if self._cfg.mode == OperationMode.HPPC:
-            want_load = (elapsed % 20.0) >= 10.0
+            cycle = self._hppc_relax + self._hppc_pulse
+            want_load = (elapsed % cycle) >= self._hppc_relax
             if want_load != self._hppc_loaded:
                 if want_load:
                     self.hw.set_load(True, str(self._cfg.profile.max_discharge_a * 0.6))

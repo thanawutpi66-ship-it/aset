@@ -448,6 +448,18 @@ class BatteryQtWindow(QMainWindow):
         actions.addWidget(self.btn_detect, 2)
         actions.addWidget(self.btn_save_default, 1)
         lay.addLayout(actions)
+
+        # HPPC pulse timing (used by the HPPC test mode). Longer pulse/relaxation
+        # lets the RC transient fully develop so R1/C1 are not under-resolved.
+        lay.addWidget(_hline())
+        hppc = QFormLayout()
+        self.ed_hppc_pulse = QLineEdit("30")
+        self.ed_hppc_pulse.setValidator(QDoubleValidator(1.0, 600.0, 1))
+        self.ed_hppc_relax = QLineEdit("30")
+        self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))
+        hppc.addRow("HPPC pulse (s):", self.ed_hppc_pulse)
+        hppc.addRow("HPPC relax (s):", self.ed_hppc_relax)
+        lay.addLayout(hppc)
         return g
 
     def _block_connection(self):
@@ -1020,6 +1032,12 @@ class BatteryQtWindow(QMainWindow):
         s = self.config.system.safety_limits or {}
         rin = getattr(getattr(self.estimator, "battery_model", None), "base_rin", 0.03) or 0.03
         otp = float(s.get("max_temperature", 55.0))
+        def _fld(widget, default):
+            try:
+                return max(1.0, float(widget.text()))
+            except (ValueError, AttributeError):
+                return default
+
         return AcqProfile(
             name=b.battery_type, chemistry=b.battery_type,
             nominal_v=b.pack_nominal_voltage, series=b.cells_series,
@@ -1029,6 +1047,8 @@ class BatteryQtWindow(QMainWindow):
             ovp=float(s.get("max_voltage", b.pack_max_voltage + 1)),
             uvp=float(s.get("min_voltage", b.pack_min_voltage - 1)),
             otp_warn=max(0.0, otp - 10.0), otp_crit=otp, internal_r=float(rin),
+            hppc_pulse_duration=_fld(self.ed_hppc_pulse, 30.0),
+            hppc_relaxation_duration=_fld(self.ed_hppc_relax, 30.0),
         )
 
     def _on_run_test(self):

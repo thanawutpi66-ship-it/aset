@@ -32,6 +32,8 @@ class MockHardwareController:
         self._mock_r1 = 0.020       # Ω charge-transfer
         self._mock_tau = 12.0       # s  (R1·C1)
         self._load_on_t = None      # monotonic time the load last turned on
+        self._load_off_t = None     # monotonic time the load last turned off
+        self._relax_v0 = 0.0        # R1 overpotential at pulse end (decays in rest)
 
     # ------------------------------------------------------------------
     # Port enumeration
@@ -67,14 +69,14 @@ class MockHardwareController:
             self._charging = False
 
     def set_load(self, state, current_val="0"):
-        was_on = self._load_current > 0
-        self._load_current = float(current_val) if state else 0.0
         if state:
+            was_on = self._load_current > 0
+            self._load_current = float(current_val)
             self._charging = False   # ดิสชาร์จ → หยุดจำลองชาร์จ
             if not was_on:
                 self._load_on_t = time.monotonic()   # mark pulse start for RC model
         else:
-            self._load_on_t = None
+            self.load_off()
 
     def set_load_raw(self, target):
         self._load_current = abs(float(target))
@@ -83,7 +85,15 @@ class MockHardwareController:
         pass
 
     def load_off(self):
+        # Pulse ending → seed the relaxation tail: the R1 overpotential built up
+        # during the pulse now decays back toward OCV with τ (no ohmic, no current).
+        if self._load_current > 0 and self._load_on_t is not None:
+            t_pulse = time.monotonic() - self._load_on_t
+            self._relax_v0 = self._load_current * self._mock_r1 * \
+                (1.0 - math.exp(-t_pulse / self._mock_tau))
+            self._load_off_t = time.monotonic()
         self._load_current = 0.0
+        self._load_on_t = None
 
     def psu_off(self):
         self._psu_voltage = 0.0
@@ -118,8 +128,14 @@ class MockHardwareController:
             ripple = 0.002 * math.sin(time.time() - self._t_start)
             return round(self._sim_v - overpot + ripple, 4), 0.0, round(self._load_current, 4)
         else:
-            psu_i = 0.0
-            load_i = 0.0
+            # Rest: if a pulse just ended, replay the relaxation tail — terminal
+            # voltage recovers toward OCV as V = OCV − V_R1·e^(−t_off/τ).
+            ripple = 0.002 * math.sin(time.time() - self._t_start)
+            if self._load_off_t is not None:
+                t_off = time.monotonic() - self._load_off_t
+                recovery = self._relax_v0 * math.exp(-t_off / self._mock_tau)
+                return round(self._sim_v - recovery + ripple, 4), 0.0, 0.0
+            return round(self._sim_v + ripple, 4), 0.0, 0.0
         ripple = 0.005 * math.sin(time.time() - self._t_start)
         return round(self._sim_v + ripple, 4), round(psu_i, 4), round(load_i, 4)
 
