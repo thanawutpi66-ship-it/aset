@@ -292,6 +292,7 @@ class BatteryQtWindow(QMainWindow):
         self._last_analysis = None
         self._test_thread = None      # characterization worker (QThread)
         self._test_worker = None
+        self._last_csv = None         # CSV written by the most recent test/monitor run
 
         self._build_ui()
         self._connect_signals()
@@ -1068,6 +1069,8 @@ class BatteryQtWindow(QMainWindow):
         self.buf_soc.clear(); self.buf_temp.clear()
         os.makedirs("logs", exist_ok=True)
         csv_path = os.path.join("logs", f"test_{datetime.now():%Y%m%d_%H%M%S}.csv")
+        self._last_csv = csv_path                       # most-recent run → Analyze/PDF use this
+        self.lbl_csv.setText(f"CSV: {csv_path}")
 
         backend = HardwareBackend(self.hw)
         self._test_thread = QThread()
@@ -1205,6 +1208,7 @@ class BatteryQtWindow(QMainWindow):
             ok, msg = self.data.start_logging(self.config.system.csv_filepath)
             if ok:
                 self.btn_log.setText("STOP DATA LOGGING")
+                self._last_csv = self.config.system.csv_filepath   # monitor CSV becomes latest
             elif not self._headless:
                 QMessageBox.critical(self, "Logging", msg)
 
@@ -1214,7 +1218,8 @@ class BatteryQtWindow(QMainWindow):
             return
         self.btn_pdf.setEnabled(False)
         self.btn_pdf.setText("Generating...")
-        task = _PdfTask(self._pdf_notifier, path, self.config, self.estimator, self._last_analysis, self.config.system.csv_filepath)
+        task = _PdfTask(self._pdf_notifier, path, self.config, self.estimator,
+                        self._last_analysis, self._last_csv or self.config.system.csv_filepath)
         self.thread_pool.start(task)
 
     def _on_pdf_finished(self, ok: bool, payload: str):
@@ -1246,12 +1251,13 @@ class BatteryQtWindow(QMainWindow):
             if not self._headless:
                 QMessageBox.warning(self, "AI Analysis", "Analysis subsystem is not ready")
             return
-        csv_path = self.config.system.csv_filepath
-        if not os.path.exists(csv_path):
+        csv_path = self._last_csv or self.config.system.csv_filepath
+        if not csv_path or not os.path.exists(csv_path):
             if not self._headless:
-                QMessageBox.warning(self, "AI Analysis", f"CSV not found:\n{csv_path}")
+                QMessageBox.warning(self, "AI Analysis",
+                                    f"CSV not found:\n{csv_path}\n\nRun a test first.")
             return
-        self.lbl_analytics.setText("Analyzing CSV...")
+        self.lbl_analytics.setText(f"Analyzing {os.path.basename(csv_path)}...")
         threading.Thread(target=analyzer.analyze, args=(csv_path,), daemon=True).start()
 
     def _show_text_dialog(self, title, text):

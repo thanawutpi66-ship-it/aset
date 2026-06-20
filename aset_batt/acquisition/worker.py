@@ -80,8 +80,11 @@ class AcquisitionWorker(QObject):
         hppc_pulses = []
         f = open(self.csv_path, "w", newline="", encoding="utf-8")
         writer = csv.writer(f)
-        writer.writerow(["timestamp", "elapsed_s", "voltage_v", "current_a",
-                         "capacity_ah", "soc_pct", "temperature_c", "mode"])
+        # Canonical project schema (matches data_utils.DataHandler / battery_data.csv)
+        # so analysis_module and any project tool can read a test CSV directly.
+        # Current_A uses the project convention: discharge POSITIVE.
+        writer.writerow(["Timestamp", "Elapsed_s", "Voltage_V", "Current_A",
+                         "SoC_pct", "Temperature_C", "Capacity_Ah", "Mode"])
         try:
             with QMutexLocker(self._io):
                 self.backend.start_mode(self.cfg)
@@ -130,8 +133,8 @@ class AcquisitionWorker(QObject):
                 row = {"elapsed": elapsed, "v": v, "i": i, "cap": self.cap_ah,
                        "soc": soc, "temp": temp, "mode": self.cfg.mode.value}
                 writer.writerow([datetime.now().isoformat(timespec="milliseconds"),
-                                 f"{elapsed:.3f}", f"{v:.4f}", f"{i:.4f}",
-                                 f"{self.cap_ah:.5f}", f"{soc:.2f}", f"{temp:.2f}",
+                                 f"{elapsed:.3f}", f"{v:.4f}", f"{-i:.4f}",  # discharge +
+                                 f"{soc:.2f}", f"{temp:.2f}", f"{self.cap_ah:.5f}",
                                  self.cfg.mode.value])
                 self.telemetry.emit(row)
 

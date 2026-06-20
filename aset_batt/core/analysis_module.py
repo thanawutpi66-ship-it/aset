@@ -477,29 +477,43 @@ class BatteryAnalyzer:
                                     base_r0_mohm=base_r0_mohm)
         self.event_bus = event_bus
 
+    # canonicalise header names so either schema works (DataHandler's "Voltage_V"
+    # or the acquisition worker's lowercase "voltage_v"); maps lowercased → canonical.
+    _CANON = {
+        "elapsed_s": "Elapsed_s", "voltage_v": "Voltage_V", "current_a": "Current_A",
+        "soc_pct": "SoC_pct", "temperature_c": "Temperature_C",
+        "resistance_mohm": "Resistance_mOhm",
+    }
+
+    @classmethod
+    def _canon_col(cls, name: str) -> str:
+        return cls._CANON.get(name.strip().lower(), name)
+
     # ---- CSV loading -------------------------------------------------------
     def _load_csv(self, csv_path: str) -> Dict[str, np.ndarray]:
-        """โหลด CSV เป็น dict ของ numpy arrays (รองรับทั้ง pandas และ stdlib)"""
+        """โหลด CSV เป็น dict ของ numpy arrays (รองรับทั้ง pandas และ stdlib);
+        normalise ชื่อคอลัมน์ + coerce ค่าที่ไม่ใช่ตัวเลข (เช่นคอลัมน์ 'mode') เป็น NaN"""
         if _HAS_PANDAS:
             df = _pd.read_csv(csv_path, encoding="utf-8-sig")
-            return {col: df[col].to_numpy(dtype=float, na_value=np.nan)
-                    for col in df.columns
-                    if col not in ("Timestamp",)}
+            return {self._canon_col(col): _pd.to_numeric(df[col], errors="coerce")
+                    .to_numpy(dtype=float)
+                    for col in df.columns if col.strip().lower() != "timestamp"}
 
         # fallback: stdlib csv
         cols: Dict[str, List[float]] = {}
         with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
-            headers = [h for h in (reader.fieldnames or []) if h != "Timestamp"]
+            headers = [h for h in (reader.fieldnames or []) if h.strip().lower() != "timestamp"]
+            keys = {h: self._canon_col(h) for h in headers}
             for h in headers:
-                cols[h] = []
+                cols[keys[h]] = []
             for row in reader:
                 for h in headers:
                     try:
-                        cols[h].append(float(row[h]))
+                        cols[keys[h]].append(float(row[h]))
                     except (ValueError, TypeError, KeyError):
-                        cols[h].append(np.nan)
-        return {h: np.asarray(v, dtype=float) for h, v in cols.items()}
+                        cols[keys[h]].append(np.nan)
+        return {k: np.asarray(v, dtype=float) for k, v in cols.items()}
 
     # ---- feature computation ----------------------------------------------
     @staticmethod
