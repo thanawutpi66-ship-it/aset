@@ -76,6 +76,7 @@ class AcquisitionWorker(QObject):
         period = 1.0 / max(1.0, self.cfg.sample_hz)
         p = self.cfg.profile
         v_hist, q_hist, t_hist = [], [], []
+        time_hist, i_hist = [], []          # for 1-RC ECM identification (HPPC)
         hppc_pulses = []
         f = open(self.csv_path, "w", newline="", encoding="utf-8")
         writer = csv.writer(f)
@@ -119,6 +120,7 @@ class AcquisitionWorker(QObject):
                         logger.debug("estimator update skipped: %s", e)
 
                 v_hist.append(v); q_hist.append(self.cap_ah); t_hist.append(temp)
+                time_hist.append(elapsed); i_hist.append(i)
                 if self.cfg.mode == OperationMode.HPPC and abs(i - prev_i) > 0.05:
                     hppc_pulses.append((v, i))
                 prev_i = i
@@ -152,7 +154,8 @@ class AcquisitionWorker(QObject):
                     pass
             f.close()
 
-        results = self._post_process(v_hist, q_hist, t_hist, hppc_pulses, p)
+        results = self._post_process(time_hist, i_hist, v_hist, q_hist, t_hist,
+                                     hppc_pulses, p)
         self.finished.emit(results)
         if not self._estop:
             self.state.emit("STOPPED")
@@ -180,7 +183,8 @@ class AcquisitionWorker(QObject):
             self.alarm.emit(sev, msg)
 
     # ---- post-test analytics ----------------------------------------------
-    def _post_process(self, v_hist, q_hist, t_hist, hppc_pulses, p: BatteryProfile):
+    def _post_process(self, time_hist, i_hist, v_hist, q_hist, t_hist,
+                      hppc_pulses, p: BatteryProfile):
         v = np.asarray(v_hist, float); q = np.asarray(q_hist, float)
         t = np.asarray(t_hist, float)
         capacity = float(q[-1]) if q.size else 0.0
@@ -188,14 +192,49 @@ class AcquisitionWorker(QObject):
             soh = float(min(120.0, max(0.0, getattr(self.estimator, "soh", 0.0))))
         else:
             soh = float(min(120.0, max(0.0, 100.0 * capacity / p.capacity_ah))) if p.capacity_ah else 0.0
-        ri = Analytics.internal_resistance_hppc(hppc_pulses, p)
+
+        r0, r1, c1, tau, ecm_ok = self._identify_ecm(time_hist, i_hist, v_hist, hppc_pulses, p)
+        if ecm_ok:
+            grade = Analytics.grade_from_ecm(soh, r0, r1, p)   # two-resistance grading
+            ri_total = r0 + r1
+        else:
+            ri_total = r0
+            grade = Analytics.grade(soh, ri_total, p)          # single-Rᵢ fallback
+
         ica_v, ica = Analytics.incremental_capacity(v, q)
         dtv_v, dtv = Analytics.differential_thermal(v, t)
         return {
-            "soh": soh, "capacity_ah": capacity, "ri_mohm": ri * 1000.0,
-            "grade": Analytics.grade(soh, ri, p),
+            "soh": soh, "capacity_ah": capacity,
+            "r0_mohm": r0 * 1000.0, "r1_mohm": r1 * 1000.0,
+            "c1_farad": c1, "tau_s": tau,
+            "ri_mohm": ri_total * 1000.0,        # total DCIR (R0+R1) for the Rin readout
+            "ecm_identified": ecm_ok,
+            "grade": grade,
             "ica": (ica_v, ica), "dtv": (dtv_v, dtv),
         }
+
+    def _identify_ecm(self, time_hist, i_hist, v_hist, hppc_pulses, p: BatteryProfile):
+        """Separate R0/R1/C1/τ. HPPC → full 1-RC ECM fit (BatteryParameterIdentifier
+        on the pulse transient); otherwise the single-point ohmic estimate (R1=0).
+
+        Returns ``(r0_ohm, r1_ohm, c1_farad, tau_s, ecm_identified)``.
+        """
+        if self.cfg.mode == OperationMode.HPPC and len(time_hist) > 20:
+            try:
+                from aset_batt.core.parameter_id import BatteryParameterIdentifier
+                ta = np.asarray(time_hist, float)
+                # worker convention is discharge-negative; the identifier expects
+                # discharge-positive (V sags below Voc) — flip the sign here.
+                ia = -np.asarray(i_hist, float)
+                va = np.asarray(v_hist, float)
+                rest = np.abs(ia) < 0.05
+                voc = float(np.mean(va[rest][:30])) if rest.any() else float(va[0])
+                res = BatteryParameterIdentifier(smooth_window=5).fit_model(ta, ia, va, voc)
+                return (res["R0_ohm"], res["R1_ohm"], res["C1_farad"], res["tau_s"], True)
+            except Exception as e:
+                logger.warning("ECM identification failed (%s) — single-point fallback", e)
+        ri = Analytics.internal_resistance_hppc(hppc_pulses, p)
+        return (ri, 0.0, 0.0, 0.0, False)
 
 
 class ReportTask(QRunnable):

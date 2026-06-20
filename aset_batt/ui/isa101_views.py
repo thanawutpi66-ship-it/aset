@@ -1092,16 +1092,35 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_grade.setText(grade)
         self.lbl_grade.setStyleSheet(
             f"background:{gc}; color:white; border:1px solid {BORDER}; border-radius:6px; padding:10px;")
+        ecm = " · 1-RC ECM" if results.get("ecm_identified") else ""
         self.lbl_analytics.setText(
-            f"Grade {grade} · SoH {results['soh']:.1f}% · Rᵢ {results['ri_mohm']:.1f} mΩ · "
+            f"Grade {grade}{ecm} · SoH {results['soh']:.1f}% · "
+            f"R0 {results['r0_mohm']:.1f} mΩ · R1 {results['r1_mohm']:.1f} mΩ · "
             f"Cap {results['capacity_ah']:.3f} Ah")
+        # detailed ECM breakdown
+        header = "1-RC Thevenin ECM (HPPC)" if results.get("ecm_identified") \
+            else "Internal resistance (single-point)"
+        self.txt_analytics.setPlainText("\n".join([
+            f"Grade:                 {grade}",
+            f"State of Health:       {results['soh']:.1f} %",
+            f"Capacity:              {results['capacity_ah']:.3f} Ah",
+            "",
+            header + ":",
+            f"  R0 (ohmic):          {results['r0_mohm']:.2f} mΩ",
+            f"  R1 (charge-transfer):{results['r1_mohm']:.2f} mΩ",
+            f"  C1:                  {results['c1_farad']:.0f} F",
+            f"  tau (R1·C1):         {results['tau_s']:.1f} s",
+            f"  Total DCIR (R0+R1):  {results['ri_mohm']:.2f} mΩ",
+        ]))
         iv, ic = results["ica"]
         if len(iv):
             self.plot_ica.clear(); self.plot_ica.plot(iv, ic, pen=pg.mkPen("#1f4e79", width=2))
         dv, dt = results["dtv"]
         if len(dv):
             self.plot_dtv.clear(); self.plot_dtv.plot(dv, dt, pen=pg.mkPen("#7a2020", width=2))
-        self._log_alarm(f"Test complete — Grade {grade}, SoH {results['soh']:.1f}%")
+        self._log_alarm(
+            f"Test complete — Grade {grade}, SoH {results['soh']:.1f}%, "
+            f"R0 {results['r0_mohm']:.1f} mΩ, R1 {results['r1_mohm']:.1f} mΩ")
 
     def _cleanup_test_thread(self):
         if self._test_thread:

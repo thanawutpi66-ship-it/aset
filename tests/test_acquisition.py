@@ -75,6 +75,46 @@ class TestAnalytics(unittest.TestCase):
         self.assertEqual(Analytics.grade(72, 0.07, p), "C")
         self.assertEqual(Analytics.grade(50, 0.2, p), "REJECT")
 
+    def test_grade_from_ecm_penalises_r0_and_r1(self):
+        p = _profile()                       # internal_r=0.03 → r0_base=0.018, r1_base=0.012
+        # healthy: both at baseline
+        self.assertEqual(Analytics.grade_from_ecm(95, 0.018, 0.012, p), "A")
+        # high R1 (SEI growth) alone drags a high-SoH cell down even if R0 is fine
+        self.assertNotEqual(Analytics.grade_from_ecm(95, 0.018, 0.030, p), "A")
+        # high R0 (contact) alone likewise
+        self.assertNotEqual(Analytics.grade_from_ecm(95, 0.045, 0.012, p), "A")
+        # both badly grown → reject
+        self.assertEqual(Analytics.grade_from_ecm(60, 0.06, 0.05, p), "REJECT")
+
+
+class TestWorkerEcmWiring(unittest.TestCase):
+    """HPPC post-processing must run the 1-RC identifier and grade on R0/R1."""
+
+    def test_post_process_identifies_ecm(self):
+        from aset_batt.acquisition.worker import AcquisitionWorker
+        r0, r1, c1, cur, voc = 0.012, 0.018, 1000.0, 8.0, 13.2   # τ=18 s
+        tau = r1 * c1
+        dt = 0.1
+        t_rest = np.arange(0, 10, dt); t_pulse = np.arange(0, 40, dt)
+        v = np.concatenate([np.full_like(t_rest, voc),
+                            voc - cur * (r0 + r1 * (1 - np.exp(-t_pulse / tau)))])
+        # worker convention: discharge current is NEGATIVE (the worker flips it
+        # internally for the identifier) — use the real convention so the test
+        # exercises the same path as production.
+        i = np.concatenate([np.zeros_like(t_rest), np.full_like(t_pulse, -cur)])
+        tt = np.arange(len(v)) * dt
+        q = np.cumsum(np.abs(i)) * dt / 3600.0
+        temp = np.full_like(v, 30.0)
+
+        w = AcquisitionWorker(backend=None,
+                              cfg=TestConfig(_profile(), OperationMode.HPPC),
+                              csv_path="unused.csv")
+        res = w._post_process(list(tt), list(i), list(v), list(q), list(temp), [], _profile())
+        self.assertTrue(res["ecm_identified"])
+        self.assertAlmostEqual(res["r0_mohm"], 12.0, delta=2.0)
+        self.assertAlmostEqual(res["r1_mohm"], 18.0, delta=4.0)
+        self.assertIn(res["grade"], ("A", "B", "C", "REJECT"))
+
 
 class TestProfileLoading(unittest.TestCase):
     def test_fallback_profiles(self):

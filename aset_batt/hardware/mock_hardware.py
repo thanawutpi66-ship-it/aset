@@ -26,6 +26,12 @@ class MockHardwareController:
         self._cccv_v = None         # CV target ขณะชาร์จ (V, ระดับแพ็ค)
         self._charge_i = 0.0        # กระแสชาร์จจำลอง (A) — taper ลงในช่วง CV
         self._t_start = time.time()
+        # 1-RC overpotential model so HPPC pulses show a realistic ohmic step + RC
+        # relaxation (lets BatteryParameterIdentifier extract non-zero R0/R1 on mock)
+        self._mock_r0 = 0.030       # Ω ohmic (instant step under load)
+        self._mock_r1 = 0.020       # Ω charge-transfer
+        self._mock_tau = 12.0       # s  (R1·C1)
+        self._load_on_t = None      # monotonic time the load last turned on
 
     # ------------------------------------------------------------------
     # Port enumeration
@@ -61,9 +67,14 @@ class MockHardwareController:
             self._charging = False
 
     def set_load(self, state, current_val="0"):
+        was_on = self._load_current > 0
         self._load_current = float(current_val) if state else 0.0
         if state:
             self._charging = False   # ดิสชาร์จ → หยุดจำลองชาร์จ
+            if not was_on:
+                self._load_on_t = time.monotonic()   # mark pulse start for RC model
+        else:
+            self._load_on_t = None
 
     def set_load_raw(self, target):
         self._load_current = abs(float(target))
@@ -98,10 +109,14 @@ class MockHardwareController:
                 psu_i = self._charge_i
             load_i = 0.0
         elif self._load_current > 0:
-            # Discharge: แรงดันลดตามกระแส (clamp ไม่ให้ต่ำเกินจริง)
-            self._sim_v = max(9.5, self._sim_v - self._load_current * 0.002)
-            psu_i = 0.0
-            load_i = self._load_current
+            # Discharge: OCV drifts DOWN slowly with SoC (small, so it doesn't swamp the
+            # RC transient during short HPPC pulses); terminal = OCV − I·R0 − I·R1·(1−e^(−t/τ))
+            self._sim_v = max(9.5, self._sim_v - self._load_current * 1e-5)
+            t_load = time.monotonic() - (self._load_on_t or time.monotonic())
+            overpot = self._load_current * (
+                self._mock_r0 + self._mock_r1 * (1.0 - math.exp(-t_load / self._mock_tau)))
+            ripple = 0.002 * math.sin(time.time() - self._t_start)
+            return round(self._sim_v - overpot + ripple, 4), 0.0, round(self._load_current, 4)
         else:
             psu_i = 0.0
             load_i = 0.0

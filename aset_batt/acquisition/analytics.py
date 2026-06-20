@@ -27,7 +27,9 @@ class Analytics:
 
     @staticmethod
     def internal_resistance_hppc(pulses, p: BatteryProfile) -> float:
-        """Rᵢ = |ΔV / ΔI| measured across the HPPC pulse current step."""
+        """[fallback] Single-point total resistance Rᵢ = |ΔV / ΔI| across the pulse
+        step. Superseded by the full 1-RC ECM fit (``parameter_id``) which separates
+        R0 and R1; retained only for non-HPPC modes where no RC transient exists."""
         if len(pulses) >= 2:
             (v1, i1), (v2, i2) = pulses[-2], pulses[-1]
             if abs(i2 - i1) > 1e-3:
@@ -64,9 +66,40 @@ class Analytics:
         dtdv = np.gradient(Analytics.gaussian_smooth(tg, 3.0), grid)
         return grid, Analytics.gaussian_smooth(dtdv, 2.0)
 
+    # baseline split of the profile's DC internal resistance into ohmic (R0) and
+    # charge-transfer (R1) parts — typical for LiFePO4 (~60 % ohmic, ~40 % CT).
+    R0_FRACTION = 0.6
+    R1_FRACTION = 0.4
+
+    @staticmethod
+    def grade_from_ecm(soh: float, r0_ohm: float, r1_ohm: float,
+                       p: BatteryProfile) -> str:
+        """Sort A/B/C/REJECT from SoH plus **independent** growth of R0 and R1.
+
+        Physical rationale:
+          * **R0** (ohmic) rising → contact degradation / electrolyte conductivity loss.
+          * **R1** (charge-transfer) rising → SEI-layer growth / active-material loss.
+
+        A cell is downgraded if *either* resistance has grown, so a cell that still
+        holds capacity (high SoH) but has a degraded interface (high R1) is correctly
+        rejected — which the old single total-Rᵢ metric could miss.
+        """
+        r0_base = max(1e-9, Analytics.R0_FRACTION * p.internal_r)
+        r1_base = max(1e-9, Analytics.R1_FRACTION * p.internal_r)
+        r0_ratio = r0_ohm / r0_base
+        r1_ratio = r1_ohm / r1_base
+        if soh >= 90 and r0_ratio <= 1.3 and r1_ratio <= 1.4:
+            return "A"
+        if soh >= 80 and r0_ratio <= 1.7 and r1_ratio <= 1.8:
+            return "B"
+        if soh >= 70 and r0_ratio <= 2.5 and r1_ratio <= 2.8:
+            return "C"
+        return "REJECT"
+
     @staticmethod
     def grade(soh: float, ri_ohm: float, p: BatteryProfile) -> str:
-        """Sort into A/B/C/REJECT from SoH and the internal-resistance growth ratio."""
+        """[fallback] Single total-resistance grading for non-HPPC modes (no RC fit).
+        Prefer :meth:`grade_from_ecm` when R0/R1 are available."""
         ri_ratio = ri_ohm / max(1e-6, p.internal_r)
         if soh >= 90 and ri_ratio <= 1.3:
             return "A"
