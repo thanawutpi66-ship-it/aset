@@ -680,14 +680,17 @@ class AutoController:
             logger.debug("log_sample error: %s", e)
 
     def _auto_analyze(self):
-        """รัน AI analysis อัตโนมัติหลัง test จบ (analyzer จะ post ANALYSIS_COMPLETED -> UI)"""
-        analyzer = getattr(self, "analyzer", None)
-        if analyzer is None:
-            return
+        """รัน unified analysis (ECM/grade) บน CSV ล่าสุด แล้ว post ANALYSIS_COMPLETED -> UI.
+        ใช้วิธีวิเคราะห์เดียวกับ characterization test และปุ่ม Analyze CSV (วิธีเดียวทั้งระบบ)"""
         try:
-            analyzer.analyze(self.config.system.csv_filepath)
+            from aset_batt.acquisition.analysis import analyze_csv, profile_from_config
+            res = analyze_csv(self.config.system.csv_filepath,
+                              profile_from_config(self.config))
         except Exception as e:
             logger.warning("auto-analyze ล้มเหลว: %s", e)
+            return
+        if self.event_handler:
+            self.event_handler.post_event(EventType.ANALYSIS_COMPLETED, res)
 
     # ------------------------------------------------------------------
     # Shutdown

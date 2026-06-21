@@ -23,7 +23,6 @@ import numpy as np
 from PySide6.QtCore import QObject, Signal, QThread, QMutex, QMutexLocker, QRunnable
 
 from aset_batt.acquisition.models import BatteryProfile, TestConfig, OperationMode
-from aset_batt.acquisition.analytics import Analytics
 
 logger = logging.getLogger(__name__)
 
@@ -188,56 +187,14 @@ class AcquisitionWorker(QObject):
     # ---- post-test analytics ----------------------------------------------
     def _post_process(self, time_hist, i_hist, v_hist, q_hist, t_hist,
                       hppc_pulses, p: BatteryProfile):
-        v = np.asarray(v_hist, float); q = np.asarray(q_hist, float)
-        t = np.asarray(t_hist, float)
-        capacity = float(q[-1]) if q.size else 0.0
-        if self.estimator is not None:
-            soh = float(min(120.0, max(0.0, getattr(self.estimator, "soh", 0.0))))
-        else:
-            soh = float(min(120.0, max(0.0, 100.0 * capacity / p.capacity_ah))) if p.capacity_ah else 0.0
-
-        r0, r1, c1, tau, ecm_ok = self._identify_ecm(time_hist, i_hist, v_hist, hppc_pulses, p)
-        if ecm_ok:
-            grade = Analytics.grade_from_ecm(soh, r0, r1, p)   # two-resistance grading
-            ri_total = r0 + r1
-        else:
-            ri_total = r0
-            grade = Analytics.grade(soh, ri_total, p)          # single-Rᵢ fallback
-
-        ica_v, ica = Analytics.incremental_capacity(v, q)
-        dtv_v, dtv = Analytics.differential_thermal(v, t)
-        return {
-            "soh": soh, "capacity_ah": capacity,
-            "r0_mohm": r0 * 1000.0, "r1_mohm": r1 * 1000.0,
-            "c1_farad": c1, "tau_s": tau,
-            "ri_mohm": ri_total * 1000.0,        # total DCIR (R0+R1) for the Rin readout
-            "ecm_identified": ecm_ok,
-            "grade": grade,
-            "ica": (ica_v, ica), "dtv": (dtv_v, dtv),
-        }
-
-    def _identify_ecm(self, time_hist, i_hist, v_hist, hppc_pulses, p: BatteryProfile):
-        """Separate R0/R1/C1/τ. HPPC → full 1-RC ECM fit (BatteryParameterIdentifier
-        on the pulse transient); otherwise the single-point ohmic estimate (R1=0).
-
-        Returns ``(r0_ohm, r1_ohm, c1_farad, tau_s, ecm_identified)``.
-        """
-        if self.cfg.mode == OperationMode.HPPC and len(time_hist) > 20:
-            try:
-                from aset_batt.core.parameter_id import BatteryParameterIdentifier
-                ta = np.asarray(time_hist, float)
-                # worker convention is discharge-negative; the identifier expects
-                # discharge-positive (V sags below Voc) — flip the sign here.
-                ia = -np.asarray(i_hist, float)
-                va = np.asarray(v_hist, float)
-                rest = np.abs(ia) < 0.05
-                voc = float(np.mean(va[rest][:30])) if rest.any() else float(va[0])
-                res = BatteryParameterIdentifier(smooth_window=5).fit_model(ta, ia, va, voc)
-                return (res["R0_ohm"], res["R1_ohm"], res["C1_farad"], res["tau_s"], True)
-            except Exception as e:
-                logger.warning("ECM identification failed (%s) — single-point fallback", e)
-        ri = Analytics.internal_resistance_hppc(hppc_pulses, p)
-        return (ri, 0.0, 0.0, 0.0, False)
+        """Delegate to the single application-wide analysis (aset_batt.acquisition.
+        analysis). Worker current is discharge-negative → flip to canonical
+        discharge-positive; supply the estimator's live SoH when available."""
+        from aset_batt.acquisition.analysis import analyze_series
+        soh = getattr(self.estimator, "soh", None) if self.estimator is not None else None
+        cur_pos = -np.asarray(i_hist, float)
+        return analyze_series(time_hist, cur_pos, v_hist, t_hist, q_hist, p,
+                              is_hppc=(self.cfg.mode == OperationMode.HPPC), soh=soh)
 
 
 class ReportTask(QRunnable):

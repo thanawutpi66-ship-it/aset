@@ -701,7 +701,7 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_grade.setFont(QFont("Segoe UI", 30, QFont.Weight.Bold))
         self.lbl_grade.setStyleSheet(f"background:{PANEL}; color:{TEXT}; border:1px solid {BORDER}; border-radius:6px; padding:10px;")
         lay.addWidget(self.lbl_grade)
-        btn = _btn("Analyze Last CSV (AI Grade)", bg=INFO, fg="white", hover="#0d4a89")
+        btn = _btn("Analyze Last CSV", bg=INFO, fg="white", hover="#0d4a89")
         btn.clicked.connect(self._on_analyze_csv)
         lay.addWidget(btn)
         return w
@@ -851,30 +851,15 @@ class BatteryQtWindow(QMainWindow):
 
     @Slot(object)
     def _slot_analysis_done(self, result):
-        if not getattr(result, "success", False):
-            self.lbl_analytics.setText("Analysis failed")
-            self._log_alarm(f"Analysis failed: {getattr(result, 'error', '?')}")
+        """Display a unified-analysis result (dict). Same renderer as a live test
+        — Analyze-CSV and the controller's auto-analyze both arrive here."""
+        if not isinstance(result, dict) or "error" in result:
+            msg = result.get("error", "unknown") if isinstance(result, dict) else "unknown"
+            self.lbl_analytics.setText(f"Analysis failed: {msg}")
+            self._log_alarm(f"Analysis failed: {msg}")
             return
-        f = result.features
         self._last_analysis = result
-        self.lbl_analytics.setText(f"Grade {result.grade}  ({result.confidence * 100:.0f}%, {result.method})")
-        lines = [
-            f"SoH:            {f.soh_pct:.1f} %",
-            f"Capacity:       {f.capacity_ah:.3f} Ah",
-            f"Energy:         {f.energy_wh:.2f} Wh",
-            f"R0 (ohmic):     {f.r0_mohm:.2f} mΩ",
-            f"Rp (polar.):    {f.rp_mohm:.2f} mΩ",
-            f"tau (RC):       {f.tau_s:.2f} s",
-            f"Pulses fitted:  {f.num_pulses}",
-            f"Avg temp:       {f.avg_temp_c:.1f} °C",
-        ]
-        if result.notes:
-            lines += ["", "Notes:"] + [f"  - {n}" for n in result.notes]
-        self.txt_analytics.setPlainText("\n".join(lines))
-        self.lbl_grade.setText(result.grade)
-        self.lbl_grade.setStyleSheet(
-            f"background:{OK if result.grade == 'A' else INFO if result.grade == 'B' else WARN if result.grade == 'C' else CRIT}; color:white; border:1px solid {BORDER}; border-radius:6px; padding:10px;"
-        )
+        self._on_test_finished(result)
 
     def _log_alarm(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -1028,29 +1013,20 @@ class BatteryQtWindow(QMainWindow):
 
     # ---- characterization test (acquisition worker on the real HAL) -------
     def _acq_profile(self) -> AcqProfile:
-        """Map the runtime config (battery + safety window) to a worker profile."""
-        b = self.config.battery
-        s = self.config.system.safety_limits or {}
-        rin = getattr(getattr(self.estimator, "battery_model", None), "base_rin", 0.03) or 0.03
-        otp = float(s.get("max_temperature", 55.0))
+        """Analysis/test profile from config (shared with the controller's
+        auto-analyze), plus the HPPC durations entered in the Test Config panel."""
+        from aset_batt.acquisition.analysis import profile_from_config
+
         def _fld(widget, default):
             try:
                 return max(1.0, float(widget.text()))
             except (ValueError, AttributeError):
                 return default
 
-        return AcqProfile(
-            name=b.battery_type, chemistry=b.battery_type,
-            nominal_v=b.pack_nominal_voltage, series=b.cells_series,
-            capacity_ah=b.rated_capacity,
-            max_charge_v=b.pack_max_voltage, cutoff_v=b.pack_min_voltage,
-            max_charge_a=b.max_current, max_discharge_a=b.max_current,
-            ovp=float(s.get("max_voltage", b.pack_max_voltage + 1)),
-            uvp=float(s.get("min_voltage", b.pack_min_voltage - 1)),
-            otp_warn=max(0.0, otp - 10.0), otp_crit=otp, internal_r=float(rin),
-            hppc_pulse_duration=_fld(self.ed_hppc_pulse, 30.0),
-            hppc_relaxation_duration=_fld(self.ed_hppc_relax, 30.0),
-        )
+        p = profile_from_config(self.config)
+        p.hppc_pulse_duration = _fld(self.ed_hppc_pulse, 30.0)
+        p.hppc_relaxation_duration = _fld(self.ed_hppc_relax, 30.0)
+        return p
 
     def _on_run_test(self):
         if self._test_thread is not None:
@@ -1246,19 +1222,24 @@ class BatteryQtWindow(QMainWindow):
             logger.warning("Cloud dashboard URL not configured")
 
     def _on_analyze_csv(self):
-        analyzer = getattr(self.controller, "analyzer", None)
-        if analyzer is None:
-            if not self._headless:
-                QMessageBox.warning(self, "AI Analysis", "Analysis subsystem is not ready")
-            return
         csv_path = self._last_csv or self.config.system.csv_filepath
         if not csv_path or not os.path.exists(csv_path):
             if not self._headless:
-                QMessageBox.warning(self, "AI Analysis",
+                QMessageBox.warning(self, "Analyze CSV",
                                     f"CSV not found:\n{csv_path}\n\nRun a test first.")
             return
         self.lbl_analytics.setText(f"Analyzing {os.path.basename(csv_path)}...")
-        threading.Thread(target=analyzer.analyze, args=(csv_path,), daemon=True).start()
+        prof = self._acq_profile()
+
+        def work():
+            from aset_batt.acquisition.analysis import analyze_csv
+            try:
+                res = analyze_csv(csv_path, prof)
+            except Exception as e:
+                res = {"error": str(e)}
+            self.sig_analysis_done.emit(res)   # → _slot_analysis_done → _on_test_finished
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _show_text_dialog(self, title, text):
         dlg = QMessageBox(self)

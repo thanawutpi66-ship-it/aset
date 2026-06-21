@@ -1,0 +1,152 @@
+"""
+Single, unified post-test analysis for the whole application.
+
+Every grade in the app — the live characterization test, the "Analyze CSV" button,
+and the IEC-profile auto-analyze — goes through :func:`analyze_series` /
+:func:`analyze_csv` so there is exactly ONE analysis/grading method:
+
+  * R0/R1/C1/τ via the 1-RC Thevenin ECM identifier (on HPPC pulses);
+    single-point ohmic fallback otherwise.
+  * ICA (dQ/dV) and DTV (dT/dV), Gaussian-smoothed.
+  * Two-resistance grading (R0 ohmic + R1 charge-transfer).
+
+Current convention: **discharge POSITIVE** (project canonical), matching
+``data_utils.DataHandler`` / the worker's CSV ``Current_A`` column.
+"""
+from __future__ import annotations
+
+import os
+import csv
+import logging
+
+import numpy as np
+
+from aset_batt.acquisition.analytics import Analytics
+from aset_batt.acquisition.models import BatteryProfile
+
+logger = logging.getLogger(__name__)
+
+
+def profile_from_config(config) -> BatteryProfile:
+    """Build the analysis profile (pack limits + safety window + baseline Rᵢ) from
+    the application config. Shared by the GUI and the controller's auto-analyze."""
+    b = config.battery
+    s = config.system.safety_limits or {}
+    try:
+        from aset_batt.core.battery_model import BatteryModel
+        rin = BatteryModel(b.battery_type, b.nominal_voltage,
+                           b.cells_series, b.cells_parallel).base_rin
+    except Exception:
+        rin = 0.03
+    otp = float(s.get("max_temperature", 55.0))
+    return BatteryProfile(
+        name=b.battery_type, chemistry=b.battery_type,
+        nominal_v=b.pack_nominal_voltage, series=b.cells_series,
+        capacity_ah=b.rated_capacity,
+        max_charge_v=b.pack_max_voltage, cutoff_v=b.pack_min_voltage,
+        max_charge_a=b.max_current, max_discharge_a=b.max_current,
+        ovp=float(s.get("max_voltage", b.pack_max_voltage + 1)),
+        uvp=float(s.get("min_voltage", b.pack_min_voltage - 1)),
+        otp_warn=max(0.0, otp - 10.0), otp_crit=otp, internal_r=float(max(1e-4, rin)),
+    )
+
+
+def identify_ecm(time_s, current_a, voltage_v, profile: BatteryProfile, is_hppc: bool):
+    """Separate R0/R1/C1/τ. Returns ``(r0, r1, c1, tau, ecm_identified)``.
+
+    ``current_a`` is discharge-positive. HPPC data → full 1-RC fit; otherwise the
+    single-point ohmic estimate from the largest current step (R1=0)."""
+    ta = np.asarray(time_s, float)
+    ia = np.asarray(current_a, float)
+    va = np.asarray(voltage_v, float)
+    if is_hppc and ta.size > 20:
+        try:
+            from aset_batt.core.parameter_id import BatteryParameterIdentifier
+            rest = np.abs(ia) < 0.05
+            voc = float(np.mean(va[rest][:30])) if rest.any() else float(va[0])
+            res = BatteryParameterIdentifier(smooth_window=5).fit_model(ta, ia, va, voc)
+            return res["R0_ohm"], res["R1_ohm"], res["C1_farad"], res["tau_s"], True
+        except Exception as e:
+            logger.warning("ECM identification failed (%s) — single-point fallback", e)
+    # single-point ohmic from the largest |ΔI| step
+    ri = profile.internal_r
+    if ia.size > 2:
+        di = np.diff(ia)
+        k = int(np.argmax(np.abs(di)))
+        if abs(di[k]) > 1e-3:
+            ri = abs((va[k + 1] - va[k]) / di[k])
+    return ri, 0.0, 0.0, 0.0, False
+
+
+def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
+                   profile: BatteryProfile, is_hppc: bool, soh=None) -> dict:
+    """Run the unified analysis on raw series → the standard results dict.
+
+    ``current_a`` discharge-positive; ``capacity_series`` is the per-sample
+    cumulative Ah; ``soh`` may be supplied (live estimator) else it is computed
+    from capacity ÷ rated."""
+    v = np.asarray(voltage_v, float)
+    t = np.asarray(temp_c, float)
+    q = np.asarray(capacity_series, float)
+    capacity = float(q[-1]) if q.size else 0.0
+    if soh is None:
+        soh = (100.0 * capacity / profile.capacity_ah) if profile.capacity_ah else 0.0
+    soh = float(min(120.0, max(0.0, soh)))
+
+    r0, r1, c1, tau, ecm = identify_ecm(time_s, current_a, voltage_v, profile, is_hppc)
+    if ecm:
+        grade = Analytics.grade_from_ecm(soh, r0, r1, profile)
+        ri_total = r0 + r1
+    else:
+        ri_total = r0
+        grade = Analytics.grade(soh, ri_total, profile)
+
+    ica_v, ica = Analytics.incremental_capacity(v, q)
+    dtv_v, dtv = Analytics.differential_thermal(v, t)
+    return {
+        "soh": soh, "capacity_ah": capacity,
+        "r0_mohm": r0 * 1000.0, "r1_mohm": r1 * 1000.0,
+        "c1_farad": c1, "tau_s": tau, "ri_mohm": ri_total * 1000.0,
+        "ecm_identified": ecm, "grade": grade,
+        "ica": (ica_v, ica), "dtv": (dtv_v, dtv),
+    }
+
+
+def _read_csv(path):
+    """Read a canonical (or lowercase) telemetry CSV → arrays + mode strings."""
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        hdr = {h.strip().lower(): h for h in (reader.fieldnames or [])}
+
+        def col(name):
+            return hdr.get(name.lower())
+
+        c_t, c_v, c_i = col("Elapsed_s"), col("Voltage_V"), col("Current_A")
+        c_temp, c_cap, c_mode = col("Temperature_C"), col("Capacity_Ah"), col("Mode")
+        T, V, I, TEMP, CAP, modes = [], [], [], [], [], []
+        for r in reader:
+            def num(c, default=float("nan")):
+                try:
+                    return float(r[c]) if c else default
+                except (ValueError, TypeError, KeyError):
+                    return default
+            T.append(num(c_t)); V.append(num(c_v)); I.append(num(c_i))
+            TEMP.append(num(c_temp, 25.0)); CAP.append(num(c_cap))
+            modes.append(r[c_mode] if c_mode else "")
+    return (np.asarray(T, float), np.asarray(V, float), np.asarray(I, float),
+            np.asarray(TEMP, float), np.asarray(CAP, float), modes)
+
+
+def analyze_csv(csv_path: str, profile: BatteryProfile) -> dict:
+    """Parse a telemetry CSV and run the unified analysis. HPPC is inferred from
+    the ``Mode`` column; capacity is integrated from current if not logged."""
+    if not csv_path or not os.path.exists(csv_path):
+        raise FileNotFoundError(csv_path or "(no CSV)")
+    t, v, i, temp, cap, modes = _read_csv(csv_path)
+    if t.size < 2:
+        raise ValueError("CSV has too few samples to analyse.")
+    is_hppc = any("hppc" in (m or "").lower() for m in modes)
+    if np.all(np.isnan(cap)):                       # no capacity column → integrate
+        dt = np.diff(t, prepend=t[0])
+        cap = np.cumsum(np.clip(i, 0, None) * dt) / 3600.0
+    return analyze_series(t, i, v, temp, cap, profile, is_hppc)
