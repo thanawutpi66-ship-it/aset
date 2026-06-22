@@ -77,9 +77,25 @@ def build_payload(csv_path, max_points):
     }
 
 
+class _NumpySafeEncoder(json.JSONEncoder):
+    """JSON encoder ที่รองรับ numpy scalar/array โดยไม่ต้อง import numpy at module level."""
+    def default(self, obj):
+        t = type(obj).__name__
+        # numpy scalars
+        if hasattr(obj, "item"):
+            try:
+                return obj.item()
+            except Exception:
+                pass
+        # numpy arrays
+        if hasattr(obj, "tolist"):
+            return obj.tolist()
+        return super().default(obj)
+
+
 def push(url, token, payload, timeout=120):
     # timeout เผื่อ cloud cold-start (เช่น Azure B1 ที่ไม่ได้เปิด Always On)
-    data = json.dumps(payload).encode("utf-8")
+    data = json.dumps(payload, cls=_NumpySafeEncoder).encode("utf-8")
     req = urllib.request.Request(
         url.rstrip("/") + "/api/ingest", data=data, method="POST",
         headers={"Content-Type": "application/json", "X-Ingest-Token": token},
