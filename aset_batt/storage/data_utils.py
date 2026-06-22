@@ -96,7 +96,10 @@ def _run_analysis(config_manager, csv_path: str) -> dict:
         from aset_batt.acquisition.analysis import analyze_csv, profile_from_config
         profile = profile_from_config(config_manager)
         result = analyze_csv(csv_path, profile)
-        return result
+        # strip large numpy arrays (ica/dtv) — ไม่ต้องการบน cloud
+        clean = {k: v for k, v in result.items() if k not in ("ica", "dtv")}
+        clean["success"] = True
+        return clean
     except Exception as e:
         return {"success": False, "error": str(e)}
 
