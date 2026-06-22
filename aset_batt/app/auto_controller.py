@@ -290,6 +290,8 @@ class AutoController:
             return False
 
         self.is_charging = True
+        if not self.monitor_running:
+            self.start_monitor()
         threading.Thread(target=self._run_charge_loop,
                          args=(float_hold_s, strategy), daemon=True).start()
         return True

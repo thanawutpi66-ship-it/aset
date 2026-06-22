@@ -31,9 +31,9 @@
     }
   },
   "hardware": {
-    "psu_port": "ASRL1::INSTR",
-    "load_port": "ASRL3::INSTR",
-    "esp_port": "COM5",
+    "psu_port": "ASRL3::INSTR",
+    "load_port": "ASRL5::INSTR",
+    "esp_port": "COM4",
     "visa_timeout": 5000,
     "serial_baudrate": 115200,
     "auto_detect_ports": true
