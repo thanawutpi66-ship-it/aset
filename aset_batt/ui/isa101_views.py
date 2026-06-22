@@ -1047,10 +1047,11 @@ class BatteryQtWindow(QMainWindow):
             if not self._headless:
                 QMessageBox.warning(self, "Run Test", "Connect hardware first")
             return
-        if self.controller and (self.controller.is_charging or self.controller.monitor_running):
-            if not self._headless:
-                QMessageBox.warning(self, "Run Test", "Stop charge/monitor before running a test")
-            return
+        if self.controller and self.controller.is_charging:
+            self.controller.stop_charge()
+            self._log_alarm("Charge stopped (auto) — starting test.")
+        if self.controller and self.controller.monitor_running:
+            self.controller.stop_monitor()
 
         cfg = TestConfig(self._acq_profile(), OperationMode(self.cb_op_mode.currentText()))
         self.buf_t.clear(); self.buf_v.clear(); self.buf_i.clear()
