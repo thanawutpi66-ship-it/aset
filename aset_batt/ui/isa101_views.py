@@ -874,7 +874,18 @@ class BatteryQtWindow(QMainWindow):
             for cb, items in ((self.cb_psu, visa), (self.cb_load, visa), (self.cb_esp, coms)):
                 cb.clear()
                 cb.addItems(items)
-            if len(visa) > 1:
+            # Restore saved selections from config; fall back to positional defaults
+            hw = self.config.hardware if self.config else None
+            def _restore(cb, saved):
+                if saved:
+                    idx = cb.findText(saved)
+                    if idx >= 0:
+                        cb.setCurrentIndex(idx)
+            if hw:
+                _restore(self.cb_psu, hw.psu_port)
+                _restore(self.cb_load, hw.load_port)
+                _restore(self.cb_esp, hw.esp_port)
+            elif len(visa) > 1:
                 self.cb_load.setCurrentIndex(1)
         except Exception as exc:
             logger.error("refresh ports: %s", exc)

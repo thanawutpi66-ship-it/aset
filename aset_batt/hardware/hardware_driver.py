@@ -145,9 +145,11 @@ class HardwareController:
                 return 0.0
 
     def connect_esp32(self, port, callback=None):
+        logger.info("Connecting ESP32 on %s at 115200 baud", port)
         self.esp_serial = serial.Serial(port, 115200, timeout=1)
         self.is_esp_connected = True
         self.last_esp_heartbeat = time.time()
+        logger.info("ESP32 serial opened on %s", port)
         threading.Thread(
             target=self._esp_monitor_loop, args=(callback,), daemon=True
         ).start()
@@ -160,21 +162,46 @@ class HardwareController:
             except Exception:
                 pass
 
+    # Ordered list of patterns tried against each serial line.
+    # Each pattern must have one capture group returning the numeric temperature.
+    _ESP_TEMP_PATTERNS = [
+        re.compile(r"Object\s*=\s*([-+]?\d+\.?\d*)\s*\*?°?C", re.IGNORECASE),
+        re.compile(r"Object\s+Temp[:\s]+([-+]?\d+\.?\d*)", re.IGNORECASE),
+        re.compile(r"T_?obj[:\s]+([-+]?\d+\.?\d*)", re.IGNORECASE),
+        re.compile(r"temp[:\s]+([-+]?\d+\.?\d*)", re.IGNORECASE),
+    ]
+
+    def _parse_esp_temp(self, line: str):
+        """Return float temperature from a serial line, or None if not recognised."""
+        for pat in self._ESP_TEMP_PATTERNS:
+            m = pat.search(line)
+            if m:
+                return float(m.group(1))
+        return None
+
     def _esp_monitor_loop(self, callback):
         self.last_esp_heartbeat = time.time()
+        _unmatched_logged = set()   # avoid log-spamming the same unknown format
         while self.is_esp_connected:
             try:
                 if self.esp_serial.in_waiting > 0:
                     line = self.esp_serial.readline().decode('utf-8', errors='ignore').strip()
-                    if "Object =" in line and "*C" in line:
-                        match = re.search(r"[-+]?\d*\.\d+|\d+", line.split("Object =")[1])
-                        if match:
-                            self.current_temp = float(match.group())
-                            self.last_esp_heartbeat = time.time()
-                            if callback:
-                                callback(self.current_temp)
-            except Exception:
-                pass
+                    if not line:
+                        continue
+                    temp = self._parse_esp_temp(line)
+                    if temp is not None:
+                        self.current_temp = temp
+                        self.last_esp_heartbeat = time.time()
+                        if callback:
+                            callback(temp)
+                    else:
+                        # Log unrecognised lines once so the format can be diagnosed
+                        key = line[:40]
+                        if key not in _unmatched_logged:
+                            logger.debug("ESP32 unmatched line: %r", line)
+                            _unmatched_logged.add(key)
+            except Exception as exc:
+                logger.warning("ESP32 serial error: %s", exc)
             time.sleep(0.05)
 
     def shutdown_all(self):
