@@ -6,6 +6,23 @@
 
 ---
 
+## อัปเดตล่าสุด (2026-06-21) — ข้อจำกัดที่ทราบ ณ ปัจจุบัน
+
+- **ยังเป็น simulation ล้วน:** ค่า R0/R1/C1/SoH/grade ทั้งหมดมาจาก `MockHardwareController`
+  (ตั้งค่าไว้เอง R0=30mΩ/R1=20mΩ/τ=12s) เป็นการพิสูจน์ว่าซอฟต์แวร์คำนวณถูก **ยังไม่เคยรันกับแบตจริง**
+- **ไม่มี reference สำหรับ R1/C1:** เครื่องที่ทีมมี (GW Instek GBM-3080, FNIRSI HRM-10) วัด **ACIR 1kHz**
+  → เทียบได้แค่ **R0 (ACIR≈R0)** + OCV; ส่วน **R1/C1/τ** ไม่มีเครื่องเทียบตรง → validate ด้วย
+  R²≥0.95 + repeatability แทน · **ความจุ/SoH** ใช้ discharge จริงด้วย PEL-3111 เทียบ datasheet/IEC 61960
+- **HPPC พัลส์สั้นทำให้ R1/C1 under-resolved:** แก้แล้วโดยทำ pulse/relaxation duration ปรับได้ (ควร pulse ≳ 3·τ)
+- **ยังไม่มี full test sequence อัตโนมัติ:** ปัจจุบันรันทีละโหมด (charge / discharge / HPPC แยกกัน) —
+  แผนถัดไปคือ **SequenceWorker** ร้อย charge→rest→HPPC→discharge→analyze เป็นไซเคิลเดียว (ดึงค่าจาก profile)
+- **YTZ7V profile ค่าผิด:** ใส่ 7Ah/CCA130 แต่ datasheet จริง = 6.3Ah(20HR)/CCA105A → ต้องแก้
+- ⚠️ การ characterize เต็มไซเคิลใช้เวลา **หลายชั่วโมง** (ชาร์จ+พัก+discharge เต็ม) → ต้องมี pause/resume
+
+📄 สถานะ/architecture ล่าสุดทั้งหมด: [../context_summary.md](../context_summary.md)
+
+---
+
 ## 1. ข้อจำกัด (Limitations)
 
 ### 1.1 แบบจำลอง OCV–SoC (ไม่ครอบคลุม hysteresis)

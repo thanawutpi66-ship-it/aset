@@ -1,7 +1,15 @@
 # ASET Battery Characterization System — Engineering Reference
 
 เอกสารนี้สำหรับให้ทีมเข้าใจสถาปัตยกรรม, data flow, threading model, และ tech debt ของระบบตรงกัน
-(อิงโค้ดจริง ณ commit ปัจจุบัน)
+
+> ⚠️ **อัปเดต 2026-06-21 — โครงสร้างเปลี่ยนเป็นแพ็กเกจ `aset_batt/`**
+> โค้ดทั้งหมดย้ายเข้า package แบบ layered: `aset_batt/{app,core,hardware,acquisition,ui,services,storage,web}`
+> ดังนั้น **path แบบ flat ในเอกสารนี้ (เช่น `state_estimator.py`) ตอนนี้อยู่ใต้ `aset_batt/<layer>/`**
+> สิ่งที่เพิ่มใหม่และยังไม่ได้ลงลึกในเอกสารนี้: **acquisition engine** (`aset_batt/acquisition/`:
+> `AcquisitionWorker` QThread + `HardwareBackend` + วิธีวิเคราะห์เดียว `analyze_series/analyze_csv`),
+> **1-RC ECM identifier** (`core/parameter_id.py`), **two-resistance grading**, **HPPC ปรับเวลาได้**
+> 👉 **module map + สถานะล่าสุดที่ถูกต้องที่สุดดูที่ [context_summary.md](context_summary.md) §3**
+> (GUI เหลือ PySide6 ISA-101 ตัวเดียวที่ `aset_batt/ui/isa101_views.py` — ลบ Tkinter + retire PyQt6 แล้ว)
 
 ---
 
@@ -12,7 +20,7 @@
 ประมาณ SoC/SoH/Rin แบบ real-time, บันทึก CSV, และเปิด dashboard ดูผลผ่านเว็บได้
 
 - **Language/runtime:** Python 3.11
-- **UI:** **PySide6 + PyQtGraph** (`main.py` → `ui/qt_views.py` — desktop 5-panel;
+- **UI:** **PySide6 + PyQtGraph** (`main.py` → `aset_batt/ui/isa101_views.py` — ISA-101 HMI desktop;
   cross-thread update ผ่าน Qt signal/slot + `QtRootShim.after()`)
 - **Instrument I/O:** PyVISA (PSU/Load), pyserial (ESP32 temperature)
 - **Compute:** numpy (core), scipy/pandas/scikit-learn/joblib (optional — analysis/ML)
@@ -25,7 +33,8 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Presentation         ui/qt_views.py (PySide6)  │
+│  Presentation         aset_batt/ui/isa101_views.py (PySide6 ISA-101)        │
+│  Acquisition engine   aset_batt/acquisition/ (worker · backends · analysis)  │
 ├─────────────────────────────────────────────────────────────┤
 │  Orchestration        auto_controller.AutoController          │
 │                       (monitor loop / profile / IEC tests)    │
