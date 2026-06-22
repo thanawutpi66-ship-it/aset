@@ -47,9 +47,17 @@ class AutoController:
             self._trigger_safety(f"Voltage {voltage:.2f}V exceeds limit {limits['max_voltage']}V")
             return False
 
-        if voltage < limits["min_voltage"]:
-            self._trigger_safety(f"Voltage {voltage:.2f}V below limit {limits['min_voltage']}V")
-            return False
+        # Skip UVP while charging — low voltage is expected at the start of a
+        # deep-discharge recovery; only flag voltages that indicate a dead/open cell.
+        if not self.is_charging:
+            if voltage < limits["min_voltage"]:
+                self._trigger_safety(f"Voltage {voltage:.2f}V below limit {limits['min_voltage']}V")
+                return False
+        else:
+            hard_floor = limits.get("min_voltage", 6.0) * 0.5
+            if voltage < hard_floor:
+                self._trigger_safety(f"Voltage {voltage:.2f}V critically low (hard floor {hard_floor:.1f}V)")
+                return False
 
         if abs(current) > limits["max_current"]:
             self._trigger_safety(f"Current {current:.2f}A exceeds limit {limits['max_current']}A")
@@ -283,8 +291,16 @@ class AutoController:
             logger.error("Cannot charge: hardware not connected")
             return False
         if self.safety_triggered:
-            logger.error("Cannot charge: safety triggered — reset ก่อน")
-            return False
+            # Allow charge to proceed if the only reason safety fired was UVP —
+            # deep-discharge recovery requires charging from below the normal floor.
+            v_now = self.hw.read_vi()[0] if self.hw.is_connected else 0.0
+            hard_floor = self.config.system.safety_limits.get("min_voltage", 6.0) * 0.5
+            if v_now >= hard_floor:
+                logger.info("Safety was UVP-only; auto-clearing for charge recovery (%.2fV)", v_now)
+                self.safety_triggered = False
+            else:
+                logger.error("Cannot charge: safety triggered and voltage critically low (%.2fV)", v_now)
+                return False
         if self.estimator is None or self.estimator.battery_model is None:
             logger.error("Cannot charge: battery model unavailable")
             return False
