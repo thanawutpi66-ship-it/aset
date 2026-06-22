@@ -34,6 +34,12 @@
       "rated_capacity_ah": 7.0, "max_voltage_per_cell": 3.65, "min_voltage_per_cell": 2.50,
       "safety_ovp_pack": 15.0, "safety_uvp_pack": 9.0, "mass_grams": 1100.0, "cca_a": 0.0,
       "notes": "แบตมอเตอร์ไซค์ lithium 4S (drop-in replacement)"
+    },
+    "Little Bee MV20-12 (12V 20Ah SLA)": {
+      "chemistry": "LeadAcid", "nominal_voltage_per_cell": 2.0, "cells_series": 6, "cells_parallel": 1,
+      "rated_capacity_ah": 20.0, "max_voltage_per_cell": 2.45, "min_voltage_per_cell": 1.75,
+      "safety_ovp_pack": 15.0, "safety_uvp_pack": 10.0, "mass_grams": 5500.0, "cca_a": 0.0,
+      "notes": "Little Bee MV20-12 SLA/VRLA 12V 20Ah (20HR, ตัด 10.5V); standby/deep-cycle ไม่ใช่แบตสตาร์ท; ค่ามาตรฐานคลาส 20Ah โปรดยืนยันกับฉลากจริง"
     }
   }
 }

@@ -14,7 +14,7 @@
   },
   "system": {
     "max_points": 100,
-    "simulation_mode": true,
+    "simulation_mode": false,
     "enable_web_server": false,
     "csv_filepath": "battery_data.csv",
     "log_level": "INFO",
@@ -31,9 +31,9 @@
     }
   },
   "hardware": {
-    "psu_port": "MOCK::PSU::INSTR",
-    "load_port": "MOCK::LOAD::INSTR",
-    "esp_port": "COM_MOCK",
+    "psu_port": "ASRL1::INSTR",
+    "load_port": "ASRL3::INSTR",
+    "esp_port": "COM5",
     "visa_timeout": 5000,
     "serial_baudrate": 115200,
     "auto_detect_ports": true

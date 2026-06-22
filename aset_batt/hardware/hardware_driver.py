@@ -35,6 +35,16 @@ class HardwareController:
             return []
 
     def connect_instruments(self, psu_port, load_port):
+        for attr in ("psu_inst", "load_inst"):
+            inst = getattr(self, attr, None)
+            if inst is not None:
+                try:
+                    inst.close()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        self.is_connected = False
+
         self.psu_inst = self.rm.open_resource(psu_port)
         self.load_inst = self.rm.open_resource(load_port)
 
