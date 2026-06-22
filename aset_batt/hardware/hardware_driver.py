@@ -144,9 +144,9 @@ class HardwareController:
                 logger.error(f"DCIR Transient Error: {e}")
                 return 0.0
 
-    def connect_esp32(self, port, callback=None):
-        logger.info("Connecting ESP32 on %s at 115200 baud", port)
-        self.esp_serial = serial.Serial(port, 115200, timeout=1)
+    def connect_esp32(self, port, baudrate=9600, callback=None):
+        logger.info("Connecting ESP32 on %s at %d baud", port, baudrate)
+        self.esp_serial = serial.Serial(port, baudrate, timeout=1)
         self.is_esp_connected = True
         self.last_esp_heartbeat = time.time()
         logger.info("ESP32 serial opened on %s", port)
@@ -182,6 +182,7 @@ class HardwareController:
     def _esp_monitor_loop(self, callback):
         self.last_esp_heartbeat = time.time()
         _unmatched_logged = set()   # avoid log-spamming the same unknown format
+        _matched_once = False
         while self.is_esp_connected:
             try:
                 if self.esp_serial.in_waiting > 0:
@@ -190,15 +191,18 @@ class HardwareController:
                         continue
                     temp = self._parse_esp_temp(line)
                     if temp is not None:
+                        if not _matched_once:
+                            logger.info("ESP32 temp parsed OK (format: %r) → %.2f°C", line, temp)
+                            _matched_once = True
                         self.current_temp = temp
                         self.last_esp_heartbeat = time.time()
                         if callback:
                             callback(temp)
                     else:
-                        # Log unrecognised lines once so the format can be diagnosed
+                        # Log unrecognised lines at WARNING (once per unique prefix)
                         key = line[:40]
                         if key not in _unmatched_logged:
-                            logger.debug("ESP32 unmatched line: %r", line)
+                            logger.warning("ESP32 unmatched line (cannot parse temp): %r", line)
                             _unmatched_logged.add(key)
             except Exception as exc:
                 logger.warning("ESP32 serial error: %s", exc)

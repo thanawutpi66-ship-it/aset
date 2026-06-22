@@ -967,7 +967,8 @@ class BatteryQtWindow(QMainWindow):
         try:
             self.hw.connect_instruments(psu, load)
             if esp:
-                self.hw.connect_esp32(esp)
+                baud = getattr(self.config.hardware, "serial_baudrate", 9600)
+                self.hw.connect_esp32(esp, baudrate=baud)
             self.config.hardware.psu_port = psu
             self.config.hardware.load_port = load
             self.config.hardware.esp_port = esp

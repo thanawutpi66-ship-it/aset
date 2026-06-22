@@ -73,7 +73,7 @@ class HardwareConfig:
     load_port: str = ""
     esp_port: str = ""
     visa_timeout: int = 5000
-    serial_baudrate: int = 115200
+    serial_baudrate: int = 9600
     auto_detect_ports: bool = True
 
 class ConfigManager:
