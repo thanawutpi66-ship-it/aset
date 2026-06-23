@@ -57,29 +57,50 @@ def profile_from_config(config) -> BatteryProfile:
     )
 
 
-def identify_dcir(current_a, voltage_v, profile: BatteryProfile):
-    """Single-step DC internal resistance: ``R = |ΔV / ΔI|`` at the largest current step.
+# DCIR rises ~0.4 %/°C; normalise every reading to 25 °C so a battery measured at a
+# warmer terminal isn't graded as artificially "better" (the bench terminal sits ~4 °C
+# above ambient and self-heats during a test).
+_DCIR_TEMP_COEFF = 0.004     # per °C
+_T_REF = 25.0                # °C
+
+
+def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile):
+    """Repeatable single-step DCIR aggregated over EVERY current step in the record.
 
     At the rig's ~5 Hz SCPI readback the instantaneous ohmic step cannot be resolved
-    from the RC relaxation, so a 1-RC ECM (separating R0 / R1 / C1) is **not
-    identifiable** on this hardware — see ``docs/project_pivot.md``. A single-step
-    DCIR is the correct, repeatable resistance metric at this sample rate and is what
-    grading uses.
+    from the RC relaxation, so a 1-RC ECM (R0/R1/C1 separation) is not identifiable
+    (see ``docs/project_pivot.md``). Instead, ``R = |ΔV/ΔI|`` is read at the first
+    sample after each current edge (a consistent ~200 ms readback point), each value
+    is normalised to 25 °C, and the **median across all steps** is reported with its
+    spread — so an HPPC record's many pulses, or repeated load on/off edges, give a
+    repeatable DCIR with a measurable uncertainty instead of a single noisy number.
 
-    Returns ``(dcir_ohm, measured)``. ``measured`` is False (and DCIR falls back to the
-    profile baseline) when no clear current step is present.
+    Returns ``(dcir_ohm_25C, std_ohm, n_steps, measured)``. ``measured`` is False (and
+    DCIR falls back to the profile baseline) when no clear current step is present.
     """
     ia = np.asarray(current_a, float)
     va = np.asarray(voltage_v, float)
-    if ia.size > 3:
-        di = np.diff(ia)
-        k = int(np.argmax(np.abs(di)))
-        if abs(di[k]) > 1e-3:
-            # median baseline before the step (jitter-robust); first sample after it
-            v_before = float(np.median(va[max(0, k - 2):k + 1]))
-            v_after = float(va[k + 1])
-            return abs((v_after - v_before) / di[k]), True
-    return profile.internal_r, False
+    tc = np.asarray(temp_c, float)
+    if ia.size < 4:
+        return profile.internal_r, 0.0, 0, False
+    di = np.diff(ia)
+    thr = max(1e-3, 0.20 * float(np.max(np.abs(ia))))     # a real load edge, not jitter
+    vals = []
+    k = 0
+    while k < di.size:
+        if abs(di[k]) > thr:
+            v_before = float(np.median(va[max(0, k - 2):k + 1]))   # rested/level baseline
+            v_after = float(va[k + 1])                             # first post-edge sample
+            r = abs((v_after - v_before) / di[k])
+            T = float(tc[k + 1]) if (k + 1 < tc.size and not np.isnan(tc[k + 1])) else _T_REF
+            vals.append(r / (1.0 + _DCIR_TEMP_COEFF * (T - _T_REF)))   # → 25 °C
+            k += 2                                                 # skip the paired sample
+        else:
+            k += 1
+    if not vals:
+        return profile.internal_r, 0.0, 0, False
+    arr = np.asarray(vals, float)
+    return float(np.median(arr)), float(np.std(arr)), int(arr.size), True
 
 
 def _load_metrics(current_a, voltage_v, dcir_ohm, profile: BatteryProfile):
@@ -103,6 +124,45 @@ def _load_metrics(current_a, voltage_v, dcir_ohm, profile: BatteryProfile):
     return sag, max(0.0, cca_est), ocv
 
 
+def _quality_flags(current_a, voltage_v, temp_c, profile, is_hppc,
+                   n_steps, reached_cutoff):
+    """Data-integrity checks — a sorting bench must NOT grade on bad measurements.
+    Returns ``(warnings, temp_drift_c)``; an empty warning list means a clean record."""
+    ia = np.abs(np.asarray(current_a, float))
+    tc = np.asarray(temp_c, float)
+    w = []
+    # a rest segment is needed for a trustworthy OCV / SoC anchor
+    head = ia[:min(ia.size, 25)]
+    if head.size and int((head < 0.05).sum()) < 5:
+        w.append("no clear rest before load — OCV/SoC anchor uncertain")
+    if (not is_hppc) and not reached_cutoff:
+        w.append("discharge did not reach cut-off — SoH is partial/under-stated")
+    if n_steps == 0:
+        w.append("no clear current step — DCIR fell back to profile baseline")
+    temp_drift = 0.0
+    if tc.size and not np.all(np.isnan(tc)):
+        temp_drift = float(np.nanmax(tc) - np.nanmin(tc))
+        if temp_drift > 8.0:
+            w.append(f"terminal temperature drifted {temp_drift:.1f} °C during the test")
+    return w, temp_drift
+
+
+def _confidence(dcir_ohm, dcir_std, n_steps, profile, n_warnings):
+    """0..1 grade confidence from (a) DCIR repeatability across steps, (b) distance to
+    the nearest grade boundary, and (c) data-quality warnings. Transparent, not learned."""
+    conf = 1.0
+    if n_steps >= 2 and dcir_ohm > 0:
+        rel = dcir_std / dcir_ohm                     # coefficient of variation
+        conf *= max(0.3, 1.0 - min(1.0, 3.0 * rel))   # ~33 % spread → floor
+    elif n_steps <= 1:
+        conf *= 0.7                                   # single reading — can't assess spread
+    ratio = dcir_ohm / max(1e-6, profile.internal_r)  # grade boundaries live at 1.3/1.7/2.5
+    d = min(abs(ratio - b) for b in (1.3, 1.7, 2.5))
+    conf *= min(1.0, 0.5 + d)                          # sitting on a boundary → less sure
+    conf *= max(0.2, 1.0 - 0.15 * n_warnings)
+    return float(max(0.0, min(1.0, conf)))
+
+
 def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                    profile: BatteryProfile, is_hppc: bool, soh=None) -> dict:
     """Run the unified analysis on raw series → the standard results dict.
@@ -110,35 +170,45 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     ``current_a`` discharge-positive; ``capacity_series`` is the per-sample cumulative
     Ah; ``soh`` may be supplied (live estimator) else computed from capacity ÷ rated.
 
-    Resistance comes from a single-step DCIR (not a 1-RC ECM — unidentifiable at 5 Hz);
-    grading uses SoH + DCIR + the lead-acid load metrics (voltage-sag, CCA proxy)."""
+    Resistance is a temperature-normalised, multi-step DCIR (mean ± spread); grading
+    uses SoH + DCIR + the lead-acid load metrics, with a confidence score and
+    data-quality flags so suspect measurements are surfaced rather than silently graded."""
     v = np.asarray(voltage_v, float)
     q = np.asarray(capacity_series, float)
     capacity = float(q[-1]) if q.size else 0.0
-    # SoH = measured capacity ÷ rated is ONLY valid for a full discharge (100% → cutoff).
-    # An HPPC pulse test moves only a little charge, so its throughput is NOT a capacity
-    # measurement — reporting capacity/rated there yields a meaningless ~0% SoH. When the
-    # caller does not supply a SoH and the test is not a full discharge, SoH is N/A (NaN)
-    # and grading falls back to resistance alone.
+    reached_cutoff = bool(v.size and float(np.min(v)) <= profile.cutoff_v * 1.02)
+    # SoH = measured capacity ÷ rated is ONLY valid for a FULL discharge (100% → cut-off).
+    # HPPC moves little charge, and a discharge stopped early under-states capacity — both
+    # would yield a misleading SoH, so SoH is N/A (NaN) unless a full discharge was seen
+    # (or the caller supplied a SoH). Grading then falls back to resistance alone.
     if soh is None:
-        if is_hppc or not profile.capacity_ah:
-            soh = float("nan")
-        else:
+        if (not is_hppc) and reached_cutoff and profile.capacity_ah:
             soh = 100.0 * capacity / profile.capacity_ah
+        else:
+            soh = float("nan")
     if not np.isnan(soh):
         soh = float(min(120.0, max(0.0, soh)))
 
-    dcir, measured = identify_dcir(current_a, voltage_v, profile)
+    dcir, dcir_std, n_steps, measured = identify_dcir(current_a, voltage_v, temp_c, profile)
     sag, cca_est, ocv = _load_metrics(current_a, voltage_v, dcir, profile)
-    grade = Analytics.grade(soh, dcir, profile)
+    warnings, temp_drift = _quality_flags(current_a, voltage_v, temp_c, profile,
+                                          is_hppc, n_steps, reached_cutoff)
+
+    gradeable = measured or not np.isnan(soh)
+    grade = Analytics.grade(soh, dcir, profile) if gradeable else "REVIEW"
+    confidence = _confidence(dcir, dcir_std, n_steps, profile, len(warnings))
+    if not gradeable:
+        confidence = 0.0
 
     ica_v, ica = Analytics.incremental_capacity(v, q)
     return {
         "soh": soh, "capacity_ah": capacity,
-        "dcir_mohm": dcir * 1000.0, "ri_mohm": dcir * 1000.0,
-        "dcir_measured": measured,
+        "dcir_mohm": dcir * 1000.0, "dcir_std_mohm": dcir_std * 1000.0,
+        "dcir_n_steps": n_steps, "dcir_measured": measured, "dcir_temp_normalised": True,
+        "ri_mohm": dcir * 1000.0,
         "voltage_sag_v": sag, "cca_est_a": cca_est, "ocv_v": ocv,
-        "grade": grade,
+        "grade": grade, "gradeable": gradeable,
+        "confidence": confidence, "quality_warnings": warnings, "temp_drift_c": temp_drift,
         # legacy keys kept for consumers; 1-RC ECM is no longer identified at 5 Hz
         "r0_mohm": dcir * 1000.0, "r1_mohm": 0.0, "c1_farad": 0.0, "tau_s": 0.0,
         "ecm_identified": False,

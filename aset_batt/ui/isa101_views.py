@@ -1101,34 +1101,42 @@ class BatteryQtWindow(QMainWindow):
             "N/A" if soh != soh else f'{soh:.1f} {self.metric_labels["SoH"][1]}')
         self.metric_labels["Rin"][0].setText(f'{results["ri_mohm"]:.1f} {self.metric_labels["Rin"][1]}')
         grade = results["grade"]
-        gc = {"A": OK, "B": INFO, "C": WARN, "REJECT": CRIT}.get(grade, NEUTRAL)
-        self.lbl_grade.setText(grade)
+        gc = {"A": OK, "B": INFO, "C": WARN, "REJECT": CRIT, "REVIEW": NEUTRAL}.get(grade, NEUTRAL)
+        conf = results.get("confidence", 1.0)
+        self.lbl_grade.setText(grade if grade == "REVIEW" else f"{grade}")
         self.lbl_grade.setStyleSheet(
             f"background:{gc}; color:white; border:1px solid {BORDER}; border-radius:6px; padding:10px;")
         dcir = results.get("dcir_mohm", results.get("ri_mohm", 0.0))
+        dstd = results.get("dcir_std_mohm", 0.0)
+        nstep = results.get("dcir_n_steps", 0)
+        warns = results.get("quality_warnings", [])
         self.lbl_analytics.setText(
-            f"Grade {grade} · SoH {soh_txt}% · DCIR {dcir:.1f} mΩ · "
-            f"Sag {results.get('voltage_sag_v', 0.0):.2f} V · "
-            f"CCA~{results.get('cca_est_a', 0.0):.0f} A · "
-            f"Cap {results['capacity_ah']:.3f} Ah")
+            f"Grade {grade} (conf {conf*100:.0f}%) · SoH {soh_txt}% · "
+            f"DCIR {dcir:.1f}±{dstd:.1f} mΩ · Sag {results.get('voltage_sag_v', 0.0):.2f} V · "
+            f"CCA~{results.get('cca_est_a', 0.0):.0f} A · Cap {results['capacity_ah']:.3f} Ah")
         # 5 Hz-measurable sorting features (see project pivot): SoH + DCIR + sag + CCA proxy
         meas = "" if results.get("dcir_measured", True) else "  (no current step → profile baseline)"
-        self.txt_analytics.setPlainText("\n".join([
-            f"Grade:                 {grade}",
+        lines = [
+            f"Grade:                 {grade}   (confidence {conf*100:.0f} %)",
             f"State of Health:       {soh_txt} %",
             f"Capacity:              {results['capacity_ah']:.3f} Ah",
             f"Rested OCV:            {results.get('ocv_v', 0.0):.3f} V",
             "",
-            "Resistance & cranking (single-step DCIR @ ~5 Hz):",
-            f"  DCIR:                {dcir:.2f} mΩ{meas}",
+            "Resistance & cranking (DCIR, normalised to 25 °C):",
+            f"  DCIR:                {dcir:.2f} ± {dstd:.2f} mΩ  (n={nstep} step{'s' if nstep != 1 else ''}){meas}",
             f"  Voltage sag (load):  {results.get('voltage_sag_v', 0.0):.3f} V",
             f"  CCA proxy:           {results.get('cca_est_a', 0.0):.0f} A  (=(OCV−cutoff)/DCIR)",
-        ]))
+        ]
+        if warns:
+            lines += ["", "⚠ Data-quality flags:"] + [f"  • {m}" for m in warns]
+        self.txt_analytics.setPlainText("\n".join(lines))
         iv, ic = results["ica"]
         if len(iv):
             self.plot_ica.clear(); self.plot_ica.plot(iv, ic, pen=pg.mkPen("#1f4e79", width=2))
+        wmsg = f" — {len(warns)} quality flag(s), review" if warns else ""
         self._log_alarm(
-            f"Test complete — Grade {grade}, SoH {soh_txt}%, DCIR {dcir:.1f} mΩ")
+            f"Test complete — Grade {grade} (conf {conf*100:.0f}%), "
+            f"SoH {soh_txt}%, DCIR {dcir:.1f}±{dstd:.1f} mΩ{wmsg}")
 
     def _cleanup_test_thread(self):
         if self._test_thread:

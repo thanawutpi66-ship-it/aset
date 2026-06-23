@@ -240,17 +240,24 @@ class ReportTask(QRunnable):
             Spacer(1, 8 * mm),
         ]
         soh_txt = "N/A" if r["soh"] != r["soh"] else f"{r['soh']:.1f} %"   # NaN → N/A
+        dcir = r.get("dcir_mohm", r.get("ri_mohm", 0.0))
+        dstd = r.get("dcir_std_mohm", 0.0)
+        nstep = r.get("dcir_n_steps", 0)
         rows = [["Profile", p.name], ["Chemistry", p.chemistry],
                 ["Final capacity", f"{r['capacity_ah']:.3f} Ah"],
                 ["State of Health", soh_txt],
-                ["Internal resistance (HPPC)", f"{r['ri_mohm']:.2f} mΩ"],
-                ["Sorting grade", r["grade"]]]
+                ["DCIR (norm. 25 °C)", f"{dcir:.2f} ± {dstd:.2f} mΩ  (n={nstep})"],
+                ["Voltage sag / CCA proxy",
+                 f"{r.get('voltage_sag_v', 0.0):.3f} V  /  {r.get('cca_est_a', 0.0):.0f} A"],
+                ["Sorting grade", f"{r['grade']}  (confidence {r.get('confidence', 1.0) * 100:.0f} %)"]]
         tbl = Table(rows, colWidths=[60 * mm, 100 * mm])
         tbl.setStyle(TableStyle([
             ("FONTSIZE", (0, 0), (-1, -1), 10),
             ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
             ("LINEBELOW", (0, 0), (-1, -1), 0.3, colors.lightgrey),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
-        story += [tbl, Spacer(1, 6 * mm),
-                  Paragraph(f"Raw telemetry: {os.path.basename(self.csv_path)}", styles["Normal"])]
+        story += [tbl, Spacer(1, 6 * mm)]
+        for msg in r.get("quality_warnings", []):
+            story.append(Paragraph(f"⚠ {msg}", styles["Normal"]))
+        story.append(Paragraph(f"Raw telemetry: {os.path.basename(self.csv_path)}", styles["Normal"]))
         doc.build(story)
