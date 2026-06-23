@@ -1,9 +1,15 @@
 """
 Single, unified post-test analysis for the whole application.
 
-Every grade in the app — the live characterization test, the "Analyze CSV" button,
-and the IEC-profile auto-analyze — goes through :func:`analyze_series` /
-:func:`analyze_csv` so there is exactly ONE analysis/grading method:
+Every grade in the **running app** — the live characterization test, the "Analyze
+CSV" button, and the IEC-profile auto-analyze — goes through :func:`analyze_series` /
+:func:`analyze_csv`, so the live grading path is exactly ONE method.
+
+(``aset_batt.core.analysis_module`` contains a *separate* ML/heuristic grader with
+its own A/B/C/D scale; it is NOT wired into live grading — it backs the offline
+training scripts, report_generator, and its own tests. See that module's header.)
+
+The single live method below provides:
 
   * R0/R1/C1/τ via the 1-RC Thevenin ECM identifier (on HPPC pulses);
     single-point ohmic fallback otherwise.
@@ -89,9 +95,18 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     t = np.asarray(temp_c, float)
     q = np.asarray(capacity_series, float)
     capacity = float(q[-1]) if q.size else 0.0
+    # SoH = measured capacity ÷ rated is ONLY valid for a full discharge (100% → cutoff).
+    # An HPPC pulse test moves only a little charge, so its throughput is NOT a capacity
+    # measurement — reporting capacity/rated there yields a meaningless ~0% SoH. When the
+    # caller does not supply a SoH and the test is not a full discharge, SoH is N/A (NaN)
+    # and grading falls back to resistance growth only.
     if soh is None:
-        soh = (100.0 * capacity / profile.capacity_ah) if profile.capacity_ah else 0.0
-    soh = float(min(120.0, max(0.0, soh)))
+        if is_hppc or not profile.capacity_ah:
+            soh = float("nan")
+        else:
+            soh = 100.0 * capacity / profile.capacity_ah
+    if not np.isnan(soh):
+        soh = float(min(120.0, max(0.0, soh)))
 
     r0, r1, c1, tau, ecm = identify_ecm(time_s, current_a, voltage_v, profile, is_hppc)
     if ecm:

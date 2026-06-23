@@ -239,9 +239,10 @@ class ReportTask(QRunnable):
             Paragraph(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), styles["Normal"]),
             Spacer(1, 8 * mm),
         ]
+        soh_txt = "N/A" if r["soh"] != r["soh"] else f"{r['soh']:.1f} %"   # NaN → N/A
         rows = [["Profile", p.name], ["Chemistry", p.chemistry],
                 ["Final capacity", f"{r['capacity_ah']:.3f} Ah"],
-                ["State of Health", f"{r['soh']:.1f} %"],
+                ["State of Health", soh_txt],
                 ["Internal resistance (HPPC)", f"{r['ri_mohm']:.2f} mΩ"],
                 ["Sorting grade", r["grade"]]]
         tbl = Table(rows, colWidths=[60 * mm, 100 * mm])

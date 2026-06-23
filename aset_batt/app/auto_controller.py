@@ -463,6 +463,7 @@ class AutoController:
 
         # Monitor จนกระทั่ง voltage ตกลงถึง cutoff
         start_time = time.time()
+        last_t = start_time           # ใช้คำนวณ dt จริงต่อรอบ (ไม่ hardcode 1.0)
         voltage_data = []
         current_data = []
         time_data = []
@@ -470,7 +471,10 @@ class AutoController:
         while self.is_profile_running:
             voltage, current = self.hw.read_measurements()
             temp = self.hw.current_temp  # ใช้อุณหภูมิจริงจาก ESP (ไม่ hardcode 25°C)
-            elapsed = time.time() - start_time
+            now = time.time()
+            dt = now - last_t            # เวลาจริงต่อรอบ (รวม SCPI latency + sleep)
+            last_t = now
+            elapsed = now - start_time
 
             voltage_data.append(voltage)
             current_data.append(current)
@@ -480,8 +484,8 @@ class AutoController:
             if not self.check_safety_limits(voltage, current, temp):
                 break
 
-            # อัปเดต SoC/Rin แล้ว log ลง CSV เพื่อให้ dashboard เห็นผล IEC test
-            state = self.estimator.update(voltage, current, dt=1.0, temp=temp)
+            # อัปเดต SoC/Rin ด้วย dt จริง (รอบจริง > 1.0s เพราะ SCPI + sleep) แล้ว log
+            state = self.estimator.update(voltage, current, dt=dt, temp=temp)
             self.data.log_row(
                 time.time() - self._start_time, voltage, current,
                 state["soc"], state["rin"] * 1000, temp
@@ -571,19 +575,27 @@ class AutoController:
             self.hw.set_load(True, discharge_current)
             self._ensure_logging()
 
-            # Monitor discharge
+            # Monitor discharge — integrate the MEASURED current (real coulomb counting)
+            # instead of assuming the setpoint flowed for the whole phase.
             start_time = time.time()
+            last_t = start_time
+            last_i = 0.0
+            cap_ah = 0.0
             while self.is_profile_running:
-                voltage = self.hw.read_measurements()[0]
-                self._log_sample(voltage, discharge_current)  # ให้ dashboard เห็น cycle-life
+                voltage, current = self.hw.read_measurements()
+                now = time.time()
+                dt = now - last_t
+                last_t = now
+                i_dis = max(0.0, current)            # discharge-positive; ignore any charge
+                cap_ah += 0.5 * (i_dis + last_i) * dt / 3600.0   # trapezoidal Ah
+                last_i = i_dis
+                self._log_sample(voltage, current)   # log the measured current, not the setpoint
                 if voltage <= self.config.battery.pack_min_voltage:
                     break
                 time.sleep(10)
 
-            # วัด capacity ของ cycle นี้
-            discharge_time = time.time() - start_time
-            capacity_ah = profile.discharge_rate.value * self.config.battery.rated_capacity * (discharge_time / 3600)
-            capacity_history.append(capacity_ah)
+            # capacity ของ cycle นี้ = ประจุที่วัดได้จริง (Ah)
+            capacity_history.append(cap_ah)
 
             # Rest period
             self.hw.set_load(False)

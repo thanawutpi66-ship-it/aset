@@ -92,28 +92,36 @@ class Analytics:
         A cell is downgraded if *either* resistance has grown, so a cell that still
         holds capacity (high SoH) but has a degraded interface (high R1) is correctly
         rejected — which the old single total-Rᵢ metric could miss.
+
+        ``soh`` may be NaN when it is not measurable from this test (e.g. an HPPC
+        pulse test, where partial throughput is NOT a capacity measurement). In that
+        case the cell is graded on resistance growth alone rather than fabricating a
+        capacity-based SoH gate.
         """
         r0_base = max(1e-9, Analytics.R0_FRACTION * p.internal_r)
         r1_base = max(1e-9, Analytics.R1_FRACTION * p.internal_r)
         r0_ratio = r0_ohm / r0_base
         r1_ratio = r1_ohm / r1_base
-        if soh >= 90 and r0_ratio <= 1.3 and r1_ratio <= 1.4:
+        soh_unknown = soh is None or np.isnan(soh)
+        if (soh_unknown or soh >= 90) and r0_ratio <= 1.3 and r1_ratio <= 1.4:
             return "A"
-        if soh >= 80 and r0_ratio <= 1.7 and r1_ratio <= 1.8:
+        if (soh_unknown or soh >= 80) and r0_ratio <= 1.7 and r1_ratio <= 1.8:
             return "B"
-        if soh >= 70 and r0_ratio <= 2.5 and r1_ratio <= 2.8:
+        if (soh_unknown or soh >= 70) and r0_ratio <= 2.5 and r1_ratio <= 2.8:
             return "C"
         return "REJECT"
 
     @staticmethod
     def grade(soh: float, ri_ohm: float, p: BatteryProfile) -> str:
         """[fallback] Single total-resistance grading for non-HPPC modes (no RC fit).
-        Prefer :meth:`grade_from_ecm` when R0/R1 are available."""
+        Prefer :meth:`grade_from_ecm` when R0/R1 are available. ``soh`` may be NaN
+        (not measurable) → grade on resistance alone."""
         ri_ratio = ri_ohm / max(1e-6, p.internal_r)
-        if soh >= 90 and ri_ratio <= 1.3:
+        soh_unknown = soh is None or np.isnan(soh)
+        if (soh_unknown or soh >= 90) and ri_ratio <= 1.3:
             return "A"
-        if soh >= 80 and ri_ratio <= 1.7:
+        if (soh_unknown or soh >= 80) and ri_ratio <= 1.7:
             return "B"
-        if soh >= 70 and ri_ratio <= 2.5:
+        if (soh_unknown or soh >= 70) and ri_ratio <= 2.5:
             return "C"
         return "REJECT"

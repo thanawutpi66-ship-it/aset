@@ -1096,7 +1096,11 @@ class BatteryQtWindow(QMainWindow):
         self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
 
     def _on_test_finished(self, results: dict):
-        self.metric_labels["SoH"][0].setText(f'{results["soh"]:.1f} {self.metric_labels["SoH"][1]}')
+        # SoH is N/A when not measurable (e.g. HPPC pulse test — see analyze_series).
+        soh = results["soh"]
+        soh_txt = "N/A" if soh != soh else f"{soh:.1f}"   # soh != soh → NaN
+        self.metric_labels["SoH"][0].setText(
+            "N/A" if soh != soh else f'{soh:.1f} {self.metric_labels["SoH"][1]}')
         self.metric_labels["Rin"][0].setText(f'{results["ri_mohm"]:.1f} {self.metric_labels["Rin"][1]}')
         grade = results["grade"]
         gc = {"A": OK, "B": INFO, "C": WARN, "REJECT": CRIT}.get(grade, NEUTRAL)
@@ -1105,7 +1109,7 @@ class BatteryQtWindow(QMainWindow):
             f"background:{gc}; color:white; border:1px solid {BORDER}; border-radius:6px; padding:10px;")
         ecm = " · 1-RC ECM" if results.get("ecm_identified") else ""
         self.lbl_analytics.setText(
-            f"Grade {grade}{ecm} · SoH {results['soh']:.1f}% · "
+            f"Grade {grade}{ecm} · SoH {soh_txt}% · "
             f"R0 {results['r0_mohm']:.1f} mΩ · R1 {results['r1_mohm']:.1f} mΩ · "
             f"Cap {results['capacity_ah']:.3f} Ah")
         # detailed ECM breakdown
@@ -1113,7 +1117,7 @@ class BatteryQtWindow(QMainWindow):
             else "Internal resistance (single-point)"
         self.txt_analytics.setPlainText("\n".join([
             f"Grade:                 {grade}",
-            f"State of Health:       {results['soh']:.1f} %",
+            f"State of Health:       {soh_txt} %",
             f"Capacity:              {results['capacity_ah']:.3f} Ah",
             "",
             header + ":",
