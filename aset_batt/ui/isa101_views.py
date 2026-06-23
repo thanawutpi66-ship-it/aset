@@ -678,7 +678,9 @@ class BatteryQtWindow(QMainWindow):
         lay.setSpacing(2)
         t = QLabel(name.upper())
         t.setStyleSheet(f"color:{MUTED}; font-size:10px; font-weight:700; letter-spacing:1px; border:0;")
-        val = QLabel(f"0.0 {unit}")
+        # SoH is a final-analysis metric (not live); Rin is only valid under load.
+        # Both start "pending" so a placeholder number is never mistaken for a reading.
+        val = QLabel("—" if name in ("SoH", "Rin") else f"0.0 {unit}")
         val.setFont(QFont("Consolas", 19, QFont.Weight.Bold))
         val.setStyleSheet(f"color:{TEXT}; border:0;")
         lay.addWidget(t)
@@ -765,10 +767,20 @@ class BatteryQtWindow(QMainWindow):
     @Slot(float, float, float, float, float, float)
     def _slot_display(self, v, i, soc, rin, temp, soh):
         rin_mohm = rin * 1000.0
-        values = {"Voltage": v, "Current": i, "SoC": soc, "Rin": rin_mohm, "Temp": temp, "SoH": soh}
-        for name, (lbl, unit) in self.metric_labels.items():
-            fmt = "{:.2f}" if name not in ("SoC", "SoH") else "{:.1f}"
-            lbl.setText(f"{fmt.format(values[name])} {unit}")
+        # LIVE metrics (valid every sample): Voltage, Current, SoC, Temp.
+        live = {"Voltage": (v, "{:.2f}"), "Current": (i, "{:.2f}"),
+                "SoC": (soc, "{:.1f}"), "Temp": (temp, "{:.2f}")}
+        for name, (val, fmt) in live.items():
+            lbl, unit = self.metric_labels[name]
+            lbl.setText(f"{fmt.format(val)} {unit}")
+        # Rin: a DC resistance reading needs current flowing. At rest, (OCV−V)/I is
+        # undefined and explodes on the flat LFP plateau → keep "pending" rather than
+        # show a wild number. The final analysis fills the proper R0+R1.
+        rin_lbl, rin_unit = self.metric_labels["Rin"]
+        if abs(i) >= 0.1:
+            rin_lbl.setText(f"{rin_mohm:.2f} {rin_unit}")
+        # SoH is intentionally NOT updated here — it is a final-analysis metric,
+        # written once by _on_test_finished. (soh arg is kept for signal compatibility.)
 
         if self._elapsed_t0 is None:
             self._elapsed_t0 = datetime.now().timestamp()

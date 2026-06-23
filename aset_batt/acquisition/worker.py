@@ -76,7 +76,6 @@ class AcquisitionWorker(QObject):
         p = self.cfg.profile
         v_hist, q_hist, t_hist = [], [], []
         time_hist, i_hist = [], []          # for 1-RC ECM identification (HPPC)
-        hppc_pulses = []
         f = open(self.csv_path, "w", newline="", encoding="utf-8")
         writer = csv.writer(f)
         # Canonical project schema (matches data_utils.DataHandler / battery_data.csv)
@@ -88,8 +87,12 @@ class AcquisitionWorker(QObject):
             with QMutexLocker(self._io):
                 self.backend.start_mode(self.cfg)
             self.state.emit("RUNNING")
-            t0 = last = time.monotonic()
-            prev_i = 0.0
+            # perf_counter: sub-µs monotonic clock. time.monotonic() on Windows can be
+            # quantized to ~15.6 ms, a ~15 % error on a 100 ms (10 Hz) dt → corrupts the
+            # coulomb integral. Timestamp is captured AT the measurement, not before it.
+            t0 = time.perf_counter()
+            last_t = t0
+            last_i = 0.0                               # discharge-positive
             while True:
                 with QMutexLocker(self._ctrl):
                     if not self._running:
@@ -99,40 +102,47 @@ class AcquisitionWorker(QObject):
                     break
                 if paused:
                     QThread.msleep(40)
-                    last = time.monotonic()
+                    last_t = time.perf_counter()       # don't accrue dt across the pause
+                    last_i = 0.0
                     continue
 
-                now = time.monotonic()
-                dt = now - last
-                last = now
-                elapsed = now - t0
+                elapsed = time.perf_counter() - t0
 
                 with QMutexLocker(self._io):
-                    v, i = self.backend.step(dt, elapsed)      # charge +, discharge −
+                    v, i_raw = self.backend.step(elapsed - (last_t - t0), elapsed)
                     temp = self.backend.read_temperature()
+                t_meas = time.perf_counter()           # timestamp AT the sample
+                # Normalize sign ONCE at the backend boundary: backend returns charge +,
+                # discharge −; the whole worker + analysis speaks discharge-POSITIVE.
+                i = -i_raw
 
-                self.cap_ah += abs(i) * dt / 3600.0
-                # Live SoC/SoH from the real estimator (i_net is discharge-positive).
+                dt = t_meas - last_t
+                if dt <= 0:
+                    dt = period
+                # Trapezoidal coulomb counting on signed current = net Ah removed
+                # (this IS the discharge capacity; charge phases correctly subtract).
+                self.cap_ah += 0.5 * (i + last_i) * dt / 3600.0
+                last_i, last_t = i, t_meas
+
+                # Live SoC from the real estimator (discharge-positive). SoH/R are NOT
+                # live quantities — they come from the final analysis, not per-sample.
                 soc = float("nan")
                 if self.estimator is not None and dt > 0:
                     try:
-                        st = self.estimator.update(v, -i, dt=dt, temp=temp)
+                        st = self.estimator.update(v, i, dt=dt, temp=temp)
                         soc = st.get("soc", float("nan"))
                     except Exception as e:
                         logger.debug("estimator update skipped: %s", e)
 
                 v_hist.append(v); q_hist.append(self.cap_ah); t_hist.append(temp)
                 time_hist.append(elapsed); i_hist.append(i)
-                if self.cfg.mode == OperationMode.HPPC and abs(i - prev_i) > 0.05:
-                    hppc_pulses.append((v, i))
-                prev_i = i
 
                 self._check_safety(v, i, temp, p)
 
                 row = {"elapsed": elapsed, "v": v, "i": i, "cap": self.cap_ah,
                        "soc": soc, "temp": temp, "mode": self.cfg.mode.value}
                 writer.writerow([datetime.now().isoformat(timespec="milliseconds"),
-                                 f"{elapsed:.3f}", f"{v:.4f}", f"{-i:.4f}",  # discharge +
+                                 f"{elapsed:.3f}", f"{v:.4f}", f"{i:.4f}",  # discharge +
                                  f"{soc:.2f}", f"{temp:.2f}", f"{self.cap_ah:.5f}",
                                  self.cfg.mode.value])
                 self.telemetry.emit(row)
@@ -156,8 +166,7 @@ class AcquisitionWorker(QObject):
                     pass
             f.close()
 
-        results = self._post_process(time_hist, i_hist, v_hist, q_hist, t_hist,
-                                     hppc_pulses, p)
+        results = self._post_process(time_hist, i_hist, v_hist, q_hist, t_hist, p)
         self.finished.emit(results)
         if not self._estop:
             self.state.emit("STOPPED")
@@ -167,7 +176,7 @@ class AcquisitionWorker(QObject):
         if v > p.ovp:
             self._oneshot("OVP", "CRITICAL", f"Over-voltage {v:.2f} V > {p.ovp} V")
             self.emergency_stop()
-        elif v < p.uvp and i < 0:
+        elif v < p.uvp and i > 0:    # i discharge-positive → under-voltage while discharging
             self._oneshot("UVP", "WARNING", f"Under-voltage {v:.2f} V < {p.uvp} V")
         if not math.isnan(temp):
             if temp >= p.otp_crit:
@@ -186,15 +195,18 @@ class AcquisitionWorker(QObject):
 
     # ---- post-test analytics ----------------------------------------------
     def _post_process(self, time_hist, i_hist, v_hist, q_hist, t_hist,
-                      hppc_pulses, p: BatteryProfile):
+                      p: BatteryProfile):
         """Delegate to the single application-wide analysis (aset_batt.acquisition.
-        analysis). Worker current is discharge-negative → flip to canonical
-        discharge-positive; supply the estimator's live SoH when available."""
+        analysis). Worker current is already discharge-positive (normalized in run()).
+
+        SoH is a FINAL metric: it is computed by analyze_series from the measured
+        discharge capacity ÷ rated — NOT taken from the estimator's running value
+        (which is not a per-sample quantity and would otherwise override the real
+        capacity-based SoH with a stale/placeholder number)."""
         from aset_batt.acquisition.analysis import analyze_series
-        soh = getattr(self.estimator, "soh", None) if self.estimator is not None else None
-        cur_pos = -np.asarray(i_hist, float)
+        cur_pos = np.asarray(i_hist, float)   # already discharge-positive
         return analyze_series(time_hist, cur_pos, v_hist, t_hist, q_hist, p,
-                              is_hppc=(self.cfg.mode == OperationMode.HPPC), soh=soh)
+                              is_hppc=(self.cfg.mode == OperationMode.HPPC), soh=None)
 
 
 class ReportTask(QRunnable):

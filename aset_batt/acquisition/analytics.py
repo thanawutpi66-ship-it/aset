@@ -38,12 +38,19 @@ class Analytics:
 
     @staticmethod
     def incremental_capacity(v: np.ndarray, q: np.ndarray):
-        """ICA: dQ/dV vs V. Resample onto a monotonic voltage grid, smooth, differentiate."""
+        """ICA: dQ/dV vs V. Resample onto a monotonic voltage grid, smooth, differentiate.
+
+        The voltage axis is de-jittered FIRST: q is single-valued in V only on a clean
+        monotonic sweep, so raw sensor jitter would make V non-monotonic and scramble
+        the q-ordering during the sort (spiking dQ/dV). Smoothing the axis before the
+        sort/unique is what keeps the curve physical."""
         if v.size < 10:
             return np.array([]), np.array([])
-        order = np.argsort(v)
-        vu, idx = np.unique(v[order], return_index=True)
-        qu = q[order][idx]
+        v_s = Analytics.gaussian_smooth(v, 2.0)      # de-jitter the independent axis first
+        q_s = Analytics.gaussian_smooth(q, 2.0)
+        order = np.argsort(v_s)
+        vu, idx = np.unique(v_s[order], return_index=True)
+        qu = q_s[order][idx]
         if vu.size < 10:
             return np.array([]), np.array([])
         grid = np.linspace(vu.min(), vu.max(), 200)
@@ -53,12 +60,14 @@ class Analytics:
 
     @staticmethod
     def differential_thermal(v: np.ndarray, t: np.ndarray):
-        """DTV: dT/dV vs V (thermal fingerprint), same resample/smooth/differentiate."""
+        """DTV: dT/dV vs V (thermal fingerprint). Same axis-first de-jitter as ICA."""
         if v.size < 10:
             return np.array([]), np.array([])
-        order = np.argsort(v)
-        vu, idx = np.unique(v[order], return_index=True)
-        tu = t[order][idx]
+        v_s = Analytics.gaussian_smooth(v, 2.0)      # de-jitter the independent axis first
+        t_s = Analytics.gaussian_smooth(t, 2.0)
+        order = np.argsort(v_s)
+        vu, idx = np.unique(v_s[order], return_index=True)
+        tu = t_s[order][idx]
         if vu.size < 10:
             return np.array([]), np.array([])
         grid = np.linspace(vu.min(), vu.max(), 200)

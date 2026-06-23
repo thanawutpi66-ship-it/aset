@@ -110,10 +110,10 @@ class TestWorkerEcmWiring(unittest.TestCase):
         t_rest = np.arange(0, 10, dt); t_pulse = np.arange(0, 40, dt)
         v = np.concatenate([np.full_like(t_rest, voc),
                             voc - cur * (r0 + r1 * (1 - np.exp(-t_pulse / tau)))])
-        # worker convention: discharge current is NEGATIVE (the worker flips it
-        # internally for the identifier) — use the real convention so the test
-        # exercises the same path as production.
-        i = np.concatenate([np.zeros_like(t_rest), np.full_like(t_pulse, -cur)])
+        # worker convention (post-normalization): current reaching _post_process is
+        # discharge-POSITIVE — the sign is flipped once at the backend boundary in
+        # run(), so i_hist is already canonical here.
+        i = np.concatenate([np.zeros_like(t_rest), np.full_like(t_pulse, cur)])
         tt = np.arange(len(v)) * dt
         q = np.cumsum(np.abs(i)) * dt / 3600.0
         temp = np.full_like(v, 30.0)
@@ -121,7 +121,7 @@ class TestWorkerEcmWiring(unittest.TestCase):
         w = AcquisitionWorker(backend=None,
                               cfg=TestConfig(_profile(), OperationMode.HPPC),
                               csv_path="unused.csv")
-        res = w._post_process(list(tt), list(i), list(v), list(q), list(temp), [], _profile())
+        res = w._post_process(list(tt), list(i), list(v), list(q), list(temp), _profile())
         self.assertTrue(res["ecm_identified"])
         self.assertAlmostEqual(res["r0_mohm"], 12.0, delta=2.0)
         self.assertAlmostEqual(res["r1_mohm"], 18.0, delta=4.0)
