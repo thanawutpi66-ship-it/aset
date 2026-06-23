@@ -651,7 +651,11 @@ class BatteryQtWindow(QMainWindow):
         return panel
 
     def _tab_diagnostics(self):
-        """Post-test ICA dQ/dV + DTV dT/dV curves (populated by the worker)."""
+        """Post-test ICA dQ/dV curve (populated by the worker).
+
+        DTV (dT/dV) was removed: at 12 V / low C-rate with a slow (~240 ms) IR sensor
+        the battery's self-heating is too small/noisy to differentiate usefully on this
+        rig — see docs/project_pivot.md."""
         w = QWidget()
         lay = QHBoxLayout(w)
         self.plot_ica = pg.PlotWidget()
@@ -659,13 +663,7 @@ class BatteryQtWindow(QMainWindow):
         self.plot_ica.setLabel("bottom", "Voltage", units="V")
         self.plot_ica.setLabel("left", "dQ/dV")
         self.plot_ica.setTitle("ICA (Incremental Capacity)")
-        self.plot_dtv = pg.PlotWidget()
-        self.plot_dtv.setBackground(PANEL2)
-        self.plot_dtv.setLabel("bottom", "Voltage", units="V")
-        self.plot_dtv.setLabel("left", "dT/dV")
-        self.plot_dtv.setTitle("DTV (Differential Thermal)")
         lay.addWidget(self.plot_ica, 1)
-        lay.addWidget(self.plot_dtv, 1)
         return w
 
     def _metric_card(self, name, unit):
@@ -1107,35 +1105,30 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_grade.setText(grade)
         self.lbl_grade.setStyleSheet(
             f"background:{gc}; color:white; border:1px solid {BORDER}; border-radius:6px; padding:10px;")
-        ecm = " · 1-RC ECM" if results.get("ecm_identified") else ""
+        dcir = results.get("dcir_mohm", results.get("ri_mohm", 0.0))
         self.lbl_analytics.setText(
-            f"Grade {grade}{ecm} · SoH {soh_txt}% · "
-            f"R0 {results['r0_mohm']:.1f} mΩ · R1 {results['r1_mohm']:.1f} mΩ · "
+            f"Grade {grade} · SoH {soh_txt}% · DCIR {dcir:.1f} mΩ · "
+            f"Sag {results.get('voltage_sag_v', 0.0):.2f} V · "
+            f"CCA~{results.get('cca_est_a', 0.0):.0f} A · "
             f"Cap {results['capacity_ah']:.3f} Ah")
-        # detailed ECM breakdown
-        header = "1-RC Thevenin ECM (HPPC)" if results.get("ecm_identified") \
-            else "Internal resistance (single-point)"
+        # 5 Hz-measurable sorting features (see project pivot): SoH + DCIR + sag + CCA proxy
+        meas = "" if results.get("dcir_measured", True) else "  (no current step → profile baseline)"
         self.txt_analytics.setPlainText("\n".join([
             f"Grade:                 {grade}",
             f"State of Health:       {soh_txt} %",
             f"Capacity:              {results['capacity_ah']:.3f} Ah",
+            f"Rested OCV:            {results.get('ocv_v', 0.0):.3f} V",
             "",
-            header + ":",
-            f"  R0 (ohmic):          {results['r0_mohm']:.2f} mΩ",
-            f"  R1 (charge-transfer):{results['r1_mohm']:.2f} mΩ",
-            f"  C1:                  {results['c1_farad']:.0f} F",
-            f"  tau (R1·C1):         {results['tau_s']:.1f} s",
-            f"  Total DCIR (R0+R1):  {results['ri_mohm']:.2f} mΩ",
+            "Resistance & cranking (single-step DCIR @ ~5 Hz):",
+            f"  DCIR:                {dcir:.2f} mΩ{meas}",
+            f"  Voltage sag (load):  {results.get('voltage_sag_v', 0.0):.3f} V",
+            f"  CCA proxy:           {results.get('cca_est_a', 0.0):.0f} A  (=(OCV−cutoff)/DCIR)",
         ]))
         iv, ic = results["ica"]
         if len(iv):
             self.plot_ica.clear(); self.plot_ica.plot(iv, ic, pen=pg.mkPen("#1f4e79", width=2))
-        dv, dt = results["dtv"]
-        if len(dv):
-            self.plot_dtv.clear(); self.plot_dtv.plot(dv, dt, pen=pg.mkPen("#7a2020", width=2))
         self._log_alarm(
-            f"Test complete — Grade {grade}, SoH {results['soh']:.1f}%, "
-            f"R0 {results['r0_mohm']:.1f} mΩ, R1 {results['r1_mohm']:.1f} mΩ")
+            f"Test complete — Grade {grade}, SoH {soh_txt}%, DCIR {dcir:.1f} mΩ")
 
     def _cleanup_test_thread(self):
         if self._test_thread:

@@ -99,10 +99,11 @@ class TestAnalytics(unittest.TestCase):
         self.assertEqual(Analytics.grade_from_ecm(60, 0.06, 0.05, p), "REJECT")
 
 
-class TestWorkerEcmWiring(unittest.TestCase):
-    """HPPC post-processing must run the 1-RC identifier and grade on R0/R1."""
+class TestWorkerDcirWiring(unittest.TestCase):
+    """Post-processing reports a single-step DCIR (no 1-RC ECM — unidentifiable at
+    ~5 Hz, see docs/project_pivot.md) and grades from it."""
 
-    def test_post_process_identifies_ecm(self):
+    def test_post_process_reports_single_step_dcir(self):
         from aset_batt.acquisition.worker import AcquisitionWorker
         r0, r1, c1, cur, voc = 0.012, 0.018, 1000.0, 8.0, 13.2   # τ=18 s
         tau = r1 * c1
@@ -111,8 +112,7 @@ class TestWorkerEcmWiring(unittest.TestCase):
         v = np.concatenate([np.full_like(t_rest, voc),
                             voc - cur * (r0 + r1 * (1 - np.exp(-t_pulse / tau)))])
         # worker convention (post-normalization): current reaching _post_process is
-        # discharge-POSITIVE — the sign is flipped once at the backend boundary in
-        # run(), so i_hist is already canonical here.
+        # discharge-POSITIVE — the sign is flipped once at the backend boundary in run().
         i = np.concatenate([np.zeros_like(t_rest), np.full_like(t_pulse, cur)])
         tt = np.arange(len(v)) * dt
         q = np.cumsum(np.abs(i)) * dt / 3600.0
@@ -122,9 +122,12 @@ class TestWorkerEcmWiring(unittest.TestCase):
                               cfg=TestConfig(_profile(), OperationMode.HPPC),
                               csv_path="unused.csv")
         res = w._post_process(list(tt), list(i), list(v), list(q), list(temp), _profile())
-        self.assertTrue(res["ecm_identified"])
-        self.assertAlmostEqual(res["r0_mohm"], 12.0, delta=2.0)
-        self.assertAlmostEqual(res["r1_mohm"], 18.0, delta=4.0)
+        # 1-RC ECM is no longer identified; the step DCIR at the load edge ≈ the ohmic
+        # part (the RC has barely grown one sample in), and R1/C1 are reported as 0.
+        self.assertFalse(res["ecm_identified"])
+        self.assertAlmostEqual(res["dcir_mohm"], 12.0, delta=3.0)
+        self.assertEqual(res["r1_mohm"], 0.0)
+        self.assertGreater(res["voltage_sag_v"], 0.0)   # load metric is populated
         self.assertIn(res["grade"], ("A", "B", "C", "REJECT"))
 
 

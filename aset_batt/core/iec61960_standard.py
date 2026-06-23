@@ -123,16 +123,10 @@ class IEC61960Standard:
             temperature=25.0
         )
 
-        # 5. Temperature Performance Tests
-        for temp in [0, 25, 45]:
-            profiles[f"capacity_{temp}c"] = IEC61960TestProfile(
-                test_type=TestType.PERFORMANCE_TEST,
-                name=f"Capacity at {temp}°C",
-                description=f"Measure capacity at {temp}°C",
-                duration_hours=1.0 / 0.5,        # 2 h
-                discharge_rate=DischargeRate.C_05,
-                temperature=temp
-            )
+        # 5. Temperature-performance tests (0 / 25 / 45 °C) are intentionally NOT
+        # offered: the bench has no thermal chamber (single ambient ~25 °C), so a
+        # temperature sweep is not reproducible here. Capacity is characterised at
+        # ambient only. See docs/project_pivot.md.
 
         # 6. Safety Tests (Clause 7)
         profiles["safety_overcharge"] = IEC61960TestProfile(
