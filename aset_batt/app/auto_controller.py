@@ -469,7 +469,7 @@ class AutoController:
         time_data = []
 
         while self.is_profile_running:
-            voltage, current = self.hw.read_measurements()
+            voltage, current = self.hw.read_measurements(prefer_load_v=True)  # discharge → V from load
             temp = self.hw.current_temp  # ใช้อุณหภูมิจริงจาก ESP (ไม่ hardcode 25°C)
             now = time.time()
             dt = now - last_t            # เวลาจริงต่อรอบ (รวม SCPI latency + sleep)
@@ -535,18 +535,18 @@ class AutoController:
         self.hw.set_load(True, i1_set)
         t_end = time.time() + 10.0
         while time.time() < t_end and self.is_profile_running:
-            v, i = self.hw.read_measurements()
+            v, i = self.hw.read_measurements(prefer_load_v=True)   # discharge → V from load
             if not self.check_safety_limits(v, i, self.hw.current_temp):
                 self.hw.set_load(False)
                 return
             self._log_sample(v, i)
             time.sleep(1.0)
-        v1, i1 = self.hw.read_measurements()
+        v1, i1 = self.hw.read_measurements(prefer_load_v=True)
 
         # Pulse 2: 1C นาน 1s (สลับทันทีเพื่อลด relaxation effect ตามมาตรฐาน)
         self.hw.set_load(True, i2_set)
         time.sleep(1.0)
-        v2, i2 = self.hw.read_measurements()
+        v2, i2 = self.hw.read_measurements(prefer_load_v=True)
         self._log_sample(v2, i2)
         self.hw.set_load(False)
 
@@ -582,7 +582,7 @@ class AutoController:
             last_i = 0.0
             cap_ah = 0.0
             while self.is_profile_running:
-                voltage, current = self.hw.read_measurements()
+                voltage, current = self.hw.read_measurements(prefer_load_v=True)  # discharge → V from load
                 now = time.time()
                 dt = now - last_t
                 last_t = now

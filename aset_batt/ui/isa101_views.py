@@ -1122,7 +1122,7 @@ class BatteryQtWindow(QMainWindow):
             f"Capacity:              {results['capacity_ah']:.3f} Ah",
             f"Rested OCV:            {results.get('ocv_v', 0.0):.3f} V",
             "",
-            "Resistance & cranking (DCIR, normalised to 25 °C):",
+            "Resistance & cranking (DCIR @ ~250 ms readback, normalised to 25 °C):",
             f"  DCIR:                {dcir:.2f} ± {dstd:.2f} mΩ  (n={nstep} step{'s' if nstep != 1 else ''}){meas}",
             f"  Voltage sag (load):  {results.get('voltage_sag_v', 0.0):.3f} V",
             f"  CCA proxy:           {results.get('cca_est_a', 0.0):.0f} A  (=(OCV−cutoff)/DCIR)",

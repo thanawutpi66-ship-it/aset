@@ -189,12 +189,30 @@ class HardwareController:
             self.psu_inst = None
             self.load_inst = None
 
-    def read_measurements(self):
-        """Return (voltage, current) for IEC test routines.
+    def read_measurements(self, prefer_load_v=False):
+        """Return (terminal_voltage, current). Convention: discharge = positive.
 
-        Convention: discharge = positive (load_i − psu_i)."""
-        v, psu_i, load_i = self.read_vi()
-        return v, load_i - psu_i
+        Read V and I from the instrument that is actually ACTIVE, so the terminal
+        voltage is always authoritative and the idle instrument is not queried:
+
+          * ``prefer_load_v=True`` (discharge) — V and I from the e-load. The PSU
+            output is OFF; a switching PSU's ``MEAS:VOLT?`` may return 0 when off, so
+            it must NOT be the voltage source during discharge. i_net = +i_load.
+          * ``prefer_load_v=False`` (charge/idle) — V and I from the PSU (it is the
+            active source). i_net = −i_psu.
+
+        NB: verify on the bench that the e-load reports the terminal voltage as
+        expected (``scripts/bench_check.py``); behaviour of MEAS:VOLT? while an
+        output/input is off is instrument-specific.
+        """
+        with self.inst_lock:
+            if prefer_load_v:
+                v = float(self.load_inst.query("MEAS:VOLT?").strip())
+                i_load = float(self.load_inst.query("MEAS:CURR?").strip())
+                return v, i_load
+            v = float(self.psu_inst.query("MEAS:VOLT?").strip())
+            i_psu = float(self.psu_inst.query("MEAS:CURR?").strip())
+            return v, -i_psu
 
     def set_charge(self, state, current_val="0"):
         """Optional charge control hook for IEC cycle-life tests."""

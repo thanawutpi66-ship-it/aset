@@ -246,7 +246,7 @@ class ReportTask(QRunnable):
         rows = [["Profile", p.name], ["Chemistry", p.chemistry],
                 ["Final capacity", f"{r['capacity_ah']:.3f} Ah"],
                 ["State of Health", soh_txt],
-                ["DCIR (norm. 25 °C)", f"{dcir:.2f} ± {dstd:.2f} mΩ  (n={nstep})"],
+                ["DCIR (@~250 ms, 25 °C)", f"{dcir:.2f} ± {dstd:.2f} mΩ  (n={nstep})"],
                 ["Voltage sag / CCA proxy",
                  f"{r.get('voltage_sag_v', 0.0):.3f} V  /  {r.get('cca_est_a', 0.0):.0f} A"],
                 ["Sorting grade", f"{r['grade']}  (confidence {r.get('confidence', 1.0) * 100:.0f} %)"]]
