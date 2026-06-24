@@ -23,6 +23,7 @@ from aset_batt.acquisition.worker import AcquisitionWorker
 from PySide6.QtGui import QDoubleValidator, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -36,8 +37,10 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSplitter,
+    QStackedWidget,
     QTextEdit,
     QTabWidget,
     QVBoxLayout,
@@ -401,34 +404,72 @@ class BatteryQtWindow(QMainWindow):
         return f"background:{color}; color:white; border-radius:3px; padding:5px 12px; font-weight:700; letter-spacing:1px;"
 
     def _build_left_panel(self):
+        # Three workflow zones (SETUP → RUN → TOOLS) instead of six equal blocks, with
+        # the E-STOP pinned ABOVE the scroll area so it is always visible in an
+        # emergency (it used to be buried in a block you had to scroll to).
+        outer = QWidget()
+        ov = QVBoxLayout(outer)
+        ov.setContentsMargins(0, 0, 0, 0)
+        ov.setSpacing(8)
+        ov.addWidget(self._estop_bar())          # pinned, always visible
+
         panel = QWidget()
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(0, 0, 0, 4)
         lay.setSpacing(8)
-        lay.addWidget(self._block_config())
-        lay.addWidget(self._block_connection())
-        lay.addWidget(self._block_manual())
-        lay.addWidget(self._block_operations())
-        lay.addWidget(self._block_safety())
-        lay.addWidget(self._block_data())
+        lay.addWidget(self._zone_setup())        # collapsible — set once, then fold away
+        lay.addWidget(self._zone_run())          # the heart — always open
+        lay.addWidget(self._zone_tools())        # collapsible — advanced, collapsed
         lay.addStretch(1)
 
-        # Wrap in a scroll area so the sidebar never compresses its widgets when the
-        # window is too short (e.g. maximized on a low-height screen) — it scrolls
-        # instead of overlapping comboboxes/lists with their labels.
         scroll = QScrollArea()
         scroll.setWidget(panel)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setMinimumWidth(340)
         scroll.setStyleSheet("QScrollArea { background: transparent; }")
-        return scroll
+        ov.addWidget(scroll, 1)
+        outer.setMinimumWidth(340)
+        return outer
 
-    def _block_config(self):
-        g = QGroupBox("1 · TEST CONFIGURATION")
-        lay = QVBoxLayout(g)
+    # ---- small UI helpers --------------------------------------------------
+    def _subheader(self, text):
+        """Bold caption that groups related controls inside a zone."""
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            f"color:{TEXT}; font-size:11px; font-weight:800; letter-spacing:1px; padding-top:4px;")
+        return lbl
 
+    def _collapsible(self, title, content: QWidget, expanded=True):
+        """A checkable group box whose content shows/hides — a lightweight collapsible
+        section (the title checkbox is the expand/collapse toggle)."""
+        g = QGroupBox(title)
+        g.setCheckable(True)
+        g.setChecked(expanded)
+        v = QVBoxLayout(g)
+        v.addWidget(content)
+        content.setVisible(expanded)
+        g.toggled.connect(content.setVisible)
+        return g
+
+    def _estop_bar(self):
+        self.btn_estop = QPushButton("⛔  EMERGENCY STOP")
+        self.btn_estop.setStyleSheet(
+            f"QPushButton {{ background:{CRIT}; color:white; border:none; border-radius:8px; padding:16px; font-size:16px; font-weight:800; }}"
+            f"QPushButton:hover {{ background:#9b2020; }}"
+        )
+        self.btn_estop.setCursor(Qt.PointingHandCursor)
+        self.btn_estop.clicked.connect(self._on_estop)
+        return self.btn_estop
+
+    # ---- ZONE 1: SETUP (battery + connections) -----------------------------
+    def _zone_setup(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        # Battery selection
+        lay.addWidget(self._subheader("BATTERY"))
         row = QHBoxLayout()
         row.addWidget(QLabel("Battery:"))
         self.cb_product = QComboBox()
@@ -436,11 +477,9 @@ class BatteryQtWindow(QMainWindow):
         self.cb_product.currentTextChanged.connect(self._on_product_changed)
         row.addWidget(self.cb_product, 1)
         lay.addLayout(row)
-
         self.lbl_battery_readout = QLabel("—")
         self.lbl_battery_readout.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_battery_readout)
-
         actions = QHBoxLayout()
         self.btn_detect = _btn("Detect Chemistry", bg="#e0e2e4", hover="#d4d7da")
         self.btn_detect.clicked.connect(self._on_detect_chemistry)
@@ -450,22 +489,9 @@ class BatteryQtWindow(QMainWindow):
         actions.addWidget(self.btn_save_default, 1)
         lay.addLayout(actions)
 
-        # HPPC pulse timing (used by the HPPC test mode). Longer pulse/relaxation
-        # lets the RC transient fully develop so R1/C1 are not under-resolved.
+        # Connections
         lay.addWidget(_hline())
-        hppc = QFormLayout()
-        self.ed_hppc_pulse = QLineEdit("30")
-        self.ed_hppc_pulse.setValidator(QDoubleValidator(1.0, 600.0, 1))
-        self.ed_hppc_relax = QLineEdit("30")
-        self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))
-        hppc.addRow("HPPC pulse (s):", self.ed_hppc_pulse)
-        hppc.addRow("HPPC relax (s):", self.ed_hppc_relax)
-        lay.addLayout(hppc)
-        return g
-
-    def _block_connection(self):
-        g = QGroupBox("2 · CONNECTIONS")
-        lay = QVBoxLayout(g)
+        lay.addWidget(self._subheader("CONNECTIONS"))
         self.cb_psu = QComboBox()
         self.cb_load = QComboBox()
         self.cb_esp = QComboBox()
@@ -474,7 +500,6 @@ class BatteryQtWindow(QMainWindow):
         form.addRow("Load (VISA):", self.cb_load)
         form.addRow("ESP32 (COM):", self.cb_esp)
         lay.addLayout(form)
-
         row = QHBoxLayout()
         self.btn_connect = _btn("Connect", bg=OK, fg="white", hover="#266a2a")
         self.btn_disconnect = _btn("Disconnect", bg=CRIT, fg="white", hover="#9b2020")
@@ -483,65 +508,53 @@ class BatteryQtWindow(QMainWindow):
         row.addWidget(self.btn_connect)
         row.addWidget(self.btn_disconnect)
         lay.addLayout(row)
-
         btn_refresh = _btn("Refresh Ports", bg="#d0d4d7", hover="#c2c6ca")
         btn_refresh.clicked.connect(self._refresh_ports)
         lay.addWidget(btn_refresh)
-        return g
 
-    def _block_manual(self):
-        g = QGroupBox("3 · MANUAL CONTROL")
+        return self._collapsible("1 · SETUP", w, expanded=True)
+
+    # ---- ZONE 2: RUN (charge ⇄ discharge) ----------------------------------
+    def _zone_run(self):
+        g = QGroupBox("2 · RUN")
         lay = QVBoxLayout(g)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("PSU V:"))
-        self.ed_psu_v = QLineEdit("13.8")
-        self.ed_psu_v.setMaximumWidth(72)
-        row.addWidget(self.ed_psu_v)
-        on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
-        off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
-        on.clicked.connect(lambda: self._psu_manual(True))
-        off.clicked.connect(lambda: self._psu_manual(False))
-        row.addWidget(on)
-        row.addWidget(off)
-        lay.addLayout(row)
+        # Operation toggle — swaps the controls below between Charge and Discharge.
+        trow = QHBoxLayout()
+        self.rb_charge = QRadioButton("Charge")
+        self.rb_discharge = QRadioButton("Discharge")
+        self.rb_discharge.setChecked(True)          # grading/discharge is the common task
+        grp = QButtonGroup(self)
+        grp.addButton(self.rb_charge); grp.addButton(self.rb_discharge)
+        trow.addWidget(self.rb_charge)
+        trow.addWidget(self.rb_discharge)
+        trow.addStretch(1)
+        lay.addLayout(trow)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Load A:"))
-        self.ed_load_a = QLineEdit("0.7")
-        self.ed_load_a.setMaximumWidth(72)
-        row.addWidget(self.ed_load_a)
-        on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
-        off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
-        on.clicked.connect(lambda: self._load_manual(True))
-        off.clicked.connect(lambda: self._load_manual(False))
-        row.addWidget(on)
-        row.addWidget(off)
-        lay.addLayout(row)
+        self.run_stack = QStackedWidget()
+        self.run_stack.addWidget(self._charge_page())      # index 0
+        self.run_stack.addWidget(self._discharge_page())   # index 1
+        self.run_stack.setCurrentIndex(1)
+        self.rb_charge.toggled.connect(
+            lambda on: self.run_stack.setCurrentIndex(0 if on else 1))
+        lay.addWidget(self.run_stack)
+
+        # Last grade echo (the full breakdown stays in the Analytics tab).
+        self.lbl_run_grade = QLabel("Grade: —")
+        self.lbl_run_grade.setStyleSheet(f"color:{MUTED}; padding-top:4px;")
+        lay.addWidget(self.lbl_run_grade)
         return g
 
-    def _subheader(self, text):
-        """Bold caption that groups related controls inside a numbered block."""
-        lbl = QLabel(text)
-        lbl.setStyleSheet(
-            f"color:{TEXT}; font-size:11px; font-weight:800; letter-spacing:1px; padding-top:2px;")
-        return lbl
-
-    def _block_operations(self):
-        g = QGroupBox("4 · OPERATIONS")
-        lay = QVBoxLayout(g)
-
-        # ── CHARGE ─────────────────────────────────────────────────────────
-        # All charging in one place: a single charge-mode dropdown (Auto follows the
-        # battery chemistry, or force CC-CV / 3-Stage) + the charge controls.
-        lay.addWidget(self._subheader("CHARGE"))
+    def _charge_page(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
         mrow0 = QHBoxLayout()
         mrow0.addWidget(QLabel("Charge mode:"))
         self.cb_charge_mode = QComboBox()
         self.cb_charge_mode.addItems(["Auto (by chemistry)", "CC-CV", "3-Stage (Lead-Acid)"])
         mrow0.addWidget(self.cb_charge_mode, 1)
         lay.addLayout(mrow0)
-
         crow = QHBoxLayout()
         self.btn_charge = _btn("CHARGE", bg=OK, fg="white", hover="#266a2a")
         self.btn_stop_charge = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
@@ -553,13 +566,12 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_charge = QLabel("Charge idle")
         self.lbl_charge.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_charge)
+        return w
 
-        # ── DISCHARGE ──────────────────────────────────────────────────────
-        # All discharge characterization in one place, with its own mode dropdown.
-        # Only the discharge modes are listed here (CC discharge / HPPC) — charging
-        # lives in the CHARGE section above, so the two aren't mixed in one selector.
-        lay.addWidget(_hline())
-        lay.addWidget(self._subheader("DISCHARGE"))
+    def _discharge_page(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
         trow = QHBoxLayout()
         trow.addWidget(QLabel("Discharge mode:"))
         self.cb_op_mode = QComboBox()
@@ -578,15 +590,58 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_test_status = QLabel("Test idle")
         self.lbl_test_status.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_test_status)
+        return w
 
-        # ── IEC PROFILES ───────────────────────────────────────────────────
+    # ---- ZONE 3: TOOLS (advanced / occasional) -----------------------------
+    def _zone_tools(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        # Manual control
+        lay.addWidget(self._subheader("MANUAL CONTROL"))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("PSU V:"))
+        self.ed_psu_v = QLineEdit("13.8")
+        self.ed_psu_v.setMaximumWidth(72)
+        row.addWidget(self.ed_psu_v)
+        on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
+        off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
+        on.clicked.connect(lambda: self._psu_manual(True))
+        off.clicked.connect(lambda: self._psu_manual(False))
+        row.addWidget(on); row.addWidget(off)
+        lay.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Load A:"))
+        self.ed_load_a = QLineEdit("0.7")
+        self.ed_load_a.setMaximumWidth(72)
+        row.addWidget(self.ed_load_a)
+        on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
+        off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
+        on.clicked.connect(lambda: self._load_manual(True))
+        off.clicked.connect(lambda: self._load_manual(False))
+        row.addWidget(on); row.addWidget(off)
+        lay.addLayout(row)
+
+        # HPPC pulse timing (used by the HPPC discharge mode)
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("HPPC TIMING"))
+        hppc = QFormLayout()
+        self.ed_hppc_pulse = QLineEdit("30")
+        self.ed_hppc_pulse.setValidator(QDoubleValidator(1.0, 600.0, 1))
+        self.ed_hppc_relax = QLineEdit("30")
+        self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))
+        hppc.addRow("HPPC pulse (s):", self.ed_hppc_pulse)
+        hppc.addRow("HPPC relax (s):", self.ed_hppc_relax)
+        lay.addLayout(hppc)
+
+        # IEC profiles
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("IEC PROFILES"))
         self.lst_profiles = QListWidget()
-        self.lst_profiles.setMaximumHeight(120)
+        self.lst_profiles.setMaximumHeight(110)
         self._populate_profiles()
         lay.addWidget(self.lst_profiles)
-
         prow = QHBoxLayout()
         self.btn_start_profile = _btn("RUN", bg=INFO, fg="white", hover="#0d4a89")
         self.btn_start_profile.clicked.connect(self._on_run_profile)
@@ -600,7 +655,7 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_profile_status.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_profile_status)
 
-        # ── LIVE MONITOR ───────────────────────────────────────────────────
+        # Live monitor
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("LIVE MONITOR"))
         mrow = QHBoxLayout()
@@ -612,24 +667,10 @@ class BatteryQtWindow(QMainWindow):
         mrow.addWidget(self.btn_start_monitor)
         mrow.addWidget(self.btn_stop_monitor)
         lay.addLayout(mrow)
-        return g
 
-    def _block_safety(self):
-        g = QGroupBox("5 · SAFETY")
-        lay = QVBoxLayout(g)
-        self.btn_estop = QPushButton("⛔  EMERGENCY STOP")
-        self.btn_estop.setStyleSheet(
-            f"QPushButton {{ background:{CRIT}; color:white; border:none; border-radius:8px; padding:18px; font-size:16px; font-weight:800; }}"
-            f"QPushButton:hover {{ background:#9b2020; }}"
-        )
-        self.btn_estop.setCursor(Qt.PointingHandCursor)
-        self.btn_estop.clicked.connect(self._on_estop)
-        lay.addWidget(self.btn_estop)
-        return g
-
-    def _block_data(self):
-        g = QGroupBox("6 · DATA")
-        lay = QVBoxLayout(g)
+        # Data / report
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("DATA & REPORT"))
         self.lbl_csv = QLabel(f"CSV: {self.config.system.csv_filepath}")
         self.lbl_csv.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_csv)
@@ -642,7 +683,8 @@ class BatteryQtWindow(QMainWindow):
         btn_dash = _btn("Open Cloud Dashboard", bg="#d0d4d7", hover="#c2c6ca")
         btn_dash.clicked.connect(self._on_open_dashboard)
         lay.addWidget(btn_dash)
-        return g
+
+        return self._collapsible("3 · TOOLS", w, expanded=False)
 
     def _build_right_panel(self):
         panel = QWidget()
@@ -1163,6 +1205,10 @@ class BatteryQtWindow(QMainWindow):
         if len(iv):
             self.plot_ica.clear(); self.plot_ica.plot(iv, ic, pen=pg.mkPen("#1f4e79", width=2))
         wmsg = f" — {len(warns)} quality flag(s), review" if warns else ""
+        # echo the headline grade in the RUN zone (full breakdown is in this tab)
+        if hasattr(self, "lbl_run_grade"):
+            self.lbl_run_grade.setText(
+                f"Grade: {grade} · SoH {soh_txt}% · conf {conf*100:.0f}%")
         self._log_alarm(
             f"Test complete — Grade {grade} (conf {conf*100:.0f}%), "
             f"SoH {soh_txt}%, DCIR {dcir:.1f}±{dstd:.1f} mΩ{wmsg}")
