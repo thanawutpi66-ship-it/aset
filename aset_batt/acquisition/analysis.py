@@ -45,6 +45,9 @@ def profile_from_config(config) -> BatteryProfile:
     except Exception:
         rin = 0.03
     otp = float(s.get("max_temperature", 55.0))
+    # Peukert exponent by chemistry: lead-acid capacity is markedly rate-dependent,
+    # lithium almost not.
+    peukert = 1.20 if "lead" in (b.battery_type or "").lower() else 1.05
     return BatteryProfile(
         name=b.battery_type, chemistry=b.battery_type,
         nominal_v=b.pack_nominal_voltage, series=b.cells_series,
@@ -54,6 +57,7 @@ def profile_from_config(config) -> BatteryProfile:
         ovp=float(s.get("max_voltage", b.pack_max_voltage + 1)),
         uvp=float(s.get("min_voltage", b.pack_min_voltage - 1)),
         otp_warn=max(0.0, otp - 10.0), otp_crit=otp, internal_r=float(max(1e-4, rin)),
+        peukert_k=peukert,
     )
 
 
@@ -62,6 +66,69 @@ def profile_from_config(config) -> BatteryProfile:
 # above ambient and self-heats during a test).
 _DCIR_TEMP_COEFF = 0.004     # per °C
 _T_REF = 25.0                # °C
+
+
+def _reject_outliers_mad(x, n_sigma=3.0):
+    """Drop values that disagree with the median by >n_sigma robust deviations (MAD).
+    A bad contact or a pulse caught mid-transient shows up as an outlier DCIR; the
+    median already resists it, but removing it first tightens the reported spread."""
+    if x.size < 4:
+        return x
+    med = float(np.median(x))
+    mad = float(np.median(np.abs(x - med)))
+    if mad <= 0:
+        return x
+    keep = np.abs(x - med) <= n_sigma * 1.4826 * mad   # 1.4826: MAD→σ for normal data
+    return x[keep] if keep.any() else x
+
+
+def peukert_capacity(capacity_ah, mean_current_a, rated_ah, k, ref_c_rate=0.2):
+    """Normalise a measured discharge capacity to a reference C-rate (Peukert's law).
+
+    Available capacity falls as the discharge rate rises (strongly for lead-acid). With
+    ``C = C_p / I^(k-1)``, a capacity measured at current ``I`` maps to the reference
+    rate ``I_ref = ref_c_rate·rated`` by ``C_ref = C·(I/I_ref)^(k-1)`` — so a high-rate
+    test isn't unfairly graded low. Lithium (k≈1.05) → almost no change."""
+    i_ref = ref_c_rate * rated_ah
+    if mean_current_a <= 0 or i_ref <= 0 or k <= 0:
+        return capacity_ah
+    return capacity_ah * (mean_current_a / i_ref) ** (k - 1.0)
+
+
+def dcir_from_vi_slope(currents, voltages):
+    """Robust DCIR from the slope of V vs I across distinct current levels:
+    ``V = OCV − I·R`` → ``R = −slope``. Fitting the slope cancels the OCV intercept, so
+    it is less sensitive than one ΔV/ΔI step. Returns ``(r_ohm, r2)``; r is NaN when
+    fewer than two distinct current levels are present."""
+    I = np.asarray(currents, float)
+    V = np.asarray(voltages, float)
+    if I.size < 2 or float(np.ptp(I)) < 1e-6:
+        return float("nan"), 0.0
+    slope, intercept = np.polyfit(I, V, 1)
+    pred = slope * I + intercept
+    ss_res = float(np.sum((V - pred) ** 2))
+    ss_tot = float(np.sum((V - V.mean()) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    return abs(float(slope)), float(r2)
+
+
+def _vi_levels(current_a, voltage_v):
+    """(current, terminal-voltage) points — one per distinct current level (rest + each
+    load level) — for the V–I slope DCIR. Rest gives the (0, OCV) anchor."""
+    ia = np.asarray(current_a, float)
+    va = np.asarray(voltage_v, float)
+    pts = []
+    rest = np.abs(ia) < 0.05
+    if rest.any():
+        pts.append((0.0, float(np.median(va[rest]))))
+    loaded = np.abs(ia) >= 0.1
+    if loaded.any():
+        keys = np.round(ia, 1)                       # cluster load into 0.1 A levels
+        for lvl in np.unique(keys[loaded]):
+            m = loaded & (keys == lvl)
+            if int(m.sum()) >= 3:
+                pts.append((float(lvl), float(np.median(va[m]))))
+    return pts
 
 
 def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile):
@@ -99,7 +166,7 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile):
             k += 1
     if not vals:
         return profile.internal_r, 0.0, 0, False
-    arr = np.asarray(vals, float)
+    arr = _reject_outliers_mad(np.asarray(vals, float))   # drop disagreeing pulses
     return float(np.median(arr)), float(np.std(arr)), int(arr.size), True
 
 
@@ -205,21 +272,37 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     A confidence score and data-quality flags surface suspect measurements."""
     v = np.asarray(voltage_v, float)
     q = np.asarray(capacity_series, float)
+    ia = np.asarray(current_a, float)
     capacity = float(q[-1]) if q.size else 0.0
     reached_cutoff = bool(v.size and float(np.min(v)) <= profile.cutoff_v * 1.02)
-    # SoH = measured capacity ÷ rated is ONLY valid for a FULL discharge (100% → cut-off).
-    # HPPC moves little charge, and a discharge stopped early under-states capacity — both
-    # would yield a misleading SoH, so SoH is N/A (NaN) unless a full discharge was seen
-    # (or the caller supplied a SoH). Grading then falls back to resistance alone.
+    # Mean discharge current (for Peukert rate-normalisation of capacity).
+    dis = ia[ia > 0.05]
+    mean_dis = float(np.mean(dis)) if dis.size else 0.0
+    # Rate-normalised capacity: a fast discharge under-reads capacity (esp. lead-acid),
+    # so normalise to the reference rate before SoH (Peukert). Lithium ≈ unchanged.
+    cap_norm = peukert_capacity(capacity, mean_dis, profile.capacity_ah,
+                                getattr(profile, "peukert_k", 1.1))
+    # SoH = rate-normalised capacity ÷ rated, ONLY valid for a FULL discharge
+    # (100% → cut-off). HPPC moves little charge, and a discharge stopped early
+    # under-states capacity — both would mislead, so SoH is N/A (NaN) unless a full
+    # discharge was seen (or the caller supplied a SoH).
     if soh is None:
         if (not is_hppc) and reached_cutoff and profile.capacity_ah:
-            soh = 100.0 * capacity / profile.capacity_ah
+            soh = 100.0 * cap_norm / profile.capacity_ah
         else:
             soh = float("nan")
     if not np.isnan(soh):
         soh = float(min(120.0, max(0.0, soh)))
 
     dcir, dcir_std, n_steps, measured = identify_dcir(current_a, voltage_v, temp_c, profile)
+    # Multi-current DCIR: when the record spans ≥2 distinct current levels, the slope of
+    # V vs I gives an OCV-cancelling DCIR (more robust than a single step).
+    levels = _vi_levels(current_a, voltage_v)
+    if len(levels) >= 2:
+        dcir_slope, dcir_slope_r2 = dcir_from_vi_slope(
+            [p[0] for p in levels], [p[1] for p in levels])
+    else:
+        dcir_slope, dcir_slope_r2 = float("nan"), 0.0
     sag, cca_est, ocv = _load_metrics(current_a, voltage_v, dcir, profile)
     warnings, temp_drift = _quality_flags(current_a, voltage_v, temp_c, profile,
                                           is_hppc, n_steps, reached_cutoff)
@@ -256,8 +339,11 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     ica_v, ica = Analytics.incremental_capacity(v, q)
     return {
         "soh": soh, "capacity_ah": capacity,
+        "capacity_norm_ah": cap_norm, "mean_discharge_a": mean_dis,
+        "peukert_k": getattr(profile, "peukert_k", 1.1),
         "dcir_mohm": dcir * 1000.0, "dcir_std_mohm": dcir_std * 1000.0,
         "dcir_n_steps": n_steps, "dcir_measured": measured, "dcir_temp_normalised": True,
+        "dcir_slope_mohm": dcir_slope * 1000.0, "dcir_slope_r2": dcir_slope_r2,
         "ri_mohm": ri_total * 1000.0,
         "voltage_sag_v": sag, "cca_est_a": cca_est, "ocv_v": ocv,
         "grade": grade, "gradeable": gradeable,

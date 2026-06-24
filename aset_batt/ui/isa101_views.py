@@ -1179,10 +1179,15 @@ class BatteryQtWindow(QMainWindow):
             f"CCA~{results.get('cca_est_a', 0.0):.0f} A · Cap {results['capacity_ah']:.3f} Ah")
         # 5 Hz-measurable sorting features (see project pivot): SoH + DCIR + sag + CCA proxy
         meas = "" if results.get("dcir_measured", True) else "  (no current step → profile baseline)"
+        cap_norm = results.get("capacity_norm_ah")
+        cap_line = f"Capacity:              {results['capacity_ah']:.3f} Ah"
+        if cap_norm and abs(cap_norm - results['capacity_ah']) > 1e-4:
+            cap_line += (f"   (rate-norm. {cap_norm:.3f} Ah @"
+                         f" k={results.get('peukert_k', 1.1):.2f}, I̅={results.get('mean_discharge_a', 0):.1f} A)")
         lines = [
             f"Grade:                 {grade}   (confidence {conf*100:.0f} %)",
             f"State of Health:       {soh_txt} %",
-            f"Capacity:              {results['capacity_ah']:.3f} Ah",
+            cap_line,
             f"Rested OCV:            {results.get('ocv_v', 0.0):.3f} V",
             "",
             "Resistance & cranking (DCIR @ ~250 ms readback, normalised to 25 °C):",
@@ -1190,6 +1195,9 @@ class BatteryQtWindow(QMainWindow):
             f"  Voltage sag (load):  {results.get('voltage_sag_v', 0.0):.3f} V",
             f"  CCA proxy:           {results.get('cca_est_a', 0.0):.0f} A  (=(OCV−cutoff)/DCIR)",
         ]
+        slope = results.get("dcir_slope_mohm")
+        if slope is not None and slope == slope and results.get("dcir_slope_r2", 0) >= 0.9:
+            lines.append(f"  DCIR (V–I slope):    {slope:.2f} mΩ  (R² {results['dcir_slope_r2']:.3f}, OCV-cancelled)")
         if results.get("ecm_identified"):
             lines += [
                 "",

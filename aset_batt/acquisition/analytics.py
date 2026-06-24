@@ -37,8 +37,27 @@ class Analytics:
         return p.internal_r
 
     @staticmethod
+    def _savgol_deriv(y: np.ndarray, grid: np.ndarray) -> np.ndarray:
+        """dy/dx via a Savitzky-Golay filter — it fits a local polynomial, so it smooths
+        AND differentiates in one pass and **preserves peak height/position** far better
+        than Gaussian-smoothing then np.gradient (which rounds ICA peaks off). Falls back
+        to the Gaussian path when SciPy isn't available."""
+        n = y.size
+        if n >= 11:
+            try:
+                from scipy.signal import savgol_filter
+                win = min(n if n % 2 == 1 else n - 1, 21)   # odd window ≤ n
+                if win >= 5:
+                    delta = (grid[-1] - grid[0]) / (n - 1)
+                    return savgol_filter(y, win, 3, deriv=1, delta=delta)
+            except Exception:
+                pass
+        return Analytics.gaussian_smooth(np.gradient(Analytics.gaussian_smooth(y, 3.0), grid), 2.0)
+
+    @staticmethod
     def incremental_capacity(v: np.ndarray, q: np.ndarray):
-        """ICA: dQ/dV vs V. Resample onto a monotonic voltage grid, smooth, differentiate.
+        """ICA: dQ/dV vs V. Resample onto a monotonic voltage grid, then take a peak-
+        preserving Savitzky-Golay derivative.
 
         The voltage axis is de-jittered FIRST: q is single-valued in V only on a clean
         monotonic sweep, so raw sensor jitter would make V non-monotonic and scramble
@@ -55,8 +74,7 @@ class Analytics:
             return np.array([]), np.array([])
         grid = np.linspace(vu.min(), vu.max(), 200)
         qg = np.interp(grid, vu, qu)
-        dqdv = np.gradient(Analytics.gaussian_smooth(qg, 3.0), grid)
-        return grid, Analytics.gaussian_smooth(dqdv, 2.0)
+        return grid, Analytics._savgol_deriv(qg, grid)
 
     @staticmethod
     def differential_thermal(v: np.ndarray, t: np.ndarray):
