@@ -163,6 +163,34 @@ def _confidence(dcir_ohm, dcir_std, n_steps, profile, n_warnings):
     return float(max(0.0, min(1.0, conf)))
 
 
+_ECM_MIN_R2 = 0.90      # accept the 1-RC fit only if it explains the transient this well
+
+
+def identify_ecm_fit(time_s, current_a, voltage_v, voc):
+    """1-RC Thevenin fit on an HPPC pulse — the RIGHT use of 5 Hz data.
+
+    The polarisation/diffusion transient has τ ≈ 10–60 s, so a 30 s pulse at 5 Hz gives
+    ~150 points — dense enough for the bounded TRF fit to pin **R1 and C1** precisely.
+    **R0** is the fit's intercept at t=0 (backward extrapolation), which removes the slow
+    transient's contamination that a single 200 ms step would include. (Sub-200 ms
+    dynamics — pure ohmic + fast charge-transfer — are still unresolved at 5 Hz; for that
+    a hardware fast-capture would be needed.) Returns the fit dict, or None if it fails to
+    converge or the fit quality (R²) is too low to trust.
+    """
+    try:
+        from aset_batt.core.parameter_id import BatteryParameterIdentifier
+        res = BatteryParameterIdentifier(smooth_window=5).fit_model(
+            time_s, current_a, voltage_v, voc)
+    except Exception as e:
+        logger.info("1-RC ECM fit skipped (%s) — using single-step DCIR", e)
+        return None
+    if res.get("r_squared", 0.0) < _ECM_MIN_R2 or res.get("R0_ohm", 0.0) <= 0:
+        logger.info("1-RC ECM fit rejected (R²=%.3f) — using single-step DCIR",
+                    res.get("r_squared", 0.0))
+        return None
+    return res
+
+
 def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                    profile: BatteryProfile, is_hppc: bool, soh=None) -> dict:
     """Run the unified analysis on raw series → the standard results dict.
@@ -170,9 +198,11 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     ``current_a`` discharge-positive; ``capacity_series`` is the per-sample cumulative
     Ah; ``soh`` may be supplied (live estimator) else computed from capacity ÷ rated.
 
-    Resistance is a temperature-normalised, multi-step DCIR (mean ± spread); grading
-    uses SoH + DCIR + the lead-acid load metrics, with a confidence score and
-    data-quality flags so suspect measurements are surfaced rather than silently graded."""
+    Resistance: a temperature-normalised multi-step **DCIR@~250 ms** is always reported
+    (robust, repeatable). For HPPC, a **1-RC ECM fit** additionally extracts R0/R1/C1/τ
+    (R1/C1 are well-resolved at 5 Hz; R0 by t=0 extrapolation), used for two-resistance
+    grading when its R² is good — with the DCIR kept as a cross-check and fallback.
+    A confidence score and data-quality flags surface suspect measurements."""
     v = np.asarray(voltage_v, float)
     q = np.asarray(capacity_series, float)
     capacity = float(q[-1]) if q.size else 0.0
@@ -194,9 +224,32 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     warnings, temp_drift = _quality_flags(current_a, voltage_v, temp_c, profile,
                                           is_hppc, n_steps, reached_cutoff)
 
-    gradeable = measured or not np.isnan(soh)
-    grade = Analytics.grade(soh, dcir, profile) if gradeable else "REVIEW"
+    # 1-RC ECM for HPPC (reported ALONGSIDE the DCIR, not instead of it).
+    ecm = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc else None
+    if ecm:
+        r0, r1 = float(ecm["R0_ohm"]), float(ecm["R1_ohm"])
+        c1, tau, r2 = float(ecm["C1_farad"]), float(ecm["tau_s"]), float(ecm["r_squared"])
+        ri_total = r0 + r1
+        # cross-check: the DCIR@~250 ms should sit between R0 and R0+R1; a big gap means
+        # the fit and the step disagree → surface it.
+        if measured and dcir > 0 and not (0.5 * r0 <= dcir <= 1.5 * ri_total):
+            warnings = warnings + [f"DCIR@250ms ({dcir*1e3:.0f} mΩ) disagrees with fit "
+                                   f"R0+R1 ({ri_total*1e3:.0f} mΩ) — check the pulse"]
+    else:
+        r0, r1, c1, tau, r2 = dcir, 0.0, 0.0, 0.0, 0.0
+        ri_total = dcir
+
+    gradeable = measured or bool(ecm) or not np.isnan(soh)
+    if not gradeable:
+        grade = "REVIEW"
+    elif ecm:
+        grade = Analytics.grade_from_ecm(soh, r0, r1, profile)   # two-resistance grading
+    else:
+        grade = Analytics.grade(soh, dcir, profile)
+
     confidence = _confidence(dcir, dcir_std, n_steps, profile, len(warnings))
+    if ecm:
+        confidence *= 0.7 + 0.3 * max(0.0, min(1.0, r2))         # reward a good fit
     if not gradeable:
         confidence = 0.0
 
@@ -205,13 +258,13 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "soh": soh, "capacity_ah": capacity,
         "dcir_mohm": dcir * 1000.0, "dcir_std_mohm": dcir_std * 1000.0,
         "dcir_n_steps": n_steps, "dcir_measured": measured, "dcir_temp_normalised": True,
-        "ri_mohm": dcir * 1000.0,
+        "ri_mohm": ri_total * 1000.0,
         "voltage_sag_v": sag, "cca_est_a": cca_est, "ocv_v": ocv,
         "grade": grade, "gradeable": gradeable,
         "confidence": confidence, "quality_warnings": warnings, "temp_drift_c": temp_drift,
-        # legacy keys kept for consumers; 1-RC ECM is no longer identified at 5 Hz
-        "r0_mohm": dcir * 1000.0, "r1_mohm": 0.0, "c1_farad": 0.0, "tau_s": 0.0,
-        "ecm_identified": False,
+        # 1-RC ECM (HPPC): R0 extrapolated, R1/C1/τ fitted; zeros + ecm=False when only DCIR
+        "r0_mohm": r0 * 1000.0, "r1_mohm": r1 * 1000.0, "c1_farad": c1, "tau_s": tau,
+        "ecm_identified": bool(ecm), "ecm_r2": r2,
         "ica": (ica_v, ica),
     }
 

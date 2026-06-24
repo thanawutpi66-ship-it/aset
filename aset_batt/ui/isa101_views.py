@@ -1127,6 +1127,16 @@ class BatteryQtWindow(QMainWindow):
             f"  Voltage sag (load):  {results.get('voltage_sag_v', 0.0):.3f} V",
             f"  CCA proxy:           {results.get('cca_est_a', 0.0):.0f} A  (=(OCV−cutoff)/DCIR)",
         ]
+        if results.get("ecm_identified"):
+            lines += [
+                "",
+                f"1-RC Thevenin ECM fit (HPPC, R² {results.get('ecm_r2', 0.0):.3f}):",
+                f"  R0 (ohmic, t=0 extrap.): {results['r0_mohm']:.2f} mΩ",
+                f"  R1 (polarisation):       {results['r1_mohm']:.2f} mΩ",
+                f"  C1:                      {results['c1_farad']:.0f} F",
+                f"  τ (R1·C1):               {results['tau_s']:.1f} s",
+                f"  Total (R0+R1):           {results['ri_mohm']:.2f} mΩ",
+            ]
         if warns:
             lines += ["", "⚠ Data-quality flags:"] + [f"  • {m}" for m in warns]
         self.txt_analytics.setPlainText("\n".join(lines))

@@ -99,11 +99,11 @@ class TestAnalytics(unittest.TestCase):
         self.assertEqual(Analytics.grade_from_ecm(60, 0.06, 0.05, p), "REJECT")
 
 
-class TestWorkerDcirWiring(unittest.TestCase):
-    """Post-processing reports a single-step DCIR (no 1-RC ECM — unidentifiable at
-    ~5 Hz, see docs/project_pivot.md) and grades from it."""
+class TestWorkerEcmAndDcirWiring(unittest.TestCase):
+    """HPPC post-processing fits the 1-RC ECM (R1/C1 are resolvable at 5 Hz; R0 by
+    extrapolation) AND reports the single-step DCIR@~250 ms as a cross-check."""
 
-    def test_post_process_reports_single_step_dcir(self):
+    def test_post_process_fits_ecm_and_reports_dcir(self):
         from aset_batt.acquisition.worker import AcquisitionWorker
         r0, r1, c1, cur, voc = 0.012, 0.018, 1000.0, 8.0, 13.2   # τ=18 s
         tau = r1 * c1
@@ -122,12 +122,13 @@ class TestWorkerDcirWiring(unittest.TestCase):
                               cfg=TestConfig(_profile(), OperationMode.HPPC),
                               csv_path="unused.csv")
         res = w._post_process(list(tt), list(i), list(v), list(q), list(temp), _profile())
-        # 1-RC ECM is no longer identified; the step DCIR at the load edge ≈ the ohmic
-        # part (the RC has barely grown one sample in), and R1/C1 are reported as 0.
-        self.assertFalse(res["ecm_identified"])
-        self.assertAlmostEqual(res["dcir_mohm"], 12.0, delta=3.0)
-        self.assertEqual(res["r1_mohm"], 0.0)
-        self.assertGreater(res["voltage_sag_v"], 0.0)   # load metric is populated
+        # clean 1-RC data → the fit recovers R0/R1; the DCIR cross-check is also reported.
+        self.assertTrue(res["ecm_identified"])
+        self.assertGreaterEqual(res["ecm_r2"], 0.9)
+        self.assertAlmostEqual(res["r0_mohm"], 12.0, delta=3.0)
+        self.assertAlmostEqual(res["r1_mohm"], 18.0, delta=5.0)
+        self.assertGreater(res["dcir_mohm"], 0.0)        # single-step DCIR cross-check
+        self.assertGreater(res["voltage_sag_v"], 0.0)    # load metric is populated
         self.assertIn(res["grade"], ("A", "B", "C", "REJECT"))
 
 

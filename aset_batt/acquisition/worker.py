@@ -248,8 +248,13 @@ class ReportTask(QRunnable):
                 ["State of Health", soh_txt],
                 ["DCIR (@~250 ms, 25 °C)", f"{dcir:.2f} ± {dstd:.2f} mΩ  (n={nstep})"],
                 ["Voltage sag / CCA proxy",
-                 f"{r.get('voltage_sag_v', 0.0):.3f} V  /  {r.get('cca_est_a', 0.0):.0f} A"],
-                ["Sorting grade", f"{r['grade']}  (confidence {r.get('confidence', 1.0) * 100:.0f} %)"]]
+                 f"{r.get('voltage_sag_v', 0.0):.3f} V  /  {r.get('cca_est_a', 0.0):.0f} A"]]
+        if r.get("ecm_identified"):
+            rows.append(["1-RC ECM (R² %.3f)" % r.get("ecm_r2", 0.0),
+                         f"R0 {r['r0_mohm']:.2f} · R1 {r['r1_mohm']:.2f} mΩ · "
+                         f"C1 {r['c1_farad']:.0f} F · τ {r['tau_s']:.1f} s"])
+        rows.append(["Sorting grade",
+                     f"{r['grade']}  (confidence {r.get('confidence', 1.0) * 100:.0f} %)"])
         tbl = Table(rows, colWidths=[60 * mm, 100 * mm])
         tbl.setStyle(TableStyle([
             ("FONTSIZE", (0, 0), (-1, -1), 10),

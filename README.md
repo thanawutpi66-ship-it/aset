@@ -34,17 +34,19 @@ HMI** standard: desaturated gray shell, color reserved for alarms, status pills,
 temperature gauge, and grading badges.
 
 It covers the full test flow: connect, manual control, **chemistry-aware charge**
-(Auto / CC-CV / 3-Stage), **characterization test** (CC-CV / CC-discharge) driven by the
-QThread acquisition worker, IEC 61960 profiles (single-ambient), live multi-axis V/I/T trend +
+(Auto / CC-CV / 3-Stage), **characterization test** (CC-CV / CC-discharge / **HPPC**) driven by
+the QThread acquisition worker, IEC 61960 profiles (single-ambient), live multi-axis V/I/T trend +
 digital readouts + temperature gauge, **ICA `dQ/dV`** diagnostics, and **A/B/C/Reject grading**
-from **SoH + single-step DCIR + voltage-sag + CCA proxy** — the features this rig can measure at
-its ~5 Hz SCPI readback. A prominent E-Stop, CSV logging, and a PDF report round it out.
+from **SoH + DCIR@~250 ms + 1-RC ECM (R0/R1/C1, HPPC) + voltage-sag + CCA proxy** — the features
+this rig can measure at its ~5 Hz SCPI readback. A prominent E-Stop, CSV logging, and a PDF report
+round it out.
 
 > **Scope** (see [docs/project_pivot.md](docs/project_pivot.md)): this is a multi-chemistry
-> **grading/sorting** bench, not a high-rate characteriser. 75 Hz acquisition, sharp Ohmic-drop
-> capture, fine **1-RC ECM (R0/R1/C1) separation**, DTV `dT/dV`, and multi-temperature sweeps
-> were dropped — they are not achievable at ~5 Hz / single ambient without extra hardware. The
-> `HPPC` mode and the `parameter_id` 1-RC identifier remain in the tree for reference only.
+> **grading/sorting** bench, not a high-rate characteriser. What ~5 Hz **can** do: a 1-RC ECM
+> fit on an HPPC pulse resolves **R1/C1** well (diffusion τ ≈ 10–60 s → ~150 points/30 s) and
+> **R0** by t=0 extrapolation; the temperature-normalised **DCIR@~250 ms** is reported alongside
+> as a cross-check. What was dropped (needs extra hardware / a thermal chamber): 75 Hz acquisition
+> and pure-ohmic R0 capture (sub-200 ms), DTV `dT/dV`, and multi-temperature sweeps.
 
 ### Acquisition engine (`aset_batt/acquisition/`)
 
@@ -55,7 +57,8 @@ The `QThread` worker, instrument backends, and analytics are a reusable package:
   OCV-corrected SoC/SoH.
 - **`backends.py`** — `HardwareBackend` (drives the project **real HAL** → SCPI/VISA + ESP32
   temperature; use with `MockHardwareController` for no-hardware dev) and `VisaSerialBackend`.
-- **`analytics.py`** — single-step DCIR, ICA `dQ/dV` (Gaussian-smoothed), A/B/C/Reject grading.
+- **`analytics.py`** / **`parameter_id.py`** — DCIR@~250 ms + 1-RC ECM fit (HPPC), ICA `dQ/dV`
+  (Gaussian-smoothed), A/B/C/Reject grading.
 
 The GUI runs a test with `AcquisitionWorker(HardwareBackend(hw), cfg, csv, estimator)`.
 
