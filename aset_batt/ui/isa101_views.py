@@ -638,10 +638,12 @@ class BatteryQtWindow(QMainWindow):
         # IEC profiles
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("IEC PROFILES"))
-        self.lst_profiles = QListWidget()
-        self.lst_profiles.setMaximumHeight(110)
+        prow_sel = QHBoxLayout()
+        prow_sel.addWidget(QLabel("Profile:"))
+        self.cb_profiles = QComboBox()
         self._populate_profiles()
-        lay.addWidget(self.lst_profiles)
+        prow_sel.addWidget(self.cb_profiles, 1)
+        lay.addLayout(prow_sel)
         prow = QHBoxLayout()
         self.btn_start_profile = _btn("RUN", bg=INFO, fg="white", hover="#0d4a89")
         self.btn_start_profile.clicked.connect(self._on_run_profile)
@@ -1229,14 +1231,14 @@ class BatteryQtWindow(QMainWindow):
         self._log_alarm("⛔ E-STOP issued.")
 
     def _populate_profiles(self):
-        self.lst_profiles.clear()
+        self.cb_profiles.clear()
         self._profile_map.clear()
         for tid in self.iec_standard.get_available_tests():
             prof = self.iec_standard.get_test_profile(tid)
             if not prof:
                 continue
             disp = f"[IEC] {prof.name}"
-            self.lst_profiles.addItem(disp)
+            self.cb_profiles.addItem(disp)
             self._profile_map[disp] = ("iec", tid)
 
     def _on_run_profile(self):
@@ -1244,12 +1246,12 @@ class BatteryQtWindow(QMainWindow):
             if not self._headless:
                 QMessageBox.warning(self, "Profile", "Connect hardware first")
             return
-        item = self.lst_profiles.currentItem()
-        if item is None:
+        sel = self.cb_profiles.currentText()
+        if not sel:
             if not self._headless:
                 QMessageBox.warning(self, "Profile", "Select a profile first")
             return
-        ptype, pid = self._profile_map.get(item.text(), (None, None))
+        ptype, pid = self._profile_map.get(sel, (None, None))
         try:
             if ptype == "iec":
                 self.controller.start_iec61960_test(pid, self.iec_standard)
