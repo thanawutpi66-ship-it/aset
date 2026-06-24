@@ -520,11 +520,21 @@ class BatteryQtWindow(QMainWindow):
         lay.addLayout(row)
         return g
 
+    def _subheader(self, text):
+        """Bold caption that groups related controls inside a numbered block."""
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            f"color:{TEXT}; font-size:11px; font-weight:800; letter-spacing:1px; padding-top:2px;")
+        return lbl
+
     def _block_operations(self):
         g = QGroupBox("4 · OPERATIONS")
         lay = QVBoxLayout(g)
 
-        # charge-mode selector — Auto follows battery chemistry, or force a strategy
+        # ── CHARGE ─────────────────────────────────────────────────────────
+        # All charging in one place: a single charge-mode dropdown (Auto follows the
+        # battery chemistry, or force CC-CV / 3-Stage) + the charge controls.
+        lay.addWidget(self._subheader("CHARGE"))
         mrow0 = QHBoxLayout()
         mrow0.addWidget(QLabel("Charge mode:"))
         self.cb_charge_mode = QComboBox()
@@ -544,12 +554,17 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_charge.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_charge)
 
-        # Characterization test — worker-driven (CC-CV / Discharge / HPPC) → ICA/DTV/grade
+        # ── DISCHARGE ──────────────────────────────────────────────────────
+        # All discharge characterization in one place, with its own mode dropdown.
+        # Only the discharge modes are listed here (CC discharge / HPPC) — charging
+        # lives in the CHARGE section above, so the two aren't mixed in one selector.
         lay.addWidget(_hline())
+        lay.addWidget(self._subheader("DISCHARGE"))
         trow = QHBoxLayout()
-        trow.addWidget(QLabel("Test mode:"))
+        trow.addWidget(QLabel("Discharge mode:"))
         self.cb_op_mode = QComboBox()
-        self.cb_op_mode.addItems([m.value for m in OperationMode])
+        self.cb_op_mode.addItems([m.value for m in OperationMode
+                                  if m != OperationMode.CC_CV_CHARGE])
         trow.addWidget(self.cb_op_mode, 1)
         lay.addLayout(trow)
         crow2 = QHBoxLayout()
@@ -564,7 +579,9 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_test_status.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_test_status)
 
+        # ── IEC PROFILES ───────────────────────────────────────────────────
         lay.addWidget(_hline())
+        lay.addWidget(self._subheader("IEC PROFILES"))
         self.lst_profiles = QListWidget()
         self.lst_profiles.setMaximumHeight(120)
         self._populate_profiles()
@@ -583,7 +600,9 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_profile_status.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_profile_status)
 
+        # ── LIVE MONITOR ───────────────────────────────────────────────────
         lay.addWidget(_hline())
+        lay.addWidget(self._subheader("LIVE MONITOR"))
         mrow = QHBoxLayout()
         self.btn_start_monitor = _btn("START MONITOR", bg=OK, fg="white", hover="#266a2a")
         self.btn_stop_monitor = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
