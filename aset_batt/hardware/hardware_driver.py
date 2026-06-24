@@ -22,6 +22,13 @@ class HardwareController:
         self.current_temp = 0.0
         self.last_esp_heartbeat = time.time()
 
+        # Combined-measurement capability per instrument (None=unknown, True/False=cached
+        # after the first probe). MEAS:SCAL:ALL:DC? returns V,I,P from ONE instantaneous
+        # measurement → V and I are simultaneous (no intra-sample skew) and it's one
+        # round-trip instead of two. Probed lazily; falls back to separate MEAS queries.
+        self._psu_all = None
+        self._load_all = None
+
     def get_visa_ports(self):
         try:
             return self.rm.list_resources()
@@ -106,10 +113,29 @@ class HardwareController:
             except Exception as e:
                 logger.error(f"psu_off error: {e}")
 
+    def _meas_vi(self, inst, which):
+        """(voltage, current) from ONE combined measurement when the instrument supports
+        it (``MEAS:SCAL:ALL:DC?`` → ``V,I,P`` — measured at the same instant, single
+        round-trip), else two separate ``MEAS:VOLT?``/``MEAS:CURR?`` queries. The
+        capability is probed once and cached in ``which`` so an unsupported instrument
+        isn't retried every sample. Caller must hold ``inst_lock``."""
+        cap = getattr(self, which)
+        if cap is not False:                       # None (unknown) or True → try combined
+            try:
+                p = inst.query("MEAS:SCAL:ALL:DC?").strip().split(",")
+                v, i = float(p[0]), float(p[1])
+                if cap is None:
+                    setattr(self, which, True)
+                return v, i
+            except Exception:
+                setattr(self, which, False)        # not supported → stop trying
+        v = float(inst.query("MEAS:VOLT?").strip())
+        i = float(inst.query("MEAS:CURR?").strip())
+        return v, i
+
     def read_vi(self):
         with self.inst_lock:
-            v = float(self.psu_inst.query("MEAS:VOLT?").strip())
-            i_psu = float(self.psu_inst.query("MEAS:CURR?").strip())
+            v, i_psu = self._meas_vi(self.psu_inst, "_psu_all")   # combined when supported
             i_load = float(self.load_inst.query("MEAS:CURR?").strip())
             return v, i_psu, i_load
 
@@ -201,17 +227,19 @@ class HardwareController:
           * ``prefer_load_v=False`` (charge/idle) — V and I from the PSU (it is the
             active source). i_net = −i_psu.
 
+        Each read uses a single combined ``MEAS:SCAL:ALL:DC?`` when the instrument
+        supports it (V and I sampled simultaneously — important so the DCIR step isn't
+        skewed — and one round-trip instead of two), else falls back to separate queries.
+
         NB: verify on the bench that the e-load reports the terminal voltage as
         expected (``scripts/bench_check.py``); behaviour of MEAS:VOLT? while an
         output/input is off is instrument-specific.
         """
         with self.inst_lock:
             if prefer_load_v:
-                v = float(self.load_inst.query("MEAS:VOLT?").strip())
-                i_load = float(self.load_inst.query("MEAS:CURR?").strip())
+                v, i_load = self._meas_vi(self.load_inst, "_load_all")
                 return v, i_load
-            v = float(self.psu_inst.query("MEAS:VOLT?").strip())
-            i_psu = float(self.psu_inst.query("MEAS:CURR?").strip())
+            v, i_psu = self._meas_vi(self.psu_inst, "_psu_all")
             return v, -i_psu
 
     def set_charge(self, state, current_val="0"):
