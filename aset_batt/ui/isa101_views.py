@@ -447,16 +447,41 @@ class BatteryQtWindow(QMainWindow):
         return lbl
 
     def _collapsible(self, title, content: QWidget, expanded=True):
-        """A checkable group box whose content shows/hides — a lightweight collapsible
-        section (the title checkbox is the expand/collapse toggle)."""
-        g = QGroupBox(title)
-        g.setCheckable(True)
-        g.setChecked(expanded)
-        v = QVBoxLayout(g)
-        v.addWidget(content)
+        """Collapsible section: header row with ▾/▸ toggle arrow + content widget."""
+        wrapper = QWidget()
+        wlay = QVBoxLayout(wrapper)
+        wlay.setContentsMargins(0, 0, 0, 0)
+        wlay.setSpacing(0)
+
+        # Header row ──────────────────────────────────────────────
+        header = QPushButton(f"{'▾' if expanded else '▸'}  {title}")
+        header.setCheckable(True)
+        header.setChecked(expanded)
+        header.setStyleSheet(
+            "QPushButton {"
+            f"  text-align:left; padding:5px 8px;"
+            f"  background:transparent; border:none; border-bottom:1px solid #333;"
+            f"  color:var(--text-2, #ccc); font-weight:600; font-size:12px;"
+            "}"
+            "QPushButton:hover { background: rgba(255,255,255,0.04); }"
+        )
+        header.setCursor(Qt.PointingHandCursor)
+
         content.setVisible(expanded)
-        g.toggled.connect(content.setVisible)
-        return g
+
+        def _toggle(checked):
+            content.setVisible(checked)
+            arrow = "▾" if checked else "▸"
+            # rebuild label keeping everything after the first space
+            parts = header.text().split("  ", 1)
+            label = parts[1] if len(parts) > 1 else parts[0]
+            header.setText(f"{arrow}  {label}")
+
+        header.toggled.connect(_toggle)
+
+        wlay.addWidget(header)
+        wlay.addWidget(content)
+        return wrapper
 
     def _estop_bar(self):
         self.btn_estop = QPushButton("⛔  EMERGENCY STOP")
@@ -554,72 +579,90 @@ class BatteryQtWindow(QMainWindow):
     ]
 
     def _zone_workflow(self):
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(3)
+        outer = QWidget()
+        outer_lay = QVBoxLayout(outer)
+        outer_lay.setContentsMargins(0, 0, 0, 0)
+        outer_lay.setSpacing(4)
 
-        def _step_row(steps_list, led_list, min_name_w):
+        def _step_widget(steps_list, led_list, min_name_w):
+            """สร้าง widget ที่มีแถว step — คืน widget (ไม่ addLayout โดยตรง)"""
+            sw = QWidget()
+            sl = QVBoxLayout(sw)
+            sl.setContentsMargins(0, 4, 0, 4)
+            sl.setSpacing(2)
             for _num, name, desc in steps_list:
                 row = QHBoxLayout()
                 dot = QLabel("○")
                 dot.setStyleSheet(f"color:{NEUTRAL}; font-size:16px; min-width:22px;")
                 dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 name_lbl = QLabel(name)
-                name_lbl.setStyleSheet(f"color:{MUTED}; font-weight:700; min-width:{min_name_w}px;")
+                name_lbl.setStyleSheet(
+                    f"color:{MUTED}; font-weight:700; min-width:{min_name_w}px;"
+                )
                 desc_lbl = QLabel(desc)
                 desc_lbl.setStyleSheet(f"color:{MUTED}; font-size:11px;")
                 row.addWidget(dot)
                 row.addWidget(name_lbl)
                 row.addWidget(desc_lbl)
                 row.addStretch(1)
-                lay.addLayout(row)
+                sl.addLayout(row)
                 led_list.append((dot, name_lbl))
+            return sw
 
         # ── IEC 61960 Standard ──────────────────────────────────
-        iec_hdr = QLabel("IEC 61960 Standard  ·  ~10–12h (LeadAcid)  /  ~8h (Li-ion)")
-        iec_hdr.setStyleSheet(f"color:{INFO}; font-size:11px; font-weight:700; padding:4px 0 2px 0;")
-        lay.addWidget(iec_hdr)
         self._wf_leds = []
-        _step_row(self._WF_STEPS, self._wf_leds, 65)
-
-        iec_btn_row = QHBoxLayout()
+        iec_content = QWidget()
+        iec_lay = QVBoxLayout(iec_content)
+        iec_lay.setContentsMargins(0, 0, 0, 0)
+        iec_lay.setSpacing(3)
+        iec_lay.addWidget(_step_widget(self._WF_STEPS, self._wf_leds, 65))
         self.btn_auto_seq = _btn("▶  AUTO SEQUENCE", bg=INFO, fg="white", hover="#0d4a89")
-        self.btn_auto_seq.setToolTip("IEC 61960: OCV → Charge (3-stage) → Rest 30 min → Discharge 0.2C → Analyze")
+        self.btn_auto_seq.setToolTip(
+            "IEC 61960: OCV → Charge → Rest 30 min → Discharge 0.2C → Analyze"
+        )
         self.btn_auto_seq.clicked.connect(self._on_auto_sequence)
         self._buttons["btn_auto_seq"] = self.btn_auto_seq
-        iec_btn_row.addWidget(self.btn_auto_seq)
-        lay.addLayout(iec_btn_row)
-
-        lay.addWidget(_hline())
+        iec_lay.addWidget(self.btn_auto_seq)
+        outer_lay.addWidget(
+            self._collapsible(
+                "▸ IEC 61960 Standard  ·  ~10–12h (LeadAcid) / ~8h (Li-ion)",
+                iec_content, expanded=False,
+            )
+        )
 
         # ── Quick Scan ──────────────────────────────────────────
-        qs_hdr = QLabel("Quick Scan  ·  ~1.5h (ทุกเคมี)  ·  Peukert-corrected SoH")
-        qs_hdr.setStyleSheet("color:#e67e22; font-size:11px; font-weight:700; padding:4px 0 2px 0;")
-        lay.addWidget(qs_hdr)
         self._qs_leds = []
-        _step_row(self._QS_STEPS, self._qs_leds, 75)
-
-        qs_btn_row = QHBoxLayout()
+        qs_content = QWidget()
+        qs_lay = QVBoxLayout(qs_content)
+        qs_lay.setContentsMargins(0, 0, 0, 0)
+        qs_lay.setSpacing(3)
+        qs_lay.addWidget(_step_widget(self._QS_STEPS, self._qs_leds, 75))
         self.btn_quick_scan = _btn("⚡  QUICK SCAN", bg="#e67e22", fg="white", hover="#c0392b")
         self.btn_quick_scan.setToolTip("OCV → Rest 5 min → Discharge 1C → Analyze (~1.5h)")
         self.btn_quick_scan.clicked.connect(self._on_quick_scan)
         self._buttons["btn_quick_scan"] = self.btn_quick_scan
-        qs_btn_row.addWidget(self.btn_quick_scan)
-        lay.addLayout(qs_btn_row)
+        qs_lay.addWidget(self.btn_quick_scan)
+        outer_lay.addWidget(
+            self._collapsible(
+                "▸ Quick Scan  ·  ~1.5h  ·  Peukert-corrected SoH",
+                qs_content, expanded=False,
+            )
+        )
 
-        # ── Shared CANCEL + status ──────────────────────────────
+        # ── Shared CANCEL + status (ใช้ร่วมกัน — แสดงเสมอ) ─────
         self.btn_seq_cancel = _btn("■  CANCEL", bg=CRIT, fg="white", hover="#9b2020")
         self.btn_seq_cancel.setEnabled(False)
         self.btn_seq_cancel.clicked.connect(self._on_seq_cancel)
-        lay.addWidget(self.btn_seq_cancel)
+        outer_lay.addWidget(self.btn_seq_cancel)
 
         self.lbl_wf_status = QLabel("เลือก AUTO SEQUENCE (IEC) หรือ QUICK SCAN")
-        self.lbl_wf_status.setStyleSheet(f"color:{MUTED}; font-size:11px; padding-top:2px;")
+        self.lbl_wf_status.setStyleSheet(
+            f"color:{MUTED}; font-size:11px; padding-top:2px;"
+        )
         self.lbl_wf_status.setWordWrap(True)
-        lay.addWidget(self.lbl_wf_status)
+        outer_lay.addWidget(self.lbl_wf_status)
 
-        return self._collapsible("WORKFLOW", w, expanded=True)
+        return self._collapsible("WORKFLOW GUIDE", outer, expanded=True)
 
     # ---- ZONE 2: RUN (charge ⇄ discharge) ----------------------------------
     def _zone_run(self):
