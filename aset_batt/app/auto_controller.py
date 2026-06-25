@@ -319,6 +319,18 @@ class AutoController:
         try:
             # ปิด load ก่อนชาร์จ (กันชาร์จ-ดิสชาร์จพร้อมกัน)
             self.hw.load_off()
+
+            # Pre-charge OCV sync: PSU ยังปิดอยู่ → terminal voltage ≈ OCV
+            # Reset SoC ก่อนเปิด PSU เพื่อให้ตัวเลข SoC/Rin ตรงตั้งแต่ต้น
+            if self.estimator is not None:
+                try:
+                    time.sleep(2.0)   # รอ polarisation หายก่อนวัด
+                    v_ocv, _, _ = self.hw.read_vi()
+                    soc_pre = self.estimator.sync_with_ocv(v_ocv, self.hw.current_temp)
+                    logger.info("Pre-charge OCV sync: %.3fV → SoC %.1f%%", v_ocv, soc_pre)
+                except Exception as exc:
+                    logger.warning("Pre-charge OCV sync failed: %s", exc)
+
             self._charge_ctrl = ChargeController(
                 self.hw, self.config, self.estimator.battery_model,
                 on_update=self._on_charge_update, strategy=strategy,
