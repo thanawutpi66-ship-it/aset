@@ -38,13 +38,21 @@ class BatteryProfile:
     # the full RC tail, so R1/C1 are not truncated/under-resolved by a short pulse.
     hppc_pulse_duration: float = 30.0       # seconds of constant-current load
     hppc_relaxation_duration: float = 30.0  # seconds of rest (relaxation tail) per cycle
+    # Peukert exponent — how strongly available capacity falls with discharge rate.
+    # ~1.0–1.05 for lithium (almost rate-independent), ~1.15–1.30 for lead-acid.
+    # Used to normalise measured capacity to a reference C-rate before SoH.
+    peukert_k: float = 1.10
 
 
 @dataclass
 class TestConfig:
     profile: BatteryProfile
     mode: OperationMode
-    sample_hz: float = 10.0
+    # Target loop rate. The real ceiling is the instruments' SCPI readback (~5 Hz on
+    # the GW Instek PSW/PEL over USB: ~100 ms per MEAS query, and we query two per
+    # sample), so the effective rate is ~3–5 Hz regardless of a higher setting here.
+    # Timing uses the measured per-sample dt (perf_counter), so this is only a target.
+    sample_hz: float = 5.0
 
 
 # Not a pytest test class (name starts with "Test") — tell the collector to skip it.

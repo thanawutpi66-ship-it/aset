@@ -158,8 +158,10 @@ class MockHardwareController:
         self.psu_inst = None
         self.load_inst = _MockInst()
 
-    def read_measurements(self):
-        # Convention: discharge = positive (load_i − psu_i)
+    def read_measurements(self, prefer_load_v=False):
+        # Convention: discharge = positive (load_i − psu_i). The mock has a single
+        # simulated terminal voltage, so prefer_load_v doesn't change V here — the
+        # parameter exists to mirror the real HAL's mode-aware signature.
         v, psu_i, load_i = self.read_vi()
         return v, load_i - psu_i
 

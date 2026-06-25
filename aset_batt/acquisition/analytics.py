@@ -37,28 +37,55 @@ class Analytics:
         return p.internal_r
 
     @staticmethod
+    def _savgol_deriv(y: np.ndarray, grid: np.ndarray) -> np.ndarray:
+        """dy/dx via a Savitzky-Golay filter — it fits a local polynomial, so it smooths
+        AND differentiates in one pass and **preserves peak height/position** far better
+        than Gaussian-smoothing then np.gradient (which rounds ICA peaks off). Falls back
+        to the Gaussian path when SciPy isn't available."""
+        n = y.size
+        if n >= 11:
+            try:
+                from scipy.signal import savgol_filter
+                win = min(n if n % 2 == 1 else n - 1, 21)   # odd window ≤ n
+                if win >= 5:
+                    delta = (grid[-1] - grid[0]) / (n - 1)
+                    return savgol_filter(y, win, 3, deriv=1, delta=delta)
+            except Exception:
+                pass
+        return Analytics.gaussian_smooth(np.gradient(Analytics.gaussian_smooth(y, 3.0), grid), 2.0)
+
+    @staticmethod
     def incremental_capacity(v: np.ndarray, q: np.ndarray):
-        """ICA: dQ/dV vs V. Resample onto a monotonic voltage grid, smooth, differentiate."""
+        """ICA: dQ/dV vs V. Resample onto a monotonic voltage grid, then take a peak-
+        preserving Savitzky-Golay derivative.
+
+        The voltage axis is de-jittered FIRST: q is single-valued in V only on a clean
+        monotonic sweep, so raw sensor jitter would make V non-monotonic and scramble
+        the q-ordering during the sort (spiking dQ/dV). Smoothing the axis before the
+        sort/unique is what keeps the curve physical."""
         if v.size < 10:
             return np.array([]), np.array([])
-        order = np.argsort(v)
-        vu, idx = np.unique(v[order], return_index=True)
-        qu = q[order][idx]
+        v_s = Analytics.gaussian_smooth(v, 2.0)      # de-jitter the independent axis first
+        q_s = Analytics.gaussian_smooth(q, 2.0)
+        order = np.argsort(v_s)
+        vu, idx = np.unique(v_s[order], return_index=True)
+        qu = q_s[order][idx]
         if vu.size < 10:
             return np.array([]), np.array([])
         grid = np.linspace(vu.min(), vu.max(), 200)
         qg = np.interp(grid, vu, qu)
-        dqdv = np.gradient(Analytics.gaussian_smooth(qg, 3.0), grid)
-        return grid, Analytics.gaussian_smooth(dqdv, 2.0)
+        return grid, Analytics._savgol_deriv(qg, grid)
 
     @staticmethod
     def differential_thermal(v: np.ndarray, t: np.ndarray):
-        """DTV: dT/dV vs V (thermal fingerprint), same resample/smooth/differentiate."""
+        """DTV: dT/dV vs V (thermal fingerprint). Same axis-first de-jitter as ICA."""
         if v.size < 10:
             return np.array([]), np.array([])
-        order = np.argsort(v)
-        vu, idx = np.unique(v[order], return_index=True)
-        tu = t[order][idx]
+        v_s = Analytics.gaussian_smooth(v, 2.0)      # de-jitter the independent axis first
+        t_s = Analytics.gaussian_smooth(t, 2.0)
+        order = np.argsort(v_s)
+        vu, idx = np.unique(v_s[order], return_index=True)
+        tu = t_s[order][idx]
         if vu.size < 10:
             return np.array([]), np.array([])
         grid = np.linspace(vu.min(), vu.max(), 200)
@@ -83,28 +110,36 @@ class Analytics:
         A cell is downgraded if *either* resistance has grown, so a cell that still
         holds capacity (high SoH) but has a degraded interface (high R1) is correctly
         rejected — which the old single total-Rᵢ metric could miss.
+
+        ``soh`` may be NaN when it is not measurable from this test (e.g. an HPPC
+        pulse test, where partial throughput is NOT a capacity measurement). In that
+        case the cell is graded on resistance growth alone rather than fabricating a
+        capacity-based SoH gate.
         """
         r0_base = max(1e-9, Analytics.R0_FRACTION * p.internal_r)
         r1_base = max(1e-9, Analytics.R1_FRACTION * p.internal_r)
         r0_ratio = r0_ohm / r0_base
         r1_ratio = r1_ohm / r1_base
-        if soh >= 90 and r0_ratio <= 1.3 and r1_ratio <= 1.4:
+        soh_unknown = soh is None or np.isnan(soh)
+        if (soh_unknown or soh >= 90) and r0_ratio <= 1.3 and r1_ratio <= 1.4:
             return "A"
-        if soh >= 80 and r0_ratio <= 1.7 and r1_ratio <= 1.8:
+        if (soh_unknown or soh >= 80) and r0_ratio <= 1.7 and r1_ratio <= 1.8:
             return "B"
-        if soh >= 70 and r0_ratio <= 2.5 and r1_ratio <= 2.8:
+        if (soh_unknown or soh >= 70) and r0_ratio <= 2.5 and r1_ratio <= 2.8:
             return "C"
         return "REJECT"
 
     @staticmethod
     def grade(soh: float, ri_ohm: float, p: BatteryProfile) -> str:
         """[fallback] Single total-resistance grading for non-HPPC modes (no RC fit).
-        Prefer :meth:`grade_from_ecm` when R0/R1 are available."""
+        Prefer :meth:`grade_from_ecm` when R0/R1 are available. ``soh`` may be NaN
+        (not measurable) → grade on resistance alone."""
         ri_ratio = ri_ohm / max(1e-6, p.internal_r)
-        if soh >= 90 and ri_ratio <= 1.3:
+        soh_unknown = soh is None or np.isnan(soh)
+        if (soh_unknown or soh >= 90) and ri_ratio <= 1.3:
             return "A"
-        if soh >= 80 and ri_ratio <= 1.7:
+        if (soh_unknown or soh >= 80) and ri_ratio <= 1.7:
             return "B"
-        if soh >= 70 and ri_ratio <= 2.5:
+        if (soh_unknown or soh >= 70) and ri_ratio <= 2.5:
             return "C"
         return "REJECT"

@@ -30,9 +30,16 @@
 - โครงสร้าง grader (rule-based / RandomForest), แนวคิด 1RC
 
 ### ❌ ตัด / ลดเป้า (ต้องแก้ objective + แจ้งอาจารย์)
-- **75 Hz / จับ Ohmic Drop คม / แยก R0 ออกจาก Rp ละเอียดด้วย 1RC** → ทำไม่ได้ที่ ~5 Hz
+- **75 Hz / จับ Ohmic Drop คม (R0 ล้วน)** → ทำไม่ได้ที่ ~5 Hz (สเต็ปแรกมาช้า ~200 ms)
 - **Active cutoff เร็วระดับ ms** → เหลือ **software cutoff ผ่าน SCPI (`:INP OFF`/`:OUTP OFF`) + MCB LUMIRA เป็น passive backstop** (ช้ากว่า แต่แบต 12V พลังงานต่ำ รับได้)
 - **ไม่ซื้อ INA226 / DC contactor / isolation / NTC** (ใช้ของเดิม)
+
+> **แก้ความเข้าใจ (สำคัญ):** ข้อความเดิม "แยก R0/Rp ด้วย 1RC ทำไม่ได้ที่ 5Hz" **เหมารวมเกินไป**
+> ความจริง: τ ของ diffusion = 10–60 s → ที่ 5Hz เก็บ 150 จุด/30s **ฟิต R1/C1 ได้แม่นมาก**
+> (พิสูจน์แล้ว: synthetic 5Hz → R0/R1/C1/τ ตรง, R²=1.00). **R0** ใช้ "ลากเส้นย้อนกลับไป t=0"
+> ในการ fit (extrapolation) ได้ดีกว่า single-step ส่วน R0 ล้วน (τ<200ms) เท่านั้นที่ยังต้อง
+> hardware fast-capture (วิธี 3). → โค้ดจึง **เปิด 1-RC fit ไว้สำหรับ HPPC** และรายงานคู่กับ
+> **DCIR@~250 ms** (cross-check/fallback). ดู `aset_batt/acquisition/analysis.py`.
 
 ### ➕ เพิ่มใหม่ (งานหลักของแนวนี้)
 - **Chemistry detector** — แยก lead-acid ↔ lithium จาก features: OCV เต็ม, ความชันเส้น OCV, IR, การคืนแรงดันหลังปลดโหลด

@@ -69,11 +69,15 @@ class IEC61960Standard:
         profiles = {}
 
         # 1. Capacity Measurement Test (Clause 6.2)
+        # Discharge time at a C-rate is 1/C hours (independent of capacity):
+        #   t = capacity / current = capacity / (C·capacity) = 1/C.
+        # The previous capacity/C form was dimensionally wrong (off by a factor of
+        # capacity_ah — e.g. 7 Ah at 0.2C gave 35 h instead of 5 h).
         profiles["capacity_02c"] = IEC61960TestProfile(
             test_type=TestType.CAPACITY_MEASUREMENT,
             name="Rated Capacity (0.2C)",
             description="Measure rated capacity at 0.2C discharge rate",
-            duration_hours=self.battery_capacity_ah / 0.2,  # Time = Capacity/Current
+            duration_hours=1.0 / 0.2,            # 5 h
             discharge_rate=DischargeRate.C_02,
             temperature=25.0
         )
@@ -82,7 +86,7 @@ class IEC61960Standard:
             test_type=TestType.CAPACITY_MEASUREMENT,
             name="Capacity at 1C",
             description="Measure capacity at 1C discharge rate",
-            duration_hours=self.battery_capacity_ah / 1.0,
+            duration_hours=1.0 / 1.0,            # 1 h
             discharge_rate=DischargeRate.C_1,
             temperature=25.0
         )
@@ -92,7 +96,7 @@ class IEC61960Standard:
             test_type=TestType.ENERGY_DENSITY,
             name="Energy Density Measurement",
             description="Measure energy density at 0.5C discharge rate",
-            duration_hours=self.battery_capacity_ah / 0.5,
+            duration_hours=1.0 / 0.5,            # 2 h
             discharge_rate=DischargeRate.C_05,
             temperature=25.0
         )
@@ -111,23 +115,18 @@ class IEC61960Standard:
             test_type=TestType.CYCLE_LIFE,
             name="Cycle Life Test (300 cycles)",
             description="Charge-discharge cycles for life assessment",
-            duration_hours=(self.battery_capacity_ah / 1.0 * 2 + 0.5) * 300,  # Charge + discharge + rest
+            # per cycle: charge (1/C h) + discharge (1/C h) + 0.5 h rest, ×300
+            duration_hours=(1.0 / 1.0 * 2 + 0.5) * 300,
             discharge_rate=DischargeRate.C_1,
             charge_rate=1.0,
             cycles=300,
             temperature=25.0
         )
 
-        # 5. Temperature Performance Tests
-        for temp in [0, 25, 45]:
-            profiles[f"capacity_{temp}c"] = IEC61960TestProfile(
-                test_type=TestType.PERFORMANCE_TEST,
-                name=f"Capacity at {temp}°C",
-                description=f"Measure capacity at {temp}°C",
-                duration_hours=self.battery_capacity_ah / 0.5,
-                discharge_rate=DischargeRate.C_05,
-                temperature=temp
-            )
+        # 5. Temperature-performance tests (0 / 25 / 45 °C) are intentionally NOT
+        # offered: the bench has no thermal chamber (single ambient ~25 °C), so a
+        # temperature sweep is not reproducible here. Capacity is characterised at
+        # ambient only. See docs/project_pivot.md.
 
         # 6. Safety Tests (Clause 7)
         profiles["safety_overcharge"] = IEC61960TestProfile(

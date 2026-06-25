@@ -2,11 +2,34 @@
 Analysis Module: System Identification + AI/heuristic battery grading
 สำหรับ ASET Battery Characterization System
 
+╔══════════════════════════════════════════════════════════════════════════╗
+║ สถานะของโมดูลนี้ (อ่านก่อนแก้)                                              ║
+║                                                                            ║
+║ นี่ **ไม่ใช่** เส้นทาง grading หลักของแอปที่รันอยู่. live grading            ║
+║ (characterization test, ปุ่ม Analyze CSV, auto-analyze) ทั้งหมดไปที่         ║
+║ ``aset_batt.acquisition.analysis`` (two-resistance R0/R1, เกรด A/B/C/REJECT) ║
+║ — ดู app_bootstrapper._wire_runtime ที่ยืนยันว่า "no BatteryAnalyzer/ML     ║
+║ grader is wired".                                                          ║
+║                                                                            ║
+║ โมดูลนี้เป็น grader ทางเลือก (ML/heuristic, เกรด A/B/C/D) ที่ยังเก็บไว้เพราะ ║
+║ ถูกใช้โดย:                                                                  ║
+║   • scripts/make_training_data.py + scripts/train_grader.py (เทรนโมเดล)     ║
+║   • grader_model.joblib (โมเดลที่เทรนไว้)                                    ║
+║   • storage/report_generator.py (ฟอร์แมตผลแบบ AnalysisFeatures)             ║
+║   • tests/test_analysis_wiring.py, tests/test_chemistry.py                  ║
+║ และ ``ChemistryDetector`` (ในไฟล์นี้) ถูกใช้จริงโดย UI (isa101_views).       ║
+║                                                                            ║
+║ ⚠ อย่าให้ผล grade ของสองระบบนี้ปนกัน: สเกลเกรดต่างกัน (REJECT vs D) และ      ║
+║ heuristic ที่นี่ใช้ base_r0_mohm คนละฐานกับ profile.internal_r ของระบบหลัก. ║
+║ ถ้าจะรวมเป็นระบบเดียวในอนาคต ต้อง align feature/threshold ให้ตรงกับ pack จริง.║
+╚══════════════════════════════════════════════════════════════════════════╝
+
 โครงสร้าง:
     RCParameters / AnalysisFeatures / AnalysisResult  — dataclasses ส่งผ่าน event
     RandlesModelExtractor   — System Identification (curve_fit 1RC)
     BatteryGrader           — AI / heuristic (pluggable, โหลด .joblib ถ้ามี)
     BatteryAnalyzer         — orchestrator (เรียกใน background thread)
+    ChemistryDetector       — แยกชนิดเคมีจาก rested OCV (ใช้จริงโดย UI)
 
 หมายเหตุ dependency:
     โมดูลนี้ทำงานด้วย numpy อย่างเดียวได้ (มี fallback ในตัว)

@@ -119,14 +119,18 @@ class BatteryParameterIdentifier:
         return k
 
     @staticmethod
-    def _extract_r0(current: np.ndarray, voltage: np.ndarray, k: int) -> float:
+    def _extract_r0(current: np.ndarray, voltage_raw: np.ndarray, k: int) -> float:
         """Ohmic resistance from the instantaneous jump at the step: R0 = |ΔV/ΔI|.
 
-        The pre-step baseline is averaged over up to 3 samples for noise immunity;
-        the first post-step sample carries the (near-instantaneous) ohmic jump.
+        MUST be read from the **raw** (unfiltered) voltage. A moving-average filter
+        smears the near-instantaneous ohmic step across its window — blending the
+        rested pre-step voltage into the first loaded sample — which underestimates
+        R0 and leaks the missing drop into R1. The pre-step baseline uses a *median*
+        over a few rested samples (robust to jitter); the first post-step sample
+        carries the ohmic jump.
         """
-        v_before = float(np.mean(voltage[max(0, k - 2):k + 1]))
-        v_after = float(voltage[k + 1])
+        v_before = float(np.median(voltage_raw[max(0, k - 2):k + 1]))
+        v_after = float(voltage_raw[k + 1])
         di = float(current[k + 1] - current[k])
         if abs(di) < 1e-9:
             raise ValueError("Degenerate current step (ΔI ≈ 0).")
@@ -183,18 +187,18 @@ class BatteryParameterIdentifier:
         if t.size < 10:
             raise ValueError("Need at least 10 samples to identify the model.")
 
-        v_f = self._moving_average(v)               # de-jitter before fitting
-
         k = self._detect_step(i)
-        r0_step = self._extract_r0(i, v_f, k)
+        r0_step = self._extract_r0(i, v, k)          # RAW voltage — never the filtered one
         end = self._pulse_segment(i, k, self.step_threshold_a)
         if end - (k + 1) < 5:
             raise ValueError("Pulse segment too short to fit the RC transient.")
 
         seg = slice(k + 1, end)
         t_rel = t[seg] - t[k + 1]                    # time from the step edge
-        v_seg = v_f[seg]
-        i_pulse = float(np.mean(i[seg]))
+        # Filter the pulse segment IN ISOLATION so the edge-padded moving average
+        # cannot bleed the rested pre-step voltage into the early (R0/R1-rich) samples.
+        v_seg = self._moving_average(v[seg])
+        i_pulse = float(np.median(i[seg]))
         voc = float(initial_voc)
 
         # Closure model with I and Voc fixed → curve_fit varies only R0, R1, C1.
