@@ -43,26 +43,15 @@ class AutoController:
         """Check if parameters are within safety limits"""
         limits = self.config.system.safety_limits
 
-        # During charging the ChargeController owns voltage cutoff — skip both
-        # OVP and UVP so that a high PSU setpoint or a low starting battery
-        # voltage does not kill the charge loop prematurely.
+        # During charging the ChargeController owns voltage cutoff — skip all
+        # voltage checks so that a deeply-discharged battery (any starting V)
+        # or a high PSU setpoint does not kill the charge loop prematurely.
         if not self.is_charging:
             if voltage > limits["max_voltage"]:
                 self._trigger_safety(f"Voltage {voltage:.2f}V exceeds limit {limits['max_voltage']}V")
                 return False
             if voltage < limits["min_voltage"]:
                 self._trigger_safety(f"Voltage {voltage:.2f}V below limit {limits['min_voltage']}V")
-                return False
-        else:
-            # Hard ceiling: voltage wildly above pack_max suggests a wiring fault
-            hard_ceil = limits.get("max_voltage", 20.0) * 1.2
-            if voltage > hard_ceil:
-                self._trigger_safety(f"Voltage {voltage:.2f}V critically high (hard ceiling {hard_ceil:.1f}V)")
-                return False
-            # Hard floor: critically low cell voltage during charge = open cell
-            hard_floor = limits.get("min_voltage", 6.0) * 0.5
-            if voltage < hard_floor:
-                self._trigger_safety(f"Voltage {voltage:.2f}V critically low (hard floor {hard_floor:.1f}V)")
                 return False
 
         if abs(current) > limits["max_current"]:
@@ -297,16 +286,11 @@ class AutoController:
             logger.error("Cannot charge: hardware not connected")
             return False
         if self.safety_triggered:
-            # Allow charge to proceed if the only reason safety fired was UVP —
-            # deep-discharge recovery requires charging from below the normal floor.
+            # Always allow charge to proceed regardless of starting voltage —
+            # deeply-discharged batteries need charging even at near-zero volts.
             v_now = self.hw.read_vi()[0] if self.hw.is_connected else 0.0
-            hard_floor = self.config.system.safety_limits.get("min_voltage", 6.0) * 0.5
-            if v_now >= hard_floor:
-                logger.info("Safety was UVP-only; auto-clearing for charge recovery (%.2fV)", v_now)
-                self.safety_triggered = False
-            else:
-                logger.error("Cannot charge: safety triggered and voltage critically low (%.2fV)", v_now)
-                return False
+            logger.info("Auto-clearing safety for charge recovery (%.2fV)", v_now)
+            self.safety_triggered = False
         if self.estimator is None or self.estimator.battery_model is None:
             logger.error("Cannot charge: battery model unavailable")
             return False
