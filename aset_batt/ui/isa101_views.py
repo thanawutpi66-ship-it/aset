@@ -1453,8 +1453,8 @@ class BatteryQtWindow(QMainWindow):
         cfg = TestConfig(self._acq_profile(), OperationMode(self.cb_op_mode.currentText()))
         self.buf_t.clear(); self.buf_v.clear(); self.buf_i.clear()
         self.buf_soc.clear(); self.buf_temp.clear()
-        os.makedirs("logs", exist_ok=True)
-        csv_path = os.path.join("logs", f"test_{datetime.now():%Y%m%d_%H%M%S}.csv")
+        os.makedirs("sessions", exist_ok=True)
+        csv_path = os.path.join("sessions", f"test_{datetime.now():%Y%m%d_%H%M%S}.csv")
         self._last_csv = csv_path                       # most-recent run → Analyze/PDF use this
         self.lbl_csv.setText(f"CSV: {csv_path}")
 
@@ -1618,11 +1618,11 @@ class BatteryQtWindow(QMainWindow):
             self.lbl_csv.setText(f"CSV: {os.path.basename(self.data.current_path)}")
 
     def _refresh_session_list(self):
-        """อัพเดทรายการ session files จาก logs/ directory"""
+        """อัพเดทรายการ session files จาก sessions/ directory"""
         if not hasattr(self, "lst_sessions"):
             return
         self.lst_sessions.clear()
-        logs_dir = "logs"
+        logs_dir = "sessions"
         if not os.path.isdir(logs_dir):
             return
         files = sorted(

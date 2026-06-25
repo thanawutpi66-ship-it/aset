@@ -111,11 +111,11 @@ class DataHandler:
         self.current_path: str = ""   # path ของ session ปัจจุบัน
 
     @staticmethod
-    def make_session_path(logs_dir: str = "logs") -> str:
-        """สร้าง path สำหรับ session ใหม่ เช่น logs/test_20260625_143022.csv"""
-        os.makedirs(logs_dir, exist_ok=True)
+    def make_session_path(sessions_dir: str = "sessions") -> str:
+        """สร้าง path สำหรับ session ใหม่ เช่น sessions/test_20260625_143022.csv"""
+        os.makedirs(sessions_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return os.path.join(logs_dir, f"test_{ts}.csv")
+        return os.path.join(sessions_dir, f"test_{ts}.csv")
 
     def start_logging(self, filepath: str):
         """เริ่มบันทึก CSV — คืน (True, "") หรือ (False, error_message)"""
