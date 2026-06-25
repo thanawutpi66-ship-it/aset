@@ -263,8 +263,9 @@ class BatteryQtWindow(QMainWindow):
     sig_safety = Signal(str)
     sig_profile_done = Signal(object)
     sig_analysis_done = Signal(object)
-    sig_workflow   = Signal(int, str)  # (phase 0-4, state: "active"/"done"/"skip"/"idle")
-    sig_wf_status  = Signal(str)       # workflow status label text (cross-thread safe)
+    sig_workflow   = Signal(int, str)   # IEC sequence (phase 0-4)
+    sig_qs_workflow = Signal(int, str)  # Quick Scan (phase 0-3)
+    sig_wf_status  = Signal(str)        # workflow status label text (cross-thread safe)
 
     def __init__(self, config_manager):
         super().__init__()
@@ -543,7 +544,13 @@ class BatteryQtWindow(QMainWindow):
         ("2", "CHARGE",   "Full 3-stage"),
         ("3", "REST",     "30 min rest"),
         ("4", "TEST",     "Discharge 0.2C"),
-        ("5", "ANALYZE",  "SOH + Grade"),
+        ("5", "ANALYZE",  "SoH + Grade"),
+    ]
+    _QS_STEPS = [
+        ("1", "OCV",       "Calibrate SoC"),
+        ("2", "REST",      "5 min settle"),
+        ("3", "DISCHARGE", "1C rapid test"),
+        ("4", "ANALYZE",   "Peukert SoH"),
     ]
 
     def _zone_workflow(self):
@@ -552,39 +559,64 @@ class BatteryQtWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(3)
 
-        self._wf_leds = []   # (dot_label, name_label) per step
-        for num, name, desc in self._WF_STEPS:
-            row = QHBoxLayout()
-            dot = QLabel("○")
-            dot.setStyleSheet(f"color:{NEUTRAL}; font-size:16px; min-width:22px;")
-            dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            name_lbl = QLabel(f"{name}")
-            name_lbl.setStyleSheet(f"color:{MUTED}; font-weight:700; min-width:65px;")
-            desc_lbl = QLabel(desc)
-            desc_lbl.setStyleSheet(f"color:{MUTED}; font-size:11px;")
-            row.addWidget(dot)
-            row.addWidget(name_lbl)
-            row.addWidget(desc_lbl)
-            row.addStretch(1)
-            lay.addLayout(row)
-            self._wf_leds.append((dot, name_lbl))
+        def _step_row(steps_list, led_list, min_name_w):
+            for _num, name, desc in steps_list:
+                row = QHBoxLayout()
+                dot = QLabel("○")
+                dot.setStyleSheet(f"color:{NEUTRAL}; font-size:16px; min-width:22px;")
+                dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                name_lbl = QLabel(name)
+                name_lbl.setStyleSheet(f"color:{MUTED}; font-weight:700; min-width:{min_name_w}px;")
+                desc_lbl = QLabel(desc)
+                desc_lbl.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+                row.addWidget(dot)
+                row.addWidget(name_lbl)
+                row.addWidget(desc_lbl)
+                row.addStretch(1)
+                lay.addLayout(row)
+                led_list.append((dot, name_lbl))
 
-        btn_row = QHBoxLayout()
+        # ── IEC 61960 Standard ──────────────────────────────────
+        iec_hdr = QLabel("IEC 61960 Standard  ·  ~10–12h (LeadAcid)  /  ~8h (Li-ion)")
+        iec_hdr.setStyleSheet(f"color:{INFO}; font-size:11px; font-weight:700; padding:4px 0 2px 0;")
+        lay.addWidget(iec_hdr)
+        self._wf_leds = []
+        _step_row(self._WF_STEPS, self._wf_leds, 65)
+
+        iec_btn_row = QHBoxLayout()
         self.btn_auto_seq = _btn("▶  AUTO SEQUENCE", bg=INFO, fg="white", hover="#0d4a89")
-        self.btn_auto_seq.setToolTip("Run full cycle: OCV → Charge → Rest 30 min → Discharge → Analyze")
+        self.btn_auto_seq.setToolTip("IEC 61960: OCV → Charge (3-stage) → Rest 30 min → Discharge 0.2C → Analyze")
         self.btn_auto_seq.clicked.connect(self._on_auto_sequence)
         self._buttons["btn_auto_seq"] = self.btn_auto_seq
+        iec_btn_row.addWidget(self.btn_auto_seq)
+        lay.addLayout(iec_btn_row)
 
+        lay.addWidget(_hline())
+
+        # ── Quick Scan ──────────────────────────────────────────
+        qs_hdr = QLabel("Quick Scan  ·  ~1.5h (ทุกเคมี)  ·  Peukert-corrected SoH")
+        qs_hdr.setStyleSheet("color:#e67e22; font-size:11px; font-weight:700; padding:4px 0 2px 0;")
+        lay.addWidget(qs_hdr)
+        self._qs_leds = []
+        _step_row(self._QS_STEPS, self._qs_leds, 75)
+
+        qs_btn_row = QHBoxLayout()
+        self.btn_quick_scan = _btn("⚡  QUICK SCAN", bg="#e67e22", fg="white", hover="#c0392b")
+        self.btn_quick_scan.setToolTip("OCV → Rest 5 min → Discharge 1C → Analyze (~1.5h)")
+        self.btn_quick_scan.clicked.connect(self._on_quick_scan)
+        self._buttons["btn_quick_scan"] = self.btn_quick_scan
+        qs_btn_row.addWidget(self.btn_quick_scan)
+        lay.addLayout(qs_btn_row)
+
+        # ── Shared CANCEL + status ──────────────────────────────
         self.btn_seq_cancel = _btn("■  CANCEL", bg=CRIT, fg="white", hover="#9b2020")
         self.btn_seq_cancel.setEnabled(False)
         self.btn_seq_cancel.clicked.connect(self._on_seq_cancel)
+        lay.addWidget(self.btn_seq_cancel)
 
-        btn_row.addWidget(self.btn_auto_seq, 2)
-        btn_row.addWidget(self.btn_seq_cancel, 1)
-        lay.addLayout(btn_row)
-
-        self.lbl_wf_status = QLabel("กด AUTO SEQUENCE เพื่อเริ่ม")
+        self.lbl_wf_status = QLabel("เลือก AUTO SEQUENCE (IEC) หรือ QUICK SCAN")
         self.lbl_wf_status.setStyleSheet(f"color:{MUTED}; font-size:11px; padding-top:2px;")
+        self.lbl_wf_status.setWordWrap(True)
         lay.addWidget(self.lbl_wf_status)
 
         return self._collapsible("WORKFLOW", w, expanded=True)
@@ -897,6 +929,7 @@ class BatteryQtWindow(QMainWindow):
         self.sig_profile_done.connect(self._slot_profile_done)
         self.sig_analysis_done.connect(self._slot_analysis_done)
         self.sig_workflow.connect(self._slot_workflow)
+        self.sig_qs_workflow.connect(self._slot_qs_workflow)
         self.sig_wf_status.connect(self.lbl_wf_status.setText)
 
     def update_display(self, v, i, soc, rin, temp=None, soh=None):
@@ -1284,6 +1317,25 @@ class BatteryQtWindow(QMainWindow):
             dot.setStyleSheet(dot_style)
             name_lbl.setStyleSheet(name_style)
 
+    @Slot(int, str)
+    def _slot_qs_workflow(self, phase: int, state: str):
+        _styles = {
+            "active": (f"color:#e67e22; font-size:16px; min-width:22px; font-weight:700;",
+                       f"color:#e67e22; font-weight:700; min-width:75px;", "●"),
+            "done":   (f"color:{OK}; font-size:13px; min-width:22px; font-weight:700;",
+                       f"color:{OK}; font-weight:700; min-width:75px;", "✓"),
+            "skip":   (f"color:{NEUTRAL}; font-size:14px; min-width:22px;",
+                       f"color:{MUTED}; font-weight:700; min-width:75px;", "—"),
+            "idle":   (f"color:{NEUTRAL}; font-size:16px; min-width:22px;",
+                       f"color:{MUTED}; font-weight:700; min-width:75px;", "○"),
+        }
+        dot_style, name_style, symbol = _styles.get(state, _styles["idle"])
+        if 0 <= phase < len(self._qs_leds):
+            dot, name_lbl = self._qs_leds[phase]
+            dot.setText(symbol)
+            dot.setStyleSheet(dot_style)
+            name_lbl.setStyleSheet(name_style)
+
     def _on_auto_sequence(self):
         if self.controller is None or not getattr(self.hw, "is_connected", False):
             if not self._headless:
@@ -1291,20 +1343,39 @@ class BatteryQtWindow(QMainWindow):
             return
         if self._auto_seq_running:
             return
-        # Reset all steps to idle
         for i in range(len(self._WF_STEPS)):
             self.sig_workflow.emit(i, "idle")
+        for i in range(len(self._QS_STEPS)):
+            self.sig_qs_workflow.emit(i, "idle")
         self._auto_seq_running = True
         self.btn_seq_cancel.setEnabled(True)
         self.sig_loading.emit("btn_auto_seq", True, "Running…")
         import threading
         threading.Thread(target=self._auto_sequence_thread, daemon=True).start()
 
+    def _on_quick_scan(self):
+        if self.controller is None or not getattr(self.hw, "is_connected", False):
+            if not self._headless:
+                QMessageBox.warning(self, "Quick Scan", "Connect hardware first")
+            return
+        if self._auto_seq_running:
+            return
+        for i in range(len(self._QS_STEPS)):
+            self.sig_qs_workflow.emit(i, "idle")
+        for i in range(len(self._WF_STEPS)):
+            self.sig_workflow.emit(i, "idle")
+        self._auto_seq_running = True
+        self.btn_seq_cancel.setEnabled(True)
+        self.sig_loading.emit("btn_quick_scan", True, "Scanning…")
+        import threading
+        threading.Thread(target=self._quick_scan_thread, daemon=True).start()
+
     def _on_seq_cancel(self):
         self._auto_seq_running = False
-        self.lbl_wf_status.setText("ยกเลิก — กด AUTO SEQUENCE เพื่อเริ่มใหม่")
+        self.lbl_wf_status.setText("ยกเลิก")
         self.btn_seq_cancel.setEnabled(False)
         self.sig_loading.emit("btn_auto_seq", False, "")
+        self.sig_loading.emit("btn_quick_scan", False, "")
         self.sig_alarm.emit("[AUTO] Sequence cancelled by user.")
 
     def _auto_sequence_thread(self):
@@ -1418,6 +1489,99 @@ class BatteryQtWindow(QMainWindow):
         finally:
             self._auto_seq_running = False
             self.sig_loading.emit("btn_auto_seq", False, "")
+            self.btn_seq_cancel.setEnabled(False)
+
+    def _quick_scan_thread(self):
+        """Quick Scan: OCV → REST 5min → Discharge 1C → Analyze  (~1.5h)
+        ใช้ Peukert correction ที่มีอยู่ใน analyze_series เพื่อประเมิน capacity จาก 1C rate."""
+        import time as _t
+
+        def status(msg):
+            self.sig_charge_status.emit(msg)
+            self.sig_wf_status.emit(msg)
+
+        try:
+            # ── Phase 0: OCV ────────────────────────────────────────────────
+            self.sig_qs_workflow.emit(0, "active")
+            status("QUICK: ปิดอุปกรณ์, อ่าน OCV...")
+            self.hw.psu_off()
+            self.hw.load_off()
+            _t.sleep(5.0)
+            if not self._auto_seq_running:
+                return
+            soc = self.controller.calibrate_from_ocv()
+            v, _, _ = self.hw.read_vi()
+            self.sig_alarm.emit(f"[QUICK] OCV: {v:.3f} V → SoC {soc:.1f}%")
+            self.sig_qs_workflow.emit(0, "done")
+
+            # ── Phase 1: REST 5 นาที ─────────────────────────────────────
+            self.sig_qs_workflow.emit(1, "active")
+            t_end = _t.time() + 5 * 60
+            while self._auto_seq_running:
+                remaining = int(t_end - _t.time())
+                if remaining <= 0:
+                    break
+                mins, secs = divmod(remaining, 60)
+                status(f"QUICK REST: เหลือ {mins}:{secs:02d}")
+                _t.sleep(10.0)
+            if not self._auto_seq_running:
+                return
+            soc2 = self.controller.calibrate_from_ocv()
+            v2, _, _ = self.hw.read_vi()
+            self.sig_alarm.emit(f"[QUICK] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}%")
+            self.sig_qs_workflow.emit(1, "done")
+
+            # ── Phase 2: DISCHARGE 1C ────────────────────────────────────
+            self.sig_qs_workflow.emit(2, "active")
+            rated    = self.controller.config.battery.rated_capacity
+            max_i    = self.controller.config.battery.max_current
+            i_dis    = min(round(1.0 * rated, 2), max_i)   # 1C, clamped to rig limit
+            pack_min = self.controller.config.battery.pack_min_voltage
+            status(f"QUICK DISCHARGE: {i_dis:.2f} A (1C) → cutoff {pack_min:.1f} V")
+            self.sig_alarm.emit(f"[QUICK] Discharge 1C: {i_dis:.2f} A  (rated {rated:.1f} Ah)")
+            self.controller._ensure_logging()
+            self.hw.set_load(True, i_dis)
+            last_log = _t.time()
+            while self._auto_seq_running:
+                try:
+                    v3, i3 = self.hw.read_measurements(prefer_load_v=True)
+                    temp3  = self.hw.current_temp
+                    now    = _t.time()
+                    dt     = now - last_log
+                    last_log = now
+                    state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
+                    self.controller._log_sample(v3, i3)
+                    status(f"QUICK: {v3:.2f} V  {i3:.2f} A  SoC {state3['soc']:.0f}%")
+                    if v3 <= pack_min:
+                        break
+                except Exception as exc:
+                    self.sig_alarm.emit(f"[QUICK] read error: {exc}")
+                    break
+                _t.sleep(5.0)
+            self.hw.set_load(False)
+            if not self._auto_seq_running:
+                return
+            # รอ 30 วิให้แรงดันนิ่ง แล้ว re-anchor SoC
+            status("QUICK: รอ 30 วิ OCV settle...")
+            _t.sleep(30.0)
+            self.controller.calibrate_from_ocv()
+            self.sig_qs_workflow.emit(2, "done")
+            self.sig_alarm.emit("[QUICK] Discharge complete (1C) — Peukert correction applied in analysis")
+
+            # ── Phase 3: ANALYZE ─────────────────────────────────────────
+            self.sig_qs_workflow.emit(3, "active")
+            status("QUICK ANALYZE: คำนวณ Peukert-corrected SoH...")
+            self.controller._auto_analyze()
+            self.sig_qs_workflow.emit(3, "done")
+            status("QUICK SCAN เสร็จ — ดูผลที่แท็บ Analytics  (ค่า capacity ถูก Peukert-correct แล้ว)")
+            self.sig_alarm.emit("[QUICK] Scan complete ✓")
+
+        except Exception as exc:
+            self.sig_alarm.emit(f"[QUICK] Error: {exc}")
+            status(f"QUICK Error: {exc}")
+        finally:
+            self._auto_seq_running = False
+            self.sig_loading.emit("btn_quick_scan", False, "")
             self.btn_seq_cancel.setEnabled(False)
 
     # ---- characterization test (acquisition worker on the real HAL) -------
