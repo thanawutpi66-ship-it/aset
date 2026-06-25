@@ -106,8 +106,9 @@ class AutoController:
             self._start_time = time.time()
             self._last_update_time = None
             self.monitor_running = True
-            # เริ่ม data logging ทันทีที่ connect
-            csv_path = self.config.system.csv_filepath
+            # สร้าง session file ใหม่ทุกครั้งที่ monitor เริ่ม
+            from aset_batt.storage.data_utils import DataHandler
+            csv_path = DataHandler.make_session_path()
             ok, msg = self.data.start_logging(csv_path)
             if not ok:
                 import logging
@@ -489,7 +490,8 @@ class AutoController:
 
         # ให้ dashboard เห็นข้อมูล IEC test แบบ live -> เปิด logging + อ้างอิงเวลาเริ่ม
         if not self.data.is_recording:
-            self.data.start_logging(self.config.system.csv_filepath)
+            from aset_batt.storage.data_utils import DataHandler
+            self.data.start_logging(DataHandler.make_session_path())
         if self._start_time is None:
             self._start_time = time.time()
 
@@ -709,7 +711,8 @@ class AutoController:
     def _ensure_logging(self):
         """เปิด CSV logging + ตั้งเวลาเริ่ม ถ้ายังไม่ได้เปิด (ให้ IEC test โผล่บน dashboard)"""
         if not self.data.is_recording:
-            self.data.start_logging(self.config.system.csv_filepath)
+            from aset_batt.storage.data_utils import DataHandler
+            self.data.start_logging(DataHandler.make_session_path())
         if self._start_time is None:
             self._start_time = time.time()
 
@@ -729,8 +732,8 @@ class AutoController:
         ใช้วิธีวิเคราะห์เดียวกับ characterization test และปุ่ม Analyze CSV (วิธีเดียวทั้งระบบ)"""
         try:
             from aset_batt.acquisition.analysis import analyze_csv, profile_from_config
-            res = analyze_csv(self.config.system.csv_filepath,
-                              profile_from_config(self.config))
+            csv_path = self.data.current_path or self.config.system.csv_filepath
+            res = analyze_csv(csv_path, profile_from_config(self.config))
         except Exception as e:
             logger.warning("auto-analyze ล้มเหลว: %s", e)
             return

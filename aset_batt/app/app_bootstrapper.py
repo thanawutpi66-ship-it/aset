@@ -143,6 +143,7 @@ class ApplicationBootstrapper:
                     url=config.system.cloud_dashboard_url,
                     csv_path=config.system.csv_filepath,
                     interval=getattr(config.system, "cloud_push_interval", 30.0),
+                    data_handler=controller.data,
                 )
                 self._cloud_pusher.start()  # log เองถ้าไม่มี token
             except Exception as e:

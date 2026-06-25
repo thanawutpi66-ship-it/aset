@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -758,9 +759,29 @@ class BatteryQtWindow(QMainWindow):
         # Data / report
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("DATA & REPORT"))
-        self.lbl_csv = QLabel(f"CSV: {self.config.system.csv_filepath}")
-        self.lbl_csv.setStyleSheet(f"color:{MUTED};")
+        self.lbl_csv = QLabel("CSV: —")
+        self.lbl_csv.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+        self.lbl_csv.setWordWrap(True)
         lay.addWidget(self.lbl_csv)
+
+        # Session history list
+        sess_hdr = QHBoxLayout()
+        sess_hdr.addWidget(QLabel("Sessions (logs/)"))
+        btn_ref = QPushButton("↻")
+        btn_ref.setFixedWidth(28)
+        btn_ref.setToolTip("Refresh session list")
+        btn_ref.clicked.connect(self._refresh_session_list)
+        sess_hdr.addStretch()
+        sess_hdr.addWidget(btn_ref)
+        lay.addLayout(sess_hdr)
+
+        self.lst_sessions = QListWidget()
+        self.lst_sessions.setMaximumHeight(110)
+        self.lst_sessions.setToolTip("Click session to analyze it")
+        self.lst_sessions.itemClicked.connect(self._on_session_selected)
+        lay.addWidget(self.lst_sessions)
+        self._refresh_session_list()
+
         self.btn_log = _btn("START DATA LOGGING", bg="#d0d4d7", hover="#c2c6ca")
         self.btn_log.clicked.connect(self._on_toggle_logging)
         lay.addWidget(self.btn_log)
@@ -1591,6 +1612,40 @@ class BatteryQtWindow(QMainWindow):
         self.controller.start_monitor()
         self._elapsed_t0 = datetime.now().timestamp()
         self.status_label.setText("Monitor running")
+        # แสดงชื่อ session file ที่เพิ่งสร้าง
+        if self.data and self.data.current_path:
+            self._last_csv = self.data.current_path
+            self.lbl_csv.setText(f"CSV: {os.path.basename(self.data.current_path)}")
+
+    def _refresh_session_list(self):
+        """อัพเดทรายการ session files จาก logs/ directory"""
+        if not hasattr(self, "lst_sessions"):
+            return
+        self.lst_sessions.clear()
+        logs_dir = "logs"
+        if not os.path.isdir(logs_dir):
+            return
+        files = sorted(
+            [f for f in os.listdir(logs_dir) if f.startswith("test_") and f.endswith(".csv")],
+            reverse=True,
+        )
+        for fname in files:
+            fpath = os.path.join(logs_dir, fname)
+            try:
+                size_kb = os.path.getsize(fpath) / 1024
+                label = f"{fname}  ({size_kb:.0f} KB)"
+            except OSError:
+                label = fname
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, fpath)
+            self.lst_sessions.addItem(item)
+
+    def _on_session_selected(self, item):
+        """เลือก session file จาก list → ตั้งเป็น active CSV สำหรับ analyze"""
+        fpath = item.data(Qt.ItemDataRole.UserRole)
+        if fpath:
+            self._last_csv = fpath
+            self.lbl_csv.setText(f"CSV: {os.path.basename(fpath)}")
 
     def _on_toggle_logging(self):
         if self.data is None:
@@ -1598,11 +1653,15 @@ class BatteryQtWindow(QMainWindow):
         if self.data.is_recording:
             self.data.stop_logging()
             self.btn_log.setText("START DATA LOGGING")
+            self._refresh_session_list()
         else:
-            ok, msg = self.data.start_logging(self.config.system.csv_filepath)
+            from aset_batt.storage.data_utils import DataHandler
+            csv_path = DataHandler.make_session_path()
+            ok, msg = self.data.start_logging(csv_path)
             if ok:
                 self.btn_log.setText("STOP DATA LOGGING")
-                self._last_csv = self.config.system.csv_filepath   # monitor CSV becomes latest
+                self._last_csv = csv_path
+                self.lbl_csv.setText(f"CSV: {os.path.basename(csv_path)}")
             elif not self._headless:
                 QMessageBox.critical(self, "Logging", msg)
 

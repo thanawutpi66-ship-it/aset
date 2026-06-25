@@ -108,6 +108,14 @@ class DataHandler:
         self.is_recording = False
         self.csv_file = None
         self.csv_writer = None
+        self.current_path: str = ""   # path ของ session ปัจจุบัน
+
+    @staticmethod
+    def make_session_path(logs_dir: str = "logs") -> str:
+        """สร้าง path สำหรับ session ใหม่ เช่น logs/test_20260625_143022.csv"""
+        os.makedirs(logs_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return os.path.join(logs_dir, f"test_{ts}.csv")
 
     def start_logging(self, filepath: str):
         """เริ่มบันทึก CSV — คืน (True, "") หรือ (False, error_message)"""
@@ -121,6 +129,7 @@ class DataHandler:
                     "Voltage_V", "Current_A",
                     "SoC_pct", "Resistance_mOhm", "Temperature_C"
                 ])
+            self.current_path = filepath
             self.is_recording = True
             return True, "Success"
         except Exception as e:
