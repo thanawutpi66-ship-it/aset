@@ -29,6 +29,7 @@ class StateEstimator:
         self.ocv_correction_interval = 300  # วินาที (5 นาที)
         self.last_static_voltage = None
         self.static_current_threshold = 0.1  # A
+        self._rested_s = 0.0                  # accumulated rest time (s) for endpoint anchor
 
         # Exponential smoothing
         self.alpha = 0.05
@@ -106,34 +107,38 @@ class StateEstimator:
             voltage, current, self.soc, temp=temp, measured_dcir=measured_dcir
         )
 
-        # === 3. OCV-Based Correction (Periodic, เมื่อกระแสน้อย) ===
+        # === 3. OCV-Based Correction + ENDPOINT RESET (เมื่อกระแสน้อย) ===
+        # หลักการ (จาก literature ของ LFP): coulomb counting drift ได้ → ต้อง re-anchor
+        # ด้วย OCV "เฉพาะตรงที่ OCV เชื่อถือได้" คือบริเวณ knee/ปลาย (slope ชัน) หลัง full
+        # charge / full discharge. ตรง plateau ที่ flat (slope ต่ำ) ห้ามแก้ (V คลาดนิด SoC
+        # เพี้ยนมาก). ปลายที่ steep → anchor ทันที (ไม่รอ 300s) และ re-anchor coulomb counter.
         now = time.time()
         if abs(current) < self.static_current_threshold:
-            if self.last_static_voltage is not None:
-                time_since_correction = now - self.last_ocv_correction_time
-                if time_since_correction >= self.ocv_correction_interval:
-                    ocv_soc = self.battery_model.get_soc_from_ocv(voltage, temp)
-                    drift = abs(self.soc_filtered - ocv_soc)
-                    # guard: ข้ามถ้าอยู่บน plateau ที่ flat (slope ต่ำ → V คลาดนิดเดียว SoC เพี้ยนมาก)
-                    slope = self.battery_model.ocv_slope(ocv_soc, temp)
-                    if slope < self.min_ocv_slope:
-                        logger.debug(
-                            "ข้าม OCV correction: plateau flat (slope=%.4f V/%% < %.4f)",
-                            slope, self.min_ocv_slope
-                        )
-                    elif drift > 3.0:
-                        # Blend 80% OCV, 20% Coulomb
-                        corrected = 0.8 * ocv_soc + 0.2 * soc_cc
-                        logger.info(
-                            f"OCV Correction: CC={soc_cc:.1f}% -> "
-                            f"OCV={ocv_soc:.1f}% -> Blended={corrected:.1f}%"
-                        )
-                        # อัปเดต filtered ตรงๆ เพื่อ avoid lag
-                        self.soc_filtered = corrected
-                        self.last_ocv_correction_time = now
+            self._rested_s += dt
             self.last_static_voltage = voltage
+            ocv_soc = self.battery_model.get_soc_from_ocv(voltage, temp)
+            slope = self.battery_model.ocv_slope(ocv_soc, temp)
+            drift = abs(self.soc_filtered - ocv_soc)
+            steep = slope >= 2.0 * self.min_ocv_slope          # ปลาย/knee ที่ OCV เชื่อได้มาก
+            periodic = (now - self.last_ocv_correction_time) >= self.ocv_correction_interval
+            # เงื่อนไข: พักนานพอ (กัน transient) + ไม่ใช่ plateau แบน + (อยู่ปลาย หรือ ถึงรอบ+drift)
+            if (self._rested_s >= 5.0 and slope >= self.min_ocv_slope
+                    and (steep or (periodic and drift > 3.0))):
+                w = 0.9 if steep else 0.8                       # ปลาย anchor หนักกว่า
+                corrected = w * ocv_soc + (1.0 - w) * soc_cc
+                logger.info("OCV %s: CC=%.1f%% OCV=%.1f%% slope=%.4f -> %.1f%%",
+                            "endpoint-reset" if steep else "correction",
+                            soc_cc, ocv_soc, slope, corrected)
+                self.soc_filtered = corrected
+                # re-anchor coulomb counting to the corrected SoC (ไม่งั้น smoothing ดึงกลับ)
+                self.soc_initial = corrected
+                self.ah_accumulated = 0.0
+                soc_cc = corrected
+                self.last_ocv_correction_time = now
+                self._rested_s = 0.0
         else:
             self.last_static_voltage = None
+            self._rested_s = 0.0
 
         # === 4. Exponential Smoothing ===
         self.soc_filtered = (1 - self.alpha) * self.soc_filtered + self.alpha * soc_cc

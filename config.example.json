@@ -1,4 +1,5 @@
 {
+  "_comment": "Template — copy to config.json and edit per machine. config.json is gitignored so each rig keeps its own hardware settings. On the real test bench set simulation_mode=false and the real VISA/serial ports.",
   "battery": {
     "battery_type": "LiFePO4",
     "nominal_voltage": 3.2,

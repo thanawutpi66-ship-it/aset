@@ -78,7 +78,11 @@ class HardwareBackend(InstrumentBackend):
                 else:
                     self.hw.load_off()
                 self._hppc_loaded = want_load
-        v, i_net = self.hw.read_measurements()   # HAL convention: discharge = +
+        # Read the terminal voltage from the ACTIVE instrument: the e-load during
+        # discharge/HPPC (PSU off), the PSU during charge. Avoids trusting a PSU
+        # MEAS:VOLT? while its output is off.
+        discharge = self._cfg.mode in (OperationMode.CC_DISCHARGE, OperationMode.HPPC)
+        v, i_net = self.hw.read_measurements(prefer_load_v=discharge)  # HAL: discharge = +
         return v, -i_net                          # worker convention: discharge = −
 
     def read_temperature(self):

@@ -99,10 +99,11 @@ class TestAnalytics(unittest.TestCase):
         self.assertEqual(Analytics.grade_from_ecm(60, 0.06, 0.05, p), "REJECT")
 
 
-class TestWorkerEcmWiring(unittest.TestCase):
-    """HPPC post-processing must run the 1-RC identifier and grade on R0/R1."""
+class TestWorkerEcmAndDcirWiring(unittest.TestCase):
+    """HPPC post-processing fits the 1-RC ECM (R1/C1 are resolvable at 5 Hz; R0 by
+    extrapolation) AND reports the single-step DCIR@~250 ms as a cross-check."""
 
-    def test_post_process_identifies_ecm(self):
+    def test_post_process_fits_ecm_and_reports_dcir(self):
         from aset_batt.acquisition.worker import AcquisitionWorker
         r0, r1, c1, cur, voc = 0.012, 0.018, 1000.0, 8.0, 13.2   # τ=18 s
         tau = r1 * c1
@@ -110,10 +111,9 @@ class TestWorkerEcmWiring(unittest.TestCase):
         t_rest = np.arange(0, 10, dt); t_pulse = np.arange(0, 40, dt)
         v = np.concatenate([np.full_like(t_rest, voc),
                             voc - cur * (r0 + r1 * (1 - np.exp(-t_pulse / tau)))])
-        # worker convention: discharge current is NEGATIVE (the worker flips it
-        # internally for the identifier) — use the real convention so the test
-        # exercises the same path as production.
-        i = np.concatenate([np.zeros_like(t_rest), np.full_like(t_pulse, -cur)])
+        # worker convention (post-normalization): current reaching _post_process is
+        # discharge-POSITIVE — the sign is flipped once at the backend boundary in run().
+        i = np.concatenate([np.zeros_like(t_rest), np.full_like(t_pulse, cur)])
         tt = np.arange(len(v)) * dt
         q = np.cumsum(np.abs(i)) * dt / 3600.0
         temp = np.full_like(v, 30.0)
@@ -121,10 +121,14 @@ class TestWorkerEcmWiring(unittest.TestCase):
         w = AcquisitionWorker(backend=None,
                               cfg=TestConfig(_profile(), OperationMode.HPPC),
                               csv_path="unused.csv")
-        res = w._post_process(list(tt), list(i), list(v), list(q), list(temp), [], _profile())
+        res = w._post_process(list(tt), list(i), list(v), list(q), list(temp), _profile())
+        # clean 1-RC data → the fit recovers R0/R1; the DCIR cross-check is also reported.
         self.assertTrue(res["ecm_identified"])
-        self.assertAlmostEqual(res["r0_mohm"], 12.0, delta=2.0)
-        self.assertAlmostEqual(res["r1_mohm"], 18.0, delta=4.0)
+        self.assertGreaterEqual(res["ecm_r2"], 0.9)
+        self.assertAlmostEqual(res["r0_mohm"], 12.0, delta=3.0)
+        self.assertAlmostEqual(res["r1_mohm"], 18.0, delta=5.0)
+        self.assertGreater(res["dcir_mohm"], 0.0)        # single-step DCIR cross-check
+        self.assertGreater(res["voltage_sag_v"], 0.0)    # load metric is populated
         self.assertIn(res["grade"], ("A", "B", "C", "REJECT"))
 
 

@@ -23,6 +23,7 @@ from aset_batt.acquisition.worker import AcquisitionWorker
 from PySide6.QtGui import QDoubleValidator, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -36,8 +37,10 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSplitter,
+    QStackedWidget,
     QTextEdit,
     QTabWidget,
     QVBoxLayout,
@@ -401,34 +404,72 @@ class BatteryQtWindow(QMainWindow):
         return f"background:{color}; color:white; border-radius:3px; padding:5px 12px; font-weight:700; letter-spacing:1px;"
 
     def _build_left_panel(self):
+        # Three workflow zones (SETUP → RUN → TOOLS) instead of six equal blocks, with
+        # the E-STOP pinned ABOVE the scroll area so it is always visible in an
+        # emergency (it used to be buried in a block you had to scroll to).
+        outer = QWidget()
+        ov = QVBoxLayout(outer)
+        ov.setContentsMargins(0, 0, 0, 0)
+        ov.setSpacing(8)
+        ov.addWidget(self._estop_bar())          # pinned, always visible
+
         panel = QWidget()
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(0, 0, 0, 4)
         lay.setSpacing(8)
-        lay.addWidget(self._block_config())
-        lay.addWidget(self._block_connection())
-        lay.addWidget(self._block_manual())
-        lay.addWidget(self._block_operations())
-        lay.addWidget(self._block_safety())
-        lay.addWidget(self._block_data())
+        lay.addWidget(self._zone_setup())        # collapsible — set once, then fold away
+        lay.addWidget(self._zone_run())          # the heart — always open
+        lay.addWidget(self._zone_tools())        # collapsible — advanced, collapsed
         lay.addStretch(1)
 
-        # Wrap in a scroll area so the sidebar never compresses its widgets when the
-        # window is too short (e.g. maximized on a low-height screen) — it scrolls
-        # instead of overlapping comboboxes/lists with their labels.
         scroll = QScrollArea()
         scroll.setWidget(panel)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setMinimumWidth(340)
         scroll.setStyleSheet("QScrollArea { background: transparent; }")
-        return scroll
+        ov.addWidget(scroll, 1)
+        outer.setMinimumWidth(340)
+        return outer
 
-    def _block_config(self):
-        g = QGroupBox("1 · TEST CONFIGURATION")
-        lay = QVBoxLayout(g)
+    # ---- small UI helpers --------------------------------------------------
+    def _subheader(self, text):
+        """Bold caption that groups related controls inside a zone."""
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            f"color:{TEXT}; font-size:11px; font-weight:800; letter-spacing:1px; padding-top:4px;")
+        return lbl
 
+    def _collapsible(self, title, content: QWidget, expanded=True):
+        """A checkable group box whose content shows/hides — a lightweight collapsible
+        section (the title checkbox is the expand/collapse toggle)."""
+        g = QGroupBox(title)
+        g.setCheckable(True)
+        g.setChecked(expanded)
+        v = QVBoxLayout(g)
+        v.addWidget(content)
+        content.setVisible(expanded)
+        g.toggled.connect(content.setVisible)
+        return g
+
+    def _estop_bar(self):
+        self.btn_estop = QPushButton("⛔  EMERGENCY STOP")
+        self.btn_estop.setStyleSheet(
+            f"QPushButton {{ background:{CRIT}; color:white; border:none; border-radius:8px; padding:16px; font-size:16px; font-weight:800; }}"
+            f"QPushButton:hover {{ background:#9b2020; }}"
+        )
+        self.btn_estop.setCursor(Qt.PointingHandCursor)
+        self.btn_estop.clicked.connect(self._on_estop)
+        return self.btn_estop
+
+    # ---- ZONE 1: SETUP (battery + connections) -----------------------------
+    def _zone_setup(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        # Battery selection
+        lay.addWidget(self._subheader("BATTERY"))
         row = QHBoxLayout()
         row.addWidget(QLabel("Battery:"))
         self.cb_product = QComboBox()
@@ -436,11 +477,9 @@ class BatteryQtWindow(QMainWindow):
         self.cb_product.currentTextChanged.connect(self._on_product_changed)
         row.addWidget(self.cb_product, 1)
         lay.addLayout(row)
-
         self.lbl_battery_readout = QLabel("—")
         self.lbl_battery_readout.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_battery_readout)
-
         actions = QHBoxLayout()
         self.btn_detect = _btn("Detect Chemistry", bg="#e0e2e4", hover="#d4d7da")
         self.btn_detect.clicked.connect(self._on_detect_chemistry)
@@ -450,22 +489,9 @@ class BatteryQtWindow(QMainWindow):
         actions.addWidget(self.btn_save_default, 1)
         lay.addLayout(actions)
 
-        # HPPC pulse timing (used by the HPPC test mode). Longer pulse/relaxation
-        # lets the RC transient fully develop so R1/C1 are not under-resolved.
+        # Connections
         lay.addWidget(_hline())
-        hppc = QFormLayout()
-        self.ed_hppc_pulse = QLineEdit("30")
-        self.ed_hppc_pulse.setValidator(QDoubleValidator(1.0, 600.0, 1))
-        self.ed_hppc_relax = QLineEdit("30")
-        self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))
-        hppc.addRow("HPPC pulse (s):", self.ed_hppc_pulse)
-        hppc.addRow("HPPC relax (s):", self.ed_hppc_relax)
-        lay.addLayout(hppc)
-        return g
-
-    def _block_connection(self):
-        g = QGroupBox("2 · CONNECTIONS")
-        lay = QVBoxLayout(g)
+        lay.addWidget(self._subheader("CONNECTIONS"))
         self.cb_psu = QComboBox()
         self.cb_load = QComboBox()
         self.cb_esp = QComboBox()
@@ -474,7 +500,6 @@ class BatteryQtWindow(QMainWindow):
         form.addRow("Load (VISA):", self.cb_load)
         form.addRow("ESP32 (COM):", self.cb_esp)
         lay.addLayout(form)
-
         row = QHBoxLayout()
         self.btn_connect = _btn("Connect", bg=OK, fg="white", hover="#266a2a")
         self.btn_disconnect = _btn("Disconnect", bg=CRIT, fg="white", hover="#9b2020")
@@ -483,55 +508,53 @@ class BatteryQtWindow(QMainWindow):
         row.addWidget(self.btn_connect)
         row.addWidget(self.btn_disconnect)
         lay.addLayout(row)
-
         btn_refresh = _btn("Refresh Ports", bg="#d0d4d7", hover="#c2c6ca")
         btn_refresh.clicked.connect(self._refresh_ports)
         lay.addWidget(btn_refresh)
-        return g
 
-    def _block_manual(self):
-        g = QGroupBox("3 · MANUAL CONTROL")
+        return self._collapsible("1 · SETUP", w, expanded=True)
+
+    # ---- ZONE 2: RUN (charge ⇄ discharge) ----------------------------------
+    def _zone_run(self):
+        g = QGroupBox("2 · RUN")
         lay = QVBoxLayout(g)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("PSU V:"))
-        self.ed_psu_v = QLineEdit("13.8")
-        self.ed_psu_v.setMaximumWidth(72)
-        row.addWidget(self.ed_psu_v)
-        on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
-        off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
-        on.clicked.connect(lambda: self._psu_manual(True))
-        off.clicked.connect(lambda: self._psu_manual(False))
-        row.addWidget(on)
-        row.addWidget(off)
-        lay.addLayout(row)
+        # Operation toggle — swaps the controls below between Charge and Discharge.
+        trow = QHBoxLayout()
+        self.rb_charge = QRadioButton("Charge")
+        self.rb_discharge = QRadioButton("Discharge")
+        self.rb_discharge.setChecked(True)          # grading/discharge is the common task
+        grp = QButtonGroup(self)
+        grp.addButton(self.rb_charge); grp.addButton(self.rb_discharge)
+        trow.addWidget(self.rb_charge)
+        trow.addWidget(self.rb_discharge)
+        trow.addStretch(1)
+        lay.addLayout(trow)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Load A:"))
-        self.ed_load_a = QLineEdit("0.7")
-        self.ed_load_a.setMaximumWidth(72)
-        row.addWidget(self.ed_load_a)
-        on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
-        off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
-        on.clicked.connect(lambda: self._load_manual(True))
-        off.clicked.connect(lambda: self._load_manual(False))
-        row.addWidget(on)
-        row.addWidget(off)
-        lay.addLayout(row)
+        self.run_stack = QStackedWidget()
+        self.run_stack.addWidget(self._charge_page())      # index 0
+        self.run_stack.addWidget(self._discharge_page())   # index 1
+        self.run_stack.setCurrentIndex(1)
+        self.rb_charge.toggled.connect(
+            lambda on: self.run_stack.setCurrentIndex(0 if on else 1))
+        lay.addWidget(self.run_stack)
+
+        # Last grade echo (the full breakdown stays in the Analytics tab).
+        self.lbl_run_grade = QLabel("Grade: —")
+        self.lbl_run_grade.setStyleSheet(f"color:{MUTED}; padding-top:4px;")
+        lay.addWidget(self.lbl_run_grade)
         return g
 
-    def _block_operations(self):
-        g = QGroupBox("4 · OPERATIONS")
-        lay = QVBoxLayout(g)
-
-        # charge-mode selector — Auto follows battery chemistry, or force a strategy
+    def _charge_page(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
         mrow0 = QHBoxLayout()
         mrow0.addWidget(QLabel("Charge mode:"))
         self.cb_charge_mode = QComboBox()
         self.cb_charge_mode.addItems(["Auto (by chemistry)", "CC-CV", "3-Stage (Lead-Acid)"])
         mrow0.addWidget(self.cb_charge_mode, 1)
         lay.addLayout(mrow0)
-
         crow = QHBoxLayout()
         self.btn_charge = _btn("CHARGE", bg=OK, fg="white", hover="#266a2a")
         self.btn_stop_charge = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
@@ -543,13 +566,17 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_charge = QLabel("Charge idle")
         self.lbl_charge.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_charge)
+        return w
 
-        # Characterization test — worker-driven (CC-CV / Discharge / HPPC) → ICA/DTV/grade
-        lay.addWidget(_hline())
+    def _discharge_page(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
         trow = QHBoxLayout()
-        trow.addWidget(QLabel("Test mode:"))
+        trow.addWidget(QLabel("Discharge mode:"))
         self.cb_op_mode = QComboBox()
-        self.cb_op_mode.addItems([m.value for m in OperationMode])
+        self.cb_op_mode.addItems([m.value for m in OperationMode
+                                  if m != OperationMode.CC_CV_CHARGE])
         trow.addWidget(self.cb_op_mode, 1)
         lay.addLayout(trow)
         crow2 = QHBoxLayout()
@@ -563,13 +590,60 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_test_status = QLabel("Test idle")
         self.lbl_test_status.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_test_status)
+        return w
 
+    # ---- ZONE 3: TOOLS (advanced / occasional) -----------------------------
+    def _zone_tools(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        # Manual control
+        lay.addWidget(self._subheader("MANUAL CONTROL"))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("PSU V:"))
+        self.ed_psu_v = QLineEdit("13.8")
+        self.ed_psu_v.setMaximumWidth(72)
+        row.addWidget(self.ed_psu_v)
+        on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
+        off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
+        on.clicked.connect(lambda: self._psu_manual(True))
+        off.clicked.connect(lambda: self._psu_manual(False))
+        row.addWidget(on); row.addWidget(off)
+        lay.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Load A:"))
+        self.ed_load_a = QLineEdit("0.7")
+        self.ed_load_a.setMaximumWidth(72)
+        row.addWidget(self.ed_load_a)
+        on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
+        off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
+        on.clicked.connect(lambda: self._load_manual(True))
+        off.clicked.connect(lambda: self._load_manual(False))
+        row.addWidget(on); row.addWidget(off)
+        lay.addLayout(row)
+
+        # HPPC pulse timing (used by the HPPC discharge mode)
         lay.addWidget(_hline())
-        self.lst_profiles = QListWidget()
-        self.lst_profiles.setMaximumHeight(120)
-        self._populate_profiles()
-        lay.addWidget(self.lst_profiles)
+        lay.addWidget(self._subheader("HPPC TIMING"))
+        hppc = QFormLayout()
+        self.ed_hppc_pulse = QLineEdit("30")
+        self.ed_hppc_pulse.setValidator(QDoubleValidator(1.0, 600.0, 1))
+        self.ed_hppc_relax = QLineEdit("30")
+        self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))
+        hppc.addRow("HPPC pulse (s):", self.ed_hppc_pulse)
+        hppc.addRow("HPPC relax (s):", self.ed_hppc_relax)
+        lay.addLayout(hppc)
 
+        # IEC profiles
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("IEC PROFILES"))
+        prow_sel = QHBoxLayout()
+        prow_sel.addWidget(QLabel("Profile:"))
+        self.cb_profiles = QComboBox()
+        self._populate_profiles()
+        prow_sel.addWidget(self.cb_profiles, 1)
+        lay.addLayout(prow_sel)
         prow = QHBoxLayout()
         self.btn_start_profile = _btn("RUN", bg=INFO, fg="white", hover="#0d4a89")
         self.btn_start_profile.clicked.connect(self._on_run_profile)
@@ -583,7 +657,9 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_profile_status.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_profile_status)
 
+        # Live monitor
         lay.addWidget(_hline())
+        lay.addWidget(self._subheader("LIVE MONITOR"))
         mrow = QHBoxLayout()
         self.btn_start_monitor = _btn("START MONITOR", bg=OK, fg="white", hover="#266a2a")
         self.btn_stop_monitor = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
@@ -593,24 +669,10 @@ class BatteryQtWindow(QMainWindow):
         mrow.addWidget(self.btn_start_monitor)
         mrow.addWidget(self.btn_stop_monitor)
         lay.addLayout(mrow)
-        return g
 
-    def _block_safety(self):
-        g = QGroupBox("5 · SAFETY")
-        lay = QVBoxLayout(g)
-        self.btn_estop = QPushButton("⛔  EMERGENCY STOP")
-        self.btn_estop.setStyleSheet(
-            f"QPushButton {{ background:{CRIT}; color:white; border:none; border-radius:8px; padding:18px; font-size:16px; font-weight:800; }}"
-            f"QPushButton:hover {{ background:#9b2020; }}"
-        )
-        self.btn_estop.setCursor(Qt.PointingHandCursor)
-        self.btn_estop.clicked.connect(self._on_estop)
-        lay.addWidget(self.btn_estop)
-        return g
-
-    def _block_data(self):
-        g = QGroupBox("6 · DATA")
-        lay = QVBoxLayout(g)
+        # Data / report
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("DATA & REPORT"))
         self.lbl_csv = QLabel(f"CSV: {self.config.system.csv_filepath}")
         self.lbl_csv.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_csv)
@@ -623,7 +685,8 @@ class BatteryQtWindow(QMainWindow):
         btn_dash = _btn("Open Cloud Dashboard", bg="#d0d4d7", hover="#c2c6ca")
         btn_dash.clicked.connect(self._on_open_dashboard)
         lay.addWidget(btn_dash)
-        return g
+
+        return self._collapsible("3 · TOOLS", w, expanded=False)
 
     def _build_right_panel(self):
         panel = QWidget()
@@ -651,7 +714,11 @@ class BatteryQtWindow(QMainWindow):
         return panel
 
     def _tab_diagnostics(self):
-        """Post-test ICA dQ/dV + DTV dT/dV curves (populated by the worker)."""
+        """Post-test ICA dQ/dV curve (populated by the worker).
+
+        DTV (dT/dV) was removed: at 12 V / low C-rate with a slow (~240 ms) IR sensor
+        the battery's self-heating is too small/noisy to differentiate usefully on this
+        rig — see docs/project_pivot.md."""
         w = QWidget()
         lay = QHBoxLayout(w)
         self.plot_ica = pg.PlotWidget()
@@ -659,13 +726,7 @@ class BatteryQtWindow(QMainWindow):
         self.plot_ica.setLabel("bottom", "Voltage", units="V")
         self.plot_ica.setLabel("left", "dQ/dV")
         self.plot_ica.setTitle("ICA (Incremental Capacity)")
-        self.plot_dtv = pg.PlotWidget()
-        self.plot_dtv.setBackground(PANEL2)
-        self.plot_dtv.setLabel("bottom", "Voltage", units="V")
-        self.plot_dtv.setLabel("left", "dT/dV")
-        self.plot_dtv.setTitle("DTV (Differential Thermal)")
         lay.addWidget(self.plot_ica, 1)
-        lay.addWidget(self.plot_dtv, 1)
         return w
 
     def _metric_card(self, name, unit):
@@ -678,7 +739,9 @@ class BatteryQtWindow(QMainWindow):
         lay.setSpacing(2)
         t = QLabel(name.upper())
         t.setStyleSheet(f"color:{MUTED}; font-size:10px; font-weight:700; letter-spacing:1px; border:0;")
-        val = QLabel(f"0.0 {unit}")
+        # SoH is a final-analysis metric (not live); Rin is only valid under load.
+        # Both start "pending" so a placeholder number is never mistaken for a reading.
+        val = QLabel("—" if name in ("SoH", "Rin") else f"0.0 {unit}")
         val.setFont(QFont("Consolas", 19, QFont.Weight.Bold))
         val.setStyleSheet(f"color:{TEXT}; border:0;")
         lay.addWidget(t)
@@ -765,10 +828,20 @@ class BatteryQtWindow(QMainWindow):
     @Slot(float, float, float, float, float, float)
     def _slot_display(self, v, i, soc, rin, temp, soh):
         rin_mohm = rin * 1000.0
-        values = {"Voltage": v, "Current": i, "SoC": soc, "Rin": rin_mohm, "Temp": temp, "SoH": soh}
-        for name, (lbl, unit) in self.metric_labels.items():
-            fmt = "{:.2f}" if name not in ("SoC", "SoH") else "{:.1f}"
-            lbl.setText(f"{fmt.format(values[name])} {unit}")
+        # LIVE metrics (valid every sample): Voltage, Current, SoC, Temp.
+        live = {"Voltage": (v, "{:.2f}"), "Current": (i, "{:.2f}"),
+                "SoC": (soc, "{:.1f}"), "Temp": (temp, "{:.2f}")}
+        for name, (val, fmt) in live.items():
+            lbl, unit = self.metric_labels[name]
+            lbl.setText(f"{fmt.format(val)} {unit}")
+        # Rin: a DC resistance reading needs current flowing. At rest, (OCV−V)/I is
+        # undefined and explodes on the flat LFP plateau → keep "pending" rather than
+        # show a wild number. The final analysis fills the proper R0+R1.
+        rin_lbl, rin_unit = self.metric_labels["Rin"]
+        if abs(i) >= 0.1:
+            rin_lbl.setText(f"{rin_mohm:.2f} {rin_unit}")
+        # SoH is intentionally NOT updated here — it is a final-analysis metric,
+        # written once by _on_test_finished. (soh arg is kept for signal compatibility.)
 
         if self._elapsed_t0 is None:
             self._elapsed_t0 = datetime.now().timestamp()
@@ -1084,42 +1157,71 @@ class BatteryQtWindow(QMainWindow):
         self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
 
     def _on_test_finished(self, results: dict):
-        self.metric_labels["SoH"][0].setText(f'{results["soh"]:.1f} {self.metric_labels["SoH"][1]}')
+        # SoH is N/A when not measurable (e.g. HPPC pulse test — see analyze_series).
+        soh = results["soh"]
+        soh_txt = "N/A" if soh != soh else f"{soh:.1f}"   # soh != soh → NaN
+        self.metric_labels["SoH"][0].setText(
+            "N/A" if soh != soh else f'{soh:.1f} {self.metric_labels["SoH"][1]}')
         self.metric_labels["Rin"][0].setText(f'{results["ri_mohm"]:.1f} {self.metric_labels["Rin"][1]}')
         grade = results["grade"]
-        gc = {"A": OK, "B": INFO, "C": WARN, "REJECT": CRIT}.get(grade, NEUTRAL)
-        self.lbl_grade.setText(grade)
+        gc = {"A": OK, "B": INFO, "C": WARN, "REJECT": CRIT, "REVIEW": NEUTRAL}.get(grade, NEUTRAL)
+        conf = results.get("confidence", 1.0)
+        self.lbl_grade.setText(grade if grade == "REVIEW" else f"{grade}")
         self.lbl_grade.setStyleSheet(
             f"background:{gc}; color:white; border:1px solid {BORDER}; border-radius:6px; padding:10px;")
-        ecm = " · 1-RC ECM" if results.get("ecm_identified") else ""
+        dcir = results.get("dcir_mohm", results.get("ri_mohm", 0.0))
+        dstd = results.get("dcir_std_mohm", 0.0)
+        nstep = results.get("dcir_n_steps", 0)
+        warns = results.get("quality_warnings", [])
         self.lbl_analytics.setText(
-            f"Grade {grade}{ecm} · SoH {results['soh']:.1f}% · "
-            f"R0 {results['r0_mohm']:.1f} mΩ · R1 {results['r1_mohm']:.1f} mΩ · "
-            f"Cap {results['capacity_ah']:.3f} Ah")
-        # detailed ECM breakdown
-        header = "1-RC Thevenin ECM (HPPC)" if results.get("ecm_identified") \
-            else "Internal resistance (single-point)"
-        self.txt_analytics.setPlainText("\n".join([
-            f"Grade:                 {grade}",
-            f"State of Health:       {results['soh']:.1f} %",
-            f"Capacity:              {results['capacity_ah']:.3f} Ah",
+            f"Grade {grade} (conf {conf*100:.0f}%) · SoH {soh_txt}% · "
+            f"DCIR {dcir:.1f}±{dstd:.1f} mΩ · Sag {results.get('voltage_sag_v', 0.0):.2f} V · "
+            f"CCA~{results.get('cca_est_a', 0.0):.0f} A · Cap {results['capacity_ah']:.3f} Ah")
+        # 5 Hz-measurable sorting features (see project pivot): SoH + DCIR + sag + CCA proxy
+        meas = "" if results.get("dcir_measured", True) else "  (no current step → profile baseline)"
+        cap_norm = results.get("capacity_norm_ah")
+        cap_line = f"Capacity:              {results['capacity_ah']:.3f} Ah"
+        if cap_norm and abs(cap_norm - results['capacity_ah']) > 1e-4:
+            cap_line += (f"   (rate-norm. {cap_norm:.3f} Ah @"
+                         f" k={results.get('peukert_k', 1.1):.2f}, I̅={results.get('mean_discharge_a', 0):.1f} A)")
+        lines = [
+            f"Grade:                 {grade}   (confidence {conf*100:.0f} %)",
+            f"State of Health:       {soh_txt} %",
+            cap_line,
+            f"Rested OCV:            {results.get('ocv_v', 0.0):.3f} V",
             "",
-            header + ":",
-            f"  R0 (ohmic):          {results['r0_mohm']:.2f} mΩ",
-            f"  R1 (charge-transfer):{results['r1_mohm']:.2f} mΩ",
-            f"  C1:                  {results['c1_farad']:.0f} F",
-            f"  tau (R1·C1):         {results['tau_s']:.1f} s",
-            f"  Total DCIR (R0+R1):  {results['ri_mohm']:.2f} mΩ",
-        ]))
+            "Resistance & cranking (DCIR @ ~250 ms readback, normalised to 25 °C):",
+            f"  DCIR:                {dcir:.2f} ± {dstd:.2f} mΩ  (n={nstep} step{'s' if nstep != 1 else ''}){meas}",
+            f"  Voltage sag (load):  {results.get('voltage_sag_v', 0.0):.3f} V",
+            f"  CCA proxy:           {results.get('cca_est_a', 0.0):.0f} A  (=(OCV−cutoff)/DCIR)",
+        ]
+        slope = results.get("dcir_slope_mohm")
+        if slope is not None and slope == slope and results.get("dcir_slope_r2", 0) >= 0.9:
+            lines.append(f"  DCIR (V–I slope):    {slope:.2f} mΩ  (R² {results['dcir_slope_r2']:.3f}, OCV-cancelled)")
+        if results.get("ecm_identified"):
+            lines += [
+                "",
+                f"1-RC Thevenin ECM fit (HPPC, R² {results.get('ecm_r2', 0.0):.3f}):",
+                f"  R0 (ohmic, t=0 extrap.): {results['r0_mohm']:.2f} mΩ",
+                f"  R1 (polarisation):       {results['r1_mohm']:.2f} mΩ",
+                f"  C1:                      {results['c1_farad']:.0f} F",
+                f"  τ (R1·C1):               {results['tau_s']:.1f} s",
+                f"  Total (R0+R1):           {results['ri_mohm']:.2f} mΩ",
+            ]
+        if warns:
+            lines += ["", "⚠ Data-quality flags:"] + [f"  • {m}" for m in warns]
+        self.txt_analytics.setPlainText("\n".join(lines))
         iv, ic = results["ica"]
         if len(iv):
             self.plot_ica.clear(); self.plot_ica.plot(iv, ic, pen=pg.mkPen("#1f4e79", width=2))
-        dv, dt = results["dtv"]
-        if len(dv):
-            self.plot_dtv.clear(); self.plot_dtv.plot(dv, dt, pen=pg.mkPen("#7a2020", width=2))
+        wmsg = f" — {len(warns)} quality flag(s), review" if warns else ""
+        # echo the headline grade in the RUN zone (full breakdown is in this tab)
+        if hasattr(self, "lbl_run_grade"):
+            self.lbl_run_grade.setText(
+                f"Grade: {grade} · SoH {soh_txt}% · conf {conf*100:.0f}%")
         self._log_alarm(
-            f"Test complete — Grade {grade}, SoH {results['soh']:.1f}%, "
-            f"R0 {results['r0_mohm']:.1f} mΩ, R1 {results['r1_mohm']:.1f} mΩ")
+            f"Test complete — Grade {grade} (conf {conf*100:.0f}%), "
+            f"SoH {soh_txt}%, DCIR {dcir:.1f}±{dstd:.1f} mΩ{wmsg}")
 
     def _cleanup_test_thread(self):
         if self._test_thread:
@@ -1137,14 +1239,14 @@ class BatteryQtWindow(QMainWindow):
         self._log_alarm("⛔ E-STOP issued.")
 
     def _populate_profiles(self):
-        self.lst_profiles.clear()
+        self.cb_profiles.clear()
         self._profile_map.clear()
         for tid in self.iec_standard.get_available_tests():
             prof = self.iec_standard.get_test_profile(tid)
             if not prof:
                 continue
             disp = f"[IEC] {prof.name}"
-            self.lst_profiles.addItem(disp)
+            self.cb_profiles.addItem(disp)
             self._profile_map[disp] = ("iec", tid)
 
     def _on_run_profile(self):
@@ -1152,12 +1254,12 @@ class BatteryQtWindow(QMainWindow):
             if not self._headless:
                 QMessageBox.warning(self, "Profile", "Connect hardware first")
             return
-        item = self.lst_profiles.currentItem()
-        if item is None:
+        sel = self.cb_profiles.currentText()
+        if not sel:
             if not self._headless:
                 QMessageBox.warning(self, "Profile", "Select a profile first")
             return
-        ptype, pid = self._profile_map.get(item.text(), (None, None))
+        ptype, pid = self._profile_map.get(sel, (None, None))
         try:
             if ptype == "iec":
                 self.controller.start_iec61960_test(pid, self.iec_standard)

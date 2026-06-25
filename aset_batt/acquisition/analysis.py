@@ -1,9 +1,15 @@
 """
 Single, unified post-test analysis for the whole application.
 
-Every grade in the app — the live characterization test, the "Analyze CSV" button,
-and the IEC-profile auto-analyze — goes through :func:`analyze_series` /
-:func:`analyze_csv` so there is exactly ONE analysis/grading method:
+Every grade in the **running app** — the live characterization test, the "Analyze
+CSV" button, and the IEC-profile auto-analyze — goes through :func:`analyze_series` /
+:func:`analyze_csv`, so the live grading path is exactly ONE method.
+
+(``aset_batt.core.analysis_module`` contains a *separate* ML/heuristic grader with
+its own A/B/C/D scale; it is NOT wired into live grading — it backs the offline
+training scripts, report_generator, and its own tests. See that module's header.)
+
+The single live method below provides:
 
   * R0/R1/C1/τ via the 1-RC Thevenin ECM identifier (on HPPC pulses);
     single-point ohmic fallback otherwise.
@@ -39,6 +45,9 @@ def profile_from_config(config) -> BatteryProfile:
     except Exception:
         rin = 0.03
     otp = float(s.get("max_temperature", 55.0))
+    # Peukert exponent by chemistry: lead-acid capacity is markedly rate-dependent,
+    # lithium almost not.
+    peukert = 1.20 if "lead" in (b.battery_type or "").lower() else 1.05
     return BatteryProfile(
         name=b.battery_type, chemistry=b.battery_type,
         nominal_v=b.pack_nominal_voltage, series=b.cells_series,
@@ -48,67 +57,301 @@ def profile_from_config(config) -> BatteryProfile:
         ovp=float(s.get("max_voltage", b.pack_max_voltage + 1)),
         uvp=float(s.get("min_voltage", b.pack_min_voltage - 1)),
         otp_warn=max(0.0, otp - 10.0), otp_crit=otp, internal_r=float(max(1e-4, rin)),
+        peukert_k=peukert,
     )
 
 
-def identify_ecm(time_s, current_a, voltage_v, profile: BatteryProfile, is_hppc: bool):
-    """Separate R0/R1/C1/τ. Returns ``(r0, r1, c1, tau, ecm_identified)``.
+# DCIR rises ~0.4 %/°C; normalise every reading to 25 °C so a battery measured at a
+# warmer terminal isn't graded as artificially "better" (the bench terminal sits ~4 °C
+# above ambient and self-heats during a test).
+_DCIR_TEMP_COEFF = 0.004     # per °C
+_T_REF = 25.0                # °C
 
-    ``current_a`` is discharge-positive. HPPC data → full 1-RC fit; otherwise the
-    single-point ohmic estimate from the largest current step (R1=0)."""
-    ta = np.asarray(time_s, float)
+
+def _reject_outliers_mad(x, n_sigma=3.0):
+    """Drop values that disagree with the median by >n_sigma robust deviations (MAD).
+    A bad contact or a pulse caught mid-transient shows up as an outlier DCIR; the
+    median already resists it, but removing it first tightens the reported spread."""
+    if x.size < 4:
+        return x
+    med = float(np.median(x))
+    mad = float(np.median(np.abs(x - med)))
+    if mad <= 0:
+        return x
+    keep = np.abs(x - med) <= n_sigma * 1.4826 * mad   # 1.4826: MAD→σ for normal data
+    return x[keep] if keep.any() else x
+
+
+def peukert_capacity(capacity_ah, mean_current_a, rated_ah, k, ref_c_rate=0.2):
+    """Normalise a measured discharge capacity to a reference C-rate (Peukert's law).
+
+    Available capacity falls as the discharge rate rises (strongly for lead-acid). With
+    ``C = C_p / I^(k-1)``, a capacity measured at current ``I`` maps to the reference
+    rate ``I_ref = ref_c_rate·rated`` by ``C_ref = C·(I/I_ref)^(k-1)`` — so a high-rate
+    test isn't unfairly graded low. Lithium (k≈1.05) → almost no change."""
+    i_ref = ref_c_rate * rated_ah
+    if mean_current_a <= 0 or i_ref <= 0 or k <= 0:
+        return capacity_ah
+    return capacity_ah * (mean_current_a / i_ref) ** (k - 1.0)
+
+
+def dcir_from_vi_slope(currents, voltages):
+    """Robust DCIR from the slope of V vs I across distinct current levels:
+    ``V = OCV − I·R`` → ``R = −slope``. Fitting the slope cancels the OCV intercept, so
+    it is less sensitive than one ΔV/ΔI step. Returns ``(r_ohm, r2)``; r is NaN when
+    fewer than two distinct current levels are present."""
+    I = np.asarray(currents, float)
+    V = np.asarray(voltages, float)
+    if I.size < 2 or float(np.ptp(I)) < 1e-6:
+        return float("nan"), 0.0
+    slope, intercept = np.polyfit(I, V, 1)
+    pred = slope * I + intercept
+    ss_res = float(np.sum((V - pred) ** 2))
+    ss_tot = float(np.sum((V - V.mean()) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    return abs(float(slope)), float(r2)
+
+
+def _vi_levels(current_a, voltage_v):
+    """(current, terminal-voltage) points — one per distinct current level (rest + each
+    load level) — for the V–I slope DCIR. Rest gives the (0, OCV) anchor."""
     ia = np.asarray(current_a, float)
     va = np.asarray(voltage_v, float)
-    if is_hppc and ta.size > 20:
-        try:
-            from aset_batt.core.parameter_id import BatteryParameterIdentifier
-            rest = np.abs(ia) < 0.05
-            voc = float(np.mean(va[rest][:30])) if rest.any() else float(va[0])
-            res = BatteryParameterIdentifier(smooth_window=5).fit_model(ta, ia, va, voc)
-            return res["R0_ohm"], res["R1_ohm"], res["C1_farad"], res["tau_s"], True
-        except Exception as e:
-            logger.warning("ECM identification failed (%s) — single-point fallback", e)
-    # single-point ohmic from the largest |ΔI| step
-    ri = profile.internal_r
-    if ia.size > 2:
-        di = np.diff(ia)
-        k = int(np.argmax(np.abs(di)))
-        if abs(di[k]) > 1e-3:
-            ri = abs((va[k + 1] - va[k]) / di[k])
-    return ri, 0.0, 0.0, 0.0, False
+    pts = []
+    rest = np.abs(ia) < 0.05
+    if rest.any():
+        pts.append((0.0, float(np.median(va[rest]))))
+    loaded = np.abs(ia) >= 0.1
+    if loaded.any():
+        keys = np.round(ia, 1)                       # cluster load into 0.1 A levels
+        for lvl in np.unique(keys[loaded]):
+            m = loaded & (keys == lvl)
+            if int(m.sum()) >= 3:
+                pts.append((float(lvl), float(np.median(va[m]))))
+    return pts
+
+
+def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile):
+    """Repeatable single-step DCIR aggregated over EVERY current step in the record.
+
+    At the rig's ~5 Hz SCPI readback the instantaneous ohmic step cannot be resolved
+    from the RC relaxation, so a 1-RC ECM (R0/R1/C1 separation) is not identifiable
+    (see ``docs/project_pivot.md``). Instead, ``R = |ΔV/ΔI|`` is read at the first
+    sample after each current edge (a consistent ~200 ms readback point), each value
+    is normalised to 25 °C, and the **median across all steps** is reported with its
+    spread — so an HPPC record's many pulses, or repeated load on/off edges, give a
+    repeatable DCIR with a measurable uncertainty instead of a single noisy number.
+
+    Returns ``(dcir_ohm_25C, std_ohm, n_steps, measured)``. ``measured`` is False (and
+    DCIR falls back to the profile baseline) when no clear current step is present.
+    """
+    ia = np.asarray(current_a, float)
+    va = np.asarray(voltage_v, float)
+    tc = np.asarray(temp_c, float)
+    if ia.size < 4:
+        return profile.internal_r, 0.0, 0, False
+    di = np.diff(ia)
+    thr = max(1e-3, 0.20 * float(np.max(np.abs(ia))))     # a real load edge, not jitter
+    vals = []
+    k = 0
+    while k < di.size:
+        if abs(di[k]) > thr:
+            v_before = float(np.median(va[max(0, k - 2):k + 1]))   # rested/level baseline
+            v_after = float(va[k + 1])                             # first post-edge sample
+            r = abs((v_after - v_before) / di[k])
+            T = float(tc[k + 1]) if (k + 1 < tc.size and not np.isnan(tc[k + 1])) else _T_REF
+            vals.append(r / (1.0 + _DCIR_TEMP_COEFF * (T - _T_REF)))   # → 25 °C
+            k += 2                                                 # skip the paired sample
+        else:
+            k += 1
+    if not vals:
+        return profile.internal_r, 0.0, 0, False
+    arr = _reject_outliers_mad(np.asarray(vals, float))   # drop disagreeing pulses
+    return float(np.median(arr)), float(np.std(arr)), int(arr.size), True
+
+
+def _load_metrics(current_a, voltage_v, dcir_ohm, profile: BatteryProfile):
+    """Lead-acid health features the rig CAN measure at 5 Hz (see project pivot §3,§8.5):
+
+      * ``voltage_sag_v`` — rested OCV minus the lowest terminal voltage seen under
+        load. A weak/sulfated battery sags much more for the same current.
+      * ``cca_est_a`` — cranking-capability proxy = (OCV − cutoff) / DCIR, i.e. the
+        current at which the terminal would sag to the discharge cutoff. Not a
+        standardised CCA (that needs a cold high-rate crank), but a repeatable,
+        physically grounded surrogate for sorting.
+    """
+    ia = np.asarray(current_a, float)
+    va = np.asarray(voltage_v, float)
+    rest = np.abs(ia) < 0.05
+    ocv = float(np.median(va[rest])) if rest.any() else float(np.max(va)) if va.size else 0.0
+    under_load = np.abs(ia) >= max(0.1, 0.05 * float(np.max(np.abs(ia))) if ia.size else 0.1)
+    v_min_load = float(np.min(va[under_load])) if under_load.any() else ocv
+    sag = max(0.0, ocv - v_min_load)
+    cca_est = (ocv - profile.cutoff_v) / dcir_ohm if dcir_ohm > 1e-6 else 0.0
+    return sag, max(0.0, cca_est), ocv
+
+
+def _quality_flags(current_a, voltage_v, temp_c, profile, is_hppc,
+                   n_steps, reached_cutoff):
+    """Data-integrity checks — a sorting bench must NOT grade on bad measurements.
+    Returns ``(warnings, temp_drift_c)``; an empty warning list means a clean record."""
+    ia = np.abs(np.asarray(current_a, float))
+    tc = np.asarray(temp_c, float)
+    w = []
+    # a rest segment is needed for a trustworthy OCV / SoC anchor
+    head = ia[:min(ia.size, 25)]
+    if head.size and int((head < 0.05).sum()) < 5:
+        w.append("no clear rest before load — OCV/SoC anchor uncertain")
+    if (not is_hppc) and not reached_cutoff:
+        w.append("discharge did not reach cut-off — SoH is partial/under-stated")
+    if n_steps == 0:
+        w.append("no clear current step — DCIR fell back to profile baseline")
+    temp_drift = 0.0
+    if tc.size and not np.all(np.isnan(tc)):
+        temp_drift = float(np.nanmax(tc) - np.nanmin(tc))
+        if temp_drift > 8.0:
+            w.append(f"terminal temperature drifted {temp_drift:.1f} °C during the test")
+    return w, temp_drift
+
+
+def _confidence(dcir_ohm, dcir_std, n_steps, profile, n_warnings):
+    """0..1 grade confidence from (a) DCIR repeatability across steps, (b) distance to
+    the nearest grade boundary, and (c) data-quality warnings. Transparent, not learned."""
+    conf = 1.0
+    if n_steps >= 2 and dcir_ohm > 0:
+        rel = dcir_std / dcir_ohm                     # coefficient of variation
+        conf *= max(0.3, 1.0 - min(1.0, 3.0 * rel))   # ~33 % spread → floor
+    elif n_steps <= 1:
+        conf *= 0.7                                   # single reading — can't assess spread
+    ratio = dcir_ohm / max(1e-6, profile.internal_r)  # grade boundaries live at 1.3/1.7/2.5
+    d = min(abs(ratio - b) for b in (1.3, 1.7, 2.5))
+    conf *= min(1.0, 0.5 + d)                          # sitting on a boundary → less sure
+    conf *= max(0.2, 1.0 - 0.15 * n_warnings)
+    return float(max(0.0, min(1.0, conf)))
+
+
+_ECM_MIN_R2 = 0.90      # accept the 1-RC fit only if it explains the transient this well
+
+
+def identify_ecm_fit(time_s, current_a, voltage_v, voc):
+    """1-RC Thevenin fit on an HPPC pulse — the RIGHT use of 5 Hz data.
+
+    The polarisation/diffusion transient has τ ≈ 10–60 s, so a 30 s pulse at 5 Hz gives
+    ~150 points — dense enough for the bounded TRF fit to pin **R1 and C1** precisely.
+    **R0** is the fit's intercept at t=0 (backward extrapolation), which removes the slow
+    transient's contamination that a single 200 ms step would include. (Sub-200 ms
+    dynamics — pure ohmic + fast charge-transfer — are still unresolved at 5 Hz; for that
+    a hardware fast-capture would be needed.) Returns the fit dict, or None if it fails to
+    converge or the fit quality (R²) is too low to trust.
+    """
+    try:
+        from aset_batt.core.parameter_id import BatteryParameterIdentifier
+        res = BatteryParameterIdentifier(smooth_window=5).fit_model(
+            time_s, current_a, voltage_v, voc)
+    except Exception as e:
+        logger.info("1-RC ECM fit skipped (%s) — using single-step DCIR", e)
+        return None
+    if res.get("r_squared", 0.0) < _ECM_MIN_R2 or res.get("R0_ohm", 0.0) <= 0:
+        logger.info("1-RC ECM fit rejected (R²=%.3f) — using single-step DCIR",
+                    res.get("r_squared", 0.0))
+        return None
+    return res
 
 
 def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                    profile: BatteryProfile, is_hppc: bool, soh=None) -> dict:
     """Run the unified analysis on raw series → the standard results dict.
 
-    ``current_a`` discharge-positive; ``capacity_series`` is the per-sample
-    cumulative Ah; ``soh`` may be supplied (live estimator) else it is computed
-    from capacity ÷ rated."""
-    v = np.asarray(voltage_v, float)
-    t = np.asarray(temp_c, float)
-    q = np.asarray(capacity_series, float)
-    capacity = float(q[-1]) if q.size else 0.0
-    if soh is None:
-        soh = (100.0 * capacity / profile.capacity_ah) if profile.capacity_ah else 0.0
-    soh = float(min(120.0, max(0.0, soh)))
+    ``current_a`` discharge-positive; ``capacity_series`` is the per-sample cumulative
+    Ah; ``soh`` may be supplied (live estimator) else computed from capacity ÷ rated.
 
-    r0, r1, c1, tau, ecm = identify_ecm(time_s, current_a, voltage_v, profile, is_hppc)
-    if ecm:
-        grade = Analytics.grade_from_ecm(soh, r0, r1, profile)
-        ri_total = r0 + r1
+    Resistance: a temperature-normalised multi-step **DCIR@~250 ms** is always reported
+    (robust, repeatable). For HPPC, a **1-RC ECM fit** additionally extracts R0/R1/C1/τ
+    (R1/C1 are well-resolved at 5 Hz; R0 by t=0 extrapolation), used for two-resistance
+    grading when its R² is good — with the DCIR kept as a cross-check and fallback.
+    A confidence score and data-quality flags surface suspect measurements."""
+    v = np.asarray(voltage_v, float)
+    q = np.asarray(capacity_series, float)
+    ia = np.asarray(current_a, float)
+    capacity = float(q[-1]) if q.size else 0.0
+    reached_cutoff = bool(v.size and float(np.min(v)) <= profile.cutoff_v * 1.02)
+    # Mean discharge current (for Peukert rate-normalisation of capacity).
+    dis = ia[ia > 0.05]
+    mean_dis = float(np.mean(dis)) if dis.size else 0.0
+    # Rate-normalised capacity: a fast discharge under-reads capacity (esp. lead-acid),
+    # so normalise to the reference rate before SoH (Peukert). Lithium ≈ unchanged.
+    cap_norm = peukert_capacity(capacity, mean_dis, profile.capacity_ah,
+                                getattr(profile, "peukert_k", 1.1))
+    # SoH = rate-normalised capacity ÷ rated, ONLY valid for a FULL discharge
+    # (100% → cut-off). HPPC moves little charge, and a discharge stopped early
+    # under-states capacity — both would mislead, so SoH is N/A (NaN) unless a full
+    # discharge was seen (or the caller supplied a SoH).
+    if soh is None:
+        if (not is_hppc) and reached_cutoff and profile.capacity_ah:
+            soh = 100.0 * cap_norm / profile.capacity_ah
+        else:
+            soh = float("nan")
+    if not np.isnan(soh):
+        soh = float(min(120.0, max(0.0, soh)))
+
+    dcir, dcir_std, n_steps, measured = identify_dcir(current_a, voltage_v, temp_c, profile)
+    # Multi-current DCIR: when the record spans ≥2 distinct current levels, the slope of
+    # V vs I gives an OCV-cancelling DCIR (more robust than a single step).
+    levels = _vi_levels(current_a, voltage_v)
+    if len(levels) >= 2:
+        dcir_slope, dcir_slope_r2 = dcir_from_vi_slope(
+            [p[0] for p in levels], [p[1] for p in levels])
     else:
-        ri_total = r0
-        grade = Analytics.grade(soh, ri_total, profile)
+        dcir_slope, dcir_slope_r2 = float("nan"), 0.0
+    sag, cca_est, ocv = _load_metrics(current_a, voltage_v, dcir, profile)
+    warnings, temp_drift = _quality_flags(current_a, voltage_v, temp_c, profile,
+                                          is_hppc, n_steps, reached_cutoff)
+
+    # 1-RC ECM for HPPC (reported ALONGSIDE the DCIR, not instead of it).
+    ecm = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc else None
+    if ecm:
+        r0, r1 = float(ecm["R0_ohm"]), float(ecm["R1_ohm"])
+        c1, tau, r2 = float(ecm["C1_farad"]), float(ecm["tau_s"]), float(ecm["r_squared"])
+        ri_total = r0 + r1
+        # cross-check: the DCIR@~250 ms should sit between R0 and R0+R1; a big gap means
+        # the fit and the step disagree → surface it.
+        if measured and dcir > 0 and not (0.5 * r0 <= dcir <= 1.5 * ri_total):
+            warnings = warnings + [f"DCIR@250ms ({dcir*1e3:.0f} mΩ) disagrees with fit "
+                                   f"R0+R1 ({ri_total*1e3:.0f} mΩ) — check the pulse"]
+    else:
+        r0, r1, c1, tau, r2 = dcir, 0.0, 0.0, 0.0, 0.0
+        ri_total = dcir
+
+    gradeable = measured or bool(ecm) or not np.isnan(soh)
+    if not gradeable:
+        grade = "REVIEW"
+    elif ecm:
+        grade = Analytics.grade_from_ecm(soh, r0, r1, profile)   # two-resistance grading
+    else:
+        grade = Analytics.grade(soh, dcir, profile)
+
+    confidence = _confidence(dcir, dcir_std, n_steps, profile, len(warnings))
+    if ecm:
+        confidence *= 0.7 + 0.3 * max(0.0, min(1.0, r2))         # reward a good fit
+    if not gradeable:
+        confidence = 0.0
 
     ica_v, ica = Analytics.incremental_capacity(v, q)
-    dtv_v, dtv = Analytics.differential_thermal(v, t)
     return {
         "soh": soh, "capacity_ah": capacity,
-        "r0_mohm": r0 * 1000.0, "r1_mohm": r1 * 1000.0,
-        "c1_farad": c1, "tau_s": tau, "ri_mohm": ri_total * 1000.0,
-        "ecm_identified": ecm, "grade": grade,
-        "ica": (ica_v, ica), "dtv": (dtv_v, dtv),
+        "capacity_norm_ah": cap_norm, "mean_discharge_a": mean_dis,
+        "peukert_k": getattr(profile, "peukert_k", 1.1),
+        "dcir_mohm": dcir * 1000.0, "dcir_std_mohm": dcir_std * 1000.0,
+        "dcir_n_steps": n_steps, "dcir_measured": measured, "dcir_temp_normalised": True,
+        "dcir_slope_mohm": dcir_slope * 1000.0, "dcir_slope_r2": dcir_slope_r2,
+        "ri_mohm": ri_total * 1000.0,
+        "voltage_sag_v": sag, "cca_est_a": cca_est, "ocv_v": ocv,
+        "grade": grade, "gradeable": gradeable,
+        "confidence": confidence, "quality_warnings": warnings, "temp_drift_c": temp_drift,
+        # 1-RC ECM (HPPC): R0 extrapolated, R1/C1/τ fitted; zeros + ecm=False when only DCIR
+        "r0_mohm": r0 * 1000.0, "r1_mohm": r1 * 1000.0, "c1_farad": c1, "tau_s": tau,
+        "ecm_identified": bool(ecm), "ecm_r2": r2,
+        "ica": (ica_v, ica),
     }
 
 
