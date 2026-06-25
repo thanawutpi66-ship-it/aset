@@ -66,7 +66,9 @@ class ProductProfile:
     safety_ovp_pack: float = 0.0         # over-voltage protection ระดับแพ็ค (V)
     safety_uvp_pack: float = 0.0         # under-voltage protection ระดับแพ็ค (V)
     mass_grams: float = 0.0
-    cca_a: float = 0.0                   # Cold Cranking Amps (0 = ไม่มี/ไม่ใช่ starter)
+    cca_a: float = 0.0                        # Cold Cranking Amps (0 = ไม่มี/ไม่ใช่ starter)
+    max_cont_discharge_a: float = 0.0         # กระแส discharge ต่อเนื่องสูงสุด (A); 0 = ไม่ระบุ
+    max_peak_discharge_a: float = 0.0         # กระแส discharge peak สูงสุด (A); 0 = ไม่ระบุ
     notes: str = ""
 
 

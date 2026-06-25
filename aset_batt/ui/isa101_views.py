@@ -1200,11 +1200,19 @@ class BatteryQtWindow(QMainWindow):
             b.max_voltage = prod.max_voltage_per_cell
         if prod.min_voltage_per_cell:
             b.min_voltage = prod.min_voltage_per_cell
+        # อัป max_current จากสเปคแบต (ถ้าระบุ) — ใช้เป็น clamp สำหรับ 1C Quick Scan
+        if prod.max_cont_discharge_a:
+            b.max_current = prod.max_cont_discharge_a
         if self.config.system.safety_limits:
             if prod.safety_ovp_pack:
                 self.config.system.safety_limits["max_voltage"] = prod.safety_ovp_pack
             if prod.safety_uvp_pack:
                 self.config.system.safety_limits["min_voltage"] = prod.safety_uvp_pack
+            # safety max_current = peak ถ้ามี, ไม่งั้นใช้ cont * 1.5
+            if prod.max_peak_discharge_a:
+                self.config.system.safety_limits["max_current"] = prod.max_peak_discharge_a
+            elif prod.max_cont_discharge_a:
+                self.config.system.safety_limits["max_current"] = prod.max_cont_discharge_a * 1.5
         try:
             from aset_batt.core.battery_model import BatteryModel
 
