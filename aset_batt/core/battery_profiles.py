@@ -239,9 +239,20 @@ _CHEMISTRIES, _PRODUCTS = _load_registry()
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+_CHEMISTRY_ALIASES: Dict[str, str] = {
+    "Lead-Acid": "LeadAcid",
+    "lead-acid": "LeadAcid",
+    "lead_acid": "LeadAcid",
+    "VRLA": "LeadAcid",
+    "SLA": "LeadAcid",
+    "AGM": "LeadAcid",
+}
+
+
 def get_chemistry(name: str) -> ChemistryProfile:
-    """คืน ChemistryProfile ตามชื่อ; ถ้าไม่รู้จัก fallback เป็น Li-ion (เหมือน else เดิม)"""
-    prof = _CHEMISTRIES.get(name)
+    """คืน ChemistryProfile ตามชื่อ; รองรับ alias เช่น 'Lead-Acid' → 'LeadAcid'"""
+    resolved = _CHEMISTRY_ALIASES.get(name, name)
+    prof = _CHEMISTRIES.get(resolved)
     if prof is None:
         logger.warning(f"chemistry '{name}' ไม่รู้จัก — fallback เป็น {_FALLBACK_CHEMISTRY}")
         return _CHEMISTRIES[_FALLBACK_CHEMISTRY]

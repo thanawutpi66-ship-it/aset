@@ -143,8 +143,19 @@ class AutoController:
                     v, psu_i, load_i = self.hw.read_vi()
                     i_net = load_i - psu_i
 
-                    # Check safety limits
-                    if not self.check_safety_limits(v, i_net, self.hw.current_temp):
+                    # Monitor loop only checks temperature & overcurrent —
+                    # voltage OVP/UVP is handled by the discharge test loop and
+                    # ChargeController so we don't kill live monitoring on a
+                    # low-voltage battery that is being charged.
+                    temp = self.hw.current_temp
+                    limits = self.config.system.safety_limits
+                    if temp > limits.get("max_temperature", 60.0):
+                        self._trigger_safety(
+                            f"Temperature {temp:.1f}°C exceeds limit {limits['max_temperature']}°C")
+                        break
+                    if abs(i_net) > limits.get("max_current", 30.0):
+                        self._trigger_safety(
+                            f"Current {i_net:.2f}A exceeds limit {limits['max_current']}A")
                         break
 
                     # อัปเดต State Estimator ด้วย dt จริงต่อรอบ (ไม่ hardcode 0.1)
