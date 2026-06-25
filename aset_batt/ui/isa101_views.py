@@ -1370,13 +1370,32 @@ class BatteryQtWindow(QMainWindow):
         import threading
         threading.Thread(target=self._quick_scan_thread, daemon=True).start()
 
+    def _seq_sleep(self, seconds: float) -> bool:
+        """Sleep แบบ interruptible — คืน True ถ้าครบเวลา, False ถ้า cancel"""
+        import time
+        t_end = time.time() + seconds
+        while self._auto_seq_running:
+            left = t_end - time.time()
+            if left <= 0:
+                return True
+            time.sleep(min(0.3, left))
+        return False
+
     def _on_seq_cancel(self):
         self._auto_seq_running = False
+        # หยุด hardware ทันที
+        try:
+            if self.controller:
+                self.controller.stop_charge()
+            self.hw.load_off()
+            self.hw.psu_off()
+        except Exception:
+            pass
         self.lbl_wf_status.setText("ยกเลิก")
         self.btn_seq_cancel.setEnabled(False)
         self.sig_loading.emit("btn_auto_seq", False, "")
         self.sig_loading.emit("btn_quick_scan", False, "")
-        self.sig_alarm.emit("[AUTO] Sequence cancelled by user.")
+        self.sig_alarm.emit("[AUTO] Sequence cancelled — hardware stopped.")
 
     def _auto_sequence_thread(self):
         """Background thread: PREPARE → CHARGE → REST → TEST → ANALYZE."""
@@ -1392,8 +1411,7 @@ class BatteryQtWindow(QMainWindow):
             status("PREPARE: ปิดอุปกรณ์, รอ 3 วิ...")
             self.hw.psu_off()
             self.hw.load_off()
-            time.sleep(3.0)
-            if not self._auto_seq_running:
+            if not self._seq_sleep(3.0):
                 return
             soc = self.controller.calibrate_from_ocv()
             v, _, _ = self.hw.read_vi()
@@ -1413,7 +1431,8 @@ class BatteryQtWindow(QMainWindow):
                         status(f"CHARGE: {v2:.2f} V กำลังชาร์จ...")
                     except Exception:
                         pass
-                    time.sleep(30.0)
+                    if not self._seq_sleep(30.0):
+                        break
                 if not self._auto_seq_running:
                     return
                 self.sig_workflow.emit(1, "done")
@@ -1432,9 +1451,8 @@ class BatteryQtWindow(QMainWindow):
                     break
                 mins, secs = divmod(remaining, 60)
                 status(f"REST: เหลือ {mins:d}:{secs:02d} นาที")
-                time.sleep(10.0)
-            if not self._auto_seq_running:
-                return
+                if not self._seq_sleep(10.0):
+                    return
             # OCV reset after rest
             soc2 = self.controller.calibrate_from_ocv()
             v2, _, _ = self.hw.read_vi()
@@ -1467,7 +1485,8 @@ class BatteryQtWindow(QMainWindow):
                 except Exception as e:
                     self.sig_alarm.emit(f"[AUTO] discharge read error: {e}")
                     break
-                time.sleep(5.0)
+                if not self._seq_sleep(5.0):
+                    break
             self.hw.set_load(False)
             if not self._auto_seq_running:
                 return
@@ -1506,9 +1525,9 @@ class BatteryQtWindow(QMainWindow):
             status("QUICK: ปิดอุปกรณ์, อ่าน OCV...")
             self.hw.psu_off()
             self.hw.load_off()
-            _t.sleep(5.0)
-            if not self._auto_seq_running:
+            if not self._seq_sleep(5.0):
                 return
+
             soc = self.controller.calibrate_from_ocv()
             v, _, _ = self.hw.read_vi()
             self.sig_alarm.emit(f"[QUICK] OCV: {v:.3f} V → SoC {soc:.1f}%")
@@ -1523,7 +1542,8 @@ class BatteryQtWindow(QMainWindow):
                     break
                 mins, secs = divmod(remaining, 60)
                 status(f"QUICK REST: เหลือ {mins}:{secs:02d}")
-                _t.sleep(10.0)
+                if not self._seq_sleep(10.0):
+                    break
             if not self._auto_seq_running:
                 return
             soc2 = self.controller.calibrate_from_ocv()
@@ -1557,13 +1577,15 @@ class BatteryQtWindow(QMainWindow):
                 except Exception as exc:
                     self.sig_alarm.emit(f"[QUICK] read error: {exc}")
                     break
-                _t.sleep(5.0)
+                if not self._seq_sleep(5.0):
+                    break
             self.hw.set_load(False)
             if not self._auto_seq_running:
                 return
             # รอ 30 วิให้แรงดันนิ่ง แล้ว re-anchor SoC
             status("QUICK: รอ 30 วิ OCV settle...")
-            _t.sleep(30.0)
+            if not self._seq_sleep(30.0):
+                return
             self.controller.calibrate_from_ocv()
             self.sig_qs_workflow.emit(2, "done")
             self.sig_alarm.emit("[QUICK] Discharge complete (1C) — Peukert correction applied in analysis")

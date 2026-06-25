@@ -29,6 +29,7 @@ class AutoController:
         self.profile_data = []
         self._charge_ctrl = None
         self._shutdown_done = False   # กัน shutdown ทำงานซ้ำ (idempotent)
+        self._skip_ocv_reset = False  # set by stop_charge() เพื่อข้าม OCV reset
 
         # เวลาเริ่มต้นสำหรับคำนวณ elapsed time ใน CSV
         self._start_time = None
@@ -346,7 +347,9 @@ class AutoController:
         finally:
             self.is_charging = False
             self._charge_ctrl = None
-            self._ocv_reset_after_rest("charge")
+            if not self._skip_ocv_reset:
+                self._ocv_reset_after_rest("charge")
+            self._skip_ocv_reset = False
 
     def _on_charge_update(self, stage: str, voltage: float, i_charge: float, note: str):
         """callback จาก ChargeController — อัปเดต UI ผ่าน root.after (thread-safe)"""
@@ -362,6 +365,7 @@ class AutoController:
         if not self.is_charging:
             return
         logger.info("Stopping charge")
+        self._skip_ocv_reset = True   # ข้าม OCV rest เมื่อหยุดกลางคัน
         self.is_charging = False
         if self._charge_ctrl is not None:
             self._charge_ctrl.stop()
