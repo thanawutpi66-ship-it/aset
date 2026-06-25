@@ -2,10 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "aset-app",
-      "runtimeExecutable": "./venv/Scripts/python.exe",
-      "runtimeArgs": ["main.py"],
-      "port": 8000,
+      "name": "cloud-dashboard",
+      "runtimeExecutable": "C:/Users/theer/AppData/Local/Python/bin/python.exe",
+      "runtimeArgs": ["cloud_dashboard/server.py"],
+      "port": 8001,
       "autoPort": false
+    }
   ]
 }
