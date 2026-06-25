@@ -555,6 +555,17 @@ class BatteryQtWindow(QMainWindow):
         self.cb_charge_mode.addItems(["Auto (by chemistry)", "CC-CV", "3-Stage (Lead-Acid)"])
         mrow0.addWidget(self.cb_charge_mode, 1)
         lay.addLayout(mrow0)
+        # OCV calibration row — press before CHARGE to read resting voltage and anchor SoC
+        ocv_row = QHBoxLayout()
+        self.btn_ocv = _btn("OCV CALIBRATE", bg=WARN, fg="white", hover="#a06800")
+        self.btn_ocv.setToolTip(
+            "Turn off PSU & Load, wait 3 s, read OCV → set correct SoC.\n"
+            "Press before CHARGE to fix the SOC display."
+        )
+        self.btn_ocv.clicked.connect(self._on_ocv_calibrate)
+        self._buttons["btn_ocv"] = self.btn_ocv   # register for sig_loading
+        ocv_row.addWidget(self.btn_ocv)
+        lay.addLayout(ocv_row)
         crow = QHBoxLayout()
         self.btn_charge = _btn("CHARGE", bg=OK, fg="white", hover="#266a2a")
         self.btn_stop_charge = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
@@ -1095,6 +1106,37 @@ class BatteryQtWindow(QMainWindow):
         if self.controller:
             self.controller.stop_charge()
             self._log_alarm("Charge stopped.")
+
+    def _on_ocv_calibrate(self):
+        """Turn off PSU+Load, wait 3 s, read terminal voltage as OCV, sync SoC."""
+        if self.controller is None or not getattr(self.hw, "is_connected", False):
+            if not self._headless:
+                QMessageBox.warning(self, "OCV", "Connect hardware first")
+            return
+        if getattr(self.controller, "is_charging", False):
+            if not self._headless:
+                QMessageBox.warning(self, "OCV", "Stop charging before OCV calibration")
+            return
+
+        self.sig_loading.emit("btn_ocv", True, "Measuring…")
+        self.lbl_charge.setText("OCV: instruments off, settling…")
+
+        import threading
+        def _run():
+            try:
+                self.hw.psu_off()
+                self.hw.load_off()
+                import time; time.sleep(3.0)
+                soc = self.controller.calibrate_from_ocv()
+                v, _, _ = self.hw.read_vi()
+                msg = f"OCV: {v:.3f} V  →  SoC {soc:.1f}%"
+                self.sig_alarm.emit(msg)
+                self.sig_charge_status.emit(msg)
+            except Exception as exc:
+                self.sig_charge_status.emit(f"OCV failed: {exc}")
+            finally:
+                self.sig_loading.emit("btn_ocv", False, "")
+        threading.Thread(target=_run, daemon=True).start()
 
     # ---- characterization test (acquisition worker on the real HAL) -------
     def _acq_profile(self) -> AcqProfile:
