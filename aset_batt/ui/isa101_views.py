@@ -262,6 +262,8 @@ class BatteryQtWindow(QMainWindow):
     sig_safety = Signal(str)
     sig_profile_done = Signal(object)
     sig_analysis_done = Signal(object)
+    sig_workflow   = Signal(int, str)  # (phase 0-4, state: "active"/"done"/"skip"/"idle")
+    sig_wf_status  = Signal(str)       # workflow status label text (cross-thread safe)
 
     def __init__(self, config_manager):
         super().__init__()
@@ -296,6 +298,7 @@ class BatteryQtWindow(QMainWindow):
         self._test_thread = None      # characterization worker (QThread)
         self._test_worker = None
         self._last_csv = None         # CSV written by the most recent test/monitor run
+        self._auto_seq_running = False
 
         self._build_ui()
         self._connect_signals()
@@ -418,6 +421,7 @@ class BatteryQtWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 4)
         lay.setSpacing(8)
         lay.addWidget(self._zone_setup())        # collapsible — set once, then fold away
+        lay.addWidget(self._zone_workflow())     # 5-step guide + auto-sequence
         lay.addWidget(self._zone_run())          # the heart — always open
         lay.addWidget(self._zone_tools())        # collapsible — advanced, collapsed
         lay.addStretch(1)
@@ -489,17 +493,35 @@ class BatteryQtWindow(QMainWindow):
         actions.addWidget(self.btn_save_default, 1)
         lay.addLayout(actions)
 
-        # Connections
+        # Connections — each port row has a status LED (● gray=idle, ✓ green=ok, ✗ red=fail)
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("CONNECTIONS"))
         self.cb_psu = QComboBox()
         self.cb_load = QComboBox()
         self.cb_esp = QComboBox()
-        form = QFormLayout()
-        form.addRow("PSU (VISA):", self.cb_psu)
-        form.addRow("Load (VISA):", self.cb_load)
-        form.addRow("ESP32 (COM):", self.cb_esp)
-        lay.addLayout(form)
+
+        def _led():
+            lbl = QLabel("●")
+            lbl.setStyleSheet(f"color:{NEUTRAL}; font-size:15px; min-width:18px;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            return lbl
+
+        self.led_psu  = _led()
+        self.led_load = _led()
+        self.led_esp  = _led()
+
+        for label_text, cb, led in [
+            ("PSU (VISA):", self.cb_psu, self.led_psu),
+            ("Load (VISA):", self.cb_load, self.led_load),
+            ("ESP32 (COM):", self.cb_esp, self.led_esp),
+        ]:
+            row = QHBoxLayout()
+            lbl = QLabel(label_text)
+            lbl.setMinimumWidth(78)
+            row.addWidget(lbl)
+            row.addWidget(cb, 1)
+            row.addWidget(led)
+            lay.addLayout(row)
         row = QHBoxLayout()
         self.btn_connect = _btn("Connect", bg=OK, fg="white", hover="#266a2a")
         self.btn_disconnect = _btn("Disconnect", bg=CRIT, fg="white", hover="#9b2020")
@@ -513,6 +535,58 @@ class BatteryQtWindow(QMainWindow):
         lay.addWidget(btn_refresh)
 
         return self._collapsible("1 · SETUP", w, expanded=True)
+
+    # ---- WORKFLOW GUIDE (5-step sequence with auto-run) ----------------------
+    _WF_STEPS = [
+        ("1", "PREPARE",  "OCV calibrate"),
+        ("2", "CHARGE",   "Full 3-stage"),
+        ("3", "REST",     "30 min rest"),
+        ("4", "TEST",     "Discharge 0.2C"),
+        ("5", "ANALYZE",  "SOH + Grade"),
+    ]
+
+    def _zone_workflow(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(3)
+
+        self._wf_leds = []   # (dot_label, name_label) per step
+        for num, name, desc in self._WF_STEPS:
+            row = QHBoxLayout()
+            dot = QLabel("○")
+            dot.setStyleSheet(f"color:{NEUTRAL}; font-size:16px; min-width:22px;")
+            dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            name_lbl = QLabel(f"{name}")
+            name_lbl.setStyleSheet(f"color:{MUTED}; font-weight:700; min-width:65px;")
+            desc_lbl = QLabel(desc)
+            desc_lbl.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+            row.addWidget(dot)
+            row.addWidget(name_lbl)
+            row.addWidget(desc_lbl)
+            row.addStretch(1)
+            lay.addLayout(row)
+            self._wf_leds.append((dot, name_lbl))
+
+        btn_row = QHBoxLayout()
+        self.btn_auto_seq = _btn("▶  AUTO SEQUENCE", bg=INFO, fg="white", hover="#0d4a89")
+        self.btn_auto_seq.setToolTip("Run full cycle: OCV → Charge → Rest 30 min → Discharge → Analyze")
+        self.btn_auto_seq.clicked.connect(self._on_auto_sequence)
+        self._buttons["btn_auto_seq"] = self.btn_auto_seq
+
+        self.btn_seq_cancel = _btn("■  CANCEL", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_seq_cancel.setEnabled(False)
+        self.btn_seq_cancel.clicked.connect(self._on_seq_cancel)
+
+        btn_row.addWidget(self.btn_auto_seq, 2)
+        btn_row.addWidget(self.btn_seq_cancel, 1)
+        lay.addLayout(btn_row)
+
+        self.lbl_wf_status = QLabel("กด AUTO SEQUENCE เพื่อเริ่ม")
+        self.lbl_wf_status.setStyleSheet(f"color:{MUTED}; font-size:11px; padding-top:2px;")
+        lay.addWidget(self.lbl_wf_status)
+
+        return self._collapsible("WORKFLOW", w, expanded=True)
 
     # ---- ZONE 2: RUN (charge ⇄ discharge) ----------------------------------
     def _zone_run(self):
@@ -801,6 +875,8 @@ class BatteryQtWindow(QMainWindow):
         self.sig_safety.connect(self._slot_safety)
         self.sig_profile_done.connect(self._slot_profile_done)
         self.sig_analysis_done.connect(self._slot_analysis_done)
+        self.sig_workflow.connect(self._slot_workflow)
+        self.sig_wf_status.connect(self.lbl_wf_status.setText)
 
     def update_display(self, v, i, soc, rin, temp=None, soh=None):
         if temp is None:
@@ -908,11 +984,26 @@ class BatteryQtWindow(QMainWindow):
     @Slot()
     def _slot_conn(self):
         connected = bool(getattr(self.hw, "is_connected", False))
+        esp_ok   = bool(getattr(self.hw, "is_esp_connected", False))
+        # Header LED
         led = OK if connected else NEUTRAL
         self.conn_led.setStyleSheet(f"color:{led}; font-size:16px;")
         self.conn_text.setText("Connected" if connected else "Disconnected")
         self.conn_text.setStyleSheet(f"color:{OK if connected else MUTED}; font-weight:600;")
         self.status_label.setText("Hardware connected" if connected else "Ready — connect hardware to begin")
+        # Per-port LEDs
+        def _set_led(lbl, ok, tip_ok, tip_no):
+            if ok:
+                lbl.setText("✓")
+                lbl.setStyleSheet(f"color:{OK}; font-size:13px; min-width:18px; font-weight:700;")
+                lbl.setToolTip(tip_ok)
+            else:
+                lbl.setText("●")
+                lbl.setStyleSheet(f"color:{NEUTRAL}; font-size:15px; min-width:18px;")
+                lbl.setToolTip(tip_no)
+        _set_led(self.led_psu,  connected, "PSU connected",   "PSU: not connected")
+        _set_led(self.led_load, connected, "Load connected",  "Load: not connected")
+        _set_led(self.led_esp,  esp_ok,    "ESP32 connected", "ESP32: not connected")
 
     @Slot(str)
     def _slot_safety(self, reason):
@@ -1052,7 +1143,14 @@ class BatteryQtWindow(QMainWindow):
             self.hw.connect_instruments(psu, load)
             if esp:
                 baud = getattr(self.config.hardware, "serial_baudrate", 9600)
-                self.hw.connect_esp32(esp, baudrate=baud)
+                try:
+                    self.hw.connect_esp32(esp, baudrate=baud)
+                except Exception as esp_exc:
+                    # ESP32 fail is non-fatal — show warning but keep PSU/Load connected
+                    self.led_esp.setText("✗")
+                    self.led_esp.setStyleSheet(f"color:{CRIT}; font-size:13px; min-width:18px; font-weight:700;")
+                    self.led_esp.setToolTip(f"ESP32 failed: {esp_exc}")
+                    self._log_alarm(f"ESP32 connect failed (non-fatal): {esp_exc}")
             self.config.hardware.psu_port = psu
             self.config.hardware.load_port = load
             self.config.hardware.esp_port = esp
@@ -1060,6 +1158,11 @@ class BatteryQtWindow(QMainWindow):
             self._update_connection_status()
             self._log_alarm("Hardware connected.")
         except Exception as exc:
+            # Mark PSU+Load LEDs as failed
+            for led in (self.led_psu, self.led_load):
+                led.setText("✗")
+                led.setStyleSheet(f"color:{CRIT}; font-size:13px; min-width:18px; font-weight:700;")
+                led.setToolTip(str(exc))
             if not self._headless:
                 QMessageBox.critical(self, "Connect Error", str(exc))
 
@@ -1137,6 +1240,164 @@ class BatteryQtWindow(QMainWindow):
             finally:
                 self.sig_loading.emit("btn_ocv", False, "")
         threading.Thread(target=_run, daemon=True).start()
+
+    # ---- Workflow guide slots -----------------------------------------------
+
+    @Slot(int, str)
+    def _slot_workflow(self, step: int, state: str):
+        """Update a step indicator.  state: idle/active/done/skip."""
+        _styles = {
+            "idle":   (f"color:{NEUTRAL}; font-size:16px; min-width:22px;",
+                       f"color:{MUTED}; font-weight:700; min-width:65px;",   "○"),
+            "active": (f"color:{INFO};    font-size:16px; min-width:22px;",
+                       f"color:{INFO};    font-weight:700; min-width:65px;",  "●"),
+            "done":   (f"color:{OK};      font-size:13px; min-width:22px; font-weight:700;",
+                       f"color:{OK};      font-weight:700; min-width:65px;",  "✓"),
+            "skip":   (f"color:{NEUTRAL}; font-size:13px; min-width:22px;",
+                       f"color:{NEUTRAL}; font-weight:700; min-width:65px;",  "—"),
+        }
+        dot_style, name_style, symbol = _styles.get(state, _styles["idle"])
+        if 0 <= step < len(self._wf_leds):
+            dot, name_lbl = self._wf_leds[step]
+            dot.setText(symbol)
+            dot.setStyleSheet(dot_style)
+            name_lbl.setStyleSheet(name_style)
+
+    def _on_auto_sequence(self):
+        if self.controller is None or not getattr(self.hw, "is_connected", False):
+            if not self._headless:
+                QMessageBox.warning(self, "Auto Sequence", "Connect hardware first")
+            return
+        if self._auto_seq_running:
+            return
+        # Reset all steps to idle
+        for i in range(len(self._WF_STEPS)):
+            self.sig_workflow.emit(i, "idle")
+        self._auto_seq_running = True
+        self.btn_seq_cancel.setEnabled(True)
+        self.sig_loading.emit("btn_auto_seq", True, "Running…")
+        import threading
+        threading.Thread(target=self._auto_sequence_thread, daemon=True).start()
+
+    def _on_seq_cancel(self):
+        self._auto_seq_running = False
+        self.lbl_wf_status.setText("ยกเลิก — กด AUTO SEQUENCE เพื่อเริ่มใหม่")
+        self.btn_seq_cancel.setEnabled(False)
+        self.sig_loading.emit("btn_auto_seq", False, "")
+        self.sig_alarm.emit("[AUTO] Sequence cancelled by user.")
+
+    def _auto_sequence_thread(self):
+        """Background thread: PREPARE → CHARGE → REST → TEST → ANALYZE."""
+        import time
+
+        def status(msg):
+            self.sig_charge_status.emit(msg)
+            self.sig_wf_status.emit(msg)
+
+        try:
+            # ── PHASE 0: OCV CALIBRATE ────────────────────────────────────
+            self.sig_workflow.emit(0, "active")
+            status("PREPARE: ปิดอุปกรณ์, รอ 3 วิ...")
+            self.hw.psu_off()
+            self.hw.load_off()
+            time.sleep(3.0)
+            if not self._auto_seq_running:
+                return
+            soc = self.controller.calibrate_from_ocv()
+            v, _, _ = self.hw.read_vi()
+            self.sig_alarm.emit(f"[AUTO] OCV: {v:.3f} V → SoC {soc:.1f}%")
+            self.sig_workflow.emit(0, "done")
+
+            # ── PHASE 1: CHARGE (ถ้า SoC < 95%) ─────────────────────────
+            if soc < 95.0:
+                self.sig_workflow.emit(1, "active")
+                status(f"CHARGE: SoC={soc:.0f}% — เริ่มชาร์จ 3-stage...")
+                self.controller.start_charge(strategy=None)
+                while self._auto_seq_running:
+                    if not getattr(self.controller, "is_charging", False):
+                        break
+                    try:
+                        v2, _, _ = self.hw.read_vi()
+                        status(f"CHARGE: {v2:.2f} V กำลังชาร์จ...")
+                    except Exception:
+                        pass
+                    time.sleep(30.0)
+                if not self._auto_seq_running:
+                    return
+                self.sig_workflow.emit(1, "done")
+                self.sig_alarm.emit("[AUTO] Charge complete")
+            else:
+                self.sig_alarm.emit(f"[AUTO] SoC={soc:.0f}% ≥ 95% — ข้ามชาร์จ")
+                self.sig_workflow.emit(1, "skip")
+
+            # ── PHASE 2: REST 30 นาที ────────────────────────────────────
+            self.sig_workflow.emit(2, "active")
+            rest_total = 30 * 60   # 30 minutes in seconds
+            t_rest_end = time.time() + rest_total
+            while self._auto_seq_running:
+                remaining = int(t_rest_end - time.time())
+                if remaining <= 0:
+                    break
+                mins, secs = divmod(remaining, 60)
+                status(f"REST: เหลือ {mins:d}:{secs:02d} นาที")
+                time.sleep(10.0)
+            if not self._auto_seq_running:
+                return
+            # OCV reset after rest
+            soc2 = self.controller.calibrate_from_ocv()
+            v2, _, _ = self.hw.read_vi()
+            self.sig_alarm.emit(f"[AUTO] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}%")
+            self.sig_workflow.emit(2, "done")
+
+            # ── PHASE 3: DISCHARGE TEST (0.2C ตาม IEC) ──────────────────
+            self.sig_workflow.emit(3, "active")
+            rated   = self.controller.config.battery.rated_capacity
+            i_dis   = round(0.2 * rated, 2)   # 0.2C
+            pack_min = self.controller.config.battery.pack_min_voltage
+            status(f"TEST: discharge {i_dis:.2f} A (0.2C) จนถึง {pack_min:.1f} V")
+            self.sig_alarm.emit(f"[AUTO] Starting discharge {i_dis:.2f} A")
+            self.controller._ensure_logging()
+            self.hw.set_load(True, i_dis)
+            import time as _t
+            last_log = _t.time()
+            while self._auto_seq_running:
+                try:
+                    v3, i3 = self.hw.read_measurements(prefer_load_v=True)
+                    temp3 = self.hw.current_temp
+                    now = _t.time()
+                    dt = now - last_log
+                    last_log = now
+                    state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
+                    self.controller._log_sample(v3, i3)
+                    status(f"TEST: {v3:.2f} V  {i3:.2f} A  SoC {state3['soc']:.0f}%")
+                    if v3 <= pack_min:
+                        break
+                except Exception as e:
+                    self.sig_alarm.emit(f"[AUTO] discharge read error: {e}")
+                    break
+                time.sleep(5.0)
+            self.hw.set_load(False)
+            if not self._auto_seq_running:
+                return
+            self.controller._ocv_reset_after_rest("discharge")
+            self.sig_workflow.emit(3, "done")
+            self.sig_alarm.emit("[AUTO] Discharge complete")
+
+            # ── PHASE 4: ANALYZE ─────────────────────────────────────────
+            self.sig_workflow.emit(4, "active")
+            status("ANALYZE: วิเคราะห์ CSV...")
+            self.controller._auto_analyze()
+            self.sig_workflow.emit(4, "done")
+            status("เสร็จสิ้น — ดูผลที่แท็บ Analytics")
+            self.sig_alarm.emit("[AUTO] Sequence complete ✓")
+
+        except Exception as exc:
+            self.sig_alarm.emit(f"[AUTO] Error: {exc}")
+            status(f"Error: {exc}")
+        finally:
+            self._auto_seq_running = False
+            self.sig_loading.emit("btn_auto_seq", False, "")
+            self.btn_seq_cancel.setEnabled(False)
 
     # ---- characterization test (acquisition worker on the real HAL) -------
     def _acq_profile(self) -> AcqProfile:
