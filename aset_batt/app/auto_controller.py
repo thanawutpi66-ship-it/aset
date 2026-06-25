@@ -43,17 +43,23 @@ class AutoController:
         """Check if parameters are within safety limits"""
         limits = self.config.system.safety_limits
 
-        if voltage > limits["max_voltage"]:
-            self._trigger_safety(f"Voltage {voltage:.2f}V exceeds limit {limits['max_voltage']}V")
-            return False
-
-        # Skip UVP while charging — low voltage is expected at the start of a
-        # deep-discharge recovery; only flag voltages that indicate a dead/open cell.
+        # During charging the ChargeController owns voltage cutoff — skip both
+        # OVP and UVP so that a high PSU setpoint or a low starting battery
+        # voltage does not kill the charge loop prematurely.
         if not self.is_charging:
+            if voltage > limits["max_voltage"]:
+                self._trigger_safety(f"Voltage {voltage:.2f}V exceeds limit {limits['max_voltage']}V")
+                return False
             if voltage < limits["min_voltage"]:
                 self._trigger_safety(f"Voltage {voltage:.2f}V below limit {limits['min_voltage']}V")
                 return False
         else:
+            # Hard ceiling: voltage wildly above pack_max suggests a wiring fault
+            hard_ceil = limits.get("max_voltage", 20.0) * 1.2
+            if voltage > hard_ceil:
+                self._trigger_safety(f"Voltage {voltage:.2f}V critically high (hard ceiling {hard_ceil:.1f}V)")
+                return False
+            # Hard floor: critically low cell voltage during charge = open cell
             hard_floor = limits.get("min_voltage", 6.0) * 0.5
             if voltage < hard_floor:
                 self._trigger_safety(f"Voltage {voltage:.2f}V critically low (hard floor {hard_floor:.1f}V)")
