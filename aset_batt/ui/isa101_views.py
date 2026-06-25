@@ -1037,27 +1037,43 @@ class BatteryQtWindow(QMainWindow):
 
     @Slot()
     def _slot_conn(self):
-        connected = bool(getattr(self.hw, "is_connected", False))
-        esp_ok   = bool(getattr(self.hw, "is_esp_connected", False))
+        connected  = bool(getattr(self.hw, "is_connected", False))
+        esp_ok     = bool(getattr(self.hw, "is_esp_connected", False))
+        conn_err   = getattr(self.hw, "connect_error", "")
+        esp_err    = getattr(self.hw, "esp_connect_error", "")
         # Header LED
-        led = OK if connected else NEUTRAL
-        self.conn_led.setStyleSheet(f"color:{led}; font-size:16px;")
-        self.conn_text.setText("Connected" if connected else "Disconnected")
-        self.conn_text.setStyleSheet(f"color:{OK if connected else MUTED}; font-weight:600;")
-        self.status_label.setText("Hardware connected" if connected else "Ready — connect hardware to begin")
-        # Per-port LEDs
-        def _set_led(lbl, ok, tip_ok, tip_no):
+        if connected:
+            led_color, conn_label = OK, "Connected"
+        elif conn_err:
+            led_color, conn_label = CRIT, "Connection Failed"
+        else:
+            led_color, conn_label = NEUTRAL, "Disconnected"
+        self.conn_led.setStyleSheet(f"color:{led_color}; font-size:16px;")
+        self.conn_text.setText(conn_label)
+        self.conn_text.setStyleSheet(f"color:{led_color}; font-weight:600;")
+        if connected:
+            self.status_label.setText("Hardware connected")
+        elif conn_err:
+            self.status_label.setText(f"เชื่อมต่อล้มเหลว: {conn_err.splitlines()[0]}")
+        else:
+            self.status_label.setText("Ready — connect hardware to begin")
+        # Per-port LEDs: ✓ connected | ✗ error | ● idle
+        def _set_led(lbl, ok, err, tip_ok, tip_err, tip_no):
             if ok:
                 lbl.setText("✓")
                 lbl.setStyleSheet(f"color:{OK}; font-size:13px; min-width:18px; font-weight:700;")
                 lbl.setToolTip(tip_ok)
+            elif err:
+                lbl.setText("✗")
+                lbl.setStyleSheet(f"color:{CRIT}; font-size:13px; min-width:18px; font-weight:700;")
+                lbl.setToolTip(tip_err)
             else:
                 lbl.setText("●")
                 lbl.setStyleSheet(f"color:{NEUTRAL}; font-size:15px; min-width:18px;")
                 lbl.setToolTip(tip_no)
-        _set_led(self.led_psu,  connected, "PSU connected",   "PSU: not connected")
-        _set_led(self.led_load, connected, "Load connected",  "Load: not connected")
-        _set_led(self.led_esp,  esp_ok,    "ESP32 connected", "ESP32: not connected")
+        _set_led(self.led_psu,  connected, conn_err, "PSU connected",   conn_err,  "PSU: not connected")
+        _set_led(self.led_load, connected, conn_err, "Load connected",  conn_err,  "Load: not connected")
+        _set_led(self.led_esp,  esp_ok,    esp_err,  "ESP32 connected", esp_err,   "ESP32: not connected")
 
     @Slot(str)
     def _slot_safety(self, reason):
@@ -1199,11 +1215,12 @@ class BatteryQtWindow(QMainWindow):
                 baud = getattr(self.config.hardware, "serial_baudrate", 9600)
                 try:
                     self.hw.connect_esp32(esp, baudrate=baud)
+                    if hasattr(self.hw, "esp_connect_error"):
+                        self.hw.esp_connect_error = ""
                 except Exception as esp_exc:
-                    # ESP32 fail is non-fatal — show warning but keep PSU/Load connected
-                    self.led_esp.setText("✗")
-                    self.led_esp.setStyleSheet(f"color:{CRIT}; font-size:13px; min-width:18px; font-weight:700;")
-                    self.led_esp.setToolTip(f"ESP32 failed: {esp_exc}")
+                    # ESP32 fail is non-fatal — store error so _slot_conn shows ✗
+                    if hasattr(self.hw, "esp_connect_error"):
+                        self.hw.esp_connect_error = str(esp_exc)
                     self._log_alarm(f"ESP32 connect failed (non-fatal): {esp_exc}")
             self.config.hardware.psu_port = psu
             self.config.hardware.load_port = load
@@ -1212,13 +1229,10 @@ class BatteryQtWindow(QMainWindow):
             self._update_connection_status()
             self._log_alarm("Hardware connected.")
         except Exception as exc:
-            # Mark PSU+Load LEDs as failed
-            for led in (self.led_psu, self.led_load):
-                led.setText("✗")
-                led.setStyleSheet(f"color:{CRIT}; font-size:13px; min-width:18px; font-weight:700;")
-                led.setToolTip(str(exc))
+            # connect_error already set in hw.connect_instruments — let _slot_conn show ✗
+            self._update_connection_status()
             if not self._headless:
-                QMessageBox.critical(self, "Connect Error", str(exc))
+                QMessageBox.critical(self, "เชื่อมต่อล้มเหลว", str(exc))
 
     def _on_disconnect(self):
         try:

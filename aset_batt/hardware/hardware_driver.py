@@ -21,6 +21,8 @@ class HardwareController:
         self.is_esp_connected = False
         self.current_temp = 0.0
         self.last_esp_heartbeat = time.time()
+        self.connect_error: str = ""       # ข้อความ error ล่าสุดของ PSU/Load — ว่างเปล่าเมื่อ connect สำเร็จ
+        self.esp_connect_error: str = ""   # ข้อความ error ล่าสุดของ ESP32
 
         # Combined-measurement capability per instrument (None=unknown, True/False=cached
         # after the first probe). MEAS:SCAL:ALL:DC? returns V,I,P from ONE instantaneous
@@ -51,6 +53,7 @@ class HardwareController:
                     pass
                 setattr(self, attr, None)
         self.is_connected = False
+        self.connect_error = ""
 
         psu  = self.rm.open_resource(psu_port)
         load = self.rm.open_resource(load_port)
@@ -76,7 +79,9 @@ class HardwareController:
                 load.close()
             except Exception:
                 pass
-            raise RuntimeError(f"PSU ที่พอร์ต {psu_port} ไม่ตอบสนอง — เลือกพอร์ตผิดหรืออุปกรณ์ไม่พร้อม\n({e})")
+            msg = f"PSU ที่พอร์ต {psu_port} ไม่ตอบสนอง — เลือกพอร์ตผิดหรืออุปกรณ์ไม่พร้อม\n({e})"
+            self.connect_error = msg
+            raise RuntimeError(msg)
 
         try:
             load_idn = load.query("*IDN?").strip()
@@ -87,7 +92,9 @@ class HardwareController:
                 load.close()
             except Exception:
                 pass
-            raise RuntimeError(f"Load ที่พอร์ต {load_port} ไม่ตอบสนอง — เลือกพอร์ตผิดหรืออุปกรณ์ไม่พร้อม\n({e})")
+            msg = f"Load ที่พอร์ต {load_port} ไม่ตอบสนอง — เลือกพอร์ตผิดหรืออุปกรณ์ไม่พร้อม\n({e})"
+            self.connect_error = msg
+            raise RuntimeError(msg)
 
         self.psu_inst  = psu
         self.load_inst = load
