@@ -134,11 +134,14 @@ class AutoController:
         return soc
 
     # Settling parameters per chemistry  (min_rest s, window s, ΔV threshold V)
+    # LiFePO4: plateau ราบมาก (1.4 mV/cell/%SoC) — หลัง discharge หนัก electrochemical
+    # relaxation ใช้เวลา 5-30 นาที; 120s+5mV ตรวจ "หยุดขึ้นเร็ว" แต่ยังไม่ settle จริง
+    # ปรับเป็น 300s minimum + 2mV/60s เพื่อให้แม่นขึ้น (~5 นาที practical minimum)
     _OCV_SETTLE = {
-        "LeadAcid": (300, 60, 0.010),
-        "LiFePO4":  (120, 30, 0.005),
-        "Li-ion":   ( 60, 30, 0.005),
-        "LiPO":     ( 60, 30, 0.005),
+        "LeadAcid": (300,  60, 0.010),
+        "LiFePO4":  (300,  60, 0.002),   # เดิม (120, 30, 0.005) — เพิ่ม rest + เข้มขึ้น
+        "Li-ion":   ( 60,  30, 0.005),
+        "LiPO":     ( 60,  30, 0.005),
     }
 
     def calibrate_from_ocv_stable(self, on_progress=None):
@@ -375,7 +378,8 @@ class AutoController:
     # Chemistry-aware Charging (3-stage lead-acid / CC-CV lithium)
     # ------------------------------------------------------------------
 
-    def start_charge(self, float_hold_s: float = 0.0, strategy: str = None):
+    def start_charge(self, float_hold_s: float = 0.0, strategy: str = None,
+                     bulk_c_rate_override: float = None):
         """เริ่มชาร์จ; strategy=None → เลือกตามเคมีของแบตอัตโนมัติ
         (LeadAcid → 3-stage, Lithium → CC-CV). ส่ง strategy เพื่อ override จาก dropdown:
         "three_stage" หรือ "cc_cv". รันใน thread แยก; monitor loop ยัง log+safety ระหว่างชาร์จ
@@ -400,10 +404,11 @@ class AutoController:
         if not self.monitor_running:
             self.start_monitor()
         threading.Thread(target=self._run_charge_loop,
-                         args=(float_hold_s, strategy), daemon=True).start()
+                         args=(float_hold_s, strategy, bulk_c_rate_override), daemon=True).start()
         return True
 
-    def _run_charge_loop(self, float_hold_s: float, strategy: str = None):
+    def _run_charge_loop(self, float_hold_s: float, strategy: str = None,
+                         bulk_c_rate_override: float = None):
         from aset_batt.core.charge_controller import ChargeController
         logger.info("Charge loop started (strategy=%s)", strategy or "auto")
         try:
@@ -424,6 +429,7 @@ class AutoController:
             self._charge_ctrl = ChargeController(
                 self.hw, self.config, self.estimator.battery_model,
                 on_update=self._on_charge_update, strategy=strategy,
+                bulk_c_rate_override=bulk_c_rate_override,
             )
             final_stage = self._charge_ctrl.run(
                 should_stop=lambda: (self.safety_triggered or not self.is_charging),

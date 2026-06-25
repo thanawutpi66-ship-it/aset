@@ -102,6 +102,31 @@ class StateEstimator:
         soc_cc = self.soc_initial - (self.ah_accumulated / self.rated_capacity) * 100.0
         soc_cc = max(0.0, min(100.0, soc_cc))
 
+        # === 1b. Endpoint Anchors (SoC Restoring Points) ===
+        # Hard reset ที่ขอบบน/ล่าง — แก้ Coulomb counting drift บน flat LFP plateau
+        # ทำงานระหว่าง active charge/discharge (ต่างจาก OCV correction ที่ต้องการกระแส ≈ 0)
+        cp = self.battery_model.charge_profile
+        s  = self.battery_model.series_cells
+        # 100% anchor: ชาร์จ + V ≥ 98.6% ของ CV (~3.60V/cell × 8 = 28.8V สำหรับ LFP 8S)
+        #              AND กระแสชาร์จ taper ถึง tail threshold (แบตใกล้เต็มแล้ว)
+        full_v_cell = cp.cv_voltage_per_cell or cp.absorption_voltage_per_cell
+        if full_v_cell > 0:
+            anchor_v_full = full_v_cell * s * 0.986      # 3.65 × 0.986 × 8 = 28.8V (LFP 8S)
+            anchor_i_tail = self.rated_capacity * cp.tail_current_c_rate * 1.2
+            if (current < 0 and voltage >= anchor_v_full
+                    and abs(current) <= anchor_i_tail and self.soc < 98.0):
+                logger.info("Endpoint anchor → 100%%: %.3fV (≥%.3f) I=%.3fA tail=%.3fA",
+                            voltage, anchor_v_full, current, anchor_i_tail)
+                self._reset_to_soc(100.0)
+                soc_cc = 100.0
+        # 0% anchor: discharge + V ≤ OCV ที่ 0% ของแพ็ค (+ 1% hysteresis)
+        #            2.50V/cell × 8 = 20.0V สำหรับ LFP 8S
+        anchor_v_empty = self.battery_model.get_ocv_from_soc(0.0)
+        if (current > 0 and voltage <= anchor_v_empty * 1.01 and self.soc > 2.0):
+            logger.info("Endpoint anchor → 0%%: %.3fV (≤%.3f)", voltage, anchor_v_empty)
+            self._reset_to_soc(0.0)
+            soc_cc = 0.0
+
         # === 2. Update Internal Resistance (forward temp + measured_dcir ให้ถูก) ===
         self.rin = self.battery_model.estimate_rin(
             voltage, current, self.soc, temp=temp, measured_dcir=measured_dcir

@@ -46,15 +46,18 @@ class ChargeParams:
     @classmethod
     def from_config(cls, charge_profile, series_cells: int,
                     rated_capacity_ah: float,
-                    strategy: str = None) -> "ChargeParams":
+                    strategy: str = None,
+                    bulk_c_rate_override: float = None) -> "ChargeParams":
         """strategy=None → ใช้ตามเคมีของแบต (profile); ส่งค่ามาเพื่อ override
-        (เช่นผู้ใช้เลือก 'cc_cv' / 'three_stage' จาก dropdown ใน GUI)"""
+        (เช่นผู้ใช้เลือก 'cc_cv' / 'three_stage' จาก dropdown ใน GUI)
+        bulk_c_rate_override: ผู้ใช้เลือก C-rate เอง (None = ใช้ค่าจาก profile)"""
         cp = charge_profile
         series = max(1, int(series_cells))
         cap = max(1e-6, float(rated_capacity_ah))
+        bulk_c = bulk_c_rate_override if bulk_c_rate_override is not None else cp.bulk_c_rate
         return cls(
             strategy=strategy or cp.strategy,
-            bulk_current_a=cp.bulk_c_rate * cap,
+            bulk_current_a=bulk_c * cap,
             tail_current_a=cp.tail_current_c_rate * cap,
             absorption_v=cp.absorption_voltage_per_cell * series,
             float_v=cp.float_voltage_per_cell * series,
@@ -132,7 +135,8 @@ class ChargeController:
 
     def __init__(self, hw, config, battery_model,
                  on_update: Optional[Callable[[str, float, float, str], None]] = None,
-                 poll_interval_s: float = 1.0, strategy: str = None):
+                 poll_interval_s: float = 1.0, strategy: str = None,
+                 bulk_c_rate_override: float = None):
         self.hw = hw
         self.config = config
         self.params = ChargeParams.from_config(
@@ -140,6 +144,7 @@ class ChargeController:
             config.battery.cells_series,
             config.battery.rated_capacity,
             strategy=strategy,
+            bulk_c_rate_override=bulk_c_rate_override,
         )
         self.on_update = on_update           # callback(stage, v, i_charge, note)
         self.poll_interval_s = poll_interval_s

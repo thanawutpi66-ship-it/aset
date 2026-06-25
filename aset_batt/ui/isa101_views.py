@@ -584,8 +584,9 @@ class BatteryQtWindow(QMainWindow):
         outer_lay.setContentsMargins(0, 0, 0, 0)
         outer_lay.setSpacing(4)
 
-        def _step_widget(steps_list, led_list, min_name_w):
-            """สร้าง widget ที่มีแถว step — คืน widget (ไม่ addLayout โดยตรง)"""
+        def _step_widget(steps_list, led_list, min_name_w, desc_list=None):
+            """สร้าง widget ที่มีแถว step — คืน widget (ไม่ addLayout โดยตรง)
+            desc_list: ถ้าส่งมา จะ append desc_lbl แต่ละ step เพื่อให้ update ทีหลังได้"""
             sw = QWidget()
             sl = QVBoxLayout(sw)
             sl.setContentsMargins(0, 4, 0, 4)
@@ -607,15 +608,38 @@ class BatteryQtWindow(QMainWindow):
                 row.addStretch(1)
                 sl.addLayout(row)
                 led_list.append((dot, name_lbl))
+                if desc_list is not None:
+                    desc_list.append(desc_lbl)
             return sw
 
         # ── IEC 61960 Standard ──────────────────────────────────
         self._wf_leds = []
+        self._wf_desc_lbls = []   # desc_lbl ของแต่ละ step (index ตรงกับ _WF_STEPS)
         iec_content = QWidget()
         iec_lay = QVBoxLayout(iec_content)
         iec_lay.setContentsMargins(0, 0, 0, 0)
         iec_lay.setSpacing(3)
-        iec_lay.addWidget(_step_widget(self._WF_STEPS, self._wf_leds, 65))
+        iec_lay.addWidget(_step_widget(self._WF_STEPS, self._wf_leds, 65, self._wf_desc_lbls))
+        # C-rate selector row
+        crate_row = QHBoxLayout()
+        crate_row.addWidget(QLabel("Charge C-rate:"))
+        self.cb_seq_crate = QComboBox()
+        self.cb_seq_crate.addItems(["0.05C", "0.1C", "0.2C", "0.3C", "0.5C", "1.0C"])
+        self.cb_seq_crate.setCurrentText("0.5C")
+        self.lbl_seq_crate_a = QLabel("— A")
+        self.lbl_seq_crate_a.setStyleSheet(f"color:{INFO}; font-weight:700; font-size:11px;")
+        crate_row.addWidget(self.cb_seq_crate)
+        crate_row.addWidget(self.lbl_seq_crate_a)
+        crate_row.addStretch(1)
+        iec_lay.addLayout(crate_row)
+        self.cb_seq_crate.currentTextChanged.connect(self._on_seq_crate_changed)
+        # Stage breakdown label (อัปเมื่อเปลี่ยนแบตหรือเปลี่ยน C-rate)
+        self.lbl_charge_crate = QLabel("Charge rate: — (เลือกแบตก่อน)")
+        self.lbl_charge_crate.setStyleSheet(
+            f"color:{MUTED}; font-size:10px; padding-left:24px; padding-bottom:2px;"
+        )
+        self.lbl_charge_crate.setWordWrap(True)
+        iec_lay.addWidget(self.lbl_charge_crate)
         self.btn_auto_seq = _btn("▶  AUTO SEQUENCE", bg=INFO, fg="white", hover="#0d4a89")
         self.btn_auto_seq.setToolTip(
             "IEC 61960: OCV → Charge → Rest 30 min → Discharge 0.2C → Analyze"
@@ -632,11 +656,12 @@ class BatteryQtWindow(QMainWindow):
 
         # ── Quick Scan ──────────────────────────────────────────
         self._qs_leds = []
+        self._qs_desc_lbls = []
         qs_content = QWidget()
         qs_lay = QVBoxLayout(qs_content)
         qs_lay.setContentsMargins(0, 0, 0, 0)
         qs_lay.setSpacing(3)
-        qs_lay.addWidget(_step_widget(self._QS_STEPS, self._qs_leds, 75))
+        qs_lay.addWidget(_step_widget(self._QS_STEPS, self._qs_leds, 75, self._qs_desc_lbls))
         self.btn_quick_scan = _btn("⚡  QUICK SCAN", bg="#e67e22", fg="white", hover="#c0392b")
         self.btn_quick_scan.setToolTip("OCV → Rest 5 min → Discharge 1C → Analyze (~1.5h)")
         self.btn_quick_scan.clicked.connect(self._on_quick_scan)
@@ -1225,8 +1250,74 @@ class BatteryQtWindow(QMainWindow):
             self._populate_profiles()
         except Exception as exc:
             logger.error("apply product: %s", exc)
+        # อัป CHARGE step description ให้ตรงกับ strategy ของเคมีแบต
+        cp   = battery_profiles.get_chemistry(prod.chemistry).charge
+        charge_desc = "Full 3-stage (Bulk→Absorption→Float)" if cp.strategy == "three_stage" else "CC-CV"
+        if len(self._wf_desc_lbls) > 1:
+            self._wf_desc_lbls[1].setText(charge_desc)
+
+        # Sync C-rate selector กับค่า default ของ profile (ถ้ามีใน list)
+        default_crate_text = f"{cp.bulk_c_rate:g}C"
+        idx = self.cb_seq_crate.findText(default_crate_text)
+        if idx >= 0:
+            self.cb_seq_crate.setCurrentIndex(idx)
+        # Force-อัป lbl_seq_crate_a เสมอ (capacity อาจเปลี่ยนแม้ C-rate text เหมือนเดิม)
+        self._on_seq_crate_changed(self.cb_seq_crate.currentText())
+
+        # Reset charge mode → "Auto (by chemistry)" ให้สอดคล้องกับแบตใหม่
+        self.cb_charge_mode.setCurrentText("Auto (by chemistry)")
+
+        # อัป IEC TEST step (index 3) → แสดง A จริงของ 0.2C
+        i_test = round(0.2 * prod.rated_capacity_ah, 1)
+        if len(self._wf_desc_lbls) > 3:
+            self._wf_desc_lbls[3].setText(f"Discharge 0.2C = {i_test:.1f} A")
+
+        # อัป Quick Scan DISCHARGE step (index 2) → แสดง A จริงของ 1C
+        i_1c = prod.max_cont_discharge_a if prod.max_cont_discharge_a else prod.rated_capacity_ah
+        if len(self._qs_desc_lbls) > 2:
+            self._qs_desc_lbls[2].setText(f"1C = {i_1c:.0f} A")
+
         self._refresh_battery_readout()
         self._log_alarm(f"Selected product: {name} → {prod.chemistry} {prod.cells_series}S")
+
+    def _on_seq_crate_changed(self, text: str):
+        """ผู้ใช้เปลี่ยน C-rate selector — อัป amp label + stage breakdown"""
+        try:
+            c_rate = float(text.rstrip("C"))
+        except ValueError:
+            return
+        cap = self.config.battery.rated_capacity if self.config else 0.0
+        self.lbl_seq_crate_a.setText(f"= {c_rate * cap:.0f} A" if cap else "— A")
+        prod_name = self.cb_product.currentText() if hasattr(self, "cb_product") else ""
+        prod = battery_profiles.get_product(prod_name)
+        if prod:
+            self._update_charge_crate_label(prod, c_rate_override=c_rate)
+
+    def _update_charge_crate_label(self, prod, c_rate_override: float = None):
+        """สร้างข้อความ stage breakdown และอัป lbl_charge_crate"""
+        cp    = battery_profiles.get_chemistry(prod.chemistry).charge
+        cap   = prod.rated_capacity_ah
+        s     = prod.cells_series
+        c_rate = c_rate_override if c_rate_override is not None else cp.bulk_c_rate
+        i_bulk = c_rate * cap
+        i_tail = cp.tail_current_c_rate * cap
+        if cp.strategy == "cc_cv":
+            cv_v = cp.cv_voltage_per_cell * s
+            lines = [
+                f"① CC: {c_rate:.2g}C = {i_bulk:.0f} A",
+                f"② CV: {cv_v:.1f} V  (กระแส taper ลง)",
+                f"จบเมื่อ < {cp.tail_current_c_rate:.2g}C = {i_tail:.1f} A",
+            ]
+        else:
+            abs_v = cp.absorption_voltage_per_cell * s
+            flt_v = cp.float_voltage_per_cell * s
+            lines = [
+                f"① Bulk CC: {c_rate:.2g}C = {i_bulk:.0f} A",
+                f"② Absorption CV: {abs_v:.1f} V  (taper)",
+                f"③ Float: {flt_v:.1f} V  "
+                f"(จบเมื่อ < {cp.tail_current_c_rate:.2g}C = {i_tail:.2f} A)",
+            ]
+        self.lbl_charge_crate.setText("\n".join(lines))
 
     def _on_save_default(self):
         if self.config.save_config():
@@ -1517,8 +1608,14 @@ class BatteryQtWindow(QMainWindow):
             # ── PHASE 1: CHARGE (ถ้า SoC < 95%) ─────────────────────────
             if soc < 95.0:
                 self.sig_workflow.emit(1, "active")
-                status(f"CHARGE: SoC={soc:.0f}% — เริ่มชาร์จ 3-stage...")
-                self.controller.start_charge(strategy=None)
+                try:
+                    _c_rate_override = float(self.cb_seq_crate.currentText().rstrip("C"))
+                except (ValueError, AttributeError):
+                    _c_rate_override = None
+                status(f"CHARGE: SoC={soc:.0f}% — เริ่มชาร์จ "
+                       f"({self.cb_seq_crate.currentText()})...")
+                self.controller.start_charge(strategy=None,
+                                             bulk_c_rate_override=_c_rate_override)
                 while self._auto_seq_running:
                     if not getattr(self.controller, "is_charging", False):
                         break
