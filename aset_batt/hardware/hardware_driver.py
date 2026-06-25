@@ -67,6 +67,17 @@ class HardwareController:
 
         self.is_connected = True
 
+        # Safe idle state: ensure PSU output and Load input are OFF immediately
+        # after connect so the battery is not discharged by a stale instrument state.
+        try:
+            self.psu_inst.write(":OUTP OFF")
+        except Exception:
+            pass
+        try:
+            self.load_inst.write(":INP OFF")
+        except Exception:
+            pass
+
     def set_psu(self, state, voltage_val="0"):
         if not self.is_connected:
             return
