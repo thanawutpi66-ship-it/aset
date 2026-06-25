@@ -333,6 +333,7 @@ class AutoController:
         finally:
             self.is_charging = False
             self._charge_ctrl = None
+            self._ocv_reset_after_rest("charge")
 
     def _on_charge_update(self, stage: str, voltage: float, i_charge: float, note: str):
         """callback จาก ChargeController — อัปเดต UI ผ่าน root.after (thread-safe)"""
@@ -518,6 +519,7 @@ class AutoController:
 
         # หยุด discharge
         self.hw.set_load(False)
+        self._ocv_reset_after_rest("discharge")
 
         # บันทึก test data
         test_data['voltage_data'] = voltage_data
@@ -722,6 +724,27 @@ class AutoController:
             return
         if self.event_handler:
             self.event_handler.post_event(EventType.ANALYSIS_COMPLETED, res)
+
+    def _ocv_reset_after_rest(self, phase: str, rest_s: float = 30.0):
+        """Wait for surface charge to relax then sync SoC from OCV.
+
+        Called automatically after charge and discharge end so the SoC estimator
+        is re-anchored to the true resting voltage rather than drifting on coulomb
+        counting alone.  The 30-second rest is a compromise: enough for the RC
+        relaxation to settle (τ₁ ≈ 5-15s for lead-acid) without blocking the UI
+        thread (this runs in the charge/test background thread).
+        """
+        if self.estimator is None or not self.hw.is_connected:
+            return
+        try:
+            logger.info("OCV reset: resting %.0fs after %s …", rest_s, phase)
+            time.sleep(rest_s)
+            v, _, _ = self.hw.read_vi()
+            temp = self.hw.current_temp
+            soc = self.estimator.sync_with_ocv(v, temp)
+            logger.info("OCV reset after %s: %.3fV → SoC %.1f%%", phase, v, soc)
+        except Exception as e:
+            logger.warning("OCV reset after %s failed: %s", phase, e)
 
     # ------------------------------------------------------------------
     # Shutdown
