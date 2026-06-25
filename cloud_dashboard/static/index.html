@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="description" content="ASET Cloud Dashboard — แสดงผลการทดสอบแบตเตอรี่ Li-ion แบบเรียลไทม์ (SoC / SoH)"/>
+<title>ASET Cloud Dashboard · Battery Health</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net"/>
+<link rel="stylesheet" href="style.css"/>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script defer src="app.js"></script>
+</head>
+<body>
+
+<!-- emergency overlay -->
+<div id="overlay" role="alertdialog" aria-live="assertive">
+  <div class="ov-icon">⚠️</div>
+  <p class="ov-big">CRITICAL ALARM</p>
+  <p id="overlayMsg" class="ov-small">SYSTEM ALARM</p>
+  <button type="button" onclick="muteAlarm()">MUTE &amp; CLOSE</button>
+</div>
+
+<!-- sticky top bar -->
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🔋</span>
+    <div class="brand-txt">
+      <strong>ASET</strong><span>Cloud Battery Dashboard</span>
+    </div>
+  </div>
+  <div class="status-strip">
+    <span class="pill" id="battery"><i class="dot"></i>battery: <b>–</b></span>
+    <span class="pill">updated <b id="updated">–</b></span>
+    <span class="pill" id="livePill"><i class="dot"></i><b id="live">connecting…</b></span>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- waiting state -->
+  <section id="waiting" class="waiting">
+    <div class="spin"></div>
+    <p class="w-big">กำลังรอข้อมูลจากเครื่องแล็บ</p>
+    <p class="w-small">เปิดหน้านี้ค้างไว้ได้เลย — การ์ดและกราฟจะปรากฏอัตโนมัติเมื่อเครื่องแล็บเริ่มส่งข้อมูลขึ้นคลาวด์</p>
+  </section>
+
+  <div id="content" hidden>
+
+    <!-- HERO: SoC + SoH gauges + sorting grade -->
+    <section class="hero">
+      <!-- SoC gauge -->
+      <article class="gauge-card">
+        <div class="gauge-wrap">
+          <svg viewBox="0 0 200 200" class="gauge" aria-hidden="true">
+            <circle class="g-track" cx="100" cy="100" r="82"/>
+            <circle class="g-fill" id="socArc" cx="100" cy="100" r="82"/>
+          </svg>
+          <div class="gauge-center">
+            <div class="gauge-val"><span id="socVal">–</span><span class="unit">%</span></div>
+            <div class="gauge-label">State of Charge</div>
+          </div>
+        </div>
+        <div class="gauge-foot"><span id="socFoot">ระดับประจุปัจจุบัน</span></div>
+      </article>
+
+      <!-- SoH gauge -->
+      <article class="gauge-card">
+        <div class="gauge-wrap">
+          <svg viewBox="0 0 200 200" class="gauge" aria-hidden="true">
+            <circle class="g-track" cx="100" cy="100" r="82"/>
+            <circle class="g-fill" id="sohArc" cx="100" cy="100" r="82"/>
+          </svg>
+          <div class="gauge-center">
+            <div class="gauge-val"><span id="sohVal">–</span><span class="unit">%</span></div>
+            <div class="gauge-label">State of Health</div>
+          </div>
+        </div>
+        <div class="gauge-foot"><span id="sohFoot">สุขภาพแบตเตอรี่</span></div>
+      </article>
+
+      <!-- sorting grade + key analysis -->
+      <article class="grade-card">
+        <div class="grade-head">
+          <span class="caption">AI SORTING GRADE</span>
+          <span class="grade-badge" id="grade">–</span>
+          <span class="grade-meta" id="gradeMeta"></span>
+          <div class="conf-bar"><span id="confFill"></span></div>
+          <span class="conf-txt" id="confTxt"></span>
+        </div>
+        <div class="grade-grid">
+          <div class="mini"><span class="mk">Capacity</span><span class="mv"><b id="cap">–</b> Ah</span></div>
+          <div class="mini"><span class="mk">DCIR @25°C</span><span class="mv"><b id="dcir">–</b> mΩ</span></div>
+          <div class="mini"><span class="mk">Voltage sag</span><span class="mv"><b id="sag">–</b> V</span></div>
+          <div class="mini"><span class="mk">CCA proxy</span><span class="mv"><b id="cca">–</b> A</span></div>
+          <div class="mini"><span class="mk">Rested OCV</span><span class="mv"><b id="ocv">–</b> V</span></div>
+          <div class="mini"><span class="mk">Method</span><span class="mv"><b id="method">–</b></span></div>
+        </div>
+      </article>
+    </section>
+
+    <!-- live telemetry strip -->
+    <section class="telemetry">
+      <div class="tcard" style="--accent:var(--v)">
+        <span class="tk">VOLTAGE</span>
+        <span class="tv"><b id="mV">–</b><span class="tu">V</span></span>
+      </div>
+      <div class="tcard" style="--accent:var(--i)">
+        <span class="tk">CURRENT</span>
+        <span class="tv"><b id="mI">–</b><span class="tu">A</span></span>
+      </div>
+      <div class="tcard" style="--accent:var(--r)">
+        <span class="tk">RESISTANCE</span>
+        <span class="tv"><b id="mR">–</b></span>
+      </div>
+      <div class="tcard" style="--accent:var(--t)">
+        <span class="tk">TEMPERATURE</span>
+        <span class="tv"><b id="mT">–</b><span class="tu">°C</span></span>
+      </div>
+      <div class="tcard" id="safetyCard">
+        <span class="tk">SAFETY</span>
+        <span class="tv"><b id="safety">…</b></span>
+      </div>
+    </section>
+
+    <!-- charts -->
+    <section class="charts" id="charts"></section>
+
+  </div><!-- /content -->
+
+  <footer class="foot">
+    ASET · 24-hour battery test telemetry — served from the cloud, pushed by the lab rig.
+    <span id="rowInfo"></span>
+  </footer>
+</main>
+
+</body>
+</html>
