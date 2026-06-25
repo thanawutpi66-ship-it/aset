@@ -52,10 +52,10 @@ class HardwareController:
                 setattr(self, attr, None)
         self.is_connected = False
 
-        self.psu_inst = self.rm.open_resource(psu_port)
-        self.load_inst = self.rm.open_resource(load_port)
+        psu  = self.rm.open_resource(psu_port)
+        load = self.rm.open_resource(load_port)
 
-        for inst in [self.psu_inst, self.load_inst]:
+        for inst in [psu, load]:
             inst.baud_rate = 9600
             inst.data_bits = 8
             inst.stop_bits = const.StopBits.one
@@ -65,10 +65,35 @@ class HardwareController:
             inst.write_termination = '\n'
             inst.timeout = 5000
 
+        # Verify both instruments actually respond before marking connected.
+        # open_resource() succeeds on any valid port — *IDN? confirms a real instrument.
+        try:
+            psu_idn = psu.query("*IDN?").strip()
+            logger.info("PSU IDN: %s", psu_idn)
+        except Exception as e:
+            try:
+                psu.close()
+                load.close()
+            except Exception:
+                pass
+            raise RuntimeError(f"PSU ที่พอร์ต {psu_port} ไม่ตอบสนอง — เลือกพอร์ตผิดหรืออุปกรณ์ไม่พร้อม\n({e})")
+
+        try:
+            load_idn = load.query("*IDN?").strip()
+            logger.info("Load IDN: %s", load_idn)
+        except Exception as e:
+            try:
+                psu.close()
+                load.close()
+            except Exception:
+                pass
+            raise RuntimeError(f"Load ที่พอร์ต {load_port} ไม่ตอบสนอง — เลือกพอร์ตผิดหรืออุปกรณ์ไม่พร้อม\n({e})")
+
+        self.psu_inst  = psu
+        self.load_inst = load
         self.is_connected = True
 
-        # Safe idle state: ensure PSU output and Load input are OFF immediately
-        # after connect so the battery is not discharged by a stale instrument state.
+        # Safe idle state after connect: ensure PSU output and Load input are OFF.
         try:
             self.psu_inst.write(":OUTP OFF")
         except Exception:
