@@ -133,6 +133,94 @@ class AutoController:
         logger.info(f"Calibrated SoC from OCV: {v:.3f}V @ {ocv_temp:.1f}°C -> {soc:.1f}%")
         return soc
 
+    # Settling parameters per chemistry  (min_rest s, window s, ΔV threshold V)
+    _OCV_SETTLE = {
+        "LeadAcid": (300, 60, 0.010),
+        "LiFePO4":  (120, 30, 0.005),
+        "Li-ion":   ( 60, 30, 0.005),
+        "LiPO":     ( 60, 30, 0.005),
+    }
+
+    def calibrate_from_ocv_stable(self, on_progress=None):
+        """OCV calibration แบบ wait-for-settle ตามมาตรฐาน ΔV/Δt criterion.
+
+        อ่านแรงดันทุก 5 วิ จนกว่าจะผ่านทั้งสองเงื่อนไข:
+          1. ผ่านเวลาพักขั้นต่ำของแต่ละเคมี
+          2. max(V) - min(V) < dv_thresh ในช่วงเวลา window
+
+        on_progress(elapsed_s, voltage, dv_mv, status)
+          status: "waiting" | "checking" | "settled" | "timeout"
+
+        คืน (soc, voltage, status)
+        """
+        import time as _t
+        if not self.hw.is_connected:
+            raise HardwareError("Hardware must be connected to calibrate from OCV")
+
+        chemistry = getattr(self.config.battery, "battery_type", "LiPO")
+        min_rest, window, dv_thresh = self._OCV_SETTLE.get(
+            chemistry, self._OCV_SETTLE["LiPO"]
+        )
+        timeout   = max(min_rest * 4, 900)   # สูงสุด 15 นาที
+        interval  = 5.0                       # อ่านทุก 5 วิ
+
+        readings  = []   # [(timestamp, voltage), ...]
+        t_start   = _t.time()
+        settled   = False
+
+        while True:
+            elapsed = _t.time() - t_start
+            if elapsed > timeout:
+                break
+
+            try:
+                v, _, _ = self.hw.read_vi()
+            except Exception as exc:
+                raise HardwareError(f"OCV read failed: {exc}")
+
+            now = _t.time()
+            readings.append((now, v))
+
+            # เก็บเฉพาะ readings ใน window
+            cutoff  = now - window
+            readings = [(t, val) for t, val in readings if t >= cutoff]
+            in_win  = [val for _, val in readings]
+            dv      = (max(in_win) - min(in_win)) if len(in_win) >= 2 else float("nan")
+
+            if elapsed < min_rest:
+                status = "waiting"
+            elif len(in_win) < 3 or dv != dv or dv >= dv_thresh:
+                status = "checking"
+            else:
+                settled = True
+                status  = "settled"
+
+            if on_progress:
+                on_progress(elapsed, v, dv * 1000 if dv == dv else float("nan"), status)
+
+            if settled:
+                break
+
+            # sleep แบบ interruptible (ทุก 0.5s ตรวจ is_connected)
+            t_end = _t.time() + interval
+            while _t.time() < t_end:
+                if not self.hw.is_connected:
+                    raise HardwareError("Hardware disconnected during OCV settle")
+                _t.sleep(0.5)
+
+        # อ่านค่าสุดท้าย + sync estimator
+        v_final, _, _ = self.hw.read_vi()
+        temp_final    = self.hw.current_temp
+        soc = self.estimator.sync_with_ocv(v_final, temp_final)
+        final_status  = "settled" if settled else "timeout"
+        logger.info(
+            "OCV stable: %.3fV @ %.1f°C → SoC %.1f%% (%s, elapsed %.0fs)",
+            v_final, temp_final, soc, final_status, _t.time() - t_start,
+        )
+        if on_progress:
+            on_progress(_t.time() - t_start, v_final, 0.0, final_status)
+        return soc, v_final, final_status
+
     def _monitor_loop(self):
         """ลูปอ่าน Voltage, Current และอัปเดต SoC/UI"""
         while self.monitor_running:

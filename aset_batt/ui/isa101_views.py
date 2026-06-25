@@ -1279,7 +1279,7 @@ class BatteryQtWindow(QMainWindow):
             self._log_alarm("Charge stopped.")
 
     def _on_ocv_calibrate(self):
-        """Turn off PSU+Load, wait 3 s, read terminal voltage as OCV, sync SoC."""
+        """ปิด PSU+Load แล้วรอให้แรงดันนิ่ง (ΔV/Δt criterion) ก่อนคำนวณ SoC"""
         if self.controller is None or not getattr(self.hw, "is_connected", False):
             if not self._headless:
                 QMessageBox.warning(self, "OCV", "Connect hardware first")
@@ -1289,21 +1289,52 @@ class BatteryQtWindow(QMainWindow):
                 QMessageBox.warning(self, "OCV", "Stop charging before OCV calibration")
             return
 
-        self.sig_loading.emit("btn_ocv", True, "Measuring…")
-        self.lbl_charge.setText("OCV: instruments off, settling…")
+        chemistry = getattr(self.controller.config.battery, "battery_type", "LiPO")
+        _min_labels = {"LeadAcid": "5 นาที", "LiFePO4": "2 นาที"}
+        min_label = _min_labels.get(chemistry, "1 นาที")
+
+        self.sig_loading.emit("btn_ocv", True, "Settling…")
+        self.sig_charge_status.emit(
+            f"OCV: ปิดอุปกรณ์ — รอ settle ({chemistry}, ขั้นต่ำ {min_label})…"
+        )
 
         import threading
         def _run():
             try:
                 self.hw.psu_off()
                 self.hw.load_off()
-                import time; time.sleep(3.0)
-                soc = self.controller.calibrate_from_ocv()
-                v, _, _ = self.hw.read_vi()
-                msg = f"OCV: {v:.3f} V  →  SoC {soc:.1f}%"
-                self.sig_alarm.emit(msg)
+
+                def on_progress(elapsed, v, dv_mv, status):
+                    chemistry_now = getattr(
+                        self.controller.config.battery, "battery_type", "LiPO"
+                    )
+                    min_rest = self.controller._OCV_SETTLE.get(
+                        chemistry_now, self.controller._OCV_SETTLE["LiPO"]
+                    )[0]
+                    dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
+                    if status == "waiting":
+                        remaining = max(0, int(min_rest - elapsed))
+                        self.sig_charge_status.emit(
+                            f"OCV รอขั้นต่ำ: {remaining}s | {v:.3f} V | ΔV {dv_str}"
+                        )
+                    elif status == "checking":
+                        self.sig_charge_status.emit(
+                            f"OCV กำลัง settle: {int(elapsed)}s | {v:.3f} V | ΔV {dv_str}"
+                        )
+
+                soc, v_final, result = self.controller.calibrate_from_ocv_stable(
+                    on_progress=on_progress
+                )
+                temp = self.controller.hw.current_temp
+                flag = "✓ settled" if result == "settled" else "⚠ timeout (ใช้ค่าล่าสุด)"
+                msg = (
+                    f"OCV {flag}: {v_final:.3f} V  →  SoC {soc:.1f}%"
+                    f"  (Temp {temp:.1f}°C)"
+                )
+                self.sig_alarm.emit(f"[OCV] {msg}")
                 self.sig_charge_status.emit(msg)
             except Exception as exc:
+                self.sig_alarm.emit(f"[OCV] failed: {exc}")
                 self.sig_charge_status.emit(f"OCV failed: {exc}")
             finally:
                 self.sig_loading.emit("btn_ocv", False, "")
