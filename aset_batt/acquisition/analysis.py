@@ -66,6 +66,7 @@ def profile_from_config(config) -> BatteryProfile:
 # above ambient and self-heats during a test).
 _DCIR_TEMP_COEFF = 0.004     # per °C
 _T_REF = 25.0                # °C
+_I_STANDBY = 0.6             # A — PSU quiescent draw even when OUTP OFF
 
 
 def _reject_outliers_mad(x, n_sigma=3.0):
@@ -118,10 +119,10 @@ def _vi_levels(current_a, voltage_v):
     ia = np.asarray(current_a, float)
     va = np.asarray(voltage_v, float)
     pts = []
-    rest = np.abs(ia) < 0.05
+    rest = np.abs(ia - _I_STANDBY) < 0.15      # "rest" = PSU standby only (0.6A)
     if rest.any():
-        pts.append((0.0, float(np.median(va[rest]))))
-    loaded = np.abs(ia) >= 0.1
+        pts.append((_I_STANDBY, float(np.median(va[rest]))))
+    loaded = np.abs(ia - _I_STANDBY) >= 0.2    # load on top of standby
     if loaded.any():
         keys = np.round(ia, 1)                       # cluster load into 0.1 A levels
         for lvl in np.unique(keys[loaded]):
@@ -182,9 +183,12 @@ def _load_metrics(current_a, voltage_v, dcir_ohm, profile: BatteryProfile):
     """
     ia = np.asarray(current_a, float)
     va = np.asarray(voltage_v, float)
-    rest = np.abs(ia) < 0.05
-    ocv = float(np.median(va[rest])) if rest.any() else float(np.max(va)) if va.size else 0.0
-    under_load = np.abs(ia) >= max(0.1, 0.05 * float(np.max(np.abs(ia))) if ia.size else 0.1)
+    rest = np.abs(ia - _I_STANDBY) < 0.15
+    if rest.any():
+        ocv = float(np.median(va[rest])) + _I_STANDBY * dcir_ohm
+    else:
+        ocv = float(np.max(va)) if va.size else 0.0
+    under_load = np.abs(ia - _I_STANDBY) >= 0.2
     v_min_load = float(np.min(va[under_load])) if under_load.any() else ocv
     sag = max(0.0, ocv - v_min_load)
     cca_est = (ocv - profile.cutoff_v) / dcir_ohm if dcir_ohm > 1e-6 else 0.0
@@ -200,7 +204,7 @@ def _quality_flags(current_a, voltage_v, temp_c, profile, is_hppc,
     w = []
     # a rest segment is needed for a trustworthy OCV / SoC anchor
     head = ia[:min(ia.size, 25)]
-    if head.size and int((head < 0.05).sum()) < 5:
+    if head.size and int((np.abs(head - _I_STANDBY) < 0.15).sum()) < 5:
         w.append("no clear rest before load — OCV/SoC anchor uncertain")
     if (not is_hppc) and not reached_cutoff:
         w.append("discharge did not reach cut-off — SoH is partial/under-stated")

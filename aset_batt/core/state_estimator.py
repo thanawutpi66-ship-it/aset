@@ -28,7 +28,8 @@ class StateEstimator:
         self.last_ocv_correction_time = time.time()
         self.ocv_correction_interval = 300  # วินาที (5 นาที)
         self.last_static_voltage = None
-        self.static_current_threshold = 0.1  # A
+        self.standby_current = 0.6            # A — PSU quiescent draw even when OUTP OFF
+        self.static_current_threshold = 0.15  # A — window around standby
         self._rested_s = 0.0                  # accumulated rest time (s) for endpoint anchor
 
         # Exponential smoothing
@@ -138,10 +139,11 @@ class StateEstimator:
         # charge / full discharge. ตรง plateau ที่ flat (slope ต่ำ) ห้ามแก้ (V คลาดนิด SoC
         # เพี้ยนมาก). ปลายที่ steep → anchor ทันที (ไม่รอ 300s) และ re-anchor coulomb counter.
         now = time.time()
-        if abs(current) < self.static_current_threshold:
+        if abs(current - self.standby_current) < self.static_current_threshold:
             self._rested_s += dt
             self.last_static_voltage = voltage
-            ocv_soc = self.battery_model.get_soc_from_ocv(voltage, temp)
+            ocv_voltage = voltage + self.standby_current * self.rin
+            ocv_soc = self.battery_model.get_soc_from_ocv(ocv_voltage, temp)
             slope = self.battery_model.ocv_slope(ocv_soc, temp)
             drift = abs(self.soc_filtered - ocv_soc)
             steep = slope >= 2.0 * self.min_ocv_slope          # ปลาย/knee ที่ OCV เชื่อได้มาก
