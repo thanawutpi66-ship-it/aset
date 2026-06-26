@@ -156,6 +156,21 @@ async function load(){
     $('mR').textContent = fmtR(num(L,'Resistance_mOhm'));
     $('mT').textContent = f(T, 1);
 
+    /* --- test phase --- */
+    const phase = s.test_phase || null;
+    const phaseEl = $('testPhase'), phaseCard = $('phaseCard');
+    if (phase) {
+      phaseEl.textContent = phase;
+      const phaseColor = phase.includes('CC') && phase.includes('CV') ? css('--i')
+                       : phase.includes('CC') ? css('--v')
+                       : phase.includes('HPPC') ? css('--r')
+                       : css('--faint');
+      phaseCard.style.setProperty('--accent', phaseColor);
+    } else {
+      phaseEl.textContent = '–';
+      phaseCard.style.removeProperty('--accent');
+    }
+
     /* --- charts --- */
     ensureCharts(ser);
     const x = (ser.Elapsed_s || []).map(v => Math.round(v/60) + 'm');
