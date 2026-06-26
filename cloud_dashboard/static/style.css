@@ -132,18 +132,19 @@ b{font-weight:700}
 /* ---- grade card ---------------------------------------------------------- */
 .grade-card{align-items:stretch;gap:14px}
 .grade-head{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto auto;
-  column-gap:14px;align-items:center}
+  column-gap:14px;row-gap:8px;align-items:start}
 .caption{grid-column:1/3;font-size:11px;font-weight:700;letter-spacing:1px;color:var(--muted)}
 .grade-badge{
   grid-row:2/4;width:78px;height:78px;display:grid;place-items:center;
-  font-size:44px;font-weight:800;line-height:1;border-radius:16px;
+  font-size:clamp(18px,5.5vw,44px);font-weight:800;line-height:1.1;border-radius:16px;
   background:rgba(255,255,255,.04);border:1px solid var(--border-2);color:var(--text);
+  overflow:hidden;white-space:nowrap;text-align:center;
 }
 .grade-meta{font-size:13px;color:var(--muted);align-self:end}
 .conf-bar{height:7px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;align-self:start;margin-top:2px}
 .conf-bar span{display:block;height:100%;width:0;border-radius:999px;
   background:linear-gradient(90deg,var(--soc),var(--ok));transition:width .8s ease}
-.conf-txt{grid-column:2;font-size:11px;color:var(--faint);margin-top:-4px}
+.conf-txt{grid-column:2;font-size:11px;color:var(--faint)}
 
 .grade-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .mini{

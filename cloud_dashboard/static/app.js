@@ -134,6 +134,7 @@ async function load(){
     const grade = a.grade || '–';
     const gEl = $('grade');
     gEl.textContent = grade;
+    gEl.style.fontSize = grade.length > 2 ? '16px' : '';
     gEl.style.color = css('--g'+grade) || css('--text');
     gEl.style.borderColor = (css('--g'+grade) || css('--border-2'));
     $('gradeMeta').textContent = sohWord(soh ?? 0) + ' battery';
