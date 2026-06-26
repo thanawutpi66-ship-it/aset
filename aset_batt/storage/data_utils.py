@@ -5,11 +5,117 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Cloud-push helpers (used by cloud_push.py)
+# ---------------------------------------------------------------------------
+
+_CHANNELS = ["Voltage_V", "Current_A", "SoC_pct", "Resistance_mOhm", "Temperature_C"]
+
+
+def _tail_csv_rows(csv_path: str, limit: int = 20000) -> list:
+    """Return up to *limit* rows from *csv_path* as a list of dicts."""
+    rows = []
+    try:
+        with open(csv_path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                rows.append(row)
+        return rows[-limit:] if len(rows) > limit else rows
+    except Exception as e:
+        logger.warning("_tail_csv_rows failed: %s", e)
+        return []
+
+
+def _extract_series(rows: list, keys: list = None) -> dict:
+    """Extract columns from rows into dict of float lists."""
+    if keys is None:
+        keys = ["Elapsed_s"] + _CHANNELS
+    series: dict = {k: [] for k in keys}
+    for row in rows:
+        for k in keys:
+            try:
+                series[k].append(float(row.get(k, "nan")))
+            except (ValueError, TypeError):
+                series[k].append(float("nan"))
+    return series
+
+
+def _compute_summary(rows: list) -> dict:
+    """Compute simple summary stats from CSV rows."""
+    if not rows:
+        return {"row_count": 0}
+    last = rows[-1]
+    def _f(key):
+        try:
+            return float(last.get(key, "nan"))
+        except (ValueError, TypeError):
+            return None
+
+    v_vals = []
+    i_vals = []
+    elapsed = 0.0
+    for r in rows:
+        try:
+            v_vals.append(float(r.get("Voltage_V", "nan")))
+        except (ValueError, TypeError):
+            pass
+        try:
+            i_vals.append(float(r.get("Current_A", "nan")))
+        except (ValueError, TypeError):
+            pass
+        try:
+            elapsed = float(r.get("Elapsed_s", 0))
+        except (ValueError, TypeError):
+            pass
+
+    avg_v = sum(v_vals) / len(v_vals) if v_vals else None
+    avg_i = sum(i_vals) / len(i_vals) if i_vals else None
+    capacity_ah = abs(avg_i * elapsed / 3600.0) if avg_i and elapsed else None
+    energy_wh = abs(avg_i * avg_v * elapsed / 3600.0) if avg_i and avg_v and elapsed else None
+
+    return {
+        "row_count": len(rows),
+        "elapsed_s": elapsed,
+        "avg_voltage_v": avg_v,
+        "avg_current_a": avg_i,
+        "capacity_ah": capacity_ah,
+        "energy_wh": energy_wh,
+        "latest": {
+            "Voltage_V": _f("Voltage_V"),
+            "Current_A": _f("Current_A"),
+            "SoC_pct": _f("SoC_pct"),
+            "Resistance_mOhm": _f("Resistance_mOhm"),
+            "Temperature_C": _f("Temperature_C"),
+        },
+    }
+
+
+def _run_analysis(config_manager, csv_path: str) -> dict:
+    """Run unified analysis on *csv_path*; returns a result dict."""
+    try:
+        from aset_batt.acquisition.analysis import analyze_csv, profile_from_config
+        profile = profile_from_config(config_manager)
+        result = analyze_csv(csv_path, profile)
+        # strip large numpy arrays (ica/dtv) — ไม่ต้องการบน cloud
+        clean = {k: v for k, v in result.items() if k not in ("ica", "dtv")}
+        clean["success"] = True
+        return clean
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 class DataHandler:
     def __init__(self):
         self.is_recording = False
         self.csv_file = None
         self.csv_writer = None
+        self.current_path: str = ""   # path ของ session ปัจจุบัน
+
+    @staticmethod
+    def make_session_path(sessions_dir: str = "sessions") -> str:
+        """สร้าง path สำหรับ session ใหม่ เช่น sessions/test_20260625_143022.csv"""
+        os.makedirs(sessions_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return os.path.join(sessions_dir, f"test_{ts}.csv")
 
     def start_logging(self, filepath: str):
         """เริ่มบันทึก CSV — คืน (True, "") หรือ (False, error_message)"""
@@ -23,6 +129,7 @@ class DataHandler:
                     "Voltage_V", "Current_A",
                     "SoC_pct", "Resistance_mOhm", "Temperature_C"
                 ])
+            self.current_path = filepath
             self.is_recording = True
             return True, "Success"
         except Exception as e:

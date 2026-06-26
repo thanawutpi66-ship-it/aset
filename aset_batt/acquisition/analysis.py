@@ -270,9 +270,10 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     (R1/C1 are well-resolved at 5 Hz; R0 by t=0 extrapolation), used for two-resistance
     grading when its R² is good — with the DCIR kept as a cross-check and fallback.
     A confidence score and data-quality flags surface suspect measurements."""
-    v = np.asarray(voltage_v, float)
+    from aset_batt.acquisition.analytics import Analytics
+    v = Analytics.hampel_filter(np.asarray(voltage_v, float))
+    ia = Analytics.hampel_filter(np.asarray(current_a, float))
     q = np.asarray(capacity_series, float)
-    ia = np.asarray(current_a, float)
     capacity = float(q[-1]) if q.size else 0.0
     reached_cutoff = bool(v.size and float(np.min(v)) <= profile.cutoff_v * 1.02)
     # Mean discharge current (for Peukert rate-normalisation of capacity).

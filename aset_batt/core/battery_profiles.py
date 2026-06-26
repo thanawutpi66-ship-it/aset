@@ -66,7 +66,9 @@ class ProductProfile:
     safety_ovp_pack: float = 0.0         # over-voltage protection ระดับแพ็ค (V)
     safety_uvp_pack: float = 0.0         # under-voltage protection ระดับแพ็ค (V)
     mass_grams: float = 0.0
-    cca_a: float = 0.0                   # Cold Cranking Amps (0 = ไม่มี/ไม่ใช่ starter)
+    cca_a: float = 0.0                        # Cold Cranking Amps (0 = ไม่มี/ไม่ใช่ starter)
+    max_cont_discharge_a: float = 0.0         # กระแส discharge ต่อเนื่องสูงสุด (A); 0 = ไม่ระบุ
+    max_peak_discharge_a: float = 0.0         # กระแส discharge peak สูงสุด (A); 0 = ไม่ระบุ
     notes: str = ""
 
 
@@ -142,6 +144,14 @@ _DEFAULT_CHEMISTRIES: Dict[str, ChemistryProfile] = {
 _FALLBACK_CHEMISTRY = "Li-ion"
 
 _DEFAULT_PRODUCTS: Dict[str, ProductProfile] = {
+    "YTZ6V (12V 5Ah VRLA)": ProductProfile(
+        name="YTZ6V (12V 5Ah VRLA)", chemistry="LeadAcid",
+        nominal_voltage_per_cell=2.0, cells_series=6, cells_parallel=1,
+        rated_capacity_ah=5.0, max_voltage_per_cell=2.45, min_voltage_per_cell=1.75,
+        safety_ovp_pack=15.0, safety_uvp_pack=10.5,
+        mass_grams=900.0, cca_a=100.0,
+        notes="Yuasa YTZ6V มอเตอร์ไซค์ lead-acid AGM 12V 5Ah (10HR)",
+    ),
     "YTZ7V (12V 7Ah VRLA)": ProductProfile(
         name="YTZ7V (12V 7Ah VRLA)", chemistry="LeadAcid",
         nominal_voltage_per_cell=2.0, cells_series=6, cells_parallel=1,
@@ -239,9 +249,20 @@ _CHEMISTRIES, _PRODUCTS = _load_registry()
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+_CHEMISTRY_ALIASES: Dict[str, str] = {
+    "Lead-Acid": "LeadAcid",
+    "lead-acid": "LeadAcid",
+    "lead_acid": "LeadAcid",
+    "VRLA": "LeadAcid",
+    "SLA": "LeadAcid",
+    "AGM": "LeadAcid",
+}
+
+
 def get_chemistry(name: str) -> ChemistryProfile:
-    """คืน ChemistryProfile ตามชื่อ; ถ้าไม่รู้จัก fallback เป็น Li-ion (เหมือน else เดิม)"""
-    prof = _CHEMISTRIES.get(name)
+    """คืน ChemistryProfile ตามชื่อ; รองรับ alias เช่น 'Lead-Acid' → 'LeadAcid'"""
+    resolved = _CHEMISTRY_ALIASES.get(name, name)
+    prof = _CHEMISTRIES.get(resolved)
     if prof is None:
         logger.warning(f"chemistry '{name}' ไม่รู้จัก — fallback เป็น {_FALLBACK_CHEMISTRY}")
         return _CHEMISTRIES[_FALLBACK_CHEMISTRY]

@@ -37,6 +37,32 @@ class Analytics:
         return p.internal_r
 
     @staticmethod
+    def hampel_filter(x: np.ndarray, k: int = 7, n_sigma: float = 3.0) -> np.ndarray:
+        """Hampel identifier: replace spikes with the local median.
+
+        For each sample, if it deviates from the local median (window 2k+1) by more
+        than n_sigma robust standard deviations (1.4826·MAD), it is replaced with that
+        median.  k=7 (window=15) at 1 Hz gives ~15-second outlier context, which is
+        appropriate for SCPI measurement glitches."""
+        x = np.asarray(x, float)
+        n = x.size
+        if n < 2 * k + 1:
+            return x.copy()
+        out = x.copy()
+        for i in range(n):
+            lo, hi = max(0, i - k), min(n, i + k + 1)
+            win = x[lo:hi]
+            med = float(np.median(win))
+            mad = float(np.median(np.abs(win - med)))
+            # When MAD=0 (all neighbours equal) use a noise floor of 1% of |median|
+            # or 1e-6 (whichever is larger) so an isolated spike is still caught.
+            if mad == 0:
+                mad = max(1e-6, 0.01 * abs(med))
+            if abs(x[i] - med) > n_sigma * 1.4826 * mad:
+                out[i] = med
+        return out
+
+    @staticmethod
     def _savgol_deriv(y: np.ndarray, grid: np.ndarray) -> np.ndarray:
         """dy/dx via a Savitzky-Golay filter — it fits a local polynomial, so it smooths
         AND differentiates in one pass and **preserves peak height/position** far better
@@ -65,8 +91,8 @@ class Analytics:
         sort/unique is what keeps the curve physical."""
         if v.size < 10:
             return np.array([]), np.array([])
-        v_s = Analytics.gaussian_smooth(v, 2.0)      # de-jitter the independent axis first
-        q_s = Analytics.gaussian_smooth(q, 2.0)
+        v_s = Analytics.gaussian_smooth(Analytics.hampel_filter(v), 2.0)
+        q_s = Analytics.gaussian_smooth(Analytics.hampel_filter(q), 2.0)
         order = np.argsort(v_s)
         vu, idx = np.unique(v_s[order], return_index=True)
         qu = q_s[order][idx]
@@ -81,8 +107,8 @@ class Analytics:
         """DTV: dT/dV vs V (thermal fingerprint). Same axis-first de-jitter as ICA."""
         if v.size < 10:
             return np.array([]), np.array([])
-        v_s = Analytics.gaussian_smooth(v, 2.0)      # de-jitter the independent axis first
-        t_s = Analytics.gaussian_smooth(t, 2.0)
+        v_s = Analytics.gaussian_smooth(Analytics.hampel_filter(v), 2.0)
+        t_s = Analytics.gaussian_smooth(Analytics.hampel_filter(t), 2.0)
         order = np.argsort(v_s)
         vu, idx = np.unique(v_s[order], return_index=True)
         tu = t_s[order][idx]

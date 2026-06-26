@@ -40,6 +40,13 @@
       "rated_capacity_ah": 20.0, "max_voltage_per_cell": 2.45, "min_voltage_per_cell": 1.75,
       "safety_ovp_pack": 15.0, "safety_uvp_pack": 10.0, "mass_grams": 5500.0, "cca_a": 0.0,
       "notes": "Little Bee MV20-12 SLA/VRLA 12V 20Ah (20HR, ตัด 10.5V); standby/deep-cycle ไม่ใช่แบตสตาร์ท; ค่ามาตรฐานคลาส 20Ah โปรดยืนยันกับฉลากจริง"
+    },
+    "Lithium Valley LFP 25.6V 50Ah": {
+      "chemistry": "LiFePO4", "nominal_voltage_per_cell": 3.2, "cells_series": 8, "cells_parallel": 1,
+      "rated_capacity_ah": 50.0, "max_voltage_per_cell": 3.65, "min_voltage_per_cell": 2.50,
+      "safety_ovp_pack": 30.0, "safety_uvp_pack": 20.0, "mass_grams": 15000.0, "cca_a": 0.0,
+      "max_cont_discharge_a": 50.0, "max_peak_discharge_a": 100.0,
+      "notes": "Lithium Valley LFP 8S1P — 25.6V 50Ah 1280Wh; Charge 50A, Cont.Discharge 50A, Peak 100A; MFG 2022.12; mass ประมาณการ (ไม่ระบุบนฉลาก)"
     }
   }
 }

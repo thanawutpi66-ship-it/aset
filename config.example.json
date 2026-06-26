@@ -1,21 +1,21 @@
 {
   "_comment": "Template — copy to config.json and edit per machine. config.json is gitignored so each rig keeps its own hardware settings. On the real test bench set simulation_mode=false and the real VISA/serial ports.",
   "battery": {
-    "battery_type": "LiFePO4",
-    "nominal_voltage": 3.2,
+    "battery_type": "LeadAcid",
+    "nominal_voltage": 2.0,
     "rated_capacity": 7.0,
-    "max_voltage": 3.65,
-    "min_voltage": 2.5,
+    "max_voltage": 2.45,
+    "min_voltage": 1.75,
     "max_current": 10.0,
-    "mass_grams": 1100.0,
-    "cells_series": 4,
+    "mass_grams": 2400.0,
+    "cells_series": 6,
     "cells_parallel": 1,
     "temperature_compensation": true,
     "iec61960_compliant": true
   },
   "system": {
     "max_points": 100,
-    "simulation_mode": true,
+    "simulation_mode": false,
     "enable_web_server": false,
     "csv_filepath": "battery_data.csv",
     "log_level": "INFO",
@@ -25,18 +25,18 @@
     "cloud_push_interval": 30.0,
     "safety_limits": {
       "max_voltage": 15.0,
-      "min_voltage": 9.0,
+      "min_voltage": 10.0,
       "max_current": 30.0,
       "max_temperature": 60.0,
       "min_temperature": -10.0
     }
   },
   "hardware": {
-    "psu_port": "MOCK::PSU::INSTR",
-    "load_port": "MOCK::LOAD::INSTR",
-    "esp_port": "COM_MOCK",
+    "psu_port": "ASRL3::INSTR",
+    "load_port": "ASRL5::INSTR",
+    "esp_port": "COM4",
     "visa_timeout": 5000,
-    "serial_baudrate": 115200,
+    "serial_baudrate": 9600,
     "auto_detect_ports": true
   }
 }

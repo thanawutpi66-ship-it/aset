@@ -77,9 +77,25 @@ def build_payload(csv_path, max_points):
     }
 
 
+class _NumpySafeEncoder(json.JSONEncoder):
+    """JSON encoder ที่รองรับ numpy scalar/array โดยไม่ต้อง import numpy at module level."""
+    def default(self, obj):
+        t = type(obj).__name__
+        # numpy scalars
+        if hasattr(obj, "item"):
+            try:
+                return obj.item()
+            except Exception:
+                pass
+        # numpy arrays
+        if hasattr(obj, "tolist"):
+            return obj.tolist()
+        return super().default(obj)
+
+
 def push(url, token, payload, timeout=120):
     # timeout เผื่อ cloud cold-start (เช่น Azure B1 ที่ไม่ได้เปิด Always On)
-    data = json.dumps(payload).encode("utf-8")
+    data = json.dumps(payload, cls=_NumpySafeEncoder).encode("utf-8")
     req = urllib.request.Request(
         url.rstrip("/") + "/api/ingest", data=data, method="POST",
         headers={"Content-Type": "application/json", "X-Ingest-Token": token},
@@ -96,10 +112,12 @@ class CloudPusher:
     """
 
     def __init__(self, url: str, token: str = "", csv_path: str = "",
-                 interval: float = 30.0, max_points: int = 400):
+                 interval: float = 30.0, max_points: int = 400,
+                 data_handler=None):
         self.url = (url or "").strip()
         self.token = resolve_token(token)
         self.csv_path = csv_path or config_manager.system.csv_filepath
+        self._data_handler = data_handler   # ถ้ามี — ใช้ current_path แบบ dynamic
         self.interval = max(5.0, float(interval))
         self.max_points = max_points
         self._running = False
@@ -127,7 +145,11 @@ class CloudPusher:
     def push_once(self) -> bool:
         """push หนึ่งครั้ง (best-effort — ไม่ throw)"""
         try:
-            payload = build_payload(self.csv_path, self.max_points)
+            # ใช้ session file ปัจจุบันจาก DataHandler ถ้ามี
+            active = (self._data_handler.current_path
+                      if self._data_handler and getattr(self._data_handler, "current_path", "")
+                      else self.csv_path)
+            payload = build_payload(active, self.max_points)
             status, _ = push(self.url, self.token, payload)
             logger.debug("cloud push -> HTTP %s (rows=%s)",
                          status, payload["summary"].get("row_count"))

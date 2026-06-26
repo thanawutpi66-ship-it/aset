@@ -21,6 +21,8 @@ class HardwareController:
         self.is_esp_connected = False
         self.current_temp = 0.0
         self.last_esp_heartbeat = time.time()
+        self.connect_error: str = ""       # ข้อความ error ล่าสุดของ PSU/Load — ว่างเปล่าเมื่อ connect สำเร็จ
+        self.esp_connect_error: str = ""   # ข้อความ error ล่าสุดของ ESP32
 
         # Combined-measurement capability per instrument (None=unknown, True/False=cached
         # after the first probe). MEAS:SCAL:ALL:DC? returns V,I,P from ONE instantaneous
@@ -42,10 +44,21 @@ class HardwareController:
             return []
 
     def connect_instruments(self, psu_port, load_port):
-        self.psu_inst = self.rm.open_resource(psu_port)
-        self.load_inst = self.rm.open_resource(load_port)
+        for attr in ("psu_inst", "load_inst"):
+            inst = getattr(self, attr, None)
+            if inst is not None:
+                try:
+                    inst.close()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        self.is_connected = False
+        self.connect_error = ""
 
-        for inst in [self.psu_inst, self.load_inst]:
+        psu  = self.rm.open_resource(psu_port)
+        load = self.rm.open_resource(load_port)
+
+        for inst in [psu, load]:
             inst.baud_rate = 9600
             inst.data_bits = 8
             inst.stop_bits = const.StopBits.one
@@ -55,7 +68,47 @@ class HardwareController:
             inst.write_termination = '\n'
             inst.timeout = 5000
 
+        # Verify both instruments actually respond before marking connected.
+        # open_resource() succeeds on any valid port — *IDN? confirms a real instrument.
+        try:
+            psu_idn = psu.query("*IDN?").strip()
+            logger.info("PSU IDN: %s", psu_idn)
+        except Exception as e:
+            try:
+                psu.close()
+                load.close()
+            except Exception:
+                pass
+            msg = f"PSU ที่พอร์ต {psu_port} ไม่ตอบสนอง — เลือกพอร์ตผิดหรืออุปกรณ์ไม่พร้อม\n({e})"
+            self.connect_error = msg
+            raise RuntimeError(msg)
+
+        try:
+            load_idn = load.query("*IDN?").strip()
+            logger.info("Load IDN: %s", load_idn)
+        except Exception as e:
+            try:
+                psu.close()
+                load.close()
+            except Exception:
+                pass
+            msg = f"Load ที่พอร์ต {load_port} ไม่ตอบสนอง — เลือกพอร์ตผิดหรืออุปกรณ์ไม่พร้อม\n({e})"
+            self.connect_error = msg
+            raise RuntimeError(msg)
+
+        self.psu_inst  = psu
+        self.load_inst = load
         self.is_connected = True
+
+        # Safe idle state after connect: ensure PSU output and Load input are OFF.
+        try:
+            self.psu_inst.write(":OUTP OFF")
+        except Exception:
+            pass
+        try:
+            self.load_inst.write(":INP OFF")
+        except Exception:
+            pass
 
     def set_psu(self, state, voltage_val="0"):
         if not self.is_connected:
@@ -160,10 +213,12 @@ class HardwareController:
                 logger.error(f"DCIR Transient Error: {e}")
                 return 0.0
 
-    def connect_esp32(self, port, callback=None):
-        self.esp_serial = serial.Serial(port, 115200, timeout=1)
+    def connect_esp32(self, port, baudrate=9600, callback=None):
+        logger.info("Connecting ESP32 on %s at %d baud", port, baudrate)
+        self.esp_serial = serial.Serial(port, baudrate, timeout=1)
         self.is_esp_connected = True
         self.last_esp_heartbeat = time.time()
+        logger.info("ESP32 serial opened on %s", port)
         threading.Thread(
             target=self._esp_monitor_loop, args=(callback,), daemon=True
         ).start()
@@ -176,21 +231,50 @@ class HardwareController:
             except Exception:
                 pass
 
+    # Ordered list of patterns tried against each serial line.
+    # Each pattern must have one capture group returning the numeric temperature.
+    _ESP_TEMP_PATTERNS = [
+        re.compile(r"Object\s*=\s*([-+]?\d+\.?\d*)\s*\*?°?C", re.IGNORECASE),
+        re.compile(r"Object\s+Temp[:\s]+([-+]?\d+\.?\d*)", re.IGNORECASE),
+        re.compile(r"T_?obj[:\s]+([-+]?\d+\.?\d*)", re.IGNORECASE),
+        re.compile(r"temp[:\s]+([-+]?\d+\.?\d*)", re.IGNORECASE),
+    ]
+
+    def _parse_esp_temp(self, line: str):
+        """Return float temperature from a serial line, or None if not recognised."""
+        for pat in self._ESP_TEMP_PATTERNS:
+            m = pat.search(line)
+            if m:
+                return float(m.group(1))
+        return None
+
     def _esp_monitor_loop(self, callback):
         self.last_esp_heartbeat = time.time()
+        _unmatched_logged = set()   # avoid log-spamming the same unknown format
+        _matched_once = False
         while self.is_esp_connected:
             try:
                 if self.esp_serial.in_waiting > 0:
                     line = self.esp_serial.readline().decode('utf-8', errors='ignore').strip()
-                    if "Object =" in line and "*C" in line:
-                        match = re.search(r"[-+]?\d*\.\d+|\d+", line.split("Object =")[1])
-                        if match:
-                            self.current_temp = float(match.group())
-                            self.last_esp_heartbeat = time.time()
-                            if callback:
-                                callback(self.current_temp)
-            except Exception:
-                pass
+                    if not line:
+                        continue
+                    temp = self._parse_esp_temp(line)
+                    if temp is not None:
+                        if not _matched_once:
+                            logger.info("ESP32 temp parsed OK (format: %r) → %.2f°C", line, temp)
+                            _matched_once = True
+                        self.current_temp = temp
+                        self.last_esp_heartbeat = time.time()
+                        if callback:
+                            callback(temp)
+                    else:
+                        # Log unrecognised lines at WARNING (once per unique prefix)
+                        key = line[:40]
+                        if key not in _unmatched_logged:
+                            logger.warning("ESP32 unmatched line (cannot parse temp): %r", line)
+                            _unmatched_logged.add(key)
+            except Exception as exc:
+                logger.warning("ESP32 serial error: %s", exc)
             time.sleep(0.05)
 
     def shutdown_all(self):

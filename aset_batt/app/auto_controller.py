@@ -29,6 +29,7 @@ class AutoController:
         self.profile_data = []
         self._charge_ctrl = None
         self._shutdown_done = False   # กัน shutdown ทำงานซ้ำ (idempotent)
+        self._skip_ocv_reset = False  # set by stop_charge() เพื่อข้าม OCV reset
 
         # เวลาเริ่มต้นสำหรับคำนวณ elapsed time ใน CSV
         self._start_time = None
@@ -43,13 +44,16 @@ class AutoController:
         """Check if parameters are within safety limits"""
         limits = self.config.system.safety_limits
 
-        if voltage > limits["max_voltage"]:
-            self._trigger_safety(f"Voltage {voltage:.2f}V exceeds limit {limits['max_voltage']}V")
-            return False
-
-        if voltage < limits["min_voltage"]:
-            self._trigger_safety(f"Voltage {voltage:.2f}V below limit {limits['min_voltage']}V")
-            return False
+        # During charging the ChargeController owns voltage cutoff — skip all
+        # voltage checks so that a deeply-discharged battery (any starting V)
+        # or a high PSU setpoint does not kill the charge loop prematurely.
+        if not self.is_charging:
+            if voltage > limits["max_voltage"]:
+                self._trigger_safety(f"Voltage {voltage:.2f}V exceeds limit {limits['max_voltage']}V")
+                return False
+            if voltage < limits["min_voltage"]:
+                self._trigger_safety(f"Voltage {voltage:.2f}V below limit {limits['min_voltage']}V")
+                return False
 
         if abs(current) > limits["max_current"]:
             self._trigger_safety(f"Current {current:.2f}A exceeds limit {limits['max_current']}A")
@@ -103,8 +107,9 @@ class AutoController:
             self._start_time = time.time()
             self._last_update_time = None
             self.monitor_running = True
-            # เริ่ม data logging ทันทีที่ connect
-            csv_path = self.config.system.csv_filepath
+            # สร้าง session file ใหม่ทุกครั้งที่ monitor เริ่ม
+            from aset_batt.storage.data_utils import DataHandler
+            csv_path = DataHandler.make_session_path()
             ok, msg = self.data.start_logging(csv_path)
             if not ok:
                 import logging
@@ -128,6 +133,97 @@ class AutoController:
         logger.info(f"Calibrated SoC from OCV: {v:.3f}V @ {ocv_temp:.1f}°C -> {soc:.1f}%")
         return soc
 
+    # Settling parameters per chemistry  (min_rest s, window s, ΔV threshold V)
+    # LiFePO4: plateau ราบมาก (1.4 mV/cell/%SoC) — หลัง discharge หนัก electrochemical
+    # relaxation ใช้เวลา 5-30 นาที; 120s+5mV ตรวจ "หยุดขึ้นเร็ว" แต่ยังไม่ settle จริง
+    # ปรับเป็น 300s minimum + 2mV/60s เพื่อให้แม่นขึ้น (~5 นาที practical minimum)
+    _OCV_SETTLE = {
+        "LeadAcid": (300,  60, 0.010),
+        "LiFePO4":  (300,  60, 0.002),   # เดิม (120, 30, 0.005) — เพิ่ม rest + เข้มขึ้น
+        "Li-ion":   ( 60,  30, 0.005),
+        "LiPO":     ( 60,  30, 0.005),
+    }
+
+    def calibrate_from_ocv_stable(self, on_progress=None):
+        """OCV calibration แบบ wait-for-settle ตามมาตรฐาน ΔV/Δt criterion.
+
+        อ่านแรงดันทุก 5 วิ จนกว่าจะผ่านทั้งสองเงื่อนไข:
+          1. ผ่านเวลาพักขั้นต่ำของแต่ละเคมี
+          2. max(V) - min(V) < dv_thresh ในช่วงเวลา window
+
+        on_progress(elapsed_s, voltage, dv_mv, status)
+          status: "waiting" | "checking" | "settled" | "timeout"
+
+        คืน (soc, voltage, status)
+        """
+        import time as _t
+        if not self.hw.is_connected:
+            raise HardwareError("Hardware must be connected to calibrate from OCV")
+
+        chemistry = getattr(self.config.battery, "battery_type", "LiPO")
+        min_rest, window, dv_thresh = self._OCV_SETTLE.get(
+            chemistry, self._OCV_SETTLE["LiPO"]
+        )
+        timeout   = max(min_rest * 4, 900)   # สูงสุด 15 นาที
+        interval  = 5.0                       # อ่านทุก 5 วิ
+
+        readings  = []   # [(timestamp, voltage), ...]
+        t_start   = _t.time()
+        settled   = False
+
+        while True:
+            elapsed = _t.time() - t_start
+            if elapsed > timeout:
+                break
+
+            try:
+                v, _, _ = self.hw.read_vi()
+            except Exception as exc:
+                raise HardwareError(f"OCV read failed: {exc}")
+
+            now = _t.time()
+            readings.append((now, v))
+
+            # เก็บเฉพาะ readings ใน window
+            cutoff  = now - window
+            readings = [(t, val) for t, val in readings if t >= cutoff]
+            in_win  = [val for _, val in readings]
+            dv      = (max(in_win) - min(in_win)) if len(in_win) >= 2 else float("nan")
+
+            if elapsed < min_rest:
+                status = "waiting"
+            elif len(in_win) < 3 or dv != dv or dv >= dv_thresh:
+                status = "checking"
+            else:
+                settled = True
+                status  = "settled"
+
+            if on_progress:
+                on_progress(elapsed, v, dv * 1000 if dv == dv else float("nan"), status)
+
+            if settled:
+                break
+
+            # sleep แบบ interruptible (ทุก 0.5s ตรวจ is_connected)
+            t_end = _t.time() + interval
+            while _t.time() < t_end:
+                if not self.hw.is_connected:
+                    raise HardwareError("Hardware disconnected during OCV settle")
+                _t.sleep(0.5)
+
+        # อ่านค่าสุดท้าย + sync estimator
+        v_final, _, _ = self.hw.read_vi()
+        temp_final    = self.hw.current_temp
+        soc = self.estimator.sync_with_ocv(v_final, temp_final)
+        final_status  = "settled" if settled else "timeout"
+        logger.info(
+            "OCV stable: %.3fV @ %.1f°C → SoC %.1f%% (%s, elapsed %.0fs)",
+            v_final, temp_final, soc, final_status, _t.time() - t_start,
+        )
+        if on_progress:
+            on_progress(_t.time() - t_start, v_final, 0.0, final_status)
+        return soc, v_final, final_status
+
     def _monitor_loop(self):
         """ลูปอ่าน Voltage, Current และอัปเดต SoC/UI"""
         while self.monitor_running:
@@ -140,8 +236,19 @@ class AutoController:
                     v, psu_i, load_i = self.hw.read_vi()
                     i_net = load_i - psu_i
 
-                    # Check safety limits
-                    if not self.check_safety_limits(v, i_net, self.hw.current_temp):
+                    # Monitor loop only checks temperature & overcurrent —
+                    # voltage OVP/UVP is handled by the discharge test loop and
+                    # ChargeController so we don't kill live monitoring on a
+                    # low-voltage battery that is being charged.
+                    temp = self.hw.current_temp
+                    limits = self.config.system.safety_limits
+                    if temp > limits.get("max_temperature", 60.0):
+                        self._trigger_safety(
+                            f"Temperature {temp:.1f}°C exceeds limit {limits['max_temperature']}°C")
+                        break
+                    if abs(i_net) > limits.get("max_current", 30.0):
+                        self._trigger_safety(
+                            f"Current {i_net:.2f}A exceeds limit {limits['max_current']}A")
                         break
 
                     # อัปเดต State Estimator ด้วย dt จริงต่อรอบ (ไม่ hardcode 0.1)
@@ -271,7 +378,8 @@ class AutoController:
     # Chemistry-aware Charging (3-stage lead-acid / CC-CV lithium)
     # ------------------------------------------------------------------
 
-    def start_charge(self, float_hold_s: float = 0.0, strategy: str = None):
+    def start_charge(self, float_hold_s: float = 0.0, strategy: str = None,
+                     bulk_c_rate_override: float = None):
         """เริ่มชาร์จ; strategy=None → เลือกตามเคมีของแบตอัตโนมัติ
         (LeadAcid → 3-stage, Lithium → CC-CV). ส่ง strategy เพื่อ override จาก dropdown:
         "three_stage" หรือ "cc_cv". รันใน thread แยก; monitor loop ยัง log+safety ระหว่างชาร์จ
@@ -283,26 +391,45 @@ class AutoController:
             logger.error("Cannot charge: hardware not connected")
             return False
         if self.safety_triggered:
-            logger.error("Cannot charge: safety triggered — reset ก่อน")
-            return False
+            # Always allow charge to proceed regardless of starting voltage —
+            # deeply-discharged batteries need charging even at near-zero volts.
+            v_now = self.hw.read_vi()[0] if self.hw.is_connected else 0.0
+            logger.info("Auto-clearing safety for charge recovery (%.2fV)", v_now)
+            self.safety_triggered = False
         if self.estimator is None or self.estimator.battery_model is None:
             logger.error("Cannot charge: battery model unavailable")
             return False
 
         self.is_charging = True
+        if not self.monitor_running:
+            self.start_monitor()
         threading.Thread(target=self._run_charge_loop,
-                         args=(float_hold_s, strategy), daemon=True).start()
+                         args=(float_hold_s, strategy, bulk_c_rate_override), daemon=True).start()
         return True
 
-    def _run_charge_loop(self, float_hold_s: float, strategy: str = None):
+    def _run_charge_loop(self, float_hold_s: float, strategy: str = None,
+                         bulk_c_rate_override: float = None):
         from aset_batt.core.charge_controller import ChargeController
         logger.info("Charge loop started (strategy=%s)", strategy or "auto")
         try:
             # ปิด load ก่อนชาร์จ (กันชาร์จ-ดิสชาร์จพร้อมกัน)
             self.hw.load_off()
+
+            # Pre-charge OCV sync: PSU ยังปิดอยู่ → terminal voltage ≈ OCV
+            # Reset SoC ก่อนเปิด PSU เพื่อให้ตัวเลข SoC/Rin ตรงตั้งแต่ต้น
+            if self.estimator is not None:
+                try:
+                    time.sleep(2.0)   # รอ polarisation หายก่อนวัด
+                    v_ocv, _, _ = self.hw.read_vi()
+                    soc_pre = self.estimator.sync_with_ocv(v_ocv, self.hw.current_temp)
+                    logger.info("Pre-charge OCV sync: %.3fV → SoC %.1f%%", v_ocv, soc_pre)
+                except Exception as exc:
+                    logger.warning("Pre-charge OCV sync failed: %s", exc)
+
             self._charge_ctrl = ChargeController(
                 self.hw, self.config, self.estimator.battery_model,
                 on_update=self._on_charge_update, strategy=strategy,
+                bulk_c_rate_override=bulk_c_rate_override,
             )
             final_stage = self._charge_ctrl.run(
                 should_stop=lambda: (self.safety_triggered or not self.is_charging),
@@ -314,6 +441,9 @@ class AutoController:
         finally:
             self.is_charging = False
             self._charge_ctrl = None
+            if not self._skip_ocv_reset:
+                self._ocv_reset_after_rest("charge")
+            self._skip_ocv_reset = False
 
     def _on_charge_update(self, stage: str, voltage: float, i_charge: float, note: str):
         """callback จาก ChargeController — อัปเดต UI ผ่าน root.after (thread-safe)"""
@@ -329,6 +459,7 @@ class AutoController:
         if not self.is_charging:
             return
         logger.info("Stopping charge")
+        self._skip_ocv_reset = True   # ข้าม OCV rest เมื่อหยุดกลางคัน
         self.is_charging = False
         if self._charge_ctrl is not None:
             self._charge_ctrl.stop()
@@ -457,7 +588,8 @@ class AutoController:
 
         # ให้ dashboard เห็นข้อมูล IEC test แบบ live -> เปิด logging + อ้างอิงเวลาเริ่ม
         if not self.data.is_recording:
-            self.data.start_logging(self.config.system.csv_filepath)
+            from aset_batt.storage.data_utils import DataHandler
+            self.data.start_logging(DataHandler.make_session_path())
         if self._start_time is None:
             self._start_time = time.time()
 
@@ -499,6 +631,7 @@ class AutoController:
 
         # หยุด discharge
         self.hw.set_load(False)
+        self._ocv_reset_after_rest("discharge")
 
         # บันทึก test data
         test_data['voltage_data'] = voltage_data
@@ -676,7 +809,8 @@ class AutoController:
     def _ensure_logging(self):
         """เปิด CSV logging + ตั้งเวลาเริ่ม ถ้ายังไม่ได้เปิด (ให้ IEC test โผล่บน dashboard)"""
         if not self.data.is_recording:
-            self.data.start_logging(self.config.system.csv_filepath)
+            from aset_batt.storage.data_utils import DataHandler
+            self.data.start_logging(DataHandler.make_session_path())
         if self._start_time is None:
             self._start_time = time.time()
 
@@ -696,13 +830,34 @@ class AutoController:
         ใช้วิธีวิเคราะห์เดียวกับ characterization test และปุ่ม Analyze CSV (วิธีเดียวทั้งระบบ)"""
         try:
             from aset_batt.acquisition.analysis import analyze_csv, profile_from_config
-            res = analyze_csv(self.config.system.csv_filepath,
-                              profile_from_config(self.config))
+            csv_path = self.data.current_path or self.config.system.csv_filepath
+            res = analyze_csv(csv_path, profile_from_config(self.config))
         except Exception as e:
             logger.warning("auto-analyze ล้มเหลว: %s", e)
             return
         if self.event_handler:
             self.event_handler.post_event(EventType.ANALYSIS_COMPLETED, res)
+
+    def _ocv_reset_after_rest(self, phase: str, rest_s: float = 30.0):
+        """Wait for surface charge to relax then sync SoC from OCV.
+
+        Called automatically after charge and discharge end so the SoC estimator
+        is re-anchored to the true resting voltage rather than drifting on coulomb
+        counting alone.  The 30-second rest is a compromise: enough for the RC
+        relaxation to settle (τ₁ ≈ 5-15s for lead-acid) without blocking the UI
+        thread (this runs in the charge/test background thread).
+        """
+        if self.estimator is None or not self.hw.is_connected:
+            return
+        try:
+            logger.info("OCV reset: resting %.0fs after %s …", rest_s, phase)
+            time.sleep(rest_s)
+            v, _, _ = self.hw.read_vi()
+            temp = self.hw.current_temp
+            soc = self.estimator.sync_with_ocv(v, temp)
+            logger.info("OCV reset after %s: %.3fV → SoC %.1f%%", phase, v, soc)
+        except Exception as e:
+            logger.warning("OCV reset after %s failed: %s", phase, e)
 
     # ------------------------------------------------------------------
     # Shutdown
