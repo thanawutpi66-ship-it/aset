@@ -1,0 +1,229 @@
+/* ===========================================================================
+   ASET Cloud Dashboard — theme & layout
+   Recolour everything from the :root variables below.
+   =========================================================================== */
+:root{
+  /* surfaces */
+  --bg:#070b14;
+  --bg2:#0b1220;
+  --panel:#101a2e;
+  --panel2:#16233b;
+  --border:rgba(255,255,255,.08);
+  --border-2:rgba(255,255,255,.14);
+  --shadow:0 10px 30px -12px rgba(0,0,0,.7);
+
+  /* text */
+  --text:#eaf0f8;
+  --muted:#93a1b5;
+  --faint:#5d6b80;
+
+  /* channel accents */
+  --v:#22c55e;   /* voltage   */
+  --i:#f87171;   /* current   */
+  --soc:#38bdf8; /* soc       */
+  --r:#a78bfa;   /* resistance*/
+  --t:#fbbf24;   /* temp      */
+
+  /* states */
+  --ok:#34d399; --warn:#fbbf24; --crit:#f43f5e;
+
+  /* grade colours */
+  --gA:#34d399; --gB:#a3e635; --gC:#fbbf24; --gREJECT:#f43f5e; --gREVIEW:#93a1b5;
+
+  --r-lg:18px; --r-md:14px; --r-sm:10px;
+}
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;
+  font-family:'Inter','Segoe UI',system-ui,-apple-system,Arial,sans-serif;
+  color:var(--text);
+  background:
+    radial-gradient(1100px 600px at 12% -10%,rgba(56,189,248,.10),transparent 60%),
+    radial-gradient(900px 500px at 100% 0%,rgba(167,139,250,.10),transparent 55%),
+    var(--bg);
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+b{font-weight:700}
+
+/* ---- top bar ------------------------------------------------------------- */
+.topbar{
+  position:sticky;top:0;z-index:50;
+  display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
+  padding:12px 20px;
+  background:rgba(8,13,22,.72);
+  backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border);
+}
+.brand{display:flex;align-items:center;gap:12px}
+.logo{
+  font-size:22px;width:42px;height:42px;display:grid;place-items:center;
+  border-radius:12px;background:linear-gradient(145deg,var(--panel2),var(--panel));
+  border:1px solid var(--border-2);box-shadow:var(--shadow);
+}
+.brand-txt{display:flex;flex-direction:column;line-height:1.15}
+.brand-txt strong{font-size:16px;letter-spacing:.5px}
+.brand-txt span{font-size:12px;color:var(--muted)}
+
+.status-strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pill{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:6px 12px;border-radius:999px;font-size:12.5px;color:var(--muted);
+  background:var(--panel);border:1px solid var(--border);
+}
+.pill b{color:var(--text)}
+.pill .dot{width:8px;height:8px;border-radius:50%;background:var(--faint);box-shadow:0 0 0 0 rgba(0,0,0,0)}
+.pill.live .dot{background:var(--ok);animation:pulse 1.6s ease-out infinite}
+.pill.stale .dot{background:var(--warn)}
+.pill.off .dot{background:var(--crit)}
+.pill.live b{color:var(--ok)} .pill.stale b{color:var(--warn)} .pill.off b{color:var(--crit)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,211,153,.5)}70%{box-shadow:0 0 0 7px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+
+/* ---- layout -------------------------------------------------------------- */
+.wrap{max-width:1280px;margin:0 auto;padding:22px 20px 40px}
+
+/* ---- waiting state ------------------------------------------------------- */
+.waiting{
+  text-align:center;padding:60px 24px;margin-top:14px;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow);
+}
+.waiting .spin{
+  width:52px;height:52px;margin:0 auto 18px;border-radius:50%;
+  border:4px solid var(--panel2);border-top-color:var(--soc);animation:spin 1s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.w-big{font-size:21px;font-weight:700;margin:0 0 8px}
+.w-small{color:var(--muted);font-size:14px;margin:0;max-width:540px;margin-inline:auto;line-height:1.6}
+
+/* ---- hero (gauges + grade) ----------------------------------------------- */
+.hero{
+  display:grid;gap:16px;margin-bottom:18px;
+  grid-template-columns:1fr 1fr 1.5fr;
+}
+.gauge-card,.grade-card{
+  background:linear-gradient(180deg,var(--panel),var(--bg2));
+  border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow);
+  padding:18px;display:flex;flex-direction:column;align-items:center;gap:8px;
+}
+.gauge-wrap{position:relative;width:100%;max-width:230px}
+.gauge{width:100%;height:auto;display:block}
+.gauge circle{
+  fill:none;stroke-width:15;stroke-linecap:round;
+  transform:rotate(135deg);transform-origin:100px 100px;
+}
+.g-track{stroke:rgba(255,255,255,.07)}
+.g-fill{
+  stroke:var(--soc);
+  transition:stroke-dashoffset .9s cubic-bezier(.22,1,.36,1),stroke .4s;
+  filter:drop-shadow(0 0 6px rgba(56,189,248,.45));
+}
+.gauge-center{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;pointer-events:none;
+}
+.gauge-val{font-size:42px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;letter-spacing:-1px}
+.gauge-val .unit{font-size:18px;color:var(--muted);font-weight:600;margin-left:3px}
+.gauge-label{font-size:12px;color:var(--muted);margin-top:6px;font-weight:600;letter-spacing:.4px}
+.gauge-foot{font-size:12.5px;color:var(--faint);text-align:center}
+.gauge-foot b{color:var(--text)}
+
+/* ---- grade card ---------------------------------------------------------- */
+.grade-card{align-items:stretch;gap:14px}
+.grade-head{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto auto;
+  column-gap:14px;align-items:center}
+.caption{grid-column:1/3;font-size:11px;font-weight:700;letter-spacing:1px;color:var(--muted)}
+.grade-badge{
+  grid-row:2/4;width:78px;height:78px;display:grid;place-items:center;
+  font-size:44px;font-weight:800;line-height:1;border-radius:16px;
+  background:rgba(255,255,255,.04);border:1px solid var(--border-2);color:var(--text);
+}
+.grade-meta{font-size:13px;color:var(--muted);align-self:end}
+.conf-bar{height:7px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;align-self:start;margin-top:2px}
+.conf-bar span{display:block;height:100%;width:0;border-radius:999px;
+  background:linear-gradient(90deg,var(--soc),var(--ok));transition:width .8s ease}
+.conf-txt{grid-column:2;font-size:11px;color:var(--faint);margin-top:-4px}
+
+.grade-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.mini{
+  background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:var(--r-sm);
+  padding:9px 11px;display:flex;flex-direction:column;gap:3px;
+}
+.mini .mk{font-size:11px;color:var(--muted)}
+.mini .mv{font-size:15px;font-variant-numeric:tabular-nums}
+.mini .mv b{font-size:18px}
+
+/* ---- telemetry strip ----------------------------------------------------- */
+.telemetry{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px}
+.tcard{
+  position:relative;overflow:hidden;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r-md);
+  padding:14px 16px;box-shadow:var(--shadow);
+}
+.tcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--accent,var(--faint))}
+.tk{font-size:11px;font-weight:700;letter-spacing:.6px;color:var(--muted)}
+.tv{display:flex;align-items:baseline;gap:5px;margin-top:6px;
+  font-variant-numeric:tabular-nums;font-family:'Consolas','SF Mono',monospace}
+.tv b{font-size:26px;color:var(--accent,var(--text))}
+.tu{font-size:13px;color:var(--faint)}
+#safetyCard .tv b{font-size:20px;padding:3px 12px;border-radius:8px;color:#fff;background:var(--faint);transition:background .3s}
+
+/* ---- charts -------------------------------------------------------------- */
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.chart-card{
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r-md);
+  padding:14px 14px 8px;box-shadow:var(--shadow);
+}
+.chart-card h3{margin:0 0 8px;font-size:13px;font-weight:600;color:var(--muted);
+  display:flex;align-items:center;gap:8px}
+.chart-card h3 .swatch{width:10px;height:10px;border-radius:3px}
+.chart-card canvas{max-height:210px}
+
+/* ---- footer -------------------------------------------------------------- */
+.foot{margin-top:26px;text-align:center;color:var(--faint);font-size:12.5px;line-height:1.6}
+.foot span{display:block;margin-top:3px}
+
+/* ---- emergency overlay --------------------------------------------------- */
+#overlay{
+  display:none;position:fixed;inset:0;z-index:9999;
+  flex-direction:column;justify-content:center;align-items:center;text-align:center;
+  color:#fff;background:rgba(244,63,94,.94);backdrop-filter:blur(3px);
+  animation:blink 1.1s linear infinite;padding:24px;
+}
+@keyframes blink{50%{background:rgba(190,30,55,.94)}}
+#overlay .ov-icon{font-size:64px;line-height:1}
+#overlay .ov-big{font-size:clamp(34px,7vw,58px);font-weight:800;margin:10px 0 0;letter-spacing:1px}
+#overlay .ov-small{font-size:clamp(15px,3.5vw,22px);margin-top:10px;font-family:'Consolas',monospace}
+#overlay button{
+  margin-top:26px;padding:13px 36px;background:#fff;color:var(--crit);
+  border:none;border-radius:10px;font-weight:800;font-size:17px;cursor:pointer;
+  box-shadow:0 8px 24px rgba(0,0,0,.35);
+}
+#overlay button:hover{transform:translateY(-1px)}
+
+/* ===========================================================================
+   Responsive
+   =========================================================================== */
+@media(max-width:980px){
+  .hero{grid-template-columns:1fr 1fr}
+  .grade-card{grid-column:1/3}
+}
+@media(max-width:760px){
+  .telemetry{grid-template-columns:repeat(2,1fr)}
+  .charts{grid-template-columns:1fr}
+}
+@media(max-width:560px){
+  .wrap{padding:16px 14px 32px}
+  .topbar{padding:10px 14px}
+  .hero{grid-template-columns:1fr}
+  .grade-card{grid-column:auto}
+  .grade-grid{grid-template-columns:repeat(2,1fr)}
+  .brand-txt span{display:none}
+  #safetyCard{grid-column:1/3}
+}
+
+@media(prefers-reduced-motion:reduce){
+  *{animation-duration:.001ms!important;animation-iteration-count:1!important;
+    transition-duration:.001ms!important;scroll-behavior:auto!important}
+}

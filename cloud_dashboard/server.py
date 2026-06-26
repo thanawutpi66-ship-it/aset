@@ -2,9 +2,8 @@
 ASET Cloud Dashboard — บริการแสดงผลเทสต์แบตเตอรี่ 24 ชม. (stdlib ล้วน)
 
 แยกจากแอปแล็บ: เครื่องแล็บ push ข้อมูลขึ้นมาที่ POST /api/ingest (auth ด้วย token)
-service นี้แค่ "เก็บ snapshot ล่าสุด + เสิร์ฟ dashboard" — ไม่แตะฮาร์ดแวร์/ไม่ต้องมี numpy
+Frontend อยู่ที่ static/ (index.html + style.css + app.js)
 
-Deploy ได้ทั้ง Heroku (Procfile) และ DigitalOcean/VM (รัน python server.py)
 ENV:
   PORT          พอร์ต (Heroku ตั้งให้อัตโนมัติ; local default 8001)
   INGEST_TOKEN  token สำหรับ /api/ingest (ต้องตั้ง ไม่งั้น ingest ถูกปฏิเสธ)
@@ -12,14 +11,38 @@ ENV:
 """
 import json
 import os
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
+# Windows consoles default to a legacy code page (e.g. cp1252) that cannot encode the
+# Thai status messages below, which would crash the server on startup. Force UTF-8 on
+# the standard streams so logging works regardless of the host console encoding.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 PORT = int(os.environ.get("PORT", "8001"))
 INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
 SNAPSHOT_PATH = os.environ.get("SNAPSHOT_PATH", "snapshot.json")
+
+# Static frontend lives in ./static (index.html + style.css + app.js). It is served
+# for any non-/api path; the whole UI is editable there without touching this file.
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+_CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".png": "image/png",
+    ".webmanifest": "application/manifest+json",
+}
 
 # ---------------------------------------------------------------------------
 # In-memory store (+ best-effort disk snapshot เผื่อ process restart)
@@ -57,13 +80,25 @@ def _make_handler():
             self.end_headers()
             self.wfile.write(body)
 
-        def _html(self, text, status=200):
-            body = text.encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+        def _serve_static(self, path) -> bool:
+            """Serve a file from STATIC_DIR. Returns False if it does not exist
+            (so the caller can fall back to a 404). Blocks path traversal."""
+            rel = path.lstrip("/") or "index.html"
+            full = os.path.normpath(os.path.join(STATIC_DIR, rel))
+            if not full.startswith(STATIC_DIR) or not os.path.isfile(full):
+                return False
+            ext = os.path.splitext(full)[1].lower()
+            ctype = _CONTENT_TYPES.get(ext, "application/octet-stream")
+            with open(full, "rb") as fh:
+                body = fh.read()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
+            # HTML must stay fresh; static assets can be cached briefly.
+            self.send_header("Cache-Control", "no-cache" if ext == ".html" else "public, max-age=300")
             self.end_headers()
             self.wfile.write(body)
+            return True
 
         # ---- ingest (จากเครื่องแล็บ) -------------------------------------
         def do_POST(self):  # noqa: N802
@@ -94,12 +129,16 @@ def _make_handler():
         def do_GET(self):  # noqa: N802
             path = urlparse(self.path).path
             try:
-                if path in ("/", "/index.html"):
-                    self._html(_INDEX_HTML)
-                    return
                 if path == "/api/health":
                     self._json({"ok": True, "time": time.time(),
                                 "has_data": _store["payload"] is not None})
+                    return
+
+                # Non-API requests are served from the static frontend folder.
+                if not path.startswith("/api/"):
+                    if self._serve_static(path):
+                        return
+                    self._json({"error": "not found"}, 404)
                     return
 
                 with _lock:
@@ -139,6 +178,7 @@ def _make_handler():
     return Handler
 
 
+<<<<<<< HEAD
 _INDEX_HTML = """<!doctype html>
 <html><head>
 <meta charset="utf-8"/>
@@ -299,6 +339,8 @@ window.addEventListener('load',()=>{
 """
 
 
+=======
+>>>>>>> origin/dashboard-new
 def main():
     if not INGEST_TOKEN:
         print("WARNING: INGEST_TOKEN ไม่ได้ตั้ง — /api/ingest จะถูกปฏิเสธทั้งหมด")

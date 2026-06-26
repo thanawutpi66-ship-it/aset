@@ -49,3 +49,4 @@ config.json
 Thumbs.db
 .idea/
 .vscode/
+deploy.zip

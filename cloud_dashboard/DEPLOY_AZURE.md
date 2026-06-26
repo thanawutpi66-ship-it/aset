@@ -9,7 +9,7 @@
 
 ## 0) เปิดใช้ Azure for Students (ครั้งเดียว)
 1. ไป **https://azure.microsoft.com/free/students** → Start free
-2. ยืนยันด้วยอีเมลสถาบัน `artit.r@ubu.ac.th` → ได้ **เครดิต $100, ไม่ต้องใช้บัตรเครดิต**
+2. ยืนยันด้วยอีเมลสถาบัน `boatlnwza2547@gmail.com` → ได้ **เครดิต $100, ไม่ต้องใช้บัตรเครดิต**
 3. ได้ subscription ชื่อ "Azure for Students"
 
 ## 1) ติดตั้ง Azure CLI (ครั้งเดียว)
