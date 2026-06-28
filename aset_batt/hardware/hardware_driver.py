@@ -31,6 +31,18 @@ class HardwareController:
         self._psu_all = None
         self._load_all = None
 
+        # PSU current zero-offset: some units (e.g. PSW 80-40.5) read ~0.6 A on
+        # MEAS:CURR? even with OUTPUT OFF.  calibrate_psu_zero() measures the offset
+        # with output off and stores it here; _meas_vi subtracts it automatically.
+        self._psu_current_offset: float = 0.0
+
+        # Internal bleed resistor compensation: PSU has a permanent bleed resistor across
+        # its output terminals. During discharge the battery pushes current through it.
+        # Set this from config.hardware.psu_bleed_a after connecting.
+        # set_load() subtracts it from the load setpoint; read_measurements() adds it back
+        # so capacity integration sees the true battery current.
+        self.psu_bleed_a: float = 0.0
+
     def get_visa_ports(self):
         try:
             return self.rm.list_resources()
@@ -110,6 +122,10 @@ class HardwareController:
         except Exception:
             pass
 
+        # NOTE: calibrate_psu_zero() is NOT called automatically here because when a
+        # battery is connected the PSU already reads psu_bleed_a (real current, not an
+        # offset). Call it manually only when the output terminals are open-circuit.
+
     def set_psu(self, state, voltage_val="0"):
         if not self.is_connected:
             return
@@ -130,7 +146,13 @@ class HardwareController:
         with self.inst_lock:
             try:
                 if state:
-                    self.load_inst.write(f":CURR {current_val}")
+                    # compensate for PSU bleed: battery จ่าย (target) = load + bleed
+                    # → load setpoint = target - bleed (clamp to 0 เพื่อไม่ให้ติดลบ)
+                    try:
+                        adjusted = max(0.0, float(current_val) - self.psu_bleed_a)
+                    except (ValueError, TypeError):
+                        adjusted = current_val
+                    self.load_inst.write(f":CURR {adjusted}")
                     self.load_inst.write(":INP ON")
                 else:
                     self.load_inst.write(":INP OFF")
@@ -166,6 +188,27 @@ class HardwareController:
             except Exception as e:
                 logger.error(f"psu_off error: {e}")
 
+    def calibrate_psu_zero(self) -> float:
+        """วัด current offset ของ PSU ขณะ OUTPUT OFF แล้วเก็บไว้ลบออกจากทุกการอ่าน
+        ต้องเรียกหลัง connect (OUTPUT OFF อยู่แล้ว) หรือเมื่อรู้ว่าไม่มีกระแสไหลจริง
+        คืนค่า offset ที่วัดได้ (A)"""
+        samples = []
+        with self.inst_lock:
+            try:
+                for _ in range(5):
+                    try:
+                        i = float(self.psu_inst.query("MEAS:CURR?").strip())
+                        samples.append(i)
+                    except Exception:
+                        pass
+                    time.sleep(0.1)
+            except Exception as e:
+                logger.error(f"calibrate_psu_zero error: {e}")
+        offset = sum(samples) / len(samples) if samples else 0.0
+        self._psu_current_offset = offset
+        logger.info("PSU current zero-offset calibrated: %.4f A", offset)
+        return offset
+
     def _meas_vi(self, inst, which):
         """(voltage, current) from ONE combined measurement when the instrument supports
         it (``MEAS:SCAL:ALL:DC?`` → ``V,I,P`` — measured at the same instant, single
@@ -179,17 +222,30 @@ class HardwareController:
                 v, i = float(p[0]), float(p[1])
                 if cap is None:
                     setattr(self, which, True)
+                if which == "_psu_all":
+                    i -= self._psu_current_offset
                 return v, i
             except Exception:
                 setattr(self, which, False)        # not supported → stop trying
         v = float(inst.query("MEAS:VOLT?").strip())
         i = float(inst.query("MEAS:CURR?").strip())
+        if which == "_psu_all":
+            i -= self._psu_current_offset
         return v, i
 
     def read_vi(self):
         with self.inst_lock:
-            v, i_psu = self._meas_vi(self.psu_inst, "_psu_all")   # combined when supported
-            i_load = float(self.load_inst.query("MEAS:CURR?").strip())
+            # Battery terminal voltage is taken from the electronic LOAD, not the PSU.
+            # The load senses terminal voltage continuously and reliably — even when
+            # idle or charging — whereas the PSU reports ~0 V whenever its OUTPUT is
+            # OFF (it measures the internal node after the output relay), which used to
+            # make a perfectly good battery look dead at idle. The load's V and current
+            # come from ONE ``MEAS:SCAL:ALL:DC?`` transaction → same instant, single
+            # round-trip (aligned timestamp, fast).
+            v, i_load = self._meas_vi(self.load_inst, "_load_all")
+            # PSU current is still needed to see charge current: while charging the load
+            # input is OFF (i_load = 0) and the current flows battery⇄PSU. (v ignored.)
+            _v_psu, i_psu = self._meas_vi(self.psu_inst, "_psu_all")
             return v, i_psu, i_load
 
     def read_load_current(self):
@@ -322,9 +378,12 @@ class HardwareController:
         with self.inst_lock:
             if prefer_load_v:
                 v, i_load = self._meas_vi(self.load_inst, "_load_all")
-                return v, i_load
+                # แบตจ่ายจริง = load + bleed (bleed ไหลอยู่ตลอดแม้ PSU output OFF)
+                return v, i_load + self.psu_bleed_a
             v, i_psu = self._meas_vi(self.psu_inst, "_psu_all")
-            return v, -i_psu
+            # i_psu จาก _meas_vi มี _psu_current_offset หักไปแล้ว
+            # ลบ bleed อีกครั้ง: PSU วัด (I_battery + bleed) → คืนแค่ I_battery
+            return v, -(i_psu - self.psu_bleed_a)
 
     def set_charge(self, state, current_val="0"):
         """Optional charge control hook for IEC cycle-life tests."""
@@ -333,7 +392,12 @@ class HardwareController:
         with self.inst_lock:
             try:
                 if state:
-                    self.psu_inst.write(f":CURR {current_val}")
+                    # PSU supplies battery + bleed; add bleed so battery receives current_val
+                    try:
+                        adjusted = float(current_val) + self.psu_bleed_a
+                    except (ValueError, TypeError):
+                        adjusted = current_val
+                    self.psu_inst.write(f":CURR {adjusted}")
                     self.psu_inst.write(":OUTP ON")
                 else:
                     self.psu_inst.write(":OUTP OFF")
@@ -352,7 +416,8 @@ class HardwareController:
         with self.inst_lock:
             try:
                 self.psu_inst.write(f":VOLT {voltage}")
-                self.psu_inst.write(f":CURR {current}")
+                # battery receives `current`; PSU must supply current + bleed
+                self.psu_inst.write(f":CURR {current + self.psu_bleed_a}")
                 self.psu_inst.write(":OUTP ON")
             except Exception as e:
                 logger.error(f"set_psu_cccv error: {e}")

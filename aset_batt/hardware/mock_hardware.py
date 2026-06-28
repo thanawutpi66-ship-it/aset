@@ -34,6 +34,7 @@ class MockHardwareController:
         self._load_on_t = None      # monotonic time the load last turned on
         self._load_off_t = None     # monotonic time the load last turned off
         self._relax_v0 = 0.0        # R1 overpotential at pulse end (decays in rest)
+        self.psu_bleed_a: float = 0.0  # mirror HardwareController.psu_bleed_a
 
     # ------------------------------------------------------------------
     # Port enumeration
@@ -71,7 +72,9 @@ class MockHardwareController:
     def set_load(self, state, current_val="0"):
         if state:
             was_on = self._load_current > 0
-            self._load_current = float(current_val)
+            # compensate bleed: ต้องการ current_val จากแบต → load จริง = current_val - bleed
+            adjusted = max(0.0, float(current_val) - self.psu_bleed_a)
+            self._load_current = adjusted
             self._charging = False   # ดิสชาร์จ → หยุดจำลองชาร์จ
             if not was_on:
                 self._load_on_t = time.monotonic()   # mark pulse start for RC model
@@ -159,11 +162,14 @@ class MockHardwareController:
         self.load_inst = _MockInst()
 
     def read_measurements(self, prefer_load_v=False):
-        # Convention: discharge = positive (load_i − psu_i). The mock has a single
-        # simulated terminal voltage, so prefer_load_v doesn't change V here — the
-        # parameter exists to mirror the real HAL's mode-aware signature.
+        # Convention: discharge = positive. Mirror bleed compensation of HardwareController.
         v, psu_i, load_i = self.read_vi()
-        return v, load_i - psu_i
+        if prefer_load_v:
+            # discharge: แบตจ่าย load + bleed
+            return v, load_i + self.psu_bleed_a
+        else:
+            # charge: PSU วัด I_battery + bleed → คืนแค่ I_battery (negative = charging)
+            return v, -(psu_i - self.psu_bleed_a)
 
     def set_charge(self, state, current_val="0"):
         if state:
@@ -173,7 +179,8 @@ class MockHardwareController:
         """จำลอง CC-CV charge: ตั้ง target + กระแส bulk ให้ read_vi ขับ state machine ได้"""
         self._cccv_v = float(voltage)
         if not self._charging:
-            self._charge_i = float(current)   # เริ่ม bulk ที่กระแสเต็ม
+            # แบตรับ current; PSU จ่าย current + bleed (mock ไม่มี bleed จริงๆ แต่ store ค่า target)
+            self._charge_i = float(current)
         self._charging = True
 
 
