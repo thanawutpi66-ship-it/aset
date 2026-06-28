@@ -37,10 +37,14 @@ class HardwareController:
         self._psu_current_offset: float = 0.0
 
         # Internal bleed resistor compensation: PSU has a permanent bleed resistor across
-        # its output terminals. During discharge the battery pushes current through it.
+        # its output terminals.  During CHARGE the PSU covers the bleed from its own
+        # output (battery is NOT drained).  During REST (PSU OUTPUT OFF, load OFF) the
+        # bleed resistor is still connected to the battery terminals and drains the battery.
+        # During DISCHARGE the PSU is effectively disconnected so there is no bleed path.
         # Set this from config.hardware.psu_bleed_a after connecting.
-        # set_load() subtracts it from the load setpoint; read_measurements() adds it back
-        # so capacity integration sees the true battery current.
+        # set_psu_cccv()/set_charge() add bleed to the PSU current setpoint so the battery
+        # actually receives the requested charge current; read_measurements() subtracts it
+        # back on the charge side so the displayed current reflects the battery, not the PSU.
         self.psu_bleed_a: float = 0.0
 
     def get_visa_ports(self):
@@ -126,14 +130,15 @@ class HardwareController:
         # battery is connected the PSU already reads psu_bleed_a (real current, not an
         # offset). Call it manually only when the output terminals are open-circuit.
 
-    def set_psu(self, state, voltage_val="0"):
+    def set_psu(self, state, voltage_val="0", current_val="1.0"):
+        """Manual PSU control — current_val is the CC limit (A)."""
         if not self.is_connected:
             return
         with self.inst_lock:
             try:
                 if state:
                     self.psu_inst.write(f":VOLT {voltage_val}")
-                    self.psu_inst.write(":CURR 5.0")
+                    self.psu_inst.write(f":CURR {current_val}")
                     self.psu_inst.write(":OUTP ON")
                 else:
                     self.psu_inst.write(":OUTP OFF")
@@ -146,13 +151,10 @@ class HardwareController:
         with self.inst_lock:
             try:
                 if state:
-                    # compensate for PSU bleed: battery จ่าย (target) = load + bleed
-                    # → load setpoint = target - bleed (clamp to 0 เพื่อไม่ให้ติดลบ)
-                    try:
-                        adjusted = max(0.0, float(current_val) - self.psu_bleed_a)
-                    except (ValueError, TypeError):
-                        adjusted = current_val
-                    self.load_inst.write(f":CURR {adjusted}")
+                    # No bleed compensation here: during discharge the PSU is effectively
+                    # disconnected so there is no bleed path — the load sees exactly the
+                    # requested current and the battery supplies only that current.
+                    self.load_inst.write(f":CURR {current_val}")
                     self.load_inst.write(":INP ON")
                 else:
                     self.load_inst.write(":INP OFF")
@@ -378,11 +380,12 @@ class HardwareController:
         with self.inst_lock:
             if prefer_load_v:
                 v, i_load = self._meas_vi(self.load_inst, "_load_all")
-                # แบตจ่ายจริง = load + bleed (bleed ไหลอยู่ตลอดแม้ PSU output OFF)
-                return v, i_load + self.psu_bleed_a
+                # Discharge: PSU is disconnected → no bleed path → battery supplies
+                # exactly the load current.  No bleed correction needed here.
+                return v, i_load
             v, i_psu = self._meas_vi(self.psu_inst, "_psu_all")
-            # i_psu จาก _meas_vi มี _psu_current_offset หักไปแล้ว
-            # ลบ bleed อีกครั้ง: PSU วัด (I_battery + bleed) → คืนแค่ I_battery
+            # Charge / idle: i_psu from _meas_vi already has _psu_current_offset removed.
+            # PSU measures (I_battery + I_bleed) → subtract bleed to get true battery current.
             return v, -(i_psu - self.psu_bleed_a)
 
     def set_charge(self, state, current_val="0"):
