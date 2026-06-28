@@ -15,7 +15,8 @@ from collections import deque
 from datetime import datetime
 
 import pyqtgraph as pg
-from PySide6.QtCore import QObject, Signal, Slot, QTimer, Qt, QThread, QRunnable, QThreadPool
+from PySide6.QtCore import QObject, Signal, Slot, QTimer, Qt, QThread, QRunnable, QThreadPool, QLocale, QByteArray
+from PySide6.QtSvgWidgets import QSvgWidget
 
 from aset_batt.acquisition.models import TestConfig, OperationMode, BatteryProfile as AcqProfile
 from aset_batt.acquisition.backends import HardwareBackend
@@ -224,6 +225,184 @@ class MultiAxisTrend(pg.GraphicsLayoutWidget):
         self.c_t.setData(t, temp)
 
 
+class SplitTrend(QWidget):
+    """Voltage+Current (top) / Temperature (bottom) — 2 separate plots."""
+
+    def __init__(self):
+        super().__init__()
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+
+        self._vi = pg.PlotWidget()
+        self._vi.setBackground(PANEL2)
+        self._vi.setLabel("bottom", "Elapsed", units="s")
+        self._vi.setLabel("left", "Voltage", units="V", color=INFO)
+        self._vi.showGrid(x=True, y=True, alpha=0.2)
+        self._vi.getAxis("left").setPen(INFO)
+        self._vi.showAxis("right")
+        self._vb_i = pg.ViewBox()
+        self._vi.scene().addItem(self._vb_i)
+        self._vi.getAxis("right").linkToView(self._vb_i)
+        self._vi.getAxis("right").setLabel("Current", units="A", color=WARN)
+        self._vi.getAxis("right").setPen(WARN)
+        self._vb_i.setXLink(self._vi.getPlotItem())
+        self._c_v = self._vi.plot(pen=pg.mkPen(INFO, width=2))
+        self._c_i = pg.PlotCurveItem(pen=pg.mkPen(WARN, width=2))
+        self._vb_i.addItem(self._c_i)
+        self._vi.getPlotItem().vb.sigResized.connect(self._sync_vi)
+
+        self._tp = pg.PlotWidget()
+        self._tp.setBackground(PANEL2)
+        self._tp.setLabel("bottom", "Elapsed", units="s")
+        self._tp.setLabel("left", "Temp", units="°C", color=CRIT)
+        self._tp.showGrid(x=True, y=True, alpha=0.2)
+        self._tp.getAxis("left").setPen(CRIT)
+        self._c_t = self._tp.plot(pen=pg.mkPen(CRIT, width=2, style=Qt.PenStyle.DashLine))
+
+        lay.addWidget(self._vi, 3)
+        lay.addWidget(self._tp, 1)
+
+    def _sync_vi(self):
+        self._vb_i.setGeometry(self._vi.getPlotItem().vb.sceneBoundingRect())
+        self._vb_i.linkedViewChanged(self._vi.getPlotItem().vb, self._vb_i.XAxis)
+
+    def update(self, t, v, i, temp):
+        self._c_v.setData(t, v)
+        self._c_i.setData(t, i)
+        self._c_t.setData(t, temp)
+
+
+class TripleTrend(QWidget):
+    """Voltage / Current / Temperature — 3 fully independent plots."""
+
+    def __init__(self):
+        super().__init__()
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+
+        specs = [
+            ("Voltage", "V", INFO, Qt.PenStyle.SolidLine),
+            ("Current", "A", WARN, Qt.PenStyle.SolidLine),
+            ("Temp",    "°C", CRIT, Qt.PenStyle.DashLine),
+        ]
+        self._curves = []
+        for label, unit, color, style in specs:
+            pw = pg.PlotWidget()
+            pw.setBackground(PANEL2)
+            pw.setLabel("bottom", "Elapsed", units="s")
+            pw.setLabel("left", label, units=unit, color=color)
+            pw.showGrid(x=True, y=True, alpha=0.2)
+            pw.getAxis("left").setPen(color)
+            curve = pw.plot(pen=pg.mkPen(color, width=2, style=style))
+            self._curves.append(curve)
+            lay.addWidget(pw, 1)
+
+    def update(self, t, v, i, temp):
+        for curve, data in zip(self._curves, [v, i, temp]):
+            curve.setData(t, data)
+
+
+class TrendContainer(QWidget):
+    """Wraps the 3 trend modes with a toggle bar. Press A to toggle 10s zoom."""
+
+    MODES = ["Combined", "Split 2", "Split 3"]
+    _ZOOM_WINDOW = 10  # seconds
+
+    def __init__(self):
+        super().__init__()
+        self._zoom_active = False
+        self._last_t: list = []
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(4)
+
+        bar = QHBoxLayout()
+        self._zoom_btn = QPushButton("A")
+        self._zoom_btn.setCheckable(True)
+        self._zoom_btn.setFixedSize(24, 22)
+        self._zoom_btn.setToolTip("Toggle 10s zoom")
+        self._zoom_btn.setStyleSheet(
+            f"QPushButton{{background:{PANEL2};color:{MUTED};border:1px solid {MUTED};border-radius:3px;font-weight:bold;}}"
+            f"QPushButton:checked{{background:{INFO};color:#000;border:1px solid {INFO};}}"
+            f"QPushButton:hover{{border-color:#aaa;}}"
+        )
+        self._zoom_btn.clicked.connect(self._on_zoom_btn)
+        bar.addWidget(self._zoom_btn)
+        bar.addStretch()
+        bar.addWidget(QLabel("Graph mode:"))
+        self._btn_group = QButtonGroup(self)
+        for idx, label in enumerate(self.MODES):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFixedHeight(22)
+            self._btn_group.addButton(btn, idx)
+            bar.addWidget(btn)
+        bar.addStretch()
+        root.addLayout(bar)
+
+        self._stack = QStackedWidget()
+        self._combined = MultiAxisTrend()
+        self._split2   = SplitTrend()
+        self._split3   = TripleTrend()
+        self._stack.addWidget(self._combined)
+        self._stack.addWidget(self._split2)
+        self._stack.addWidget(self._split3)
+        root.addWidget(self._stack, 1)
+
+        self._btn_group.buttons()[1].setChecked(True)
+        self._stack.setCurrentIndex(1)
+        self._btn_group.idClicked.connect(self._on_mode_changed)
+
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def _on_mode_changed(self, idx: int):
+        self._stack.setCurrentIndex(idx)
+        self._apply_zoom()
+
+    def _all_plots(self):
+        """Return all PlotWidget/PlotItem x-axes currently visible."""
+        plots = []
+        idx = self._stack.currentIndex()
+        if idx == 0:
+            plots.append(self._combined.p)
+        elif idx == 1:
+            plots.append(self._split2._vi.getPlotItem())
+            plots.append(self._split2._tp.getPlotItem())
+        else:
+            for i in range(self._split3.layout().count()):
+                w = self._split3.layout().itemAt(i).widget()
+                if isinstance(w, pg.PlotWidget):
+                    plots.append(w.getPlotItem())
+        return plots
+
+    def _apply_zoom(self):
+        if not self._last_t:
+            return
+        plots = self._all_plots()
+        if self._zoom_active and len(self._last_t) >= 2:
+            t_end = self._last_t[-1]
+            t_start = max(self._last_t[0], t_end - self._ZOOM_WINDOW)
+            for p in plots:
+                p.setXRange(t_start, t_end, padding=0.02)
+        else:
+            for p in plots:
+                p.enableAutoRange(axis='x')
+
+    def _on_zoom_btn(self, checked: bool):
+        self._zoom_active = checked
+        self._apply_zoom()
+
+    def update(self, t, v, i, temp):
+        self._last_t = t
+        idx = self._stack.currentIndex()
+        [self._combined, self._split2, self._split3][idx].update(t, v, i, temp)
+        if self._zoom_active:
+            self._apply_zoom()
+
+
 class _PdfNotifier(QObject):
     finished = Signal(bool, str)
 
@@ -288,13 +467,12 @@ class BatteryQtWindow(QMainWindow):
             self.config.battery.pack_nominal_voltage,
         )
 
-        max_pts = self.config.system.max_points
-        self.buf_t = deque(maxlen=max_pts)
-        self.buf_v = deque(maxlen=max_pts)
-        self.buf_i = deque(maxlen=max_pts)
-        self.buf_soc = deque(maxlen=max_pts)
-        self.buf_rin = deque(maxlen=max_pts)
-        self.buf_temp = deque(maxlen=max_pts)
+        self.buf_t = deque()
+        self.buf_v = deque()
+        self.buf_i = deque()
+        self.buf_soc = deque()
+        self.buf_rin = deque()
+        self.buf_temp = deque()
         self._elapsed_t0 = None
         self._sample_index = 0
         self._buttons = {}
@@ -575,6 +753,7 @@ class BatteryQtWindow(QMainWindow):
         bleed_row = QHBoxLayout()
         bleed_row.addWidget(QLabel("PSU bleed:"))
         self.spn_psu_bleed = QDoubleSpinBox()
+        self.spn_psu_bleed.setLocale(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
         self.spn_psu_bleed.setRange(0.0, 5.0)
         self.spn_psu_bleed.setSingleStep(0.1)
         self.spn_psu_bleed.setDecimals(2)
@@ -891,55 +1070,66 @@ class BatteryQtWindow(QMainWindow):
     # ---- ZONE 3: TOOLS (advanced / occasional) -----------------------------
     def _zone_tools(self):
         w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 0, 0, 0)
+        root = QVBoxLayout(w)
+        root.setContentsMargins(0, 0, 0, 0)
 
-        # Manual control
-        lay.addWidget(self._subheader("MANUAL CONTROL"))
-        row = QHBoxLayout()
-        row.addWidget(QLabel("PSU V:"))
-        self.ed_psu_v = QLineEdit("13.8")
-        self.ed_psu_v.setMaximumWidth(72)
-        row.addWidget(self.ed_psu_v)
-        on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
-        off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
-        on.clicked.connect(lambda: self._psu_manual(True))
-        off.clicked.connect(lambda: self._psu_manual(False))
-        row.addWidget(on); row.addWidget(off)
-        lay.addLayout(row)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Load A:"))
-        self.ed_load_a = QLineEdit("0.7")
-        self.ed_load_a.setMaximumWidth(72)
-        row.addWidget(self.ed_load_a)
-        on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
-        off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
-        on.clicked.connect(lambda: self._load_manual(True))
-        off.clicked.connect(lambda: self._load_manual(False))
-        row.addWidget(on); row.addWidget(off)
-        lay.addLayout(row)
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
 
-        # HPPC pulse timing (used by the HPPC discharge mode)
-        lay.addWidget(_hline())
-        lay.addWidget(self._subheader("HPPC TIMING"))
+        # ── Tab 1: Control ──────────────────────────────────────────────────
+        t1 = QWidget()
+        t1l = QVBoxLayout(t1)
+        t1l.setContentsMargins(6, 6, 6, 6)
+        t1l.setSpacing(6)
+
+        t1l.addWidget(self._subheader("MANUAL CONTROL"))
+        for label, attr_v, attr_on, attr_off, on_cb, off_cb in [
+            ("PSU V:", "ed_psu_v", None, None,
+             lambda: self._psu_manual(True), lambda: self._psu_manual(False)),
+            ("Load A:", "ed_load_a", None, None,
+             lambda: self._load_manual(True), lambda: self._load_manual(False)),
+        ]:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            ed = QLineEdit("13.8" if "PSU" in label else "0.7")
+            ed.setMaximumWidth(72)
+            setattr(self, attr_v, ed)
+            row.addWidget(ed)
+            on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
+            off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
+            on.clicked.connect(on_cb)
+            off.clicked.connect(off_cb)
+            row.addWidget(on)
+            row.addWidget(off)
+            t1l.addLayout(row)
+
+        t1l.addWidget(_hline())
+        t1l.addWidget(self._subheader("HPPC TIMING"))
         hppc = QFormLayout()
+        hppc.setSpacing(4)
         self.ed_hppc_pulse = QLineEdit("30")
         self.ed_hppc_pulse.setValidator(QDoubleValidator(1.0, 600.0, 1))
         self.ed_hppc_relax = QLineEdit("30")
         self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))
-        hppc.addRow("HPPC pulse (s):", self.ed_hppc_pulse)
-        hppc.addRow("HPPC relax (s):", self.ed_hppc_relax)
-        lay.addLayout(hppc)
+        hppc.addRow("Pulse (s):", self.ed_hppc_pulse)
+        hppc.addRow("Relax (s):", self.ed_hppc_relax)
+        t1l.addLayout(hppc)
+        t1l.addStretch()
+        tabs.addTab(t1, "Control")
 
-        # IEC profiles
-        lay.addWidget(_hline())
-        lay.addWidget(self._subheader("IEC PROFILES"))
+        # ── Tab 2: Profile ──────────────────────────────────────────────────
+        t2 = QWidget()
+        t2l = QVBoxLayout(t2)
+        t2l.setContentsMargins(6, 6, 6, 6)
+        t2l.setSpacing(6)
+
+        t2l.addWidget(self._subheader("IEC PROFILES"))
         prow_sel = QHBoxLayout()
         prow_sel.addWidget(QLabel("Profile:"))
         self.cb_profiles = QComboBox()
         self._populate_profiles()
         prow_sel.addWidget(self.cb_profiles, 1)
-        lay.addLayout(prow_sel)
+        t2l.addLayout(prow_sel)
         prow = QHBoxLayout()
         self.btn_start_profile = _btn("RUN", bg=INFO, fg="white", hover="#0d4a89")
         self.btn_start_profile.clicked.connect(self._on_run_profile)
@@ -948,14 +1138,13 @@ class BatteryQtWindow(QMainWindow):
         self._buttons["btn_start_profile"] = self.btn_start_profile
         prow.addWidget(self.btn_start_profile)
         prow.addWidget(self.btn_stop_profile)
-        lay.addLayout(prow)
+        t2l.addLayout(prow)
         self.lbl_profile_status = QLabel("No profile selected")
         self.lbl_profile_status.setStyleSheet(f"color:{MUTED};")
-        lay.addWidget(self.lbl_profile_status)
+        t2l.addWidget(self.lbl_profile_status)
 
-        # Live monitor
-        lay.addWidget(_hline())
-        lay.addWidget(self._subheader("LIVE MONITOR"))
+        t2l.addWidget(_hline())
+        t2l.addWidget(self._subheader("LIVE MONITOR"))
         mrow = QHBoxLayout()
         self.btn_start_monitor = _btn("START MONITOR", bg=OK, fg="white", hover="#266a2a")
         self.btn_stop_monitor = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
@@ -964,44 +1153,33 @@ class BatteryQtWindow(QMainWindow):
         self._buttons["btn_start_monitor"] = self.btn_start_monitor
         mrow.addWidget(self.btn_start_monitor)
         mrow.addWidget(self.btn_stop_monitor)
-        lay.addLayout(mrow)
+        t2l.addLayout(mrow)
+        t2l.addStretch()
+        tabs.addTab(t2, "Profile")
 
-        # Data / report
-        lay.addWidget(_hline())
-        lay.addWidget(self._subheader("DATA & REPORT"))
+        # ── Tab 3: Data ─────────────────────────────────────────────────────
+        t3 = QWidget()
+        t3l = QVBoxLayout(t3)
+        t3l.setContentsMargins(6, 6, 6, 6)
+        t3l.setSpacing(6)
+
         self.lbl_csv = QLabel("CSV: —")
         self.lbl_csv.setStyleSheet(f"color:{MUTED}; font-size:11px;")
         self.lbl_csv.setWordWrap(True)
-        lay.addWidget(self.lbl_csv)
-
-        # Session history list
-        sess_hdr = QHBoxLayout()
-        sess_hdr.addWidget(QLabel("Sessions (logs/)"))
-        btn_ref = QPushButton("↻")
-        btn_ref.setFixedWidth(28)
-        btn_ref.setToolTip("Refresh session list")
-        btn_ref.clicked.connect(self._refresh_session_list)
-        sess_hdr.addStretch()
-        sess_hdr.addWidget(btn_ref)
-        lay.addLayout(sess_hdr)
-
-        self.lst_sessions = QListWidget()
-        self.lst_sessions.setMaximumHeight(110)
-        self.lst_sessions.setToolTip("Click session to analyze it")
-        self.lst_sessions.itemClicked.connect(self._on_session_selected)
-        lay.addWidget(self.lst_sessions)
-        self._refresh_session_list()
+        t3l.addWidget(self.lbl_csv)
 
         self.btn_log = _btn("START DATA LOGGING", bg="#d0d4d7", hover="#c2c6ca")
         self.btn_log.clicked.connect(self._on_toggle_logging)
-        lay.addWidget(self.btn_log)
+        t3l.addWidget(self.btn_log)
         self.btn_pdf = _btn("Generate PDF Report", bg=PANEL2, hover=FIELD)
         self.btn_pdf.clicked.connect(self._on_pdf_report)
-        lay.addWidget(self.btn_pdf)
+        t3l.addWidget(self.btn_pdf)
         btn_dash = _btn("Open Cloud Dashboard", bg="#d0d4d7", hover="#c2c6ca")
         btn_dash.clicked.connect(self._on_open_dashboard)
-        lay.addWidget(btn_dash)
+        t3l.addWidget(btn_dash)
+        tabs.addTab(t3, "Data")
 
+        root.addWidget(tabs)
         return self._collapsible("3 · TOOLS", w, expanded=False)
 
     def _build_right_panel(self):
@@ -1019,14 +1197,14 @@ class BatteryQtWindow(QMainWindow):
         self._temp_gauge = TemperatureGauge()
         lay.addWidget(self._temp_gauge)
 
-        self.trend = MultiAxisTrend()
+        self.trend = TrendContainer()
         lay.addWidget(self.trend, 2)
 
-        tabs = QTabWidget()
-        tabs.addTab(self._tab_analytics(), "Analytics")
-        tabs.addTab(self._tab_diagnostics(), "Diagnostics (ICA/DTV)")
-        tabs.addTab(self._tab_alarms(), "Alarm Log")
-        lay.addWidget(tabs, 1)
+        self._right_tabs = QTabWidget()
+        self._right_tabs.addTab(self._tab_analytics(), "Analytics")
+        self._right_tabs.addTab(self._tab_diagnostics(), "Diagnostics (ICA/DTV)")
+        self._right_tabs.addTab(self._tab_alarms(), "Alarm Log")
+        lay.addWidget(self._right_tabs, 1)
         return panel
 
     def _tab_diagnostics(self):
@@ -1068,9 +1246,56 @@ class BatteryQtWindow(QMainWindow):
     def _tab_analytics(self):
         w = QWidget()
         lay = QVBoxLayout(w)
-        self.lbl_analytics = QLabel("No analysis yet — run a profile or analyze the latest CSV.")
+        lay.setSpacing(4)
+
+        # Session selector อยู่บนสุดของ Analytics
+        sess_hdr = QHBoxLayout()
+        sess_hdr.addWidget(QLabel("Sessions:"))
+        btn_ref = QPushButton("↻")
+        btn_ref.setFixedWidth(28)
+        btn_ref.setToolTip("Refresh session list")
+        btn_ref.clicked.connect(self._refresh_session_list)
+        sess_hdr.addStretch()
+        sess_hdr.addWidget(btn_ref)
+        lay.addLayout(sess_hdr)
+
+        self.lst_sessions = QListWidget()
+        self.lst_sessions.setMaximumHeight(90)
+        self.lst_sessions.setToolTip("Click session to analyze")
+        self.lst_sessions.itemClicked.connect(self._on_session_selected)
+        lay.addWidget(self.lst_sessions)
+        self._refresh_session_list()
+
+        lay.addWidget(_hline())
+
+        # ผลวิเคราะห์
+        self.lbl_analytics = QLabel("Select a session above to analyze.")
         self.lbl_analytics.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_analytics)
+
+        # วงจร Thevenin ECM
+        self.btn_ecm_toggle = QPushButton("▶ Show Circuit (ECM)")
+        self.btn_ecm_toggle.setCheckable(True)
+        self.btn_ecm_toggle.setEnabled(False)
+        self.btn_ecm_toggle.setStyleSheet(
+            f"QPushButton{{background:{PANEL2};color:{MUTED};border:1px solid {MUTED};"
+            f"border-radius:4px;padding:3px 8px;text-align:left;}}"
+            f"QPushButton:checked{{background:{PANEL};color:{TEXT};border-color:{INFO};}}"
+            f"QPushButton:enabled:hover{{border-color:#aaa;}}"
+        )
+        self.btn_ecm_toggle.clicked.connect(
+            lambda checked: (
+                self.lbl_ecm_diagram.setVisible(checked),
+                self.btn_ecm_toggle.setText("▼ Hide Circuit (ECM)" if checked else "▶ Show Circuit (ECM)")
+            )
+        )
+        lay.addWidget(self.btn_ecm_toggle)
+
+        self.lbl_ecm_diagram = QSvgWidget()
+        self.lbl_ecm_diagram.setFixedHeight(200)
+        self.lbl_ecm_diagram.setVisible(False)
+        lay.addWidget(self.lbl_ecm_diagram)
+
         self.txt_analytics = QTextEdit()
         self.txt_analytics.setReadOnly(True)
         self.txt_analytics.setFont(QFont("Consolas", 10))
@@ -1084,6 +1309,136 @@ class BatteryQtWindow(QMainWindow):
         btn.clicked.connect(self._on_analyze_csv)
         lay.addWidget(btn)
         return w
+
+    def _build_ecm_svg(self, r0: float, r1: float, c1: float, tau: float, ocv: float) -> str:
+        """สร้าง SVG วงจร 1-RC Thevenin พร้อมค่าจริง"""
+        W, H = 520, 200
+        # สี
+        wire  = "#4a9ede"
+        comp  = "#e0e0e0"
+        txt   = "#e0e0e0"
+        muted = "#888"
+        bg    = "#1e1e1e"
+
+        def resistor(x, y, label, value, color=comp):
+            return (
+                f'<rect x="{x}" y="{y-10}" width="60" height="20" rx="4" '
+                f'fill="{color}" stroke="{wire}" stroke-width="1.5"/>'
+                f'<text x="{x+30}" y="{y+4}" text-anchor="middle" '
+                f'font-size="10" font-family="Consolas" fill="#222">{value}</text>'
+                f'<text x="{x+30}" y="{y-16}" text-anchor="middle" '
+                f'font-size="10" font-family="Segoe UI" fill="{muted}">{label}</text>'
+            )
+
+        def capacitor(x, y, label, value):
+            return (
+                f'<line x1="{x+28}" y1="{y-14}" x2="{x+28}" y2="{y+14}" '
+                f'stroke="{comp}" stroke-width="3"/>'
+                f'<line x1="{x+34}" y1="{y-14}" x2="{x+34}" y2="{y+14}" '
+                f'stroke="{comp}" stroke-width="3"/>'
+                f'<line x1="{x}" y1="{y}" x2="{x+28}" y2="{y}" stroke="{wire}" stroke-width="1.5"/>'
+                f'<line x1="{x+34}" y1="{y}" x2="{x+62}" y2="{y}" stroke="{wire}" stroke-width="1.5"/>'
+                f'<text x="{x+31}" y="{y+28}" text-anchor="middle" '
+                f'font-size="10" font-family="Consolas" fill="{muted}">{value}</text>'
+                f'<text x="{x+31}" y="{y-20}" text-anchor="middle" '
+                f'font-size="10" font-family="Segoe UI" fill="{muted}">{label}</text>'
+            )
+
+        # layout positions
+        pad = 30
+        mid_y = H // 2
+        top_y = mid_y
+        bot_y = H - 30
+
+        # ค่าที่แสดง
+        r0_txt  = f"{r0:.2f} mΩ"
+        r1_txt  = f"{r1:.2f} mΩ"
+        c1_txt  = f"{c1:.0f} F"
+        tau_txt = f"τ={tau:.1f}s"
+        ocv_txt = f"{ocv:.3f} V"
+
+        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}"
+            style="background:{bg}; border-radius:6px;">
+          <!-- terminal + -->
+          <circle cx="{pad}" cy="{mid_y}" r="5" fill="{wire}"/>
+          <text x="{pad}" y="{mid_y-10}" text-anchor="middle" font-size="11"
+                font-family="Segoe UI" fill="{wire}">+</text>
+
+          <!-- OCV source (แบตเตอรี่) -->
+          <line x1="{pad}" y1="{mid_y}" x2="{pad+20}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+          <circle cx="{pad+44}" cy="{mid_y}" r="24" fill="none" stroke="{comp}" stroke-width="2"/>
+          <text x="{pad+44}" y="{mid_y+4}" text-anchor="middle" font-size="9"
+                font-family="Segoe UI" fill="{txt}">OCV</text>
+          <text x="{pad+44}" y="{mid_y+18}" text-anchor="middle" font-size="9"
+                font-family="Consolas" fill="{wire}">{ocv_txt}</text>
+          <line x1="{pad+68}" y1="{mid_y}" x2="{pad+80}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+
+          <!-- R0 -->
+          {resistor(pad+80, mid_y, "R₀ (ohmic)", r0_txt)}
+          <line x1="{pad+140}" y1="{mid_y}" x2="{pad+160}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+
+          <!-- RC branch: สายบน (ผ่าน R1) และล่าง (ผ่าน C1) -->
+          <!-- สายวนบน -->
+          <line x1="{pad+160}" y1="{mid_y}" x2="{pad+160}" y2="{mid_y-40}" stroke="{wire}" stroke-width="1.5"/>
+          {resistor(pad+160, mid_y-40, "R₁ (polar.)", r1_txt)}
+          <line x1="{pad+220}" y1="{mid_y-40}" x2="{pad+240}" y2="{mid_y-40}" stroke="{wire}" stroke-width="1.5"/>
+          <line x1="{pad+240}" y1="{mid_y-40}" x2="{pad+240}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+
+          <!-- สายวนล่าง (C1) -->
+          <line x1="{pad+160}" y1="{mid_y}" x2="{pad+160}" y2="{mid_y+40}" stroke="{wire}" stroke-width="1.5"/>
+          {capacitor(pad+160, mid_y+40, "C₁", c1_txt)}
+          <line x1="{pad+222}" y1="{mid_y+40}" x2="{pad+240}" y2="{mid_y+40}" stroke="{wire}" stroke-width="1.5"/>
+          <line x1="{pad+240}" y1="{mid_y+40}" x2="{pad+240}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+
+          <!-- ต่อออก terminal -->
+          <line x1="{pad+240}" y1="{mid_y}" x2="{W-pad}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+          <circle cx="{W-pad}" cy="{mid_y}" r="5" fill="{wire}"/>
+          <text x="{W-pad}" y="{mid_y-10}" text-anchor="middle" font-size="11"
+                font-family="Segoe UI" fill="{wire}">−</text>
+
+          <!-- τ label -->
+          <text x="{pad+200}" y="{H-8}" text-anchor="middle" font-size="10"
+                font-family="Consolas" fill="{muted}">{tau_txt}</text>
+        </svg>'''
+        return svg
+
+    def _build_simple_svg(self, r0: float, ocv: float) -> str:
+        """วงจรแบบง่าย OCV + R0 เดียว (ใช้กับ test ที่ไม่ใช่ HPPC)"""
+        W, H = 520, 130
+        wire  = "#4a9ede"
+        comp  = "#e0e0e0"
+        txt   = "#e0e0e0"
+        muted = "#888"
+        bg    = "#1e1e1e"
+        pad   = 40
+        mid_y = H // 2
+        r0_txt  = f"{r0:.2f} mΩ"
+        ocv_txt = f"{ocv:.3f} V"
+        return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}"
+            style="background:{bg}; border-radius:6px;">
+          <circle cx="{pad}" cy="{mid_y}" r="5" fill="{wire}"/>
+          <text x="{pad}" y="{mid_y-10}" text-anchor="middle" font-size="11"
+                font-family="Segoe UI" fill="{wire}">+</text>
+          <line x1="{pad}" y1="{mid_y}" x2="{pad+20}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+          <circle cx="{pad+44}" cy="{mid_y}" r="24" fill="none" stroke="{comp}" stroke-width="2"/>
+          <text x="{pad+44}" y="{mid_y+4}" text-anchor="middle" font-size="9"
+                font-family="Segoe UI" fill="{txt}">OCV</text>
+          <text x="{pad+44}" y="{mid_y+18}" text-anchor="middle" font-size="9"
+                font-family="Consolas" fill="{wire}">{ocv_txt}</text>
+          <line x1="{pad+68}" y1="{mid_y}" x2="{pad+100}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+          <rect x="{pad+100}" y="{mid_y-10}" width="80" height="20" rx="4"
+                fill="{comp}" stroke="{wire}" stroke-width="1.5"/>
+          <text x="{pad+140}" y="{mid_y+4}" text-anchor="middle" font-size="10"
+                font-family="Consolas" fill="#222">{r0_txt}</text>
+          <text x="{pad+140}" y="{mid_y-16}" text-anchor="middle" font-size="10"
+                font-family="Segoe UI" fill="{muted}">R₀ (DCIR)</text>
+          <line x1="{pad+180}" y1="{mid_y}" x2="{W-pad}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+          <circle cx="{W-pad}" cy="{mid_y}" r="5" fill="{wire}"/>
+          <text x="{W-pad}" y="{mid_y-10}" text-anchor="middle" font-size="11"
+                font-family="Segoe UI" fill="{wire}">−</text>
+          <text x="{W//2}" y="{H-8}" text-anchor="middle" font-size="10"
+                font-family="Segoe UI" fill="{muted}">Simple model (no HPPC pulses — R1/C1 not available)</text>
+        </svg>'''
 
     def _tab_alarms(self):
         w = QWidget()
@@ -1382,16 +1737,16 @@ class BatteryQtWindow(QMainWindow):
             c_test = float(self.cb_test_crate.currentText().rstrip("C"))
         except (AttributeError, ValueError):
             c_test = 0.2
-        i_test = round(c_test * prod.rated_capacity_ah, 1)
+        i_test = round(c_test * prod.rated_capacity_ah, 2)
         if len(self._wf_desc_lbls) > 3:
-            self._wf_desc_lbls[3].setText(f"Discharge {c_test:g}C = {i_test:.1f} A")
+            self._wf_desc_lbls[3].setText(f"Discharge {c_test:g}C = {i_test:.2f} A")
         if hasattr(self, "lbl_test_crate_a"):
-            self.lbl_test_crate_a.setText(f"= {i_test:.1f} A")
+            self.lbl_test_crate_a.setText(f"= {i_test:.2f} A")
 
         # อัป Quick Scan DISCHARGE step (index 2) → แสดง A จริงของ 1C
         i_1c = prod.max_cont_discharge_a if prod.max_cont_discharge_a else prod.rated_capacity_ah
         if len(self._qs_desc_lbls) > 2:
-            self._qs_desc_lbls[2].setText(f"1C = {i_1c:.0f} A")
+            self._qs_desc_lbls[2].setText(f"1C = {i_1c:.2f} A")
 
         self._refresh_battery_readout()
         self._log_alarm(f"Selected product: {name} → {prod.chemistry} {prod.cells_series}S")
@@ -1406,12 +1761,12 @@ class BatteryQtWindow(QMainWindow):
         prod = battery_profiles.get_product(prod_name)
         cap = prod.rated_capacity_ah if prod else (
             self.config.battery.rated_capacity if self.config else 0.0)
-        i_test = round(c_test * cap, 1) if cap else 0.0
+        i_test = round(c_test * cap, 2) if cap else 0.0
         if hasattr(self, "lbl_test_crate_a"):
-            self.lbl_test_crate_a.setText(f"= {i_test:.1f} A" if cap else "— A")
+            self.lbl_test_crate_a.setText(f"= {i_test:.2f} A" if cap else "— A")
         if len(self._wf_desc_lbls) > 3:
             self._wf_desc_lbls[3].setText(
-                f"Discharge {c_test:g}C = {i_test:.1f} A" if cap else f"Discharge {c_test:g}C"
+                f"Discharge {c_test:g}C = {i_test:.2f} A" if cap else f"Discharge {c_test:g}C"
             )
 
     def _on_psu_bleed_changed(self, value: float):
@@ -1432,7 +1787,7 @@ class BatteryQtWindow(QMainWindow):
         prod = battery_profiles.get_product(prod_name)
         cap = prod.rated_capacity_ah if prod else (
             self.config.battery.rated_capacity if self.config else 0.0)
-        self.lbl_seq_crate_a.setText(f"= {c_rate * cap:.0f} A" if cap else "— A")
+        self.lbl_seq_crate_a.setText(f"= {c_rate * cap:.2f} A" if cap else "— A")
         if prod:
             self._update_charge_crate_label(prod, c_rate_override=c_rate)
 
@@ -1447,15 +1802,15 @@ class BatteryQtWindow(QMainWindow):
         if cp.strategy == "cc_cv":
             cv_v = cp.cv_voltage_per_cell * s
             lines = [
-                f"① CC: {c_rate:.2g}C = {i_bulk:.0f} A",
+                f"① CC: {c_rate:.2g}C = {i_bulk:.2f} A",
                 f"② CV: {cv_v:.1f} V  (กระแส taper ลง)",
-                f"จบเมื่อ < {cp.tail_current_c_rate:.2g}C = {i_tail:.1f} A",
+                f"จบเมื่อ < {cp.tail_current_c_rate:.2g}C = {i_tail:.2f} A",
             ]
         else:
             abs_v = cp.absorption_voltage_per_cell * s
             flt_v = cp.float_voltage_per_cell * s
             lines = [
-                f"① Bulk CC: {c_rate:.2g}C = {i_bulk:.0f} A",
+                f"① Bulk CC: {c_rate:.2g}C = {i_bulk:.2f} A",
                 f"② Absorption CV: {abs_v:.1f} V  (taper)",
                 f"③ Float: {flt_v:.1f} V  "
                 f"(จบเมื่อ < {cp.tail_current_c_rate:.2g}C = {i_tail:.2f} A)",
@@ -2081,6 +2436,33 @@ class BatteryQtWindow(QMainWindow):
                 f"  τ (R1·C1):               {results['tau_s']:.1f} s",
                 f"  Total (R0+R1):           {results['ri_mohm']:.2f} mΩ",
             ]
+            svg = self._build_ecm_svg(
+                r0=results['r0_mohm'], r1=results['r1_mohm'],
+                c1=results['c1_farad'], tau=results['tau_s'],
+                ocv=results.get('ocv_v', 0.0),
+            )
+            self.lbl_ecm_diagram.load(QByteArray(svg.encode()))
+            self.btn_ecm_toggle.setEnabled(True)
+            self.btn_ecm_toggle.setStyleSheet(
+                f"QPushButton{{background:{PANEL2};color:{TEXT};border:1px solid {INFO};"
+                f"border-radius:4px;padding:3px 8px;text-align:left;}}"
+                f"QPushButton:checked{{background:{PANEL};border-color:{INFO};}}"
+                f"QPushButton:hover{{border-color:#aaa;}}"
+            )
+        else:
+            svg = self._build_simple_svg(
+                r0=results.get('dcir_mohm', results.get('ri_mohm', 0.0)),
+                ocv=results.get('ocv_v', 0.0),
+            )
+            self.lbl_ecm_diagram.load(QByteArray(svg.encode()))
+            self.btn_ecm_toggle.setEnabled(True)
+            self.btn_ecm_toggle.setText("▶ Show Circuit (R₀ only)")
+            self.btn_ecm_toggle.setStyleSheet(
+                f"QPushButton{{background:{PANEL2};color:{TEXT};border:1px solid {MUTED};"
+                f"border-radius:4px;padding:3px 8px;text-align:left;}}"
+                f"QPushButton:checked{{background:{PANEL};border-color:{MUTED};}}"
+                f"QPushButton:hover{{border-color:#aaa;}}"
+            )
         if warns:
             lines += ["", "⚠ Data-quality flags:"] + [f"  • {m}" for m in warns]
         self.txt_analytics.setPlainText("\n".join(lines))
@@ -2177,11 +2559,12 @@ class BatteryQtWindow(QMainWindow):
             self.lst_sessions.addItem(item)
 
     def _on_session_selected(self, item):
-        """เลือก session file จาก list → ตั้งเป็น active CSV สำหรับ analyze"""
+        """เลือก session file → analyze ทันทีในแท็บ Analytics เดียวกัน"""
         fpath = item.data(Qt.ItemDataRole.UserRole)
         if fpath:
             self._last_csv = fpath
             self.lbl_csv.setText(f"CSV: {os.path.basename(fpath)}")
+            self._on_analyze_csv()
 
     def _on_toggle_logging(self):
         if self.data is None:

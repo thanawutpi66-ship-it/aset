@@ -3,6 +3,7 @@ the bootstrapper. Imported by both ``main.py`` (root shim) and
 ``python -m aset_batt`` (``aset_batt/__main__.py``)."""
 import sys
 import logging
+from PySide6.QtCore import QLocale
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ def run() -> int:
         return 1
 
     app = QApplication(sys.argv)
+    QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
     root = QtRootShim()
     window = BatteryQtWindow(bootstrapper.config_manager)
     try:
