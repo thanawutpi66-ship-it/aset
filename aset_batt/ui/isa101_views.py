@@ -6,6 +6,7 @@ existing controller / estimator / analysis contracts, but presents them in the
 desaturated high-performance style used by the standalone command center.
 """
 
+import csv
 import logging
 import math
 import os
@@ -1434,7 +1435,8 @@ class BatteryQtWindow(QMainWindow):
         lay.addLayout(sess_hdr)
 
         self.lst_sessions = QListWidget()
-        self.lst_sessions.setMaximumHeight(90)
+        self.lst_sessions.setMaximumHeight(110)
+        self.lst_sessions.setFont(QFont("Consolas", 9))
         self.lst_sessions.setToolTip("Click session to analyze")
         self.lst_sessions.itemClicked.connect(self._on_session_selected)
         lay.addWidget(self.lst_sessions)
@@ -2716,8 +2718,54 @@ class BatteryQtWindow(QMainWindow):
             self._last_csv = self.data.current_path
             self.lbl_csv.setText(f"CSV: {os.path.basename(self.data.current_path)}")
 
+    # map ชนิดการทดสอบ → ชื่อย่อที่อ่านง่าย (จากคอลัมน์ Mode ใน CSV)
+    _SESSION_TYPE_MAP = {
+        "hppc": "HPPC",
+        "discharge": "Discharge",
+        "charge": "Charge",
+    }
+
+    def _detect_session_type(self, fpath: str) -> str:
+        """อ่านคอลัมน์ Mode ของ CSV เพื่อบอกชนิดการทดสอบ.
+        ไฟล์จาก START DATA LOGGING ไม่มีคอลัมน์ Mode → 'Data Log'."""
+        try:
+            with open(fpath, "r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.reader(f)
+                header = next(reader, None)
+                if not header:
+                    return "—"
+                mode_idx = next((i for i, h in enumerate(header)
+                                 if h.strip().lower() == "mode"), None)
+                if mode_idx is None:
+                    return "Data Log"
+                modes = set()
+                for n, row in enumerate(reader):
+                    if mode_idx < len(row) and row[mode_idx]:
+                        modes.add(row[mode_idx].lower())
+                    if n > 500:          # อ่านพอประมาณ — ชนิดไม่เปลี่ยนกลางคัน
+                        break
+                if not modes:
+                    return "Data Log"
+                for key, label in self._SESSION_TYPE_MAP.items():
+                    if any(key in m for m in modes):
+                        return label
+                return next(iter(modes)).title()
+        except OSError:
+            return "—"
+
+    @staticmethod
+    def _format_session_time(fname: str) -> str:
+        """แปลง test_YYYYMMDD_HHMMSS.csv → '28 Jun 2026  18:47'."""
+        try:
+            stem = fname[len("test_"):-len(".csv")]
+            dt = datetime.strptime(stem, "%Y%m%d_%H%M%S")
+            return dt.strftime("%d %b %Y  %H:%M")
+        except ValueError:
+            return fname
+
     def _refresh_session_list(self):
-        """อัพเดทรายการ session files จาก sessions/ directory"""
+        """อัพเดทรายการ session files จาก sessions/ directory.
+        แสดง: ลำดับ · ชนิดการทดสอบ · วันเวลา · ขนาด."""
         if not hasattr(self, "lst_sessions"):
             return
         self.lst_sessions.clear()
@@ -2728,15 +2776,19 @@ class BatteryQtWindow(QMainWindow):
             [f for f in os.listdir(logs_dir) if f.startswith("test_") and f.endswith(".csv")],
             reverse=True,
         )
-        for fname in files:
+        for seq, fname in enumerate(files, start=1):
             fpath = os.path.join(logs_dir, fname)
+            ttype = self._detect_session_type(fpath)
+            when = self._format_session_time(fname)
             try:
                 size_kb = os.path.getsize(fpath) / 1024
-                label = f"{fname}  ({size_kb:.0f} KB)"
+                size_txt = f"{size_kb:.0f} KB"
             except OSError:
-                label = fname
+                size_txt = "—"
+            label = f"{seq}.  {ttype:<10}{when}   ·  {size_txt}"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, fpath)
+            item.setToolTip(f"{fname}\nType: {ttype}\n{when}  ·  {size_txt}")
             self.lst_sessions.addItem(item)
 
     def _on_session_selected(self, item):
