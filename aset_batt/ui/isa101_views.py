@@ -745,9 +745,8 @@ class BatteryQtWindow(QMainWindow):
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(0, 0, 0, 4)
         lay.setSpacing(8)
-        lay.addWidget(self._zone_setup())        # collapsible — set once, then fold away
-        lay.addWidget(self._zone_workflow())     # 5-step guide + auto-sequence
-        lay.addWidget(self._zone_run())          # charge / discharge controls
+        lay.addWidget(self._zone_setup())        # collapsible — battery + connections
+        lay.addWidget(self._zone_test_mode())    # TEST MODE: AUTO tab | MANUAL tab
         lay.addWidget(self._zone_tools())        # collapsible — manual control + data
         lay.addStretch(1)
 
@@ -1112,7 +1111,7 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_wf_status.setWordWrap(True)
         outer_lay.addWidget(self.lbl_wf_status)
 
-        return self._collapsible("WORKFLOW GUIDE", outer, expanded=True)
+        return outer
 
     def _on_wf_stack_changed(self, idx: int):
         """ปรับให้เฉพาะหน้าที่กำลังแสดงดันความสูงของ stack — หน้าที่ซ่อนตั้งเป็น
@@ -1128,8 +1127,10 @@ class BatteryQtWindow(QMainWindow):
 
     # ---- ZONE 2: RUN (charge ⇄ discharge) ----------------------------------
     def _zone_run(self):
-        g = QGroupBox("2 · RUN")
-        lay = QVBoxLayout(g)
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
 
         # Operation toggle — swaps the controls below between Charge and Discharge.
         trow = QHBoxLayout()
@@ -1155,7 +1156,8 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_run_grade = QLabel("Grade: —")
         self.lbl_run_grade.setStyleSheet(f"color:{MUTED}; padding-top:4px;")
         lay.addWidget(self.lbl_run_grade)
-        return g
+        lay.addStretch(1)
+        return w
 
     def _charge_page(self):
         w = QWidget()
@@ -1208,6 +1210,18 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_test_status.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_test_status)
         return w
+
+    # ---- ZONE: TEST MODE — AUTO tab (workflow) + MANUAL tab (charge/discharge) --
+    def _zone_test_mode(self):
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.setStyleSheet(
+            f"QTabBar::tab {{ padding:5px 18px; }} "
+            f"QTabBar::tab:selected {{ font-weight:700; }}"
+        )
+        tabs.addTab(self._zone_workflow(), "AUTO")
+        tabs.addTab(self._zone_run(),      "MANUAL")
+        return self._collapsible("TEST MODE", tabs, expanded=True)
 
     # ---- ZONE 3: TOOLS (advanced / occasional) -----------------------------
     def _zone_tools(self):
