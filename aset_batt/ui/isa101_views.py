@@ -1083,25 +1083,40 @@ class BatteryQtWindow(QMainWindow):
         t1l.setSpacing(6)
 
         t1l.addWidget(self._subheader("MANUAL CONTROL"))
-        for label, attr_v, attr_on, attr_off, on_cb, off_cb in [
-            ("PSU V:", "ed_psu_v", None, None,
-             lambda: self._psu_manual(True), lambda: self._psu_manual(False)),
-            ("Load A:", "ed_load_a", None, None,
-             lambda: self._load_manual(True), lambda: self._load_manual(False)),
-        ]:
-            row = QHBoxLayout()
-            row.addWidget(QLabel(label))
-            ed = QLineEdit("13.8" if "PSU" in label else "0.7")
-            ed.setMaximumWidth(72)
-            setattr(self, attr_v, ed)
-            row.addWidget(ed)
-            on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
-            off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
-            on.clicked.connect(on_cb)
-            off.clicked.connect(off_cb)
-            row.addWidget(on)
-            row.addWidget(off)
-            t1l.addLayout(row)
+
+        # PSU row: V field + A (CC limit) field
+        psu_row = QHBoxLayout()
+        psu_row.addWidget(QLabel("PSU V:"))
+        self.ed_psu_v = QLineEdit("13.8")
+        self.ed_psu_v.setMaximumWidth(72)
+        psu_row.addWidget(self.ed_psu_v)
+        psu_row.addWidget(QLabel("A:"))
+        self.ed_psu_i = QLineEdit("1.0")
+        self.ed_psu_i.setMaximumWidth(48)
+        self.ed_psu_i.setValidator(QDoubleValidator(0.0, 40.0, 2))
+        self.ed_psu_i.setToolTip("กระแส limit (CC) ของ PSU (A)")
+        psu_row.addWidget(self.ed_psu_i)
+        psu_on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
+        psu_off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
+        psu_on.clicked.connect(lambda: self._psu_manual(True))
+        psu_off.clicked.connect(lambda: self._psu_manual(False))
+        psu_row.addWidget(psu_on)
+        psu_row.addWidget(psu_off)
+        t1l.addLayout(psu_row)
+
+        # Load row
+        load_row = QHBoxLayout()
+        load_row.addWidget(QLabel("Load A:"))
+        self.ed_load_a = QLineEdit("0.7")
+        self.ed_load_a.setMaximumWidth(72)
+        load_row.addWidget(self.ed_load_a)
+        load_on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
+        load_off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
+        load_on.clicked.connect(lambda: self._load_manual(True))
+        load_off.clicked.connect(lambda: self._load_manual(False))
+        load_row.addWidget(load_on)
+        load_row.addWidget(load_off)
+        t1l.addLayout(load_row)
 
         t1l.addWidget(_hline())
         t1l.addWidget(self._subheader("HPPC TIMING"))
@@ -1891,10 +1906,17 @@ class BatteryQtWindow(QMainWindow):
 
     def _psu_manual(self, on):
         try:
-            self.hw.set_psu(on, str(float(self.ed_psu_v.text())) if on else "0")
+            if on:
+                self.hw.set_psu(
+                    True,
+                    str(float(self.ed_psu_v.text())),
+                    str(float(self.ed_psu_i.text())),
+                )
+            else:
+                self.hw.set_psu(False)
         except ValueError:
             if not self._headless:
-                QMessageBox.warning(self, "PSU", "Invalid voltage")
+                QMessageBox.warning(self, "PSU", "Invalid voltage / current")
 
     def _load_manual(self, on):
         try:

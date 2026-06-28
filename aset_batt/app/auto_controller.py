@@ -232,14 +232,23 @@ class AutoController:
                     # อ่านค่าจาก Hardware
                     # Convention: discharge = บวก (ให้ตรงกับ StateEstimator,
                     # CSV/dashboard และ generate_sample_data)
-                    # load_i = กระแส discharge, psu_i = PSU output (รวม bleed อยู่แล้ว)
-                    # i_net = load_i - (psu_i - bleed): ชดเชย bleed ออกจาก psu_i
-                    # → charge: 0 - (I_ch+bleed-bleed) = -I_ch ✓
-                    # → discharge: load_i - 0 = load_i (undercount bleed แต่ OK สำหรับ display)
-                    # → idle: 0 - 0 = 0 ✓
+                    #
+                    # Bleed physics:
+                    #   CHARGE  → PSU covers bleed; i_net = -(psu_i - bleed)   (negative)
+                    #   DISCHARGE → PSU disconnected, no bleed path; i_net = load_i (positive)
+                    #   REST    → load OFF, PSU OUTPUT OFF but still wired; bleed drains
+                    #             battery; i_net = bleed                         (positive)
+                    #
+                    # Distinguish DISCHARGE (load_i significant) vs CHARGE/REST (load_i ≈ 0):
+                    #   discharge: i_net = load_i
+                    #   charge:    i_net = -(psu_i - bleed)  [load_i ≈ 0]
+                    #   rest:      i_net = 0 - (0 - bleed) = bleed  [both ≈ 0]
                     v, psu_i, load_i = self.hw.read_vi()
                     bleed = getattr(self.hw, "psu_bleed_a", 0.0)
-                    i_net = load_i - (psu_i - bleed)
+                    if load_i > 0.02:          # discharge phase — no bleed path
+                        i_net = load_i
+                    else:                       # charge or rest — apply bleed correction
+                        i_net = load_i - (psu_i - bleed)
 
                     # Monitor loop only checks temperature & overcurrent —
                     # voltage OVP/UVP is handled by the discharge test loop and

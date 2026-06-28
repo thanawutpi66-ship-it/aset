@@ -63,7 +63,7 @@ class MockHardwareController:
     # PSU / Load control
     # ------------------------------------------------------------------
 
-    def set_psu(self, state, voltage_val="0"):
+    def set_psu(self, state, voltage_val="0", current_val="1.0"):
         if state:
             self._psu_voltage = float(voltage_val)
         else:
@@ -72,9 +72,8 @@ class MockHardwareController:
     def set_load(self, state, current_val="0"):
         if state:
             was_on = self._load_current > 0
-            # compensate bleed: ต้องการ current_val จากแบต → load จริง = current_val - bleed
-            adjusted = max(0.0, float(current_val) - self.psu_bleed_a)
-            self._load_current = adjusted
+            # Discharge: no bleed path (PSU disconnected) → set load directly
+            self._load_current = float(current_val)
             self._charging = False   # ดิสชาร์จ → หยุดจำลองชาร์จ
             if not was_on:
                 self._load_on_t = time.monotonic()   # mark pulse start for RC model
@@ -165,10 +164,10 @@ class MockHardwareController:
         # Convention: discharge = positive. Mirror bleed compensation of HardwareController.
         v, psu_i, load_i = self.read_vi()
         if prefer_load_v:
-            # discharge: แบตจ่าย load + bleed
-            return v, load_i + self.psu_bleed_a
+            # Discharge: PSU disconnected → no bleed → battery supplies only load current
+            return v, load_i
         else:
-            # charge: PSU วัด I_battery + bleed → คืนแค่ I_battery (negative = charging)
+            # Charge/idle: PSU measures I_battery + I_bleed → subtract bleed (negative = charging)
             return v, -(psu_i - self.psu_bleed_a)
 
     def set_charge(self, state, current_val="0"):
