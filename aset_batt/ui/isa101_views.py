@@ -516,6 +516,9 @@ class BatteryQtWindow(QMainWindow):
             QLabel {{ background:transparent; }}
             QComboBox, QLineEdit {{ background:{FIELD}; border:1px solid {BORDER}; border-radius:3px; padding:4px 6px; color:{TEXT}; }}
             QComboBox:focus, QLineEdit:focus {{ border:1px solid {INFO}; }}
+            QDoubleSpinBox, QSpinBox {{ background:{FIELD}; border:1px solid {BORDER}; border-radius:3px; padding:3px 4px; color:{TEXT}; }}
+            QDoubleSpinBox:focus, QSpinBox:focus {{ border:1px solid {INFO}; }}
+            QDoubleSpinBox:hover, QSpinBox:hover {{ border:1px solid {INFO}; }}
             QComboBox QAbstractItemView {{ background:{FIELD}; color:{TEXT}; selection-background-color:{INFO}; selection-color:white; }}
             QListWidget {{ background:{PANEL2}; border:1px solid {BORDER}; border-radius:4px; }}
             QListWidget::item {{ padding:5px 6px; }}
@@ -542,13 +545,14 @@ class BatteryQtWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(6)
+        splitter.setChildrenCollapsible(False)   # panels can't be dragged to 0
         splitter.addWidget(self._build_left_panel())
         splitter.addWidget(self._build_center_panel())
         splitter.addWidget(self._build_right_panel())
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([300, 880, 260])
+        splitter.setSizes([300, 880, 360])
         self.setCentralWidget(splitter)
 
     def _logo(self, filename, h=40):
@@ -742,30 +746,28 @@ class BatteryQtWindow(QMainWindow):
             )
 
     def _build_left_panel(self):
-        panel = QWidget()
-        lay = QVBoxLayout(panel)
-        lay.setContentsMargins(8, 4, 8, 4)
-        lay.setSpacing(8)
-        panel.setMinimumWidth(290)
-        lay.addWidget(self._zone_setup())        # collapsible — battery + connections
-        lay.addWidget(self._zone_test_mode())    # TEST MODE: AUTO tab | MANUAL tab
-        lay.addWidget(self._zone_tools())        # collapsible — manual control + data
-        lay.addStretch(1)
+        """Left column: three top-level tabs (SETUP / TEST MODE / TOOLS) that
+        follow the 1→2→3 workflow order. Each tab scrolls independently."""
+        def _scroll(inner):
+            holder = QWidget()
+            hl = QVBoxLayout(holder)
+            hl.setContentsMargins(8, 8, 8, 8)
+            hl.addWidget(inner)
+            hl.addStretch(1)
+            sc = QScrollArea()
+            sc.setWidget(holder)
+            sc.setWidgetResizable(True)
+            sc.setFrameShape(QFrame.Shape.NoFrame)
+            sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            sc.setStyleSheet("QScrollArea { background: transparent; }")
+            return sc
 
-        scroll = QScrollArea()
-        scroll.setWidget(panel)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { background: transparent; }")
-
-        outer = QWidget()
-        ov = QVBoxLayout(outer)
-        ov.setContentsMargins(0, 0, 0, 0)
-        ov.setSpacing(0)
-        ov.addWidget(scroll, 1)
-        outer.setMinimumWidth(300)
-        return outer
+        tabs = QTabWidget()
+        tabs.setMinimumWidth(300)
+        tabs.addTab(_scroll(self._zone_setup()),     "1 · SETUP")
+        tabs.addTab(_scroll(self._zone_test_mode()), "TEST MODE")
+        tabs.addTab(_scroll(self._zone_tools()),     "3 · TOOLS")
+        return tabs
 
     # ---- small UI helpers --------------------------------------------------
     def _subheader(self, text):
@@ -775,42 +777,15 @@ class BatteryQtWindow(QMainWindow):
             f"color:{TEXT}; font-size:11px; font-weight:800; letter-spacing:1px; padding-top:4px;")
         return lbl
 
-    def _collapsible(self, title, content: QWidget, expanded=True):
-        """Collapsible section: header row with ▾/▸ toggle arrow + content widget."""
-        wrapper = QWidget()
-        wlay = QVBoxLayout(wrapper)
-        wlay.setContentsMargins(0, 0, 0, 0)
-        wlay.setSpacing(0)
-
-        # Header row ──────────────────────────────────────────────
-        header = QPushButton(f"{'▾' if expanded else '▸'}  {title}")
-        header.setCheckable(True)
-        header.setChecked(expanded)
-        header.setStyleSheet(
-            "QPushButton {"
-            f"  text-align:left; padding:5px 8px;"
-            f"  background:transparent; border:none; border-bottom:1px solid #333;"
-            f"  color:var(--text-2, #ccc); font-weight:600; font-size:12px;"
-            "}"
-            "QPushButton:hover { background: rgba(255,255,255,0.04); }"
-        )
-        header.setCursor(Qt.PointingHandCursor)
-
-        content.setVisible(expanded)
-
-        def _toggle(checked):
-            content.setVisible(checked)
-            arrow = "▾" if checked else "▸"
-            # rebuild label keeping everything after the first space
-            parts = header.text().split("  ", 1)
-            label = parts[1] if len(parts) > 1 else parts[0]
-            header.setText(f"{arrow}  {label}")
-
-        header.toggled.connect(_toggle)
-
-        wlay.addWidget(header)
-        wlay.addWidget(content)
-        return wrapper
+    @staticmethod
+    def _combo_shrink(cb, min_chars=6):
+        """Let a combo with long items shrink below its content width (the
+        current text is elided) so it never forces the whole panel wider than
+        the column. The full text stays visible in the dropdown + tooltip."""
+        cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        cb.setMinimumContentsLength(min_chars)
+        cb.setToolTip(cb.currentText())
+        cb.currentTextChanged.connect(cb.setToolTip)
 
     def _estop_bar(self):
         self.btn_estop = QPushButton("⛔  EMERGENCY STOP")
@@ -835,6 +810,7 @@ class BatteryQtWindow(QMainWindow):
         self.cb_product = QComboBox()
         self.cb_product.addItems(battery_profiles.list_products())
         self.cb_product.currentTextChanged.connect(self._on_product_changed)
+        self._combo_shrink(self.cb_product, 8)
         row.addWidget(self.cb_product, 1)
         lay.addLayout(row)
         self.lbl_battery_readout = QLabel("—")
@@ -894,27 +870,32 @@ class BatteryQtWindow(QMainWindow):
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("PSU COMPENSATION"))
         bleed_row = QHBoxLayout()
-        bleed_row.addWidget(QLabel("PSU bleed:"))
+        bleed_lbl = QLabel("PSU bleed current:")
+        bleed_row.addWidget(bleed_lbl)
         self.spn_psu_bleed = QDoubleSpinBox()
         self.spn_psu_bleed.setLocale(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
         self.spn_psu_bleed.setRange(0.0, 5.0)
         self.spn_psu_bleed.setSingleStep(0.1)
         self.spn_psu_bleed.setDecimals(2)
         self.spn_psu_bleed.setSuffix(" A")
+        self.spn_psu_bleed.setMinimumWidth(90)
         self.spn_psu_bleed.setToolTip(
             "กระแสที่ PSU ดูดผ่าน internal bleed resistor ตลอดเวลา\n"
-            "PSW 80-40.5 ≈ 0.60 A  |  ตั้ง 0.00 ถ้าไม่มีปัญหา"
+            "ปรับด้วยลูกศร ▲▼ หรือพิมพ์ค่า  •  PSW 80-40.5 ≈ 0.60 A\n"
+            "ตั้ง 0.00 ถ้าไม่มีปัญหา"
         )
         bleed_row.addWidget(self.spn_psu_bleed)
         bleed_row.addStretch(1)
         lay.addLayout(bleed_row)
-        lbl_bleed_hint = QLabel("ตั้งค่าก่อน Connect — ใช้ชดเชย discharge C-rate และ capacity")
+        lbl_bleed_hint = QLabel(
+            "ⓘ ปรับค่าได้ตามรุ่น PSU — เป็นกระแสที่ PSU ปล่อยทิ้งตลอดเวลา "
+            "ระบบจะหักออกเพื่อให้ค่า discharge และ capacity แม่นยำ  •  ตั้งก่อนกด Connect")
         lbl_bleed_hint.setStyleSheet(f"color:{MUTED}; font-size:10px;")
         lbl_bleed_hint.setWordWrap(True)
         lay.addWidget(lbl_bleed_hint)
         self.spn_psu_bleed.valueChanged.connect(self._on_psu_bleed_changed)
 
-        return self._collapsible("1 · SETUP", w, expanded=True)
+        return w
 
     # ---- WORKFLOW GUIDE (5-step sequence with auto-run) ----------------------
     _WF_STEPS = [
@@ -971,7 +952,7 @@ class BatteryQtWindow(QMainWindow):
             "IEC 61960 Standard  (~10–12h LeadAcid / ~8h Li-ion)",
             "Quick Scan  (~1.5h  Peukert-corrected SoH)",
         ])
-        self.cb_workflow_type.setToolTip("เลือกประเภทการทดสอบ")
+        self._combo_shrink(self.cb_workflow_type, 10)
         sel_row.addWidget(self.cb_workflow_type, 1)
         outer_lay.addLayout(sel_row)
 
@@ -1120,6 +1101,7 @@ class BatteryQtWindow(QMainWindow):
         prow_sel.addWidget(QLabel("Profile:"))
         self.cb_profiles = QComboBox()
         self._populate_profiles()
+        self._combo_shrink(self.cb_profiles, 10)
         prow_sel.addWidget(self.cb_profiles, 1)
         outer_lay.addLayout(prow_sel)
         prow = QHBoxLayout()
@@ -1263,12 +1245,13 @@ class BatteryQtWindow(QMainWindow):
                     QSizePolicy.Policy.Preferred if i == idx
                     else QSizePolicy.Policy.Ignored)
                 p.setSizePolicy(sp)
-            tabs.adjustSize()
+            # defer adjustSize so we don't trigger a layout feedback loop
+            QTimer.singleShot(0, tabs.adjustSize)
 
         tabs.currentChanged.connect(_sync_height)
         _sync_height(tabs.currentIndex())
 
-        return self._collapsible("TEST MODE", tabs, expanded=True)
+        return tabs
 
     # ---- ZONE 3: TOOLS (advanced / occasional) -----------------------------
     def _zone_tools(self):
@@ -1368,10 +1351,11 @@ class BatteryQtWindow(QMainWindow):
         tabs.addTab(t3, "Data")
 
         root.addWidget(tabs)
-        return self._collapsible("3 · TOOLS", w, expanded=False)
+        return w
 
     def _build_right_panel(self):
         panel = QWidget()
+        panel.setMinimumWidth(300)
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(0, 0, 0, 0)
 
@@ -1450,7 +1434,7 @@ class BatteryQtWindow(QMainWindow):
         lay.addWidget(self.lbl_analytics)
 
         # วงจร Thevenin ECM
-        self.btn_ecm_toggle = QPushButton("▶ Show Circuit (ECM)")
+        self.btn_ecm_toggle = QPushButton("▶ Show Equivalent Circuit")
         self.btn_ecm_toggle.setCheckable(True)
         self.btn_ecm_toggle.setEnabled(False)
         self.btn_ecm_toggle.setStyleSheet(
@@ -1462,19 +1446,20 @@ class BatteryQtWindow(QMainWindow):
         self.btn_ecm_toggle.clicked.connect(
             lambda checked: (
                 self.lbl_ecm_diagram.setVisible(checked),
-                self.btn_ecm_toggle.setText("▼ Hide Circuit (ECM)" if checked else "▶ Show Circuit (ECM)")
+                self.btn_ecm_toggle.setText(
+                    "▼ Hide Equivalent Circuit" if checked else "▶ Show Equivalent Circuit")
             )
         )
         lay.addWidget(self.btn_ecm_toggle)
 
         self.lbl_ecm_diagram = QSvgWidget()
-        self.lbl_ecm_diagram.setFixedHeight(200)
+        self.lbl_ecm_diagram.setFixedHeight(240)
         self.lbl_ecm_diagram.setVisible(False)
         lay.addWidget(self.lbl_ecm_diagram)
 
         self.txt_analytics = QTextEdit()
         self.txt_analytics.setReadOnly(True)
-        self.txt_analytics.setFont(QFont("Consolas", 10))
+        self.txt_analytics.setFont(QFont("Segoe UI", 10))
         lay.addWidget(self.txt_analytics, 1)
         self.lbl_grade = QLabel("—")
         self.lbl_grade.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1486,135 +1471,226 @@ class BatteryQtWindow(QMainWindow):
         lay.addWidget(btn)
         return w
 
-    def _build_ecm_svg(self, r0: float, r1: float, c1: float, tau: float, ocv: float) -> str:
-        """สร้าง SVG วงจร 1-RC Thevenin พร้อมค่าจริง"""
-        W, H = 520, 200
-        # สี
-        wire  = "#4a9ede"
-        comp  = "#e0e0e0"
-        txt   = "#e0e0e0"
-        muted = "#888"
-        bg    = "#1e1e1e"
+    def _build_ecm_svg(self, r0=None, r1=None, c1=None, ocv=None, tau=None) -> str:
+        """วงจรสมมูลแบตเตอรี่ (Thévenin 1-RC) ตามรูปตำรา:
 
-        def resistor(x, y, label, value, color=comp):
+            V_oc ── R_I ──┬── R_d ──┬── + (V_t)
+                          └── C_d ──┘
+
+        ค่าที่เป็น None จะแสดงเป็นตัวแปร (สัญลักษณ์เปล่า) — ใช้กับการทดสอบที่
+        ไม่ใช่ HPPC ซึ่งระบุ R_d/C_d ไม่ได้.
+        """
+        W, H = 560, 240
+        ink    = "#1a1a1a"     # เส้น/สัญลักษณ์
+        accent = "#1565c0"     # ค่าตัวเลข
+        muted  = "#6a6a6a"
+        bg     = "#fbfbfb"
+
+        y_main = 120           # เส้นหลัก (R_I, R_d)
+        y_cap  = 70            # กิ่งขนานยกขึ้น (C_d)
+        y_bot  = 195           # สายกลับ
+        bat_x  = 80
+        term_x = 505
+
+        def wire(x1, y1, x2, y2):
+            return f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{ink}" stroke-width="1.8"/>'
+
+        def resistor(x1, x2, y, a=9):
+            u = (x2 - x1) / 8.0
+            ys = [0, 0, -a, a, -a, a, -a, 0, 0]
+            pts = " ".join(f"{x1 + k*u:.1f},{y + ys[k]:.1f}" for k in range(9))
+            return f'<polyline points="{pts}" fill="none" stroke="{ink}" stroke-width="1.8" stroke-linejoin="round"/>'
+
+        def capacitor(cx, y, gap=9, ph=24):
+            half = ph / 2
+            p1, p2 = cx - gap / 2, cx + gap / 2
             return (
-                f'<rect x="{x}" y="{y-10}" width="60" height="20" rx="4" '
-                f'fill="{color}" stroke="{wire}" stroke-width="1.5"/>'
-                f'<text x="{x+30}" y="{y+4}" text-anchor="middle" '
-                f'font-size="10" font-family="Consolas" fill="#222">{value}</text>'
-                f'<text x="{x+30}" y="{y-16}" text-anchor="middle" '
-                f'font-size="10" font-family="Segoe UI" fill="{muted}">{label}</text>'
+                f'<line x1="{p1}" y1="{y-half}" x2="{p1}" y2="{y+half}" stroke="{ink}" stroke-width="2.2"/>'
+                f'<line x1="{p2}" y1="{y-half}" x2="{p2}" y2="{y+half}" stroke="{ink}" stroke-width="2.2"/>'
             )
 
-        def capacitor(x, y, label, value):
-            return (
-                f'<line x1="{x+28}" y1="{y-14}" x2="{x+28}" y2="{y+14}" '
-                f'stroke="{comp}" stroke-width="3"/>'
-                f'<line x1="{x+34}" y1="{y-14}" x2="{x+34}" y2="{y+14}" '
-                f'stroke="{comp}" stroke-width="3"/>'
-                f'<line x1="{x}" y1="{y}" x2="{x+28}" y2="{y}" stroke="{wire}" stroke-width="1.5"/>'
-                f'<line x1="{x+34}" y1="{y}" x2="{x+62}" y2="{y}" stroke="{wire}" stroke-width="1.5"/>'
-                f'<text x="{x+31}" y="{y+28}" text-anchor="middle" '
-                f'font-size="10" font-family="Consolas" fill="{muted}">{value}</text>'
-                f'<text x="{x+31}" y="{y-20}" text-anchor="middle" '
-                f'font-size="10" font-family="Segoe UI" fill="{muted}">{label}</text>'
+        def sym(x, y, base, sub, size=15):
+            return (f'<text x="{x}" y="{y}" text-anchor="middle" font-family="Georgia, serif" '
+                    f'font-size="{size}" fill="{ink}">{base}'
+                    f'<tspan dy="4" font-size="{size-5}">{sub}</tspan></text>')
+
+        def val(x, y, text):
+            if not text:
+                return ''
+            return (f'<text x="{x}" y="{y}" text-anchor="middle" font-family="Consolas, monospace" '
+                    f'font-size="11" fill="{accent}">{text}</text>')
+
+        ri_txt = f"{r0:.2f} mΩ" if r0 is not None else ""
+        rd_txt = f"{r1:.2f} mΩ" if r1 is not None else ""
+        cd_txt = f"{c1:.0f} F"  if c1 is not None else ""
+        oc_txt = f"{ocv:.3f} V" if ocv is not None else ""
+
+        # node A (แยกกิ่ง) และ node B (รวมกิ่ง)
+        nA, nB = 255, 360
+
+        parts = [
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+            f'viewBox="0 0 {W} {H}"><rect width="{W}" height="{H}" rx="8" fill="{bg}"/>',
+
+            # ── แบตเตอรี่ (V_oc) ในสายตั้งซ้าย ──
+            wire(bat_x, y_main, bat_x, 148),
+            f'<line x1="{bat_x-17}" y1="150" x2="{bat_x+17}" y2="150" stroke="{ink}" stroke-width="2"/>',   # plate +
+            f'<line x1="{bat_x-9}" y1="159" x2="{bat_x+9}" y2="159" stroke="{ink}" stroke-width="3.5"/>',   # plate −
+            wire(bat_x, 161, bat_x, y_bot),
+            sym(bat_x + 32, 150, "V", "oc"),
+            val(bat_x + 34, 168, oc_txt),
+
+            # ── สายหลัก: bat → R_I → node A ──
+            wire(bat_x, y_main, 150, y_main),
+            resistor(150, 215, y_main),
+            wire(215, y_main, nA, y_main),
+            sym(182, y_main - 18, "R", "I"),
+            val(182, y_main + 26, ri_txt),
+
+            # ── กิ่งล่าง: R_d (อยู่บนเส้นหลัก) ──
+            wire(nA, y_main, 272, y_main),
+            resistor(272, 337, y_main),
+            wire(337, y_main, nB, y_main),
+            sym(304, y_main + 28, "R", "d"),
+            val(304, y_main + 43, rd_txt),
+
+            # ── กิ่งบน: C_d (กิ่งขนานยกขึ้น) ──
+            wire(nA, y_main, nA, y_cap),
+            wire(nA, y_cap, 296, y_cap),
+            capacitor(304, y_cap),
+            wire(312, y_cap, nB, y_cap),
+            wire(nB, y_cap, nB, y_main),
+            sym(304, y_cap - 16, "C", "d"),
+            val(304, y_cap + 30, cd_txt),
+
+            # ── ออกขั้ว + และสายกลับขั้ว − ──
+            wire(nB, y_main, term_x, y_main),
+            wire(bat_x, y_bot, term_x, y_bot),
+            f'<circle cx="{term_x}" cy="{y_main}" r="4.5" fill="{bg}" stroke="{ink}" stroke-width="1.8"/>',
+            f'<circle cx="{term_x}" cy="{y_bot}" r="4.5" fill="{bg}" stroke="{ink}" stroke-width="1.8"/>',
+            f'<text x="{term_x-14}" y="{y_main-6}" font-family="Georgia, serif" font-size="15" fill="{ink}">+</text>',
+            f'<text x="{term_x-14}" y="{y_bot+18}" font-family="Georgia, serif" font-size="15" fill="{ink}">−</text>',
+
+            # ── V_t (แรงดันขั้ว) ──
+            wire(term_x + 22, y_main, term_x + 22, y_bot),
+            f'<polyline points="{term_x+18},{y_main+9} {term_x+22},{y_main} {term_x+26},{y_main+9}" '
+            f'fill="none" stroke="{ink}" stroke-width="1.4"/>',
+            f'<polyline points="{term_x+18},{y_bot-9} {term_x+22},{y_bot} {term_x+26},{y_bot-9}" '
+            f'fill="none" stroke="{ink}" stroke-width="1.4"/>',
+            sym(term_x + 38, (y_main + y_bot) // 2 + 4, "V", "t"),
+        ]
+
+        if r1 is None:
+            parts.append(
+                f'<text x="{W//2}" y="{H-10}" text-anchor="middle" font-family="Segoe UI" '
+                f'font-size="10" fill="{muted}">Non-HPPC test — Rd, Cd shown as symbols '
+                f'(not identifiable without pulses)</text>'
+            )
+        elif tau is not None:
+            parts.append(
+                f'<text x="{W//2}" y="{H-10}" text-anchor="middle" font-family="Consolas, monospace" '
+                f'font-size="10" fill="{muted}">1-RC Thévenin model · τ = Rd·Cd = {tau:.1f} s</text>'
             )
 
-        # layout positions
-        pad = 30
-        mid_y = H // 2
-        top_y = mid_y
-        bot_y = H - 30
+        parts.append("</svg>")
+        return "".join(parts)
 
-        # ค่าที่แสดง
-        r0_txt  = f"{r0:.2f} mΩ"
-        r1_txt  = f"{r1:.2f} mΩ"
-        c1_txt  = f"{c1:.0f} F"
-        tau_txt = f"τ={tau:.1f}s"
-        ocv_txt = f"{ocv:.3f} V"
+    def _build_results_html(self, results: dict) -> str:
+        """Rich HTML table for the analytics results pane."""
+        grade = results["grade"]
+        gc = {"A": OK, "B": INFO, "C": WARN, "REJECT": CRIT, "REVIEW": NEUTRAL}.get(grade, NEUTRAL)
+        soh = results["soh"]
+        soh_txt = "N/A" if soh != soh else f"{soh:.1f}"
+        conf = results.get("confidence", 1.0)
+        dcir = results.get("dcir_mohm", results.get("ri_mohm", 0.0))
+        dstd = results.get("dcir_std_mohm", 0.0)
+        nstep = results.get("dcir_n_steps", 0)
+        ocv = results.get("ocv_v", 0.0)
+        cap_ah = results["capacity_ah"]
+        cap_norm = results.get("capacity_norm_ah")
+        warns = results.get("quality_warnings", [])
 
-        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}"
-            style="background:{bg}; border-radius:6px;">
-          <!-- terminal + -->
-          <circle cx="{pad}" cy="{mid_y}" r="5" fill="{wire}"/>
-          <text x="{pad}" y="{mid_y-10}" text-anchor="middle" font-size="11"
-                font-family="Segoe UI" fill="{wire}">+</text>
+        def hdr(text):
+            return (
+                f'<tr><td colspan="2" style="background:{PANEL2};padding:5px 8px;'
+                f'font-weight:bold;color:{TEXT};font-size:11px;'
+                f'border-top:2px solid {BORDER};border-bottom:1px solid {BORDER}">'
+                f'{text}</td></tr>'
+            )
 
-          <!-- OCV source (แบตเตอรี่) -->
-          <line x1="{pad}" y1="{mid_y}" x2="{pad+20}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
-          <circle cx="{pad+44}" cy="{mid_y}" r="24" fill="none" stroke="{comp}" stroke-width="2"/>
-          <text x="{pad+44}" y="{mid_y+4}" text-anchor="middle" font-size="9"
-                font-family="Segoe UI" fill="{txt}">OCV</text>
-          <text x="{pad+44}" y="{mid_y+18}" text-anchor="middle" font-size="9"
-                font-family="Consolas" fill="{wire}">{ocv_txt}</text>
-          <line x1="{pad+68}" y1="{mid_y}" x2="{pad+80}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+        def row(label, value, unit="", sub=""):
+            sub_html = (
+                f'<br><span style="font-size:9px;color:{MUTED}">{sub}</span>'
+            ) if sub else ""
+            return (
+                f'<tr>'
+                f'<td style="padding:4px 8px 4px 14px;color:{MUTED};font-size:11px;vertical-align:top">'
+                f'{label}</td>'
+                f'<td style="padding:4px 8px;color:{INFO};font-family:Consolas,monospace;'
+                f'font-size:12px;font-weight:bold;vertical-align:top">'
+                f'{value}'
+                f'<span style="color:{MUTED};font-size:10px;font-weight:normal"> {unit}</span>'
+                f'{sub_html}</td>'
+                f'</tr>'
+            )
 
-          <!-- R0 -->
-          {resistor(pad+80, mid_y, "R₀ (ohmic)", r0_txt)}
-          <line x1="{pad+140}" y1="{mid_y}" x2="{pad+160}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+        parts = [
+            '<table width="100%" cellspacing="0" cellpadding="0" '
+            'style="border-collapse:collapse;font-family:Segoe UI,Arial,sans-serif;">'
+        ]
 
-          <!-- RC branch: สายบน (ผ่าน R1) และล่าง (ผ่าน C1) -->
-          <!-- สายวนบน -->
-          <line x1="{pad+160}" y1="{mid_y}" x2="{pad+160}" y2="{mid_y-40}" stroke="{wire}" stroke-width="1.5"/>
-          {resistor(pad+160, mid_y-40, "R₁ (polar.)", r1_txt)}
-          <line x1="{pad+220}" y1="{mid_y-40}" x2="{pad+240}" y2="{mid_y-40}" stroke="{wire}" stroke-width="1.5"/>
-          <line x1="{pad+240}" y1="{mid_y-40}" x2="{pad+240}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+        # ── Summary ──
+        parts.append(hdr("Summary"))
+        parts.append(row(
+            "Grade",
+            f'<span style="color:{gc};font-size:14px">{grade}</span>',
+            f'conf {conf * 100:.0f}%'
+        ))
+        parts.append(row("State of Health", soh_txt, "%"))
+        cap_sub = ""
+        if cap_norm and abs(cap_norm - cap_ah) > 1e-4:
+            k = results.get("peukert_k", 1.1)
+            i_avg = results.get("mean_discharge_a", 0)
+            cap_sub = f"rate-norm. {cap_norm:.3f} Ah @ k={k:.2f}, Ī={i_avg:.1f} A"
+        parts.append(row("Capacity", f"{cap_ah:.3f}", "Ah", cap_sub))
+        parts.append(row("Rested OCV", f"{ocv:.3f}", "V"))
 
-          <!-- สายวนล่าง (C1) -->
-          <line x1="{pad+160}" y1="{mid_y}" x2="{pad+160}" y2="{mid_y+40}" stroke="{wire}" stroke-width="1.5"/>
-          {capacitor(pad+160, mid_y+40, "C₁", c1_txt)}
-          <line x1="{pad+222}" y1="{mid_y+40}" x2="{pad+240}" y2="{mid_y+40}" stroke="{wire}" stroke-width="1.5"/>
-          <line x1="{pad+240}" y1="{mid_y+40}" x2="{pad+240}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
+        # ── DCIR ──
+        parts.append(hdr("Resistance &amp; Cranking  (DCIR @ ~250 ms, norm. 25 °C)"))
+        meas_hint = "" if results.get("dcir_measured", True) else "no current step → profile baseline"
+        step_sub = f"n={nstep} step{'s' if nstep != 1 else ''}" + (
+            f"  {meas_hint}" if meas_hint else ""
+        )
+        parts.append(row("DCIR", f"{dcir:.2f} ± {dstd:.2f}", "mΩ", step_sub))
+        parts.append(row("Voltage sag (load)", f"{results.get('voltage_sag_v', 0.0):.3f}", "V"))
+        parts.append(row("CCA proxy", f"{results.get('cca_est_a', 0.0):.0f}", "A",
+                         "(OCV − cutoff) / DCIR"))
+        slope = results.get("dcir_slope_mohm")
+        if slope is not None and slope == slope and results.get("dcir_slope_r2", 0) >= 0.9:
+            parts.append(row("DCIR (V–I slope)", f"{slope:.2f}", "mΩ",
+                             f"R² {results['dcir_slope_r2']:.3f}, OCV-cancelled"))
 
-          <!-- ต่อออก terminal -->
-          <line x1="{pad+240}" y1="{mid_y}" x2="{W-pad}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
-          <circle cx="{W-pad}" cy="{mid_y}" r="5" fill="{wire}"/>
-          <text x="{W-pad}" y="{mid_y-10}" text-anchor="middle" font-size="11"
-                font-family="Segoe UI" fill="{wire}">−</text>
+        # ── ECM (HPPC only) ──
+        if results.get("ecm_identified"):
+            r2 = results.get("ecm_r2", 0.0)
+            parts.append(hdr(f"1-RC Thévenin ECM  (HPPC, R² {r2:.3f})"))
+            parts.append(row("R₀  (ohmic, t=0 extrap.)", f"{results['r0_mohm']:.2f}", "mΩ"))
+            parts.append(row("R₁  (polarisation)", f"{results['r1_mohm']:.2f}", "mΩ"))
+            parts.append(row("C₁", f"{results['c1_farad']:.0f}", "F"))
+            parts.append(row("τ  (R₁·C₁)", f"{results['tau_s']:.1f}", "s"))
+            parts.append(row("Total (R₀+R₁)", f"{results['ri_mohm']:.2f}", "mΩ"))
 
-          <!-- τ label -->
-          <text x="{pad+200}" y="{H-8}" text-anchor="middle" font-size="10"
-                font-family="Consolas" fill="{muted}">{tau_txt}</text>
-        </svg>'''
-        return svg
+        # ── Quality flags ──
+        if warns:
+            parts.append(hdr("⚠ Data Quality Flags"))
+            for w in warns:
+                parts.append(
+                    f'<tr><td colspan="2" style="padding:3px 14px;color:{CRIT};font-size:11px">'
+                    f'• {w}</td></tr>'
+                )
 
-    def _build_simple_svg(self, r0: float, ocv: float) -> str:
-        """วงจรแบบง่าย OCV + R0 เดียว (ใช้กับ test ที่ไม่ใช่ HPPC)"""
-        W, H = 520, 130
-        wire  = "#4a9ede"
-        comp  = "#e0e0e0"
-        txt   = "#e0e0e0"
-        muted = "#888"
-        bg    = "#1e1e1e"
-        pad   = 40
-        mid_y = H // 2
-        r0_txt  = f"{r0:.2f} mΩ"
-        ocv_txt = f"{ocv:.3f} V"
-        return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}"
-            style="background:{bg}; border-radius:6px;">
-          <circle cx="{pad}" cy="{mid_y}" r="5" fill="{wire}"/>
-          <text x="{pad}" y="{mid_y-10}" text-anchor="middle" font-size="11"
-                font-family="Segoe UI" fill="{wire}">+</text>
-          <line x1="{pad}" y1="{mid_y}" x2="{pad+20}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
-          <circle cx="{pad+44}" cy="{mid_y}" r="24" fill="none" stroke="{comp}" stroke-width="2"/>
-          <text x="{pad+44}" y="{mid_y+4}" text-anchor="middle" font-size="9"
-                font-family="Segoe UI" fill="{txt}">OCV</text>
-          <text x="{pad+44}" y="{mid_y+18}" text-anchor="middle" font-size="9"
-                font-family="Consolas" fill="{wire}">{ocv_txt}</text>
-          <line x1="{pad+68}" y1="{mid_y}" x2="{pad+100}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
-          <rect x="{pad+100}" y="{mid_y-10}" width="80" height="20" rx="4"
-                fill="{comp}" stroke="{wire}" stroke-width="1.5"/>
-          <text x="{pad+140}" y="{mid_y+4}" text-anchor="middle" font-size="10"
-                font-family="Consolas" fill="#222">{r0_txt}</text>
-          <text x="{pad+140}" y="{mid_y-16}" text-anchor="middle" font-size="10"
-                font-family="Segoe UI" fill="{muted}">R₀ (DCIR)</text>
-          <line x1="{pad+180}" y1="{mid_y}" x2="{W-pad}" y2="{mid_y}" stroke="{wire}" stroke-width="1.5"/>
-          <circle cx="{W-pad}" cy="{mid_y}" r="5" fill="{wire}"/>
-          <text x="{W-pad}" y="{mid_y-10}" text-anchor="middle" font-size="11"
-                font-family="Segoe UI" fill="{wire}">−</text>
-          <text x="{W//2}" y="{H-8}" text-anchor="middle" font-size="10"
-                font-family="Segoe UI" fill="{muted}">Simple model (no HPPC pulses — R1/C1 not available)</text>
-        </svg>'''
+        parts.append('</table>')
+        return "".join(parts)
 
     def _tab_alarms(self):
         w = QWidget()
@@ -2589,36 +2665,7 @@ class BatteryQtWindow(QMainWindow):
             f"DCIR {dcir:.1f}±{dstd:.1f} mΩ · Sag {results.get('voltage_sag_v', 0.0):.2f} V · "
             f"CCA~{results.get('cca_est_a', 0.0):.0f} A · Cap {results['capacity_ah']:.3f} Ah")
         # 5 Hz-measurable sorting features (see project pivot): SoH + DCIR + sag + CCA proxy
-        meas = "" if results.get("dcir_measured", True) else "  (no current step → profile baseline)"
-        cap_norm = results.get("capacity_norm_ah")
-        cap_line = f"Capacity:              {results['capacity_ah']:.3f} Ah"
-        if cap_norm and abs(cap_norm - results['capacity_ah']) > 1e-4:
-            cap_line += (f"   (rate-norm. {cap_norm:.3f} Ah @"
-                         f" k={results.get('peukert_k', 1.1):.2f}, I̅={results.get('mean_discharge_a', 0):.1f} A)")
-        lines = [
-            f"Grade:                 {grade}   (confidence {conf*100:.0f} %)",
-            f"State of Health:       {soh_txt} %",
-            cap_line,
-            f"Rested OCV:            {results.get('ocv_v', 0.0):.3f} V",
-            "",
-            "Resistance & cranking (DCIR @ ~250 ms readback, normalised to 25 °C):",
-            f"  DCIR:                {dcir:.2f} ± {dstd:.2f} mΩ  (n={nstep} step{'s' if nstep != 1 else ''}){meas}",
-            f"  Voltage sag (load):  {results.get('voltage_sag_v', 0.0):.3f} V",
-            f"  CCA proxy:           {results.get('cca_est_a', 0.0):.0f} A  (=(OCV−cutoff)/DCIR)",
-        ]
-        slope = results.get("dcir_slope_mohm")
-        if slope is not None and slope == slope and results.get("dcir_slope_r2", 0) >= 0.9:
-            lines.append(f"  DCIR (V–I slope):    {slope:.2f} mΩ  (R² {results['dcir_slope_r2']:.3f}, OCV-cancelled)")
         if results.get("ecm_identified"):
-            lines += [
-                "",
-                f"1-RC Thevenin ECM fit (HPPC, R² {results.get('ecm_r2', 0.0):.3f}):",
-                f"  R0 (ohmic, t=0 extrap.): {results['r0_mohm']:.2f} mΩ",
-                f"  R1 (polarisation):       {results['r1_mohm']:.2f} mΩ",
-                f"  C1:                      {results['c1_farad']:.0f} F",
-                f"  τ (R1·C1):               {results['tau_s']:.1f} s",
-                f"  Total (R0+R1):           {results['ri_mohm']:.2f} mΩ",
-            ]
             svg = self._build_ecm_svg(
                 r0=results['r0_mohm'], r1=results['r1_mohm'],
                 c1=results['c1_farad'], tau=results['tau_s'],
@@ -2633,22 +2680,20 @@ class BatteryQtWindow(QMainWindow):
                 f"QPushButton:hover{{border-color:#aaa;}}"
             )
         else:
-            svg = self._build_simple_svg(
+            # ไม่ใช่ HPPC — แสดงวงจรเดียวกัน แต่ R_d/C_d เป็นตัวแปร (ไม่มีค่า)
+            svg = self._build_ecm_svg(
                 r0=results.get('dcir_mohm', results.get('ri_mohm', 0.0)),
                 ocv=results.get('ocv_v', 0.0),
             )
             self.lbl_ecm_diagram.load(QByteArray(svg.encode()))
             self.btn_ecm_toggle.setEnabled(True)
-            self.btn_ecm_toggle.setText("▶ Show Circuit (R₀ only)")
             self.btn_ecm_toggle.setStyleSheet(
                 f"QPushButton{{background:{PANEL2};color:{TEXT};border:1px solid {MUTED};"
                 f"border-radius:4px;padding:3px 8px;text-align:left;}}"
                 f"QPushButton:checked{{background:{PANEL};border-color:{MUTED};}}"
                 f"QPushButton:hover{{border-color:#aaa;}}"
             )
-        if warns:
-            lines += ["", "⚠ Data-quality flags:"] + [f"  • {m}" for m in warns]
-        self.txt_analytics.setPlainText("\n".join(lines))
+        self.txt_analytics.setHtml(self._build_results_html(results))
         iv, ic = results["ica"]
         if len(iv):
             self.plot_ica.clear(); self.plot_ica.plot(iv, ic, pen=pg.mkPen("#1f4e79", width=2))
