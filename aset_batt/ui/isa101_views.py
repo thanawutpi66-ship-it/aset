@@ -743,8 +743,9 @@ class BatteryQtWindow(QMainWindow):
     def _build_left_panel(self):
         panel = QWidget()
         lay = QVBoxLayout(panel)
-        lay.setContentsMargins(0, 0, 0, 4)
+        lay.setContentsMargins(8, 4, 8, 4)
         lay.setSpacing(8)
+        panel.setMinimumWidth(290)
         lay.addWidget(self._zone_setup())        # collapsible — battery + connections
         lay.addWidget(self._zone_test_mode())    # TEST MODE: AUTO tab | MANUAL tab
         lay.addWidget(self._zone_tools())        # collapsible — manual control + data
@@ -1111,6 +1112,29 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_wf_status.setWordWrap(True)
         outer_lay.addWidget(self.lbl_wf_status)
 
+        # ── IEC Profiles (moved from 3·TOOLS → Profile tab) ──────────────
+        outer_lay.addWidget(_hline())
+        outer_lay.addWidget(self._subheader("IEC PROFILES"))
+        prow_sel = QHBoxLayout()
+        prow_sel.addWidget(QLabel("Profile:"))
+        self.cb_profiles = QComboBox()
+        self._populate_profiles()
+        prow_sel.addWidget(self.cb_profiles, 1)
+        outer_lay.addLayout(prow_sel)
+        prow = QHBoxLayout()
+        self.btn_start_profile = _btn("RUN", bg=INFO, fg="white", hover="#0d4a89")
+        self.btn_start_profile.clicked.connect(self._on_run_profile)
+        self.btn_stop_profile = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_stop_profile.clicked.connect(
+            lambda: self.controller and self.controller.stop_profile())
+        self._buttons["btn_start_profile"] = self.btn_start_profile
+        prow.addWidget(self.btn_start_profile)
+        prow.addWidget(self.btn_stop_profile)
+        outer_lay.addLayout(prow)
+        self.lbl_profile_status = QLabel("No profile selected")
+        self.lbl_profile_status.setStyleSheet(f"color:{MUTED};")
+        outer_lay.addWidget(self.lbl_profile_status)
+
         return outer
 
     def _on_wf_stack_changed(self, idx: int):
@@ -1221,6 +1245,28 @@ class BatteryQtWindow(QMainWindow):
         )
         tabs.addTab(self._zone_workflow(), "AUTO")
         tabs.addTab(self._zone_run(),      "MANUAL")
+
+        # Make each tab page shrink to its own content height instead of
+        # reserving the height of the tallest page at all times.
+        for i in range(tabs.count()):
+            p = tabs.widget(i)
+            sp = p.sizePolicy()
+            sp.setVerticalPolicy(QSizePolicy.Policy.Ignored)
+            p.setSizePolicy(sp)
+
+        def _sync_height(idx):
+            for i in range(tabs.count()):
+                p = tabs.widget(i)
+                sp = p.sizePolicy()
+                sp.setVerticalPolicy(
+                    QSizePolicy.Policy.Preferred if i == idx
+                    else QSizePolicy.Policy.Ignored)
+                p.setSizePolicy(sp)
+            tabs.adjustSize()
+
+        tabs.currentChanged.connect(_sync_height)
+        _sync_height(tabs.currentIndex())
+
         return self._collapsible("TEST MODE", tabs, expanded=True)
 
     # ---- ZONE 3: TOOLS (advanced / occasional) -----------------------------
@@ -1288,45 +1334,15 @@ class BatteryQtWindow(QMainWindow):
         t1l.addStretch()
         tabs.addTab(t1, "Control")
 
-        # ── Tab 2: Profile ──────────────────────────────────────────────────
-        t2 = QWidget()
-        t2l = QVBoxLayout(t2)
-        t2l.setContentsMargins(6, 6, 6, 6)
-        t2l.setSpacing(6)
-
-        t2l.addWidget(self._subheader("IEC PROFILES"))
-        prow_sel = QHBoxLayout()
-        prow_sel.addWidget(QLabel("Profile:"))
-        self.cb_profiles = QComboBox()
-        self._populate_profiles()
-        prow_sel.addWidget(self.cb_profiles, 1)
-        t2l.addLayout(prow_sel)
-        prow = QHBoxLayout()
-        self.btn_start_profile = _btn("RUN", bg=INFO, fg="white", hover="#0d4a89")
-        self.btn_start_profile.clicked.connect(self._on_run_profile)
-        self.btn_stop_profile = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
-        self.btn_stop_profile.clicked.connect(lambda: self.controller and self.controller.stop_profile())
-        self._buttons["btn_start_profile"] = self.btn_start_profile
-        prow.addWidget(self.btn_start_profile)
-        prow.addWidget(self.btn_stop_profile)
-        t2l.addLayout(prow)
-        self.lbl_profile_status = QLabel("No profile selected")
-        self.lbl_profile_status.setStyleSheet(f"color:{MUTED};")
-        t2l.addWidget(self.lbl_profile_status)
-
-        t2l.addWidget(_hline())
-        t2l.addWidget(self._subheader("LIVE MONITOR"))
-        mrow = QHBoxLayout()
+        # ── Monitor buttons (hidden widgets, used by toolbar actions) ───────
         self.btn_start_monitor = _btn("START MONITOR", bg=OK, fg="white", hover="#266a2a")
         self.btn_stop_monitor = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
         self.btn_start_monitor.clicked.connect(self._on_start_monitor)
-        self.btn_stop_monitor.clicked.connect(lambda: self.controller and self.controller.stop_monitor())
+        self.btn_stop_monitor.clicked.connect(
+            lambda: self.controller and self.controller.stop_monitor())
         self._buttons["btn_start_monitor"] = self.btn_start_monitor
-        mrow.addWidget(self.btn_start_monitor)
-        mrow.addWidget(self.btn_stop_monitor)
-        t2l.addLayout(mrow)
-        t2l.addStretch()
-        tabs.addTab(t2, "Profile")
+        self.btn_start_monitor.hide()
+        self.btn_stop_monitor.hide()
 
         # ── Tab 3: Data ─────────────────────────────────────────────────────
         t3 = QWidget()
