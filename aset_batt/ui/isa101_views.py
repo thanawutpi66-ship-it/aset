@@ -40,6 +40,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QDoubleSpinBox,
+    QSpinBox,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QTextEdit,
@@ -315,8 +318,13 @@ class BatteryQtWindow(QMainWindow):
         self.data = controller.data
         self.estimator = controller.estimator
         self._refresh_ports()
-        self._refresh_battery_readout()
+        self._on_product_changed(self.cb_product.currentText())
         self._update_connection_status()
+        # load bleed value from config into spinbox (block signal to avoid spurious save)
+        bleed_val = getattr(controller.config.hardware, "psu_bleed_a", 0.0)
+        self.spn_psu_bleed.blockSignals(True)
+        self.spn_psu_bleed.setValue(bleed_val)
+        self.spn_psu_bleed.blockSignals(False)
 
     def _build_ui(self):
         self.setWindowTitle("ASET Battery Tester — ISA-101 Command Center")
@@ -561,6 +569,29 @@ class BatteryQtWindow(QMainWindow):
         btn_refresh.clicked.connect(self._refresh_ports)
         lay.addWidget(btn_refresh)
 
+        # PSU Bleed compensation
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("PSU COMPENSATION"))
+        bleed_row = QHBoxLayout()
+        bleed_row.addWidget(QLabel("PSU bleed:"))
+        self.spn_psu_bleed = QDoubleSpinBox()
+        self.spn_psu_bleed.setRange(0.0, 5.0)
+        self.spn_psu_bleed.setSingleStep(0.1)
+        self.spn_psu_bleed.setDecimals(2)
+        self.spn_psu_bleed.setSuffix(" A")
+        self.spn_psu_bleed.setToolTip(
+            "กระแสที่ PSU ดูดผ่าน internal bleed resistor ตลอดเวลา\n"
+            "PSW 80-40.5 ≈ 0.60 A  |  ตั้ง 0.00 ถ้าไม่มีปัญหา"
+        )
+        bleed_row.addWidget(self.spn_psu_bleed)
+        bleed_row.addStretch(1)
+        lay.addLayout(bleed_row)
+        lbl_bleed_hint = QLabel("ตั้งค่าก่อน Connect — ใช้ชดเชย discharge C-rate และ capacity")
+        lbl_bleed_hint.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        lbl_bleed_hint.setWordWrap(True)
+        lay.addWidget(lbl_bleed_hint)
+        self.spn_psu_bleed.valueChanged.connect(self._on_psu_bleed_changed)
+
         return self._collapsible("1 · SETUP", w, expanded=True)
 
     # ---- WORKFLOW GUIDE (5-step sequence with auto-run) ----------------------
@@ -582,11 +613,9 @@ class BatteryQtWindow(QMainWindow):
         outer = QWidget()
         outer_lay = QVBoxLayout(outer)
         outer_lay.setContentsMargins(0, 0, 0, 0)
-        outer_lay.setSpacing(4)
+        outer_lay.setSpacing(6)
 
         def _step_widget(steps_list, led_list, min_name_w, desc_list=None):
-            """สร้าง widget ที่มีแถว step — คืน widget (ไม่ addLayout โดยตรง)
-            desc_list: ถ้าส่งมา จะ append desc_lbl แต่ละ step เพื่อให้ update ทีหลังได้"""
             sw = QWidget()
             sl = QVBoxLayout(sw)
             sl.setContentsMargins(0, 4, 0, 4)
@@ -612,72 +641,147 @@ class BatteryQtWindow(QMainWindow):
                     desc_list.append(desc_lbl)
             return sw
 
-        # ── IEC 61960 Standard ──────────────────────────────────
-        self._wf_leds = []
-        self._wf_desc_lbls = []   # desc_lbl ของแต่ละ step (index ตรงกับ _WF_STEPS)
-        iec_content = QWidget()
-        iec_lay = QVBoxLayout(iec_content)
+        # ── Workflow selector dropdown ─────────────────────────
+        sel_row = QHBoxLayout()
+        sel_row.addWidget(QLabel("Workflow:"))
+        self.cb_workflow_type = QComboBox()
+        self.cb_workflow_type.addItems([
+            "IEC 61960 Standard  (~10–12h LeadAcid / ~8h Li-ion)",
+            "Quick Scan  (~1.5h  Peukert-corrected SoH)",
+        ])
+        self.cb_workflow_type.setToolTip("เลือกประเภทการทดสอบ")
+        sel_row.addWidget(self.cb_workflow_type, 1)
+        outer_lay.addLayout(sel_row)
+
+        # ── QStackedWidget — สลับเนื้อหาตาม workflow ─────────
+        self._wf_stack = QStackedWidget()
+
+        # ── Page 0: IEC 61960 ────────────────────────────────
+        iec_page = QWidget()
+        iec_lay = QVBoxLayout(iec_page)
         iec_lay.setContentsMargins(0, 0, 0, 0)
-        iec_lay.setSpacing(3)
+        iec_lay.setSpacing(4)
+
+        self._wf_leds = []
+        self._wf_desc_lbls = []
         iec_lay.addWidget(_step_widget(self._WF_STEPS, self._wf_leds, 65, self._wf_desc_lbls))
-        # C-rate selector row
+
+        # separator
+        _sep = QFrame()
+        _sep.setFrameShape(QFrame.Shape.HLine)
+        _sep.setStyleSheet(f"color:{BORDER}; margin:2px 0;")
+        iec_lay.addWidget(_sep)
+
+        # Charge mode
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Charge mode:"))
+        self.cb_charge_mode = QComboBox()
+        self.cb_charge_mode.addItems(["Auto (by chemistry)", "CC-CV", "3-Stage (Lead-Acid)"])
+        self.cb_charge_mode.setToolTip(
+            "Auto — ใช้ strategy ของเคมีแบต  |  CC-CV — Lithium  |  3-Stage — Lead-Acid"
+        )
+        mode_row.addWidget(self.cb_charge_mode, 1)
+        iec_lay.addLayout(mode_row)
+
+        # Charge C-rate
         crate_row = QHBoxLayout()
         crate_row.addWidget(QLabel("Charge C-rate:"))
         self.cb_seq_crate = QComboBox()
         self.cb_seq_crate.addItems(["0.05C", "0.1C", "0.2C", "0.3C", "0.5C", "1.0C"])
         self.cb_seq_crate.setCurrentText("0.5C")
         self.lbl_seq_crate_a = QLabel("— A")
-        self.lbl_seq_crate_a.setStyleSheet(f"color:{INFO}; font-weight:700; font-size:11px;")
+        self.lbl_seq_crate_a.setStyleSheet(
+            f"color:{INFO}; font-weight:700; font-size:11px;"
+        )
         crate_row.addWidget(self.cb_seq_crate)
         crate_row.addWidget(self.lbl_seq_crate_a)
         crate_row.addStretch(1)
         iec_lay.addLayout(crate_row)
         self.cb_seq_crate.currentTextChanged.connect(self._on_seq_crate_changed)
-        # Stage breakdown label (อัปเมื่อเปลี่ยนแบตหรือเปลี่ยน C-rate)
+
+        # Stage breakdown
         self.lbl_charge_crate = QLabel("Charge rate: — (เลือกแบตก่อน)")
         self.lbl_charge_crate.setStyleSheet(
             f"color:{MUTED}; font-size:10px; padding-left:24px; padding-bottom:2px;"
         )
         self.lbl_charge_crate.setWordWrap(True)
         iec_lay.addWidget(self.lbl_charge_crate)
+
+        # REST duration
+        rest_row = QHBoxLayout()
+        rest_row.addWidget(QLabel("REST duration:"))
+        self.spn_rest_min = QSpinBox()
+        self.spn_rest_min.setRange(5, 120)
+        self.spn_rest_min.setValue(30)
+        self.spn_rest_min.setSingleStep(5)
+        self.spn_rest_min.setSuffix(" min")
+        self.spn_rest_min.setToolTip("เวลา rest หลังชาร์จ ก่อนเริ่ม discharge test (5–120 นาที)")
+        rest_row.addWidget(self.spn_rest_min)
+        rest_row.addStretch(1)
+        iec_lay.addLayout(rest_row)
+
+        # Test discharge C-rate
+        test_row = QHBoxLayout()
+        test_row.addWidget(QLabel("Test discharge:"))
+        self.cb_test_crate = QComboBox()
+        self.cb_test_crate.addItems(["0.1C", "0.2C", "0.5C", "1.0C"])
+        self.cb_test_crate.setCurrentText("0.2C")
+        self.cb_test_crate.setToolTip("C-rate สำหรับ IEC discharge test (มาตรฐาน = 0.2C)")
+        self.lbl_test_crate_a = QLabel("— A")
+        self.lbl_test_crate_a.setStyleSheet(
+            f"color:{INFO}; font-weight:700; font-size:11px;"
+        )
+        test_row.addWidget(self.cb_test_crate)
+        test_row.addWidget(self.lbl_test_crate_a)
+        test_row.addStretch(1)
+        iec_lay.addLayout(test_row)
+        self.cb_test_crate.currentTextChanged.connect(self._on_test_crate_changed)
+
         self.btn_auto_seq = _btn("▶  AUTO SEQUENCE", bg=INFO, fg="white", hover="#0d4a89")
         self.btn_auto_seq.setToolTip(
-            "IEC 61960: OCV → Charge → Rest 30 min → Discharge 0.2C → Analyze"
+            "IEC 61960: OCV → Charge → Rest → Discharge → Analyze"
         )
         self.btn_auto_seq.clicked.connect(self._on_auto_sequence)
         self._buttons["btn_auto_seq"] = self.btn_auto_seq
         iec_lay.addWidget(self.btn_auto_seq)
-        outer_lay.addWidget(
-            self._collapsible(
-                "▸ IEC 61960 Standard  ·  ~10–12h (LeadAcid) / ~8h (Li-ion)",
-                iec_content, expanded=False,
-            )
-        )
+        iec_lay.addStretch(1)
 
-        # ── Quick Scan ──────────────────────────────────────────
+        # ── Page 1: Quick Scan ───────────────────────────────
+        qs_page = QWidget()
+        qs_lay = QVBoxLayout(qs_page)
+        qs_lay.setContentsMargins(0, 0, 0, 0)
+        qs_lay.setSpacing(4)
+
         self._qs_leds = []
         self._qs_desc_lbls = []
-        qs_content = QWidget()
-        qs_lay = QVBoxLayout(qs_content)
-        qs_lay.setContentsMargins(0, 0, 0, 0)
-        qs_lay.setSpacing(3)
         qs_lay.addWidget(_step_widget(self._QS_STEPS, self._qs_leds, 75, self._qs_desc_lbls))
+
         self.btn_quick_scan = _btn("⚡  QUICK SCAN", bg="#e67e22", fg="white", hover="#c0392b")
         self.btn_quick_scan.setToolTip("OCV → Rest 5 min → Discharge 1C → Analyze (~1.5h)")
         self.btn_quick_scan.clicked.connect(self._on_quick_scan)
         self._buttons["btn_quick_scan"] = self.btn_quick_scan
         qs_lay.addWidget(self.btn_quick_scan)
-        outer_lay.addWidget(
-            self._collapsible(
-                "▸ Quick Scan  ·  ~1.5h  ·  Peukert-corrected SoH",
-                qs_content, expanded=False,
-            )
-        )
+        qs_lay.addStretch(1)
 
-        # ── Shared CANCEL + status (ใช้ร่วมกัน — แสดงเสมอ) ─────
+        self._wf_stack.addWidget(iec_page)   # index 0
+        self._wf_stack.addWidget(qs_page)    # index 1
+        outer_lay.addWidget(self._wf_stack)
+
+        # ให้ stack สูงตามหน้าที่กำลังแสดง — หน้าที่ซ่อนไม่ดันความสูง (กันพื้นที่ว่าง
+        # ใต้ Quick Scan ซึ่งเตี้ยกว่าหน้า IEC)
+        for _i in range(self._wf_stack.count()):
+            _pg = self._wf_stack.widget(_i)
+            _pg.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
+        self._wf_stack.currentChanged.connect(self._on_wf_stack_changed)
+        self._on_wf_stack_changed(self._wf_stack.currentIndex())
+
+        self.cb_workflow_type.currentIndexChanged.connect(self._wf_stack.setCurrentIndex)
+
+        # ── Shared CANCEL + status ────────────────────────────
         self.btn_seq_cancel = _btn("■  CANCEL", bg=CRIT, fg="white", hover="#9b2020")
         self.btn_seq_cancel.setEnabled(False)
         self.btn_seq_cancel.clicked.connect(self._on_seq_cancel)
+        self._buttons["btn_seq_cancel"] = self.btn_seq_cancel
         outer_lay.addWidget(self.btn_seq_cancel)
 
         self.lbl_wf_status = QLabel("เลือก AUTO SEQUENCE (IEC) หรือ QUICK SCAN")
@@ -688,6 +792,18 @@ class BatteryQtWindow(QMainWindow):
         outer_lay.addWidget(self.lbl_wf_status)
 
         return self._collapsible("WORKFLOW GUIDE", outer, expanded=True)
+
+    def _on_wf_stack_changed(self, idx: int):
+        """ปรับให้เฉพาะหน้าที่กำลังแสดงดันความสูงของ stack — หน้าที่ซ่อนตั้งเป็น
+        Ignored เพื่อไม่ให้หน้า IEC (สูงกว่า) ทิ้งช่องว่างใต้หน้า Quick Scan."""
+        for i in range(self._wf_stack.count()):
+            page = self._wf_stack.widget(i)
+            policy = page.sizePolicy()
+            policy.setVerticalPolicy(
+                QSizePolicy.Policy.Preferred if i == idx else QSizePolicy.Policy.Ignored
+            )
+            page.setSizePolicy(policy)
+        self._wf_stack.adjustSize()
 
     # ---- ZONE 2: RUN (charge ⇄ discharge) ----------------------------------
     def _zone_run(self):
@@ -724,12 +840,6 @@ class BatteryQtWindow(QMainWindow):
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
-        mrow0 = QHBoxLayout()
-        mrow0.addWidget(QLabel("Charge mode:"))
-        self.cb_charge_mode = QComboBox()
-        self.cb_charge_mode.addItems(["Auto (by chemistry)", "CC-CV", "3-Stage (Lead-Acid)"])
-        mrow0.addWidget(self.cb_charge_mode, 1)
-        lay.addLayout(mrow0)
         # OCV calibration row — press before CHARGE to read resting voltage and anchor SoC
         ocv_row = QHBoxLayout()
         self.btn_ocv = _btn("OCV CALIBRATE", bg=WARN, fg="white", hover="#a06800")
@@ -998,7 +1108,7 @@ class BatteryQtWindow(QMainWindow):
         self.sig_analysis_done.connect(self._slot_analysis_done)
         self.sig_workflow.connect(self._slot_workflow)
         self.sig_qs_workflow.connect(self._slot_qs_workflow)
-        self.sig_wf_status.connect(self.lbl_wf_status.setText)
+        self.sig_wf_status.connect(self._slot_wf_status)
 
     def update_display(self, v, i, soc, rin, temp=None, soh=None):
         if temp is None:
@@ -1267,10 +1377,16 @@ class BatteryQtWindow(QMainWindow):
         # Reset charge mode → "Auto (by chemistry)" ให้สอดคล้องกับแบตใหม่
         self.cb_charge_mode.setCurrentText("Auto (by chemistry)")
 
-        # อัป IEC TEST step (index 3) → แสดง A จริงของ 0.2C
-        i_test = round(0.2 * prod.rated_capacity_ah, 1)
+        # อัป IEC TEST step (index 3) → แสดง A จริงของ C-rate ที่เลือก
+        try:
+            c_test = float(self.cb_test_crate.currentText().rstrip("C"))
+        except (AttributeError, ValueError):
+            c_test = 0.2
+        i_test = round(c_test * prod.rated_capacity_ah, 1)
         if len(self._wf_desc_lbls) > 3:
-            self._wf_desc_lbls[3].setText(f"Discharge 0.2C = {i_test:.1f} A")
+            self._wf_desc_lbls[3].setText(f"Discharge {c_test:g}C = {i_test:.1f} A")
+        if hasattr(self, "lbl_test_crate_a"):
+            self.lbl_test_crate_a.setText(f"= {i_test:.1f} A")
 
         # อัป Quick Scan DISCHARGE step (index 2) → แสดง A จริงของ 1C
         i_1c = prod.max_cont_discharge_a if prod.max_cont_discharge_a else prod.rated_capacity_ah
@@ -1280,16 +1396,43 @@ class BatteryQtWindow(QMainWindow):
         self._refresh_battery_readout()
         self._log_alarm(f"Selected product: {name} → {prod.chemistry} {prod.cells_series}S")
 
+    def _on_test_crate_changed(self, text: str):
+        """ผู้ใช้เปลี่ยน Test discharge C-rate — อัป amp label + WF step desc"""
+        try:
+            c_test = float(text.rstrip("C"))
+        except ValueError:
+            return
+        prod_name = self.cb_product.currentText() if hasattr(self, "cb_product") else ""
+        prod = battery_profiles.get_product(prod_name)
+        cap = prod.rated_capacity_ah if prod else (
+            self.config.battery.rated_capacity if self.config else 0.0)
+        i_test = round(c_test * cap, 1) if cap else 0.0
+        if hasattr(self, "lbl_test_crate_a"):
+            self.lbl_test_crate_a.setText(f"= {i_test:.1f} A" if cap else "— A")
+        if len(self._wf_desc_lbls) > 3:
+            self._wf_desc_lbls[3].setText(
+                f"Discharge {c_test:g}C = {i_test:.1f} A" if cap else f"Discharge {c_test:g}C"
+            )
+
+    def _on_psu_bleed_changed(self, value: float):
+        """ผู้ใช้เปลี่ยน PSU bleed compensation — อัป config + driver ทันที"""
+        if self.config:
+            self.config.hardware.psu_bleed_a = value
+            self.config.save_config()
+        if hasattr(self.hw, "psu_bleed_a"):
+            self.hw.psu_bleed_a = value
+
     def _on_seq_crate_changed(self, text: str):
         """ผู้ใช้เปลี่ยน C-rate selector — อัป amp label + stage breakdown"""
         try:
             c_rate = float(text.rstrip("C"))
         except ValueError:
             return
-        cap = self.config.battery.rated_capacity if self.config else 0.0
-        self.lbl_seq_crate_a.setText(f"= {c_rate * cap:.0f} A" if cap else "— A")
         prod_name = self.cb_product.currentText() if hasattr(self, "cb_product") else ""
         prod = battery_profiles.get_product(prod_name)
+        cap = prod.rated_capacity_ah if prod else (
+            self.config.battery.rated_capacity if self.config else 0.0)
+        self.lbl_seq_crate_a.setText(f"= {c_rate * cap:.0f} A" if cap else "— A")
         if prod:
             self._update_charge_crate_label(prod, c_rate_override=c_rate)
 
@@ -1368,6 +1511,9 @@ class BatteryQtWindow(QMainWindow):
             self.config.hardware.load_port = load
             self.config.hardware.esp_port = esp
             self.config.save_config()
+            # sync bleed compensation จาก config เข้า driver
+            if hasattr(self.hw, "psu_bleed_a"):
+                self.hw.psu_bleed_a = getattr(self.config.hardware, "psu_bleed_a", 0.0)
             self._update_connection_status()
             self._log_alarm("Hardware connected.")
         except Exception as exc:
@@ -1523,6 +1669,13 @@ class BatteryQtWindow(QMainWindow):
             dot.setStyleSheet(dot_style)
             name_lbl.setStyleSheet(name_style)
 
+    @Slot(str)
+    def _slot_wf_status(self, text: str):
+        """Cross-thread safe wrapper for lbl_wf_status.setText.
+        Connecting directly to a C++ slot (setText) from a Python threading.Thread
+        silently drops queued events — a Python @Slot wrapper fixes this."""
+        self.lbl_wf_status.setText(text)
+
     def _on_auto_sequence(self):
         if self.controller is None or not getattr(self.hw, "is_connected", False):
             if not self._headless:
@@ -1636,7 +1789,7 @@ class BatteryQtWindow(QMainWindow):
 
             # ── PHASE 2: REST 30 นาที ────────────────────────────────────
             self.sig_workflow.emit(2, "active")
-            rest_total = 30 * 60   # 30 minutes in seconds
+            rest_total = self.spn_rest_min.value() * 60
             t_rest_end = time.time() + rest_total
             while self._auto_seq_running:
                 remaining = int(t_rest_end - time.time())
@@ -1652,12 +1805,16 @@ class BatteryQtWindow(QMainWindow):
             self.sig_alarm.emit(f"[AUTO] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}%")
             self.sig_workflow.emit(2, "done")
 
-            # ── PHASE 3: DISCHARGE TEST (0.2C ตาม IEC) ──────────────────
+            # ── PHASE 3: DISCHARGE TEST (IEC — C-rate จาก cb_test_crate) ───────
             self.sig_workflow.emit(3, "active")
+            try:
+                c_test = float(self.cb_test_crate.currentText().rstrip("C"))
+            except (AttributeError, ValueError):
+                c_test = 0.2
             rated   = self.controller.config.battery.rated_capacity
-            i_dis   = round(0.2 * rated, 2)   # 0.2C
+            i_dis   = round(c_test * rated, 2)
             pack_min = self.controller.config.battery.pack_min_voltage
-            status(f"TEST: discharge {i_dis:.2f} A (0.2C) จนถึง {pack_min:.1f} V")
+            status(f"TEST: discharge {i_dis:.2f} A ({c_test:g}C) จนถึง {pack_min:.1f} V")
             self.sig_alarm.emit(f"[AUTO] Starting discharge {i_dis:.2f} A")
             self.controller._ensure_logging()
             self.hw.set_load(True, i_dis)
@@ -1701,7 +1858,7 @@ class BatteryQtWindow(QMainWindow):
         finally:
             self._auto_seq_running = False
             self.sig_loading.emit("btn_auto_seq", False, "")
-            self.btn_seq_cancel.setEnabled(False)
+            self.sig_button.emit("btn_seq_cancel", False)
 
     def _quick_scan_thread(self):
         """Quick Scan: OCV → REST 5min → Discharge 1C → Analyze  (~1.5h)
@@ -1797,7 +1954,7 @@ class BatteryQtWindow(QMainWindow):
         finally:
             self._auto_seq_running = False
             self.sig_loading.emit("btn_quick_scan", False, "")
-            self.btn_seq_cancel.setEnabled(False)
+            self.sig_button.emit("btn_seq_cancel", False)
 
     # ---- characterization test (acquisition worker on the real HAL) -------
     def _acq_profile(self) -> AcqProfile:
