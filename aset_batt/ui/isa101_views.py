@@ -506,7 +506,7 @@ class BatteryQtWindow(QMainWindow):
 
     def _build_ui(self):
         self.setWindowTitle("ASET Battery Tester — ISA-101 Command Center")
-        self.resize(1600, 980)
+        self.resize(1440, 900)
         self.setStyleSheet(
             f"""
             QMainWindow, QWidget {{ background:{BG}; color:{TEXT}; font-family:'Segoe UI','Inter',sans-serif; font-size:12px; }}
@@ -523,30 +523,32 @@ class BatteryQtWindow(QMainWindow):
             QTabWidget::pane {{ border:1px solid {BORDER}; background:{PANEL2}; }}
             QTabBar::tab {{ background:{PANEL}; padding:6px 14px; border:1px solid {BORDER}; border-bottom:0; color:{MUTED}; }}
             QTabBar::tab:selected {{ background:{PANEL2}; color:{TEXT}; font-weight:700; }}
+            QMenuBar {{ background:{PANEL}; border-bottom:1px solid {BORDER}; padding:1px 0; }}
+            QMenuBar::item {{ padding:4px 10px; border-radius:3px; }}
+            QMenuBar::item:selected {{ background:{INFO}; color:white; }}
+            QMenu {{ background:{PANEL2}; border:1px solid {BORDER}; padding:3px 0; }}
+            QMenu::item {{ padding:5px 22px; }}
+            QMenu::item:selected {{ background:{INFO}; color:white; }}
+            QMenu::separator {{ height:1px; background:{BORDER}; margin:3px 0; }}
+            QToolBar {{ background:{PANEL}; border-bottom:1px solid {BORDER}; spacing:3px; padding:3px 6px; }}
+            QStatusBar {{ background:{PANEL}; border-top:1px solid {BORDER}; font-size:11px; }}
             """
         )
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(8)
-        root.addWidget(self._build_header())
+        self._build_menubar()
+        self._build_toolbar()
+        self._build_statusbar()
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(8)
+        splitter.setHandleWidth(6)
         splitter.addWidget(self._build_left_panel())
+        splitter.addWidget(self._build_center_panel())
         splitter.addWidget(self._build_right_panel())
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([390, 1210])
-        root.addWidget(splitter, 1)
-
-        self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet(
-            f"color:{MUTED}; padding:5px 10px; background:{PANEL}; border:1px solid {BORDER}; border-radius:4px;"
-        )
-        root.addWidget(self.status_label)
+        splitter.setStretchFactor(2, 0)
+        splitter.setSizes([300, 880, 260])
+        self.setCentralWidget(splitter)
 
     def _logo(self, filename, h=40):
         lbl = QLabel()
@@ -594,24 +596,159 @@ class BatteryQtWindow(QMainWindow):
     def _pill(self, color):
         return f"background:{color}; color:white; border-radius:3px; padding:5px 12px; font-weight:700; letter-spacing:1px;"
 
-    def _build_left_panel(self):
-        # Three workflow zones (SETUP → RUN → TOOLS) instead of six equal blocks, with
-        # the E-STOP pinned ABOVE the scroll area so it is always visible in an
-        # emergency (it used to be buried in a block you had to scroll to).
-        outer = QWidget()
-        ov = QVBoxLayout(outer)
-        ov.setContentsMargins(0, 0, 0, 0)
-        ov.setSpacing(8)
-        ov.addWidget(self._estop_bar())          # pinned, always visible
+    # ---- International standard: Menu bar / Toolbar / Status bar ---------------
 
+    def _build_menubar(self):
+        bar = self.menuBar()
+
+        m = bar.addMenu("File")
+        m.addAction("Open CSV…", self._on_analyze_csv)
+        m.addSeparator()
+        m.addAction("Save as Default", self._on_save_default)
+        m.addSeparator()
+        m.addAction("Exit", self.close)
+
+        m = bar.addMenu("Run")
+        m.addAction("Connect", self._on_connect)
+        m.addAction("Disconnect", self._on_disconnect)
+        m.addSeparator()
+        m.addAction("OCV Calibrate", self._on_ocv_calibrate)
+        m.addSeparator()
+        m.addAction("Charge", self._on_charge)
+        m.addAction("Stop Charge", self._on_stop_charge)
+        m.addSeparator()
+        m.addAction("Run Test", self._on_run_test)
+        m.addAction("Stop Test", self._on_stop_test)
+        m.addSeparator()
+        m.addAction("Start Monitor", self._on_start_monitor)
+        m.addAction("Stop Monitor", lambda: self.controller and self.controller.stop_monitor())
+        m.addSeparator()
+        m.addAction("Auto Sequence", self._on_auto_sequence)
+        m.addAction("Quick Scan", self._on_quick_scan)
+
+        m = bar.addMenu("View")
+        g = m.addMenu("Graph Mode")
+        for _lbl in ("Combined", "Split 2", "Split 3"):
+            g.addAction(_lbl, lambda l=_lbl: self._set_graph_mode(l))
+
+        m = bar.addMenu("Tools")
+        m.addAction("Detect Chemistry", self._on_detect_chemistry)
+        m.addSeparator()
+        m.addAction("Refresh Ports", self._refresh_ports)
+        m.addSeparator()
+        m.addAction("Open Cloud Dashboard", self._on_open_dashboard)
+        m.addSeparator()
+        m.addAction("Generate PDF Report", self._on_pdf_report)
+
+        m = bar.addMenu("Help")
+        m.addAction("About ASET Battery Tester", self._on_about)
+
+    def _build_toolbar(self):
+        tb = self.addToolBar("Main")
+        tb.setMovable(False)
+
+        tb.addAction("Connect", self._on_connect)
+        tb.addAction("Disconnect", self._on_disconnect)
+        tb.addSeparator()
+        tb.addAction("OCV", self._on_ocv_calibrate)
+        tb.addSeparator()
+        tb.addAction("▶ Auto Seq", self._on_auto_sequence)
+        tb.addAction("⚡ Quick Scan", self._on_quick_scan)
+        tb.addSeparator()
+        tb.addAction("Start Monitor", self._on_start_monitor)
+        tb.addAction("Stop Monitor", lambda: self.controller and self.controller.stop_monitor())
+        tb.addSeparator()
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tb.addWidget(spacer)
+
+        mode = "SIMULATION" if self.config.system.simulation_mode else "HARDWARE"
+        color = WARN if self.config.system.simulation_mode else OK
+        self.mode_badge = QLabel(f"  {mode}  ")
+        self.mode_badge.setStyleSheet(
+            f"background:transparent; color:{color}; border:1px solid {color}; "
+            f"border-radius:4px; padding:3px 8px; font-weight:700; letter-spacing:1px;"
+        )
+        tb.addWidget(self.mode_badge)
+
+        self.state_pill = QLabel("  IDLE  ")
+        self.state_pill.setStyleSheet(self._pill(NEUTRAL))
+        tb.addWidget(self.state_pill)
+        tb.addSeparator()
+
+        self.btn_estop = QPushButton("⛔ E-STOP")
+        self.btn_estop.setStyleSheet(
+            f"QPushButton {{ background:{CRIT}; color:white; border:none; border-radius:5px; "
+            f"padding:7px 14px; font-size:13px; font-weight:800; }}"
+            f"QPushButton:hover {{ background:#9b2020; }}"
+        )
+        self.btn_estop.setCursor(Qt.PointingHandCursor)
+        self.btn_estop.clicked.connect(self._on_estop)
+        tb.addWidget(self.btn_estop)
+
+    def _build_statusbar(self):
+        sb = self.statusBar()
+        self.status_label = QLabel("Ready — connect hardware to begin")
+        self.status_label.setStyleSheet(f"color:{MUTED};")
+        sb.addWidget(self.status_label, 1)
+        self.conn_led = QLabel("●")
+        self.conn_led.setStyleSheet(f"color:{NEUTRAL}; font-size:14px; padding:0 4px;")
+        sb.addPermanentWidget(self.conn_led)
+        self.conn_text = QLabel("Disconnected")
+        self.conn_text.setStyleSheet(f"color:{MUTED}; font-weight:600; padding-right:8px;")
+        sb.addPermanentWidget(self.conn_text)
+
+    def _build_center_panel(self):
+        panel = QWidget()
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(8)
+        self.metric_labels = {}
+        for name, unit in [("Voltage", "V"), ("Current", "A"), ("SoC", "%"),
+                           ("Rin", "mΩ"), ("Temp", "°C"), ("SoH", "%")]:
+            cards_row.addWidget(self._metric_card(name, unit), 1)
+        lay.addLayout(cards_row)
+
+        self._temp_gauge = TemperatureGauge()
+        lay.addWidget(self._temp_gauge)
+
+        self.trend = TrendContainer()
+        lay.addWidget(self.trend, 2)
+        return panel
+
+    def _set_graph_mode(self, label: str):
+        if not hasattr(self, "trend"):
+            return
+        modes = TrendContainer.MODES
+        idx = modes.index(label) if label in modes else 0
+        self.trend._stack.setCurrentIndex(idx)
+        for i, btn in enumerate(self.trend._btn_group.buttons()):
+            btn.setChecked(i == idx)
+
+    def _on_about(self):
+        if not self._headless:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.about(
+                self,
+                "About ASET Battery Tester",
+                "ASET Battery Tester — ISA-101 Command Center\n\n"
+                "มหาวิทยาลัยอุบลราชธานี  Faculty of Engineering — ASET Lab\n\n"
+                "Built with PySide6 · Python",
+            )
+
+    def _build_left_panel(self):
         panel = QWidget()
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(0, 0, 0, 4)
         lay.setSpacing(8)
         lay.addWidget(self._zone_setup())        # collapsible — set once, then fold away
         lay.addWidget(self._zone_workflow())     # 5-step guide + auto-sequence
-        lay.addWidget(self._zone_run())          # the heart — always open
-        lay.addWidget(self._zone_tools())        # collapsible — advanced, collapsed
+        lay.addWidget(self._zone_run())          # charge / discharge controls
+        lay.addWidget(self._zone_tools())        # collapsible — manual control + data
         lay.addStretch(1)
 
         scroll = QScrollArea()
@@ -620,8 +757,13 @@ class BatteryQtWindow(QMainWindow):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea { background: transparent; }")
+
+        outer = QWidget()
+        ov = QVBoxLayout(outer)
+        ov.setContentsMargins(0, 0, 0, 0)
+        ov.setSpacing(0)
         ov.addWidget(scroll, 1)
-        outer.setMinimumWidth(340)
+        outer.setMinimumWidth(300)
         return outer
 
     # ---- small UI helpers --------------------------------------------------
@@ -1201,19 +1343,6 @@ class BatteryQtWindow(QMainWindow):
         panel = QWidget()
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(0, 0, 0, 0)
-
-        cards_row = QHBoxLayout()
-        cards_row.setSpacing(8)
-        self.metric_labels = {}
-        for name, unit in [("Voltage", "V"), ("Current", "A"), ("SoC", "%"), ("Rin", "mΩ"), ("Temp", "°C"), ("SoH", "%")]:
-            cards_row.addWidget(self._metric_card(name, unit), 1)
-        lay.addLayout(cards_row)
-
-        self._temp_gauge = TemperatureGauge()
-        lay.addWidget(self._temp_gauge)
-
-        self.trend = TrendContainer()
-        lay.addWidget(self.trend, 2)
 
         self._right_tabs = QTabWidget()
         self._right_tabs.addTab(self._tab_analytics(), "Analytics")
