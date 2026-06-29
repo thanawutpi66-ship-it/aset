@@ -35,6 +35,12 @@
       "safety_ovp_pack": 15.0, "safety_uvp_pack": 10.0, "mass_grams": 1900.0, "cca_a": 95.0,
       "notes": "YTZ6V มอเตอร์ไซค์ lead-acid AGM 12V 5Ah; charge 3-stage absorption 14.4V/float 13.65V; mass+CCA ประมาณการ โปรดยืนยันกับฉลากจริง"
     },
+    "FB FTZ6V (12V 5.3Ah VRLA AGM)": {
+      "chemistry": "LeadAcid", "nominal_voltage_per_cell": 2.0, "cells_series": 6, "cells_parallel": 1,
+      "rated_capacity_ah": 5.3, "max_voltage_per_cell": 2.45, "min_voltage_per_cell": 1.75,
+      "safety_ovp_pack": 15.0, "safety_uvp_pack": 10.0, "mass_grams": 1700.0, "cca_a": 90.0,
+      "notes": "Furukawa Battery (FB) SUPER MF FTZ6V — Honda มอเตอร์ไซค์ VRLA AGM 12V 5.3Ah 90CCA. ชาร์จ STD 0.5A×5-10h (0.094C), QUICK 3.0A×1h (0.57C). Absorption 14.4V (2.40V/cell), Float 13.65V (2.275V/cell). Siam Furukawa Co., Ltd. Made in Thailand."
+    },
     "Generic 4S LiFePO4 (12.8V)": {
       "chemistry": "LiFePO4", "nominal_voltage_per_cell": 3.2, "cells_series": 4, "cells_parallel": 1,
       "rated_capacity_ah": 7.0, "max_voltage_per_cell": 3.65, "min_voltage_per_cell": 2.50,
