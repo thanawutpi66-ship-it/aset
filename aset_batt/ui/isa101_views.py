@@ -516,6 +516,10 @@ class BatteryQtWindow(QMainWindow):
     def _build_ui(self):
         self.setWindowTitle("ASET Battery Tester — ISA-101 Command Center")
         self.resize(1440, 900)
+        _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aset_logo.png")
+        if os.path.exists(_icon_path):
+            from PySide6.QtGui import QIcon
+            self.setWindowIcon(QIcon(_icon_path))
         self.setStyleSheet(
             f"""
             QMainWindow, QWidget {{ background:{BG}; color:{TEXT}; font-family:'Segoe UI','Inter',sans-serif; font-size:12px; }}
