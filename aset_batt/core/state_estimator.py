@@ -22,7 +22,7 @@ class StateEstimator:
 
         # Coulomb counting
         self.ah_accumulated = 0.0   # Ah นับจาก initial SoC
-        self.coulomb_efficiency = 0.99
+        self.coulomb_efficiency = 0.99  # fallback for non-lead-acid chemistries
 
         # OCV correction
         self.last_ocv_correction_time = time.time()
@@ -58,6 +58,56 @@ class StateEstimator:
         if "lead" in chem:
             return 60.0
         return 30.0         # Li-ion / LiPO: faster kinetics
+
+    # ------------------------------------------------------------------
+    # Physics helpers
+    # ------------------------------------------------------------------
+
+    def _coulomb_eta(self, soc: float, current: float) -> float:
+        """Faraday coulombic efficiency for a charging step.
+
+        Lead-acid gassing loss is SoC-dependent (Faraday's 2nd law applied to
+        competitive H₂O electrolysis reaction near full charge):
+          SoC < 75%:  bulk, minor gassing → η = 0.97
+          75–90%:     absorption, rising gassing → η = 0.92
+          SoC > 90%:  heavy gassing (H₂ + O₂) → η = 0.75
+
+        Li-ion / LFP: no significant side reaction → fixed η = 0.99.
+        Discharge (current ≥ 0): no coulombic loss on discharge side → η = 1.0.
+        """
+        if current >= 0:
+            return 1.0
+        chem = getattr(self.battery_model, "battery_type", "").lower()
+        if "lead" in chem:
+            if soc < 75.0:
+                return 0.97
+            if soc < 90.0:
+                return 0.92
+            return 0.75
+        return self.coulomb_efficiency
+
+    def _peukert_dah(self, current: float, dah: float) -> float:
+        """Apply Peukert correction to a discharge Ah increment.
+
+        Peukert's law: C_eff = C_rated × (I_rated / I)^(k-1)
+        Equivalently, the incremental Ah cost at current I is scaled by
+        (I / I_rated)^(k-1).  k=1.0 → no correction (Li-ion).
+        Lead-acid k≈1.30, rated at 10-hour rate → I_rated = C_10 / 10.
+
+        High current (I > I_rated): scale > 1 → SoC depletes faster (less
+        usable capacity per actual Ah discharged).
+        Low current (I < I_rated): scale < 1 → SoC depletes slower (more
+        usable capacity at slow discharge).
+        """
+        k   = getattr(self.battery_model.chemistry, "peukert_k",  1.0)
+        hr  = getattr(self.battery_model.chemistry, "peukert_hr", 20.0)
+        if k <= 1.0 or hr <= 0 or self.rated_capacity <= 0:
+            return dah
+        i_rated = self.rated_capacity / hr
+        if i_rated <= 0:
+            return dah
+        scale = (current / i_rated) ** (k - 1.0)
+        return dah * min(scale, 5.0)   # cap at 5× — protects against huge pulse spikes
 
     def set_standby_current(self, bleed_a: float) -> None:
         """Sync PSU bleed current from hardware config.
@@ -112,11 +162,15 @@ class StateEstimator:
 
         # === 1. Coulomb Counting ===
         # current > 0 = discharge → SoC ลดลง ; current < 0 = charge → SoC เพิ่มขึ้น
-        # coulombic efficiency ใช้กับ "charge" เท่านั้น (ประจุที่ใส่เข้าไม่ได้เก็บหมด);
-        # ตอน discharge ประจุที่จ่ายออกนับเต็ม
         dah = current * (dt / 3600.0)
-        if current < 0:  # charge
-            dah *= self.coulomb_efficiency
+        if current < 0:
+            # Charging: apply state-dependent coulombic efficiency (Faraday gassing loss).
+            # For lead-acid near full SoC most current goes to H₂O electrolysis, not storage.
+            dah *= self._coulomb_eta(self.soc, current)
+        else:
+            # Discharging: apply Peukert correction for lead-acid.
+            # High-rate discharge depletes effective capacity faster than nominal Ah suggests.
+            dah = self._peukert_dah(current, dah)
         self.ah_accumulated += dah
 
         # ใช้ soc_initial เป็นฐาน ไม่ hardcode 50%

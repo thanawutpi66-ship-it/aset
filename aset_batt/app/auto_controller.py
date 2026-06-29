@@ -144,7 +144,7 @@ class AutoController:
         "LiPO":     ( 60,  30, 0.005),
     }
 
-    def calibrate_from_ocv_stable(self, on_progress=None):
+    def calibrate_from_ocv_stable(self, on_progress=None, cancel_check=None):
         """OCV calibration แบบ wait-for-settle ตามมาตรฐาน ΔV/Δt criterion.
 
         อ่านแรงดันทุก 5 วิ จนกว่าจะผ่านทั้งสองเงื่อนไข:
@@ -153,6 +153,9 @@ class AutoController:
 
         on_progress(elapsed_s, voltage, dv_mv, status)
           status: "waiting" | "checking" | "settled" | "timeout"
+
+        cancel_check: callable() → bool; คืน True เมื่อ sequence ยังทำงานอยู่
+          (เช่น self._seq_running.is_set). ถ้าคืน False → หยุดรอทันที
 
         คืน (soc, voltage, status)
         """
@@ -172,6 +175,9 @@ class AutoController:
         settled   = False
 
         while True:
+            if cancel_check is not None and not cancel_check():
+                break
+
             elapsed = _t.time() - t_start
             if elapsed > timeout:
                 break
@@ -204,11 +210,13 @@ class AutoController:
             if settled:
                 break
 
-            # sleep แบบ interruptible (ทุก 0.5s ตรวจ is_connected)
+            # sleep แบบ interruptible (ทุก 0.5s ตรวจ is_connected + cancel_check)
             t_end = _t.time() + interval
             while _t.time() < t_end:
                 if not self.hw.is_connected:
                     raise HardwareError("Hardware disconnected during OCV settle")
+                if cancel_check is not None and not cancel_check():
+                    break
                 _t.sleep(0.5)
 
         # อ่านค่าสุดท้าย + sync estimator

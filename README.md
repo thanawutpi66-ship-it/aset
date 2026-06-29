@@ -15,7 +15,7 @@ CSV, and serves a remote dashboard.
 python -m venv venv && venv\Scripts\activate     # Windows
 pip install -r requirements.txt
 python main.py            # ISA-101 PySide6 desktop GUI (integrated app)
-pytest -q                 # 49 tests
+pytest -q                 # 64 tests
 ```
 
 `config.json` ships in **simulation mode** (no hardware needed); set `"simulation_mode": false`
@@ -112,9 +112,21 @@ Full detail: [ARCHITECTURE.md](ARCHITECTURE.md). Project history/pivot: [context
 
 ## Battery profiles
 
-Chemistry physics + charging strategy live in [battery_profiles.json](battery_profiles.json)
-(`LiPO`, `LiFePO4`, `LeadAcid`, `Li-ion`) and are loaded by `battery_profiles.py` with a
-built-in fallback. The integrated app's runtime config is `config.json` (managed by `config.py`).
+Chemistry physics + charging strategy live in [aset_batt/core/battery_profiles.json](aset_batt/core/battery_profiles.json)
+(`LiPO`, `LiFePO4`, `LeadAcid`, `Li-ion`) loaded by `battery_profiles.py` with built-in fallbacks.
+Each `ChemistryProfile` carries per-cell OCV curve, Rin parameters, charge strategy, and (for Lead-Acid)
+physics constants for two accuracy fixes:
+
+| Field | Chemistry | Value | Physics |
+|---|---|---|---|
+| `temp_coeff_mv_per_degc` | LeadAcid | 0.40 mV/°C/cell | Nernst — H₂SO₄ OCV rises with temperature |
+| `peukert_k` | LeadAcid | 1.30 | Peukert — capacity is current-rate dependent |
+| `peukert_hr` | LeadAcid | 10.0 (C10) | Hour-rate at which rated capacity is specified |
+
+**Products**: YTZ7V (7Ah), YTZ6V (5Ah), **FB FTZ6V (5.3Ah/90CCA)**, Generic 4S LiFePO4,
+Little Bee MV20-12 (20Ah SLA), Lithium Valley LFP 25.6V 50Ah.
+
+The integrated app's runtime config is `config.json` (managed by `config.py`).
 
 ---
 
@@ -149,10 +161,11 @@ ASET_BATT/
 
 | Role | Device |
 |---|---|
-| DUT | 12 V motorcycle battery (lead-acid AGM, e.g. YTZ7V 7Ah) or lithium |
+| DUT | 12 V motorcycle battery — lead-acid AGM (e.g. **FB FTZ6V 5.3Ah/90CCA**, YTZ7V 7Ah) or 4S lithium |
 | DC supply | GW Instek PSW/PSB-1080L (SCPI) |
 | DC load | GW Instek PEL-3111 (SCPI) |
 | Temperature | MLX90614 (IR) → ESP32 → UART |
+| Impedance ref | GW Instek GBM-3080 / FNIRSI HRM-10 (ACIR 1kHz, validation) |
 | Breaker | LUMIRA MCB (passive overcurrent backstop) |
 
 SCPI readback is ~5 Hz; software cutoff (`:OUTP OFF`/`:INP OFF`) is the primary failsafe with

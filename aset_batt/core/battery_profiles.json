@@ -14,7 +14,10 @@
     "LeadAcid": {
       "ocv_curve": [[0,1.960],[5,1.980],[10,1.995],[15,2.005],[20,2.015],[25,2.025],[30,2.033],[35,2.040],[40,2.047],[45,2.053],[50,2.060],[55,2.066],[60,2.072],[65,2.078],[70,2.085],[75,2.092],[80,2.100],[85,2.108],[90,2.115],[95,2.122],[100,2.130]],
       "rin": {"r0": 0.005, "temp_coeff": 0.005, "soc_coeff": 0.0010, "aging_coeff": 0.003},
-      "charge": {"strategy": "three_stage", "bulk_c_rate": 0.10, "absorption_voltage_per_cell": 2.40, "float_voltage_per_cell": 2.275, "tail_current_c_rate": 0.02, "stage_timeout_min": 240.0}
+      "charge": {"strategy": "three_stage", "bulk_c_rate": 0.10, "absorption_voltage_per_cell": 2.40, "float_voltage_per_cell": 2.275, "tail_current_c_rate": 0.02, "stage_timeout_min": 240.0},
+      "temp_coeff_mv_per_degc": 0.40,
+      "peukert_k": 1.30,
+      "peukert_hr": 10.0
     },
     "Li-ion": {
       "ocv_curve": [[0,3.00],[5,3.40],[10,3.50],[15,3.58],[20,3.63],[25,3.67],[30,3.70],[35,3.73],[40,3.76],[45,3.79],[50,3.82],[55,3.85],[60,3.88],[65,3.92],[70,3.96],[75,4.00],[80,4.05],[85,4.10],[90,4.14],[95,4.17],[100,4.20]],

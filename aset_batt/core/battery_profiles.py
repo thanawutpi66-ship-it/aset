@@ -45,6 +45,15 @@ class ChemistryProfile:
     ocv_curve: Dict[int, float]          # {soc_pct: ocv_per_cell}
     rin: Dict[str, float]                # r0/temp_coeff/soc_coeff/aging_coeff
     charge: ChargeProfile = field(default_factory=ChargeProfile)
+    # Nernst temperature coefficient: mV/°C/cell shift of OCV from 25°C reference.
+    # Lead-acid H₂SO₄ electrolyte: ~+0.40 mV/°C/cell (OCV rises slightly with T).
+    # Li-ion / LFP: ≈0 (temp effect small; separate per-temp tables used instead).
+    temp_coeff_mv_per_degc: float = 0.0
+    # Peukert parameters for real-time SoC during discharge.
+    # k=1.0 → no correction (Li-ion k≈1.0–1.05).  Lead-acid k≈1.25–1.35.
+    # peukert_hr = hour-rate at which rated_capacity is specified (10HR or 20HR).
+    peukert_k: float = 1.0
+    peukert_hr: float = 20.0
 
 
 @dataclass
@@ -122,6 +131,11 @@ _DEFAULT_CHEMISTRIES: Dict[str, ChemistryProfile] = {
                              absorption_voltage_per_cell=2.40,
                              float_voltage_per_cell=2.275,
                              tail_current_c_rate=0.02, stage_timeout_min=240.0),
+        # Nernst: H₂SO₄ electrolyte OCV rises ~+0.40 mV/°C/cell from 25°C reference
+        temp_coeff_mv_per_degc=0.40,
+        # Peukert k≈1.3 for VRLA/AGM; capacity rated at 10-hour rate (C10)
+        peukert_k=1.30,
+        peukert_hr=10.0,
     ),
     "Li-ion": ChemistryProfile(
         name="Li-ion",
@@ -197,7 +211,11 @@ def _chemistry_from_dict(name: str, d: dict,
     rin = (base.rin.copy() if base else {})
     rin.update(d.get("rin", {}))
     charge = _charge_from_dict(d.get("charge", {}), base_charge)
-    return ChemistryProfile(name=name, ocv_curve=ocv, rin=rin, charge=charge)
+    tc  = d.get("temp_coeff_mv_per_degc", base.temp_coeff_mv_per_degc if base else 0.0)
+    pk  = d.get("peukert_k",              base.peukert_k              if base else 1.0)
+    phr = d.get("peukert_hr",             base.peukert_hr             if base else 20.0)
+    return ChemistryProfile(name=name, ocv_curve=ocv, rin=rin, charge=charge,
+                            temp_coeff_mv_per_degc=tc, peukert_k=pk, peukert_hr=phr)
 
 
 def _load_registry() -> Tuple[Dict[str, ChemistryProfile], Dict[str, ProductProfile]]:
@@ -285,3 +303,55 @@ def reload() -> None:
     """โหลด registry ใหม่จากดิสก์ (ใช้ตอนผู้ใช้แก้ไฟล์ profile ระหว่างรัน)"""
     global _CHEMISTRIES, _PRODUCTS
     _CHEMISTRIES, _PRODUCTS = _load_registry()
+
+
+def save_measured_params(product_name: str, params: dict) -> bool:
+    """Persist characterization results for a product in battery_profiles.json.
+
+    params keys (all optional):
+      peukert_k, peukert_k_r2, peukert_hr
+      coulomb_eta_bulk, coulomb_eta_absorb, coulomb_eta_full
+      ocv_curve_measured  (dict {soc_int: v_per_cell})
+      measured_date       (ISO string — auto-filled if absent)
+
+    Returns True on success.
+    """
+    import datetime
+
+    data: dict = {}
+    if os.path.exists(_PROFILE_FILE):
+        try:
+            with open(_PROFILE_FILE, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception:
+            pass
+
+    products_section = data.setdefault("products", {})
+    entry = products_section.setdefault(product_name, {})
+    mp = entry.setdefault("measured_params", {})
+    mp.update(params)
+    if "measured_date" not in mp:
+        mp["measured_date"] = datetime.date.today().isoformat()
+
+    try:
+        with open(_PROFILE_FILE, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, ensure_ascii=False)
+        logger.info("Saved measured_params for '%s' → %s", product_name, _PROFILE_FILE)
+        return True
+    except Exception as exc:
+        logger.error("Failed to save measured_params for '%s': %s", product_name, exc)
+        return False
+
+
+def get_measured_params(product_name: str) -> dict:
+    """Return measured_params dict for a product entry, or {} if none stored."""
+    if not os.path.exists(_PROFILE_FILE):
+        return {}
+    try:
+        with open(_PROFILE_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return (data.get("products", {})
+                    .get(product_name, {})
+                    .get("measured_params", {}))
+    except Exception:
+        return {}

@@ -57,12 +57,20 @@ class BatteryModel:
         """สร้าง OCV lookup tables สำหรับอุณหภูมิต่างๆ จาก chemistry profile
 
         Base table = rested OCV ต่อเซลล์ ณ 25°C (จาก battery_profiles).
-        OCV ถือว่า ~independent ของอุณหภูมิ (entropic ~mV/K เล็กน้อย) — ผลของอุณหภูมิ
-        ที่มีนัยสำคัญอยู่ที่ internal resistance (ดู _calculate_base_rin) จึงใช้ table
-        เดียวกันทุกอุณหภูมิ
+        ถ้าเคมีมี temp_coeff_mv_per_degc != 0 (เช่น Lead-Acid Nernst ~+0.40 mV/°C/cell)
+        จะ shift ทุกจุดใน OCV table ตามอุณหภูมิ relative จาก 25°C reference.
+        Li-ion/LFP: tc=0 → ใช้ table เดิมทุกอุณหภูมิ (ผลเล็กน้อย vs. Rin ที่เปลี่ยนมาก)
         """
         base_table = self.chemistry.ocv_curve
-        return {temp: dict(base_table) for temp in self.temp_range}
+        tc = getattr(self.chemistry, "temp_coeff_mv_per_degc", 0.0)
+        if tc == 0.0:
+            return {temp: dict(base_table) for temp in self.temp_range}
+        # Nernst shift: delta_v = tc[mV/°C/cell] × (T − 25°C) / 1000 → V/cell
+        result = {}
+        for t in self.temp_range:
+            delta_v = tc * (t - 25.0) * 1e-3
+            result[t] = {soc: ocv + delta_v for soc, ocv in base_table.items()}
+        return result
 
     def _get_rin_parameters(self) -> Dict[str, float]:
         """Parameters สำหรับ internal resistance model (จาก chemistry profile)
