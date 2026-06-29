@@ -26,7 +26,9 @@ from PySide6.QtGui import QDoubleValidator, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -43,6 +45,7 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QDoubleSpinBox,
+    QProgressBar,
     QSpinBox,
     QSizePolicy,
     QSplitter,
@@ -446,9 +449,14 @@ class BatteryQtWindow(QMainWindow):
     sig_safety = Signal(str)
     sig_profile_done = Signal(object)
     sig_analysis_done = Signal(object)
-    sig_workflow   = Signal(int, str)   # IEC sequence (phase 0-4)
-    sig_qs_workflow = Signal(int, str)  # Quick Scan (phase 0-3)
-    sig_wf_status  = Signal(str)        # workflow status label text (cross-thread safe)
+    sig_workflow        = Signal(int, str)   # IEC sequence (phase 0-4)
+    sig_qs_workflow     = Signal(int, str)  # Quick Scan (phase 0-3)
+    sig_hppc_seq_wf     = Signal(int, str)  # HPPC Full Sequence (phase 0-3)
+    sig_cycle_wf        = Signal(int, str)  # Cycle Life (phase 0-3)
+    sig_wf_status       = Signal(str)       # workflow status label text (cross-thread safe)
+    sig_phase_progress  = Signal(int, int)  # (elapsed_s, total_s); (0,0) = hide
+    sig_seq_result      = Signal(str)       # inline result summary after analyze
+    sig_seq_done        = Signal(str, str)  # (title, body) — notify when sequence finishes
 
     def __init__(self, config_manager):
         super().__init__()
@@ -482,7 +490,7 @@ class BatteryQtWindow(QMainWindow):
         self._test_thread = None      # characterization worker (QThread)
         self._test_worker = None
         self._last_csv = None         # CSV written by the most recent test/monitor run
-        self._auto_seq_running = False
+        self._seq_running = threading.Event()   # SET while a sequence thread is active
 
         self._build_ui()
         self._connect_signals()
@@ -824,6 +832,10 @@ class BatteryQtWindow(QMainWindow):
         actions.addWidget(self.btn_detect, 2)
         actions.addWidget(self.btn_save_default, 1)
         lay.addLayout(actions)
+        btn_edit_profile = _btn("Edit Battery Profile…", bg="#e8f0fe", hover="#c5d8fd")
+        btn_edit_profile.setToolTip("แก้ไขค่า BatteryConfig ในแอพโดยตรง")
+        btn_edit_profile.clicked.connect(self._on_edit_battery_profile)
+        lay.addWidget(btn_edit_profile)
 
         # Connections — each port row has a status LED (● gray=idle, ✓ green=ok, ✗ red=fail)
         lay.addWidget(_hline())
@@ -911,6 +923,18 @@ class BatteryQtWindow(QMainWindow):
         ("3", "DISCHARGE", "1C rapid test"),
         ("4", "ANALYZE",   "Peukert SoH"),
     ]
+    _HPPC_SEQ_STEPS = [
+        ("1", "CHARGE",  "CC-CV to 100%"),
+        ("2", "REST",    "OCV settle"),
+        ("3", "HPPC",    "Pulse/relax cycles"),
+        ("4", "ANALYZE", "R0/R1/C1/τ ECM"),
+    ]
+    _CYCLE_STEPS = [
+        ("1", "CHARGE",    "CC-CV"),
+        ("2", "DISCHARGE", "CC to cutoff"),
+        ("3", "REPEAT",    "N cycles"),
+        ("4", "ANALYZE",   "Capacity fade"),
+    ]
 
     def _zone_workflow(self):
         outer = QWidget()
@@ -951,6 +975,8 @@ class BatteryQtWindow(QMainWindow):
         self.cb_workflow_type.addItems([
             "IEC 61960 Standard  (~10–12h LeadAcid / ~8h Li-ion)",
             "Quick Scan  (~1.5h  Peukert-corrected SoH)",
+            "HPPC Full Sequence  (~2–3h  R0/R1/C1/τ ECM)",
+            "Cycle Life Test  (N × charge + discharge)",
         ])
         self._combo_shrink(self.cb_workflow_type, 10)
         sel_row.addWidget(self.cb_workflow_type, 1)
@@ -1040,6 +1066,29 @@ class BatteryQtWindow(QMainWindow):
         iec_lay.addLayout(test_row)
         self.cb_test_crate.currentTextChanged.connect(self._on_test_crate_changed)
 
+        # Skip-phase toggles
+        skip_row = QHBoxLayout()
+        self.chk_skip_charge = QCheckBox("Skip charge")
+        self.chk_skip_charge.setToolTip("Force-skip CHARGE phase (use if battery is already full)")
+        self.chk_skip_rest = QCheckBox("Skip REST")
+        self.chk_skip_rest.setToolTip("Skip the post-charge rest period (faster, less accurate)")
+        skip_row.addWidget(self.chk_skip_charge)
+        skip_row.addWidget(self.chk_skip_rest)
+        skip_row.addStretch(1)
+        iec_lay.addLayout(skip_row)
+
+        # SoC charge threshold
+        soc_row = QHBoxLayout()
+        soc_row.addWidget(QLabel("Charge if SoC <"))
+        self.spn_soc_threshold = QSpinBox()
+        self.spn_soc_threshold.setRange(50, 99)
+        self.spn_soc_threshold.setValue(95)
+        self.spn_soc_threshold.setSuffix(" %")
+        self.spn_soc_threshold.setToolTip("Skip CHARGE when battery SoC is at or above this level")
+        soc_row.addWidget(self.spn_soc_threshold)
+        soc_row.addStretch(1)
+        iec_lay.addLayout(soc_row)
+
         self.btn_auto_seq = _btn("▶  AUTO SEQUENCE", bg=INFO, fg="white", hover="#0d4a89")
         self.btn_auto_seq.setToolTip(
             "IEC 61960: OCV → Charge → Rest → Discharge → Analyze"
@@ -1066,8 +1115,103 @@ class BatteryQtWindow(QMainWindow):
         qs_lay.addWidget(self.btn_quick_scan)
         qs_lay.addStretch(1)
 
-        self._wf_stack.addWidget(iec_page)   # index 0
-        self._wf_stack.addWidget(qs_page)    # index 1
+        # ── Page 2: HPPC Full Sequence ──────────────────────────
+        hppc_seq_page = QWidget()
+        hppc_seq_lay = QVBoxLayout(hppc_seq_page)
+        hppc_seq_lay.setContentsMargins(0, 0, 0, 0)
+        hppc_seq_lay.setSpacing(4)
+
+        self._hppc_seq_leds = []
+        hppc_seq_lay.addWidget(_step_widget(
+            self._HPPC_SEQ_STEPS, self._hppc_seq_leds, 65))
+
+        hppc_seq_sep = QFrame()
+        hppc_seq_sep.setFrameShape(QFrame.Shape.HLine)
+        hppc_seq_sep.setStyleSheet(f"color:{BORDER}; margin:2px 0;")
+        hppc_seq_lay.addWidget(hppc_seq_sep)
+
+        hppc_seq_form = QFormLayout()
+        hppc_seq_form.setSpacing(4)
+        hppc_seq_form.setContentsMargins(0, 0, 0, 0)
+        self.spn_hppc_cycles = QSpinBox()
+        self.spn_hppc_cycles.setRange(1, 20)
+        self.spn_hppc_cycles.setValue(5)
+        self.spn_hppc_cycles.setToolTip(
+            "Number of pulse/relax cycles — more cycles = better R1/C1 statistics")
+        hppc_seq_form.addRow("HPPC cycles:", self.spn_hppc_cycles)
+        hppc_seq_lay.addLayout(hppc_seq_form)
+
+        hppc_seq_note = QLabel("Pulse/relax timing from MANUAL → HPPC tab")
+        hppc_seq_note.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        hppc_seq_lay.addWidget(hppc_seq_note)
+
+        self.btn_hppc_seq = _btn("▶  HPPC SEQUENCE", bg="#7b2d8b", fg="white", hover="#5c2068")
+        self.btn_hppc_seq.setToolTip(
+            "Charge → Rest 30min → HPPC N cycles → Analyze ECM (R0/R1/C1/τ)")
+        self.btn_hppc_seq.clicked.connect(self._on_hppc_sequence)
+        self._buttons["btn_hppc_seq"] = self.btn_hppc_seq
+        hppc_seq_lay.addWidget(self.btn_hppc_seq)
+        hppc_seq_lay.addStretch(1)
+
+        # ── Page 3: Cycle Life ───────────────────────────────
+        cycle_page = QWidget()
+        cycle_lay = QVBoxLayout(cycle_page)
+        cycle_lay.setContentsMargins(0, 0, 0, 0)
+        cycle_lay.setSpacing(4)
+
+        self._cycle_leds = []
+        cycle_lay.addWidget(_step_widget(
+            self._CYCLE_STEPS, self._cycle_leds, 75))
+
+        cycle_sep = QFrame()
+        cycle_sep.setFrameShape(QFrame.Shape.HLine)
+        cycle_sep.setStyleSheet(f"color:{BORDER}; margin:2px 0;")
+        cycle_lay.addWidget(cycle_sep)
+
+        cycle_form = QFormLayout()
+        cycle_form.setSpacing(4)
+        cycle_form.setContentsMargins(0, 0, 0, 0)
+
+        self.spn_cycle_n = QSpinBox()
+        self.spn_cycle_n.setRange(1, 100)
+        self.spn_cycle_n.setValue(3)
+        self.spn_cycle_n.setToolTip("Total number of charge+discharge cycles")
+        cycle_form.addRow("Cycles:", self.spn_cycle_n)
+
+        self.cb_cycle_charge_crate = QComboBox()
+        self.cb_cycle_charge_crate.addItems(["0.1C", "0.2C", "0.3C", "0.5C", "1.0C"])
+        self.cb_cycle_charge_crate.setCurrentText("0.3C")
+        cycle_form.addRow("Charge C-rate:", self.cb_cycle_charge_crate)
+
+        self.cb_cycle_dis_crate = QComboBox()
+        self.cb_cycle_dis_crate.addItems(["0.1C", "0.2C", "0.5C", "1.0C"])
+        self.cb_cycle_dis_crate.setCurrentText("0.2C")
+        cycle_form.addRow("Discharge C-rate:", self.cb_cycle_dis_crate)
+
+        self.spn_cycle_rest = QSpinBox()
+        self.spn_cycle_rest.setRange(1, 60)
+        self.spn_cycle_rest.setValue(5)
+        self.spn_cycle_rest.setSuffix(" min")
+        self.spn_cycle_rest.setToolTip("Rest between charge and discharge in each cycle")
+        cycle_form.addRow("Rest/cycle:", self.spn_cycle_rest)
+        cycle_lay.addLayout(cycle_form)
+
+        self.lbl_cycle_counter = QLabel("Cycle: —")
+        self.lbl_cycle_counter.setStyleSheet(f"color:{INFO}; font-weight:700; font-size:11px;")
+        cycle_lay.addWidget(self.lbl_cycle_counter)
+
+        self.btn_cycle_life = _btn("▶  CYCLE LIFE TEST", bg="#6c3483", fg="white", hover="#4a235a")
+        self.btn_cycle_life.setToolTip(
+            "Automated N×(Charge→Rest→Discharge) — logs capacity fade per cycle")
+        self.btn_cycle_life.clicked.connect(self._on_cycle_life)
+        self._buttons["btn_cycle_life"] = self.btn_cycle_life
+        cycle_lay.addWidget(self.btn_cycle_life)
+        cycle_lay.addStretch(1)
+
+        self._wf_stack.addWidget(iec_page)       # index 0
+        self._wf_stack.addWidget(qs_page)        # index 1
+        self._wf_stack.addWidget(hppc_seq_page)  # index 2
+        self._wf_stack.addWidget(cycle_page)     # index 3
         outer_lay.addWidget(self._wf_stack)
 
         # ให้ stack สูงตามหน้าที่กำลังแสดง — หน้าที่ซ่อนไม่ดันความสูง (กันพื้นที่ว่าง
@@ -1087,12 +1231,49 @@ class BatteryQtWindow(QMainWindow):
         self._buttons["btn_seq_cancel"] = self.btn_seq_cancel
         outer_lay.addWidget(self.btn_seq_cancel)
 
-        self.lbl_wf_status = QLabel("เลือก AUTO SEQUENCE (IEC) หรือ QUICK SCAN")
+        self.lbl_wf_status = QLabel("เลือก workflow แล้วกดปุ่ม RUN")
         self.lbl_wf_status.setStyleSheet(
             f"color:{MUTED}; font-size:11px; padding-top:2px;"
         )
         self.lbl_wf_status.setWordWrap(True)
         outer_lay.addWidget(self.lbl_wf_status)
+
+        # Phase progress bar + ETA
+        self.wf_progress = QProgressBar()
+        self.wf_progress.setRange(0, 100)
+        self.wf_progress.setValue(0)
+        self.wf_progress.setTextVisible(True)
+        self.wf_progress.setFormat("%p%  (%v / %m s)")
+        self.wf_progress.setMaximumHeight(14)
+        self.wf_progress.setStyleSheet(
+            f"QProgressBar{{border:1px solid {BORDER};border-radius:3px;"
+            f"background:{PANEL2};text-align:center;font-size:9px;}}"
+            f"QProgressBar::chunk{{background:{INFO};border-radius:2px;}}"
+        )
+        self.wf_progress.hide()
+        outer_lay.addWidget(self.wf_progress)
+
+        self.lbl_eta = QLabel("")
+        self.lbl_eta.setStyleSheet(f"color:{INFO}; font-size:10px; font-weight:600;")
+        self.lbl_eta.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.lbl_eta.hide()
+        outer_lay.addWidget(self.lbl_eta)
+
+        # Inline result card — shown after sequence completes
+        self.frm_seq_result = QFrame()
+        self.frm_seq_result.setStyleSheet(
+            f"QFrame{{background:{PANEL2};border:1px solid {INFO};"
+            f"border-radius:5px;padding:4px 8px;}}"
+        )
+        result_lay = QVBoxLayout(self.frm_seq_result)
+        result_lay.setContentsMargins(4, 4, 4, 4)
+        result_lay.setSpacing(2)
+        self.lbl_seq_result = QLabel("—")
+        self.lbl_seq_result.setStyleSheet(f"color:{TEXT}; font-size:11px; font-weight:600;")
+        self.lbl_seq_result.setWordWrap(True)
+        result_lay.addWidget(self.lbl_seq_result)
+        self.frm_seq_result.hide()
+        outer_lay.addWidget(self.frm_seq_result)
 
         # ── IEC Profiles (moved from 3·TOOLS → Profile tab) ──────────────
         outer_lay.addWidget(_hline())
@@ -1139,30 +1320,87 @@ class BatteryQtWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
-        # Operation toggle — swaps the controls below between Charge and Discharge.
+        # Operation toggle — swaps the controls below between Charge / Discharge / HPPC / Direct.
         trow = QHBoxLayout()
-        self.rb_charge = QRadioButton("Charge")
+        self.rb_charge    = QRadioButton("Charge")
         self.rb_discharge = QRadioButton("Discharge")
-        self.rb_discharge.setChecked(True)          # grading/discharge is the common task
+        self.rb_hppc      = QRadioButton("HPPC")
+        self.rb_direct    = QRadioButton("Direct")
+        self.rb_direct.setToolTip("ควบคุม PSU / Load โดยตรง (manual voltage/current)")
+        self.rb_discharge.setChecked(True)
         grp = QButtonGroup(self)
-        grp.addButton(self.rb_charge); grp.addButton(self.rb_discharge)
-        trow.addWidget(self.rb_charge)
-        trow.addWidget(self.rb_discharge)
+        for rb in (self.rb_charge, self.rb_discharge, self.rb_hppc, self.rb_direct):
+            grp.addButton(rb)
+            trow.addWidget(rb)
         trow.addStretch(1)
         lay.addLayout(trow)
 
         self.run_stack = QStackedWidget()
         self.run_stack.addWidget(self._charge_page())      # index 0
         self.run_stack.addWidget(self._discharge_page())   # index 1
+        self.run_stack.addWidget(self._hppc_page())        # index 2
+        self.run_stack.addWidget(self._direct_page())      # index 3
         self.run_stack.setCurrentIndex(1)
-        self.rb_charge.toggled.connect(
-            lambda on: self.run_stack.setCurrentIndex(0 if on else 1))
+        self.rb_charge.toggled.connect(   lambda on: on and self.run_stack.setCurrentIndex(0))
+        self.rb_discharge.toggled.connect(lambda on: on and self.run_stack.setCurrentIndex(1))
+        self.rb_hppc.toggled.connect(     lambda on: on and self.run_stack.setCurrentIndex(2))
+        self.rb_direct.toggled.connect(   self._on_direct_toggled)
         lay.addWidget(self.run_stack)
 
         # Last grade echo (the full breakdown stays in the Analytics tab).
         self.lbl_run_grade = QLabel("Grade: —")
         self.lbl_run_grade.setStyleSheet(f"color:{MUTED}; padding-top:4px;")
         lay.addWidget(self.lbl_run_grade)
+        lay.addStretch(1)
+        return w
+
+    def _direct_page(self):
+        """Direct hardware control — PSU voltage/current and e-load current."""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(8)
+
+        lay.addWidget(self._subheader("PSU"))
+        psu_row = QHBoxLayout()
+        psu_row.addWidget(QLabel("V:"))
+        self.ed_psu_v = QLineEdit("13.8")
+        self.ed_psu_v.setMaximumWidth(72)
+        self.ed_psu_v.setToolTip("Output voltage (V)")
+        psu_row.addWidget(self.ed_psu_v)
+        psu_row.addWidget(QLabel("A:"))
+        self.ed_psu_i = QLineEdit("1.0")
+        self.ed_psu_i.setMaximumWidth(56)
+        self.ed_psu_i.setValidator(QDoubleValidator(0.0, 40.0, 2))
+        self.ed_psu_i.setToolTip("CC current limit (A)")
+        psu_row.addWidget(self.ed_psu_i)
+        psu_on  = _btn("ON",  bg=OK,       fg="white", hover="#266a2a")
+        psu_off = _btn("OFF", bg="#d0d4d7",            hover="#c2c6ca")
+        psu_on.clicked.connect( lambda: self._psu_manual(True))
+        psu_off.clicked.connect(lambda: self._psu_manual(False))
+        psu_row.addWidget(psu_on)
+        psu_row.addWidget(psu_off)
+        lay.addLayout(psu_row)
+
+        lay.addWidget(self._subheader("E-LOAD"))
+        load_row = QHBoxLayout()
+        load_row.addWidget(QLabel("A:"))
+        self.ed_load_a = QLineEdit("0.7")
+        self.ed_load_a.setMaximumWidth(72)
+        self.ed_load_a.setToolTip("CC load current (A)")
+        load_row.addWidget(self.ed_load_a)
+        load_on  = _btn("ON",  bg=OK,       fg="white", hover="#266a2a")
+        load_off = _btn("OFF", bg="#d0d4d7",            hover="#c2c6ca")
+        load_on.clicked.connect( lambda: self._load_manual(True))
+        load_off.clicked.connect(lambda: self._load_manual(False))
+        load_row.addWidget(load_on)
+        load_row.addWidget(load_off)
+        lay.addLayout(load_row)
+
+        note = QLabel("⚠  ใช้เฉพาะทดสอบฮาร์ดแวร์  —  ไม่มี SoC หรือ safety interlock")
+        note.setStyleSheet(f"color:{WARN}; font-size:10px;")
+        note.setWordWrap(True)
+        lay.addWidget(note)
         lay.addStretch(1)
         return w
 
@@ -1202,7 +1440,8 @@ class BatteryQtWindow(QMainWindow):
         trow.addWidget(QLabel("Discharge mode:"))
         self.cb_op_mode = QComboBox()
         self.cb_op_mode.addItems([m.value for m in OperationMode
-                                  if m != OperationMode.CC_CV_CHARGE])
+                                  if m not in (OperationMode.CC_CV_CHARGE,
+                                               OperationMode.HPPC)])
         trow.addWidget(self.cb_op_mode, 1)
         lay.addLayout(trow)
         crow2 = QHBoxLayout()
@@ -1216,6 +1455,71 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_test_status = QLabel("Test idle")
         self.lbl_test_status.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_test_status)
+        return w
+
+    def _hppc_page(self):
+        """Dedicated HPPC Pulse Test page — pulse/relax sequencer with phase indicator."""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+
+        # Capability note
+        note = QLabel(
+            "R₀ from 250 ms voltage step · R₁/C₁ from RC-tail fit · "
+            "Max observable: ~2 Hz  (SCPI limit) · pulse ≥ 3×τ recommended"
+        )
+        note.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        lay.addWidget(_hline())
+
+        form = QFormLayout()
+        form.setSpacing(4)
+        form.setContentsMargins(0, 0, 0, 0)
+
+        self.ed_hppc_crate = QLineEdit("1.0")
+        self.ed_hppc_crate.setValidator(QDoubleValidator(0.1, 10.0, 2))
+        self.ed_hppc_crate.setToolTip(
+            "Pulse C-rate × rated capacity = pulse current (A)\n"
+            "Clamped to max_discharge_a from the active profile."
+        )
+        form.addRow("Pulse C-rate:", self.ed_hppc_crate)
+
+        self.ed_hppc_pulse = QLineEdit("30")
+        self.ed_hppc_pulse.setValidator(QDoubleValidator(1.0, 600.0, 1))
+        self.ed_hppc_pulse.setToolTip(
+            "Pulse duration (s)\nLead-acid τ ≈ 10–60 s → use ≥ 30 s to resolve R₁/C₁"
+        )
+        form.addRow("Pulse (s):", self.ed_hppc_pulse)
+
+        self.ed_hppc_relax = QLineEdit("30")
+        self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))
+        self.ed_hppc_relax.setToolTip("Rest/relaxation duration (s) between pulses")
+        form.addRow("Relax (s):", self.ed_hppc_relax)
+
+        lay.addLayout(form)
+
+        # Phase indicator — updates live via _on_hppc_telemetry
+        self.lbl_hppc_phase = QLabel("IDLE")
+        self.lbl_hppc_phase.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_hppc_phase.setStyleSheet(
+            f"background:{PANEL2}; color:{MUTED}; border:1px solid {BORDER}; "
+            f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
+        )
+        lay.addWidget(self.lbl_hppc_phase)
+
+        brow = QHBoxLayout()
+        self.btn_run_hppc = _btn("RUN HPPC", bg=INFO, fg="white", hover="#0d4a89")
+        self.btn_run_hppc.clicked.connect(self._on_run_hppc)
+        self._buttons["btn_run_hppc"] = self.btn_run_hppc
+        self.btn_stop_hppc = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_stop_hppc.clicked.connect(self._on_stop_test)
+        brow.addWidget(self.btn_run_hppc, 2)
+        brow.addWidget(self.btn_stop_hppc, 1)
+        lay.addLayout(brow)
+
+        lay.addStretch(1)
         return w
 
     # ---- ZONE: TEST MODE — AUTO tab (workflow) + MANUAL tab (charge/discharge) --
@@ -1253,74 +1557,16 @@ class BatteryQtWindow(QMainWindow):
 
         return tabs
 
-    # ---- ZONE 3: TOOLS (advanced / occasional) -----------------------------
+    # ---- ZONE 3: TOOLS (data / reporting) ----------------------------------
     def _zone_tools(self):
         w = QWidget()
-        root = QVBoxLayout(w)
-        root.setContentsMargins(0, 0, 0, 0)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(6)
 
-        tabs = QTabWidget()
-        tabs.setDocumentMode(True)
-
-        # ── Tab 1: Control ──────────────────────────────────────────────────
-        t1 = QWidget()
-        t1l = QVBoxLayout(t1)
-        t1l.setContentsMargins(6, 6, 6, 6)
-        t1l.setSpacing(6)
-
-        t1l.addWidget(self._subheader("MANUAL CONTROL"))
-
-        # PSU row: V field + A (CC limit) field
-        psu_row = QHBoxLayout()
-        psu_row.addWidget(QLabel("PSU V:"))
-        self.ed_psu_v = QLineEdit("13.8")
-        self.ed_psu_v.setMaximumWidth(72)
-        psu_row.addWidget(self.ed_psu_v)
-        psu_row.addWidget(QLabel("A:"))
-        self.ed_psu_i = QLineEdit("1.0")
-        self.ed_psu_i.setMaximumWidth(48)
-        self.ed_psu_i.setValidator(QDoubleValidator(0.0, 40.0, 2))
-        self.ed_psu_i.setToolTip("กระแส limit (CC) ของ PSU (A)")
-        psu_row.addWidget(self.ed_psu_i)
-        psu_on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
-        psu_off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
-        psu_on.clicked.connect(lambda: self._psu_manual(True))
-        psu_off.clicked.connect(lambda: self._psu_manual(False))
-        psu_row.addWidget(psu_on)
-        psu_row.addWidget(psu_off)
-        t1l.addLayout(psu_row)
-
-        # Load row
-        load_row = QHBoxLayout()
-        load_row.addWidget(QLabel("Load A:"))
-        self.ed_load_a = QLineEdit("0.7")
-        self.ed_load_a.setMaximumWidth(72)
-        load_row.addWidget(self.ed_load_a)
-        load_on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
-        load_off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
-        load_on.clicked.connect(lambda: self._load_manual(True))
-        load_off.clicked.connect(lambda: self._load_manual(False))
-        load_row.addWidget(load_on)
-        load_row.addWidget(load_off)
-        t1l.addLayout(load_row)
-
-        t1l.addWidget(_hline())
-        t1l.addWidget(self._subheader("HPPC TIMING"))
-        hppc = QFormLayout()
-        hppc.setSpacing(4)
-        self.ed_hppc_pulse = QLineEdit("30")
-        self.ed_hppc_pulse.setValidator(QDoubleValidator(1.0, 600.0, 1))
-        self.ed_hppc_relax = QLineEdit("30")
-        self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))
-        hppc.addRow("Pulse (s):", self.ed_hppc_pulse)
-        hppc.addRow("Relax (s):", self.ed_hppc_relax)
-        t1l.addLayout(hppc)
-        t1l.addStretch()
-        tabs.addTab(t1, "Control")
-
-        # ── Monitor buttons (hidden widgets, used by toolbar actions) ───────
+        # Hidden monitor buttons — triggered by toolbar actions, not shown directly.
         self.btn_start_monitor = _btn("START MONITOR", bg=OK, fg="white", hover="#266a2a")
-        self.btn_stop_monitor = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_stop_monitor  = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
         self.btn_start_monitor.clicked.connect(self._on_start_monitor)
         self.btn_stop_monitor.clicked.connect(
             lambda: self.controller and self.controller.stop_monitor())
@@ -1328,29 +1574,43 @@ class BatteryQtWindow(QMainWindow):
         self.btn_start_monitor.hide()
         self.btn_stop_monitor.hide()
 
-        # ── Tab 3: Data ─────────────────────────────────────────────────────
-        t3 = QWidget()
-        t3l = QVBoxLayout(t3)
-        t3l.setContentsMargins(6, 6, 6, 6)
-        t3l.setSpacing(6)
-
+        # ── Data / Reporting ────────────────────────────────────────────────
+        lay.addWidget(self._subheader("DATA"))
         self.lbl_csv = QLabel("CSV: —")
         self.lbl_csv.setStyleSheet(f"color:{MUTED}; font-size:11px;")
         self.lbl_csv.setWordWrap(True)
-        t3l.addWidget(self.lbl_csv)
+        lay.addWidget(self.lbl_csv)
 
         self.btn_log = _btn("START DATA LOGGING", bg="#d0d4d7", hover="#c2c6ca")
         self.btn_log.clicked.connect(self._on_toggle_logging)
-        t3l.addWidget(self.btn_log)
+        lay.addWidget(self.btn_log)
         self.btn_pdf = _btn("Generate PDF Report", bg=PANEL2, hover=FIELD)
         self.btn_pdf.clicked.connect(self._on_pdf_report)
-        t3l.addWidget(self.btn_pdf)
+        lay.addWidget(self.btn_pdf)
         btn_dash = _btn("Open Cloud Dashboard", bg="#d0d4d7", hover="#c2c6ca")
         btn_dash.clicked.connect(self._on_open_dashboard)
-        t3l.addWidget(btn_dash)
-        tabs.addTab(t3, "Data")
+        lay.addWidget(btn_dash)
 
-        root.addWidget(tabs)
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("CLOUD PUSH"))
+        self.chk_cloud_push = QCheckBox("Enable cloud push")
+        self.chk_cloud_push.setChecked(
+            getattr(self.config.system, "cloud_push_enabled", False))
+        self.chk_cloud_push.setToolTip(
+            "ส่งข้อมูล V/I/SoC/Temp ไปยัง cloud endpoint ทุก push interval\n"
+            "ตั้ง cloud_dashboard_url และ push interval ใน config.json")
+        self.chk_cloud_push.stateChanged.connect(self._on_cloud_push_toggle)
+        lay.addWidget(self.chk_cloud_push)
+        cloud_url_row = QHBoxLayout()
+        cloud_url_row.addWidget(QLabel("Endpoint URL:"))
+        self.ed_cloud_url = QLineEdit(
+            getattr(self.config.system, "cloud_dashboard_url", ""))
+        self.ed_cloud_url.setPlaceholderText("https://...")
+        self.ed_cloud_url.editingFinished.connect(self._on_cloud_url_changed)
+        cloud_url_row.addWidget(self.ed_cloud_url, 1)
+        lay.addLayout(cloud_url_row)
+
+        lay.addStretch(1)
         return w
 
     def _build_right_panel(self):
@@ -1400,6 +1660,12 @@ class BatteryQtWindow(QMainWindow):
         lay.addWidget(t)
         lay.addWidget(val)
         self.metric_labels[name] = (val, unit)
+        # Current card: add a direction badge below the number (CHG / DSG / REST)
+        if name == "Current":
+            self._lbl_i_dir = QLabel("—")
+            self._lbl_i_dir.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+            self._lbl_i_dir.setStyleSheet(f"color:{MUTED}; border:0;")
+            lay.addWidget(self._lbl_i_dir)
         return card
 
     def _tab_analytics(self):
@@ -1421,8 +1687,10 @@ class BatteryQtWindow(QMainWindow):
         self.lst_sessions = QListWidget()
         self.lst_sessions.setMaximumHeight(110)
         self.lst_sessions.setFont(QFont("Consolas", 9))
-        self.lst_sessions.setToolTip("Click session to analyze")
+        self.lst_sessions.setToolTip("Click to analyze  ·  Right-click for rename/tag")
         self.lst_sessions.itemClicked.connect(self._on_session_selected)
+        self.lst_sessions.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.lst_sessions.customContextMenuRequested.connect(self._on_session_context_menu)
         lay.addWidget(self.lst_sessions)
         self._refresh_session_list()
 
@@ -1469,6 +1737,18 @@ class BatteryQtWindow(QMainWindow):
         btn = _btn("Analyze Last CSV", bg=INFO, fg="white", hover="#0d4a89")
         btn.clicked.connect(self._on_analyze_csv)
         lay.addWidget(btn)
+
+        # ── SoH trend + capacity fade charts ─────────────────────────────
+        trend_row = QHBoxLayout()
+        btn_trend = _btn("SoH Trend", bg=PANEL2, hover=FIELD)
+        btn_trend.setToolTip("Plot SoH history across all sessions")
+        btn_trend.clicked.connect(self._on_soh_trend)
+        btn_fade = _btn("Capacity Fade", bg=PANEL2, hover=FIELD)
+        btn_fade.setToolTip("Plot capacity fade from Cycle Life sessions")
+        btn_fade.clicked.connect(self._on_capacity_fade)
+        trend_row.addWidget(btn_trend)
+        trend_row.addWidget(btn_fade)
+        lay.addLayout(trend_row)
         return w
 
     def _build_ecm_svg(self, r0=None, r1=None, c1=None, ocv=None, tau=None) -> str:
@@ -1715,7 +1995,12 @@ class BatteryQtWindow(QMainWindow):
         self.sig_analysis_done.connect(self._slot_analysis_done)
         self.sig_workflow.connect(self._slot_workflow)
         self.sig_qs_workflow.connect(self._slot_qs_workflow)
+        self.sig_hppc_seq_wf.connect(self._slot_hppc_seq_wf)
+        self.sig_cycle_wf.connect(self._slot_cycle_wf)
         self.sig_wf_status.connect(self._slot_wf_status)
+        self.sig_phase_progress.connect(self._slot_phase_progress)
+        self.sig_seq_result.connect(self._slot_seq_result)
+        self.sig_seq_done.connect(self._slot_seq_done)
 
     def update_display(self, v, i, soc, rin, temp=None, soh=None):
         if temp is None:
@@ -1754,12 +2039,26 @@ class BatteryQtWindow(QMainWindow):
     @Slot(float, float, float, float, float, float)
     def _slot_display(self, v, i, soc, rin, temp, soh):
         rin_mohm = rin * 1000.0
-        # LIVE metrics (valid every sample): Voltage, Current, SoC, Temp.
-        live = {"Voltage": (v, "{:.2f}"), "Current": (i, "{:.2f}"),
-                "SoC": (soc, "{:.1f}"), "Temp": (temp, "{:.2f}")}
-        for name, (val, fmt) in live.items():
+        # LIVE metrics (valid every sample): Voltage, SoC, Temp — shown with signed value.
+        for name, val, fmt in [("Voltage", v, "{:.2f}"), ("SoC", soc, "{:.1f}"), ("Temp", temp, "{:.2f}")]:
             lbl, unit = self.metric_labels[name]
             lbl.setText(f"{fmt.format(val)} {unit}")
+        # Current: always show absolute value; direction shown by badge + color.
+        i_lbl, i_unit = self.metric_labels["Current"]
+        i_lbl.setText(f"{abs(i):.2f} {i_unit}")
+        _IDLE = 0.05   # A — threshold below which current is considered "at rest"
+        if i < -_IDLE:                              # charging (convention: negative)
+            i_lbl.setStyleSheet(f"color:{INFO}; border:0;")
+            self._lbl_i_dir.setText("▲  CHG")
+            self._lbl_i_dir.setStyleSheet(f"color:{INFO}; border:0;")
+        elif i > _IDLE:                             # discharging (convention: positive)
+            i_lbl.setStyleSheet(f"color:{WARN}; border:0;")
+            self._lbl_i_dir.setText("▼  DSG")
+            self._lbl_i_dir.setStyleSheet(f"color:{WARN}; border:0;")
+        else:                                       # at rest
+            i_lbl.setStyleSheet(f"color:{TEXT}; border:0;")
+            self._lbl_i_dir.setText("—  REST")
+            self._lbl_i_dir.setStyleSheet(f"color:{MUTED}; border:0;")
         # Rin: a DC resistance reading needs current flowing. At rest, (OCV−V)/I is
         # undefined and explodes on the flat LFP plateau → keep "pending" rather than
         # show a wild number. The final analysis fills the proper R0+R1.
@@ -1781,9 +2080,13 @@ class BatteryQtWindow(QMainWindow):
         self.buf_temp.append(temp)
         self._sample_index += 1
         self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
+        self._cloud_push_update(v, i, soc, temp)
 
         self._update_temp_gauge(temp)
-        self.status_label.setText(f"V={v:.2f} V  I={i:.2f} A  SoC={soc:.1f}%  Rin={rin_mohm:.1f} mΩ  Temp={temp:.1f} °C")
+        i_dir = "CHG" if i < -_IDLE else "DSG" if i > _IDLE else "REST"
+        self.status_label.setText(
+            f"V={v:.2f} V  I={abs(i):.2f} A ({i_dir})  SoC={soc:.1f}%  Rin={rin_mohm:.1f} mΩ  Temp={temp:.1f} °C"
+        )
 
     def _update_temp_gauge(self, temp):
         if hasattr(self, "_temp_gauge") and self._temp_gauge is not None:
@@ -2077,6 +2380,63 @@ class BatteryQtWindow(QMainWindow):
         elif not self._headless:
             QMessageBox.critical(self, "Save as Default", "Save failed")
 
+    def _on_edit_battery_profile(self):
+        """In-app dialog to edit BatteryConfig fields and save to config.json."""
+        b = self.config.battery
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Edit Battery Profile")
+        dlg.setMinimumWidth(340)
+        lay = QVBoxLayout(dlg)
+        form = QFormLayout()
+        form.setSpacing(6)
+
+        fields = [
+            ("battery_type",  "Chemistry / Type",   str),
+            ("nominal_voltage","Nominal V (per cell)", float),
+            ("max_voltage",    "Max V (per cell)",   float),
+            ("min_voltage",    "Min V cutoff (per cell)", float),
+            ("rated_capacity", "Rated Capacity (Ah)", float),
+            ("max_current",    "Max Current (A)",    float),
+            ("cells_series",   "Cells Series",       int),
+            ("cells_parallel", "Cells Parallel",     int),
+            ("mass_grams",     "Mass (g)",           float),
+        ]
+        editors: dict[str, QLineEdit] = {}
+        for attr, label, _typ in fields:
+            ed = QLineEdit(str(getattr(b, attr, "")))
+            form.addRow(label + ":", ed)
+            editors[attr] = ed
+        lay.addLayout(form)
+
+        hint = QLabel("Changes saved to config.json and applied immediately.")
+        hint.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        btn_row = QHBoxLayout()
+        btn_ok = _btn("Save", bg=INFO, fg="white", hover="#0d4a89")
+        btn_cancel = _btn("Cancel", bg="#d0d4d7", hover="#c2c6ca")
+        btn_ok.clicked.connect(dlg.accept)
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_row.addWidget(btn_ok, 2); btn_row.addWidget(btn_cancel, 1)
+        lay.addLayout(btn_row)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        errors = []
+        for attr, label, typ in fields:
+            raw = editors[attr].text().strip()
+            try:
+                setattr(b, attr, typ(raw))
+            except (ValueError, TypeError):
+                errors.append(f"{label}: '{raw}' is not a valid {typ.__name__}")
+        if errors:
+            QMessageBox.warning(self, "Edit Battery Profile",
+                                "Some fields were invalid:\n" + "\n".join(errors))
+        self.config.save_config()
+        self._on_product_changed(self.cb_product.currentText())
+        self._log_alarm("[CONFIG] Battery profile updated and saved")
+
     def _on_detect_chemistry(self):
         if self.estimator is None:
             return
@@ -2123,6 +2483,7 @@ class BatteryQtWindow(QMainWindow):
                 self.hw.psu_bleed_a = getattr(self.config.hardware, "psu_bleed_a", 0.0)
             self._update_connection_status()
             self._log_alarm("Hardware connected.")
+            self._cloud_push_start()
         except Exception as exc:
             # connect_error already set in hw.connect_instruments — let _slot_conn show ✗
             self._update_connection_status()
@@ -2131,6 +2492,7 @@ class BatteryQtWindow(QMainWindow):
 
     def _on_disconnect(self):
         try:
+            self._cloud_push_stop()
             if hasattr(self.hw, "disconnect_instruments"):
                 self.hw.disconnect_instruments()
             if hasattr(self.hw, "disconnect_esp32"):
@@ -2141,7 +2503,66 @@ class BatteryQtWindow(QMainWindow):
             if not self._headless:
                 QMessageBox.critical(self, "Disconnect Error", str(exc))
 
+    # ── Cloud push helpers ────────────────────────────────────────────────
+    _cloud_svc = None
+
+    def _cloud_push_start(self):
+        try:
+            from aset_batt.services.cloud_push import CloudPushService
+            self._cloud_svc = CloudPushService(self.config)
+            self._cloud_svc.start()
+            if getattr(self.config.system, "cloud_push_enabled", False):
+                self._log_alarm("[CLOUD] Push service started")
+        except Exception as e:
+            self._log_alarm(f"[CLOUD] Start failed: {e}")
+
+    def _cloud_push_stop(self):
+        try:
+            if self._cloud_svc:
+                self._cloud_svc.stop()
+                self._cloud_svc = None
+        except Exception:
+            pass
+
+    def _cloud_push_update(self, v, i, soc, temp):
+        """Call from the telemetry slot to keep the cloud payload fresh."""
+        try:
+            if self._cloud_svc:
+                from datetime import datetime as _dt
+                self._cloud_svc.push_now({
+                    "ts": _dt.utcnow().isoformat(),
+                    "voltage_v": round(v, 3),
+                    "current_a": round(i, 3),
+                    "soc_pct":   round(soc, 1),
+                    "temp_c":    round(temp, 1),
+                    "battery":   self.config.battery.battery_type,
+                })
+        except Exception:
+            pass
+
+    def _on_direct_toggled(self, on: bool):
+        if not on:
+            return
+        if self._seq_running.is_set():
+            # A sequence is active — refuse to switch into direct control.
+            if not self._headless:
+                QMessageBox.warning(
+                    self, "Direct Control",
+                    "ไม่สามารถใช้ Direct Control ขณะที่ AUTO sequence กำลังรันอยู่\n"
+                    "กด CANCEL SEQUENCE ก่อน"
+                )
+            # Revert radio selection back to whichever page was showing.
+            idx = self.run_stack.currentIndex()
+            [self.rb_charge, self.rb_discharge, self.rb_hppc][min(idx, 2)].setChecked(True)
+            return
+        self.run_stack.setCurrentIndex(3)
+
     def _psu_manual(self, on):
+        if on and self._seq_running.is_set():
+            if not self._headless:
+                QMessageBox.warning(self, "Direct Control",
+                                    "ไม่สามารถใช้ Direct Control ขณะที่ AUTO sequence กำลังรันอยู่")
+            return
         try:
             if on:
                 self.hw.set_psu(
@@ -2156,6 +2577,11 @@ class BatteryQtWindow(QMainWindow):
                 QMessageBox.warning(self, "PSU", "Invalid voltage / current")
 
     def _load_manual(self, on):
+        if on and self._seq_running.is_set():
+            if not self._headless:
+                QMessageBox.warning(self, "Direct Control",
+                                    "ไม่สามารถใช้ Direct Control ขณะที่ AUTO sequence กำลังรันอยู่")
+            return
         try:
             self.hw.set_load(on, str(float(self.ed_load_a.text())) if on else "0")
         except ValueError:
@@ -2285,25 +2711,161 @@ class BatteryQtWindow(QMainWindow):
 
     @Slot(str)
     def _slot_wf_status(self, text: str):
-        """Cross-thread safe wrapper for lbl_wf_status.setText.
-        Connecting directly to a C++ slot (setText) from a Python threading.Thread
-        silently drops queued events — a Python @Slot wrapper fixes this."""
+        """Cross-thread safe wrapper for lbl_wf_status.setText."""
         self.lbl_wf_status.setText(text)
+
+    @Slot(int, str)
+    def _slot_hppc_seq_wf(self, step: int, state: str):
+        _styles = {
+            "idle":   (f"color:{NEUTRAL}; font-size:16px; min-width:22px;",
+                       f"color:{MUTED}; font-weight:700; min-width:65px;", "○"),
+            "active": (f"color:#7b2d8b; font-size:16px; min-width:22px;",
+                       f"color:#7b2d8b; font-weight:700; min-width:65px;", "●"),
+            "done":   (f"color:{OK}; font-size:13px; min-width:22px; font-weight:700;",
+                       f"color:{OK}; font-weight:700; min-width:65px;", "✓"),
+            "skip":   (f"color:{NEUTRAL}; font-size:13px; min-width:22px;",
+                       f"color:{NEUTRAL}; font-weight:700; min-width:65px;", "—"),
+        }
+        dot_style, name_style, symbol = _styles.get(state, _styles["idle"])
+        if 0 <= step < len(self._hppc_seq_leds):
+            dot, name_lbl = self._hppc_seq_leds[step]
+            dot.setText(symbol); dot.setStyleSheet(dot_style)
+            name_lbl.setStyleSheet(name_style)
+
+    @Slot(int, str)
+    def _slot_cycle_wf(self, step: int, state: str):
+        _styles = {
+            "idle":   (f"color:{NEUTRAL}; font-size:16px; min-width:22px;",
+                       f"color:{MUTED}; font-weight:700; min-width:75px;", "○"),
+            "active": (f"color:#6c3483; font-size:16px; min-width:22px;",
+                       f"color:#6c3483; font-weight:700; min-width:75px;", "●"),
+            "done":   (f"color:{OK}; font-size:13px; min-width:22px; font-weight:700;",
+                       f"color:{OK}; font-weight:700; min-width:75px;", "✓"),
+            "skip":   (f"color:{NEUTRAL}; font-size:13px; min-width:22px;",
+                       f"color:{NEUTRAL}; font-weight:700; min-width:75px;", "—"),
+        }
+        dot_style, name_style, symbol = _styles.get(state, _styles["idle"])
+        if 0 <= step < len(self._cycle_leds):
+            dot, name_lbl = self._cycle_leds[step]
+            dot.setText(symbol); dot.setStyleSheet(dot_style)
+            name_lbl.setStyleSheet(name_style)
+
+    @Slot(int, int)
+    def _slot_phase_progress(self, elapsed_s: int, total_s: int):
+        if total_s <= 0:
+            self.wf_progress.hide(); self.lbl_eta.hide(); return
+        self.wf_progress.setRange(0, total_s)
+        self.wf_progress.setValue(min(elapsed_s, total_s))
+        self.wf_progress.setFormat(f"%p%  ({elapsed_s // 60}m {elapsed_s % 60:02d}s / "
+                                   f"{total_s // 60}m {total_s % 60:02d}s)")
+        rem = max(0, total_s - elapsed_s)
+        self.lbl_eta.setText(f"ETA: {rem // 60}m {rem % 60:02d}s remaining")
+        self.wf_progress.show(); self.lbl_eta.show()
+
+    @Slot(str)
+    def _slot_seq_result(self, html: str):
+        self.lbl_seq_result.setText(html)
+        self.frm_seq_result.show()
+
+    @Slot(str, str)
+    def _slot_seq_done(self, title: str, body: str):
+        """Sound + popup notification when a sequence finishes."""
+        try:
+            import winsound
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        except Exception:
+            QApplication.beep()
+        if not self._headless:
+            msg = QMessageBox(self)
+            msg.setWindowTitle(title)
+            msg.setText(body)
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.setWindowModality(Qt.WindowModality.NonModal)
+            msg.show()
+
+    def _show_pretest_dialog(self, title: str, plan_lines: list, eta_min: int) -> bool:
+        """Show a pre-test confirmation card.  Returns True iff user clicks Confirm."""
+        if self._headless:
+            return True
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Confirm: {title}")
+        dlg.setMinimumWidth(380)
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(10)
+
+        # Battery / plan card
+        card = QFrame()
+        card.setStyleSheet(
+            f"QFrame{{background:{PANEL2};border:1px solid {BORDER};"
+            f"border-radius:5px;padding:6px 10px;}}"
+        )
+        card_lay = QVBoxLayout(card)
+        card_lay.setSpacing(3)
+        for line in plan_lines:
+            lbl = QLabel(line)
+            lbl.setStyleSheet(f"color:{TEXT}; font-size:12px;")
+            card_lay.addWidget(lbl)
+        lay.addWidget(card)
+
+        # ETA row
+        eta_lbl = QLabel(f"Estimated duration: ~{eta_min} min  ({eta_min//60}h {eta_min%60:02d}m)")
+        eta_lbl.setStyleSheet(f"color:{INFO}; font-weight:600;")
+        lay.addWidget(eta_lbl)
+
+        # Confirm / Cancel
+        btn_row = QHBoxLayout()
+        btn_conf = _btn("▶  CONFIRM START", bg=INFO, fg="white", hover="#0d4a89")
+        btn_canc = _btn("Cancel", bg="#d0d4d7", hover="#c2c6ca")
+        btn_conf.clicked.connect(dlg.accept)
+        btn_canc.clicked.connect(dlg.reject)
+        btn_row.addWidget(btn_conf, 2); btn_row.addWidget(btn_canc, 1)
+        lay.addLayout(btn_row)
+
+        return dlg.exec() == QDialog.DialogCode.Accepted
+
+    def _seq_common_start(self, btn_key: str, loading_label: str):
+        """Shared startup: reset all step leds, buffers, progress, result card."""
+        for i in range(len(self._WF_STEPS)):       self.sig_workflow.emit(i, "idle")
+        for i in range(len(self._QS_STEPS)):       self.sig_qs_workflow.emit(i, "idle")
+        for i in range(len(self._HPPC_SEQ_STEPS)): self.sig_hppc_seq_wf.emit(i, "idle")
+        for i in range(len(self._CYCLE_STEPS)):    self.sig_cycle_wf.emit(i, "idle")
+        for buf in (self.buf_t, self.buf_v, self.buf_i,
+                    self.buf_soc, self.buf_rin, self.buf_temp):
+            buf.clear()
+        self._elapsed_t0 = None
+        self._seq_last_meas_time = 0.0   # reset watchdog
+        self.sig_phase_progress.emit(0, 0)   # hide progress bar
+        self.frm_seq_result.hide()
+        self._seq_running.set()
+        self.btn_seq_cancel.setEnabled(True)
+        self.sig_loading.emit(btn_key, True, loading_label)
 
     def _on_auto_sequence(self):
         if self.controller is None or not getattr(self.hw, "is_connected", False):
             if not self._headless:
                 QMessageBox.warning(self, "Auto Sequence", "Connect hardware first")
             return
-        if self._auto_seq_running:
+        if self._seq_running.is_set():
             return
-        for i in range(len(self._WF_STEPS)):
-            self.sig_workflow.emit(i, "idle")
-        for i in range(len(self._QS_STEPS)):
-            self.sig_qs_workflow.emit(i, "idle")
-        self._auto_seq_running = True
-        self.btn_seq_cancel.setEnabled(True)
-        self.sig_loading.emit("btn_auto_seq", True, "Running…")
+        try:
+            v_now, _, _ = self.hw.read_vi()
+            temp_now = self.hw.current_temp
+            soc_now = getattr(self.controller.estimator, "soc", 0.0)
+            rated = self.controller.config.battery.rated_capacity
+            crate = self.cb_seq_crate.currentText()
+            plan = [
+                f"Battery: {self.controller.config.battery.battery_type}",
+                f"OCV: {v_now:.2f} V  ·  SoC: {soc_now:.0f}%  ·  Temp: {temp_now:.1f} °C",
+                f"Charge: {crate} ({float(crate.rstrip('C'))*rated:.2f} A)  →  "
+                f"REST {self.spn_rest_min.value()} min  →  "
+                f"Discharge {self.cb_test_crate.currentText()}",
+            ]
+        except Exception:
+            plan = ["(hardware not ready — values unavailable)"]
+        if not self._show_pretest_dialog("IEC 61960 AUTO SEQUENCE", plan, eta_min=600):
+            return
+        self._seq_common_start("btn_auto_seq", "Running…")
         import threading
         threading.Thread(target=self._auto_sequence_thread, daemon=True).start()
 
@@ -2312,31 +2874,128 @@ class BatteryQtWindow(QMainWindow):
             if not self._headless:
                 QMessageBox.warning(self, "Quick Scan", "Connect hardware first")
             return
-        if self._auto_seq_running:
+        if self._seq_running.is_set():
             return
-        for i in range(len(self._QS_STEPS)):
-            self.sig_qs_workflow.emit(i, "idle")
-        for i in range(len(self._WF_STEPS)):
-            self.sig_workflow.emit(i, "idle")
-        self._auto_seq_running = True
-        self.btn_seq_cancel.setEnabled(True)
-        self.sig_loading.emit("btn_quick_scan", True, "Scanning…")
+        try:
+            v_now, _, _ = self.hw.read_vi()
+            soc_now = getattr(self.controller.estimator, "soc", 0.0)
+            rated = self.controller.config.battery.rated_capacity
+            plan = [
+                f"Battery: {self.controller.config.battery.battery_type}",
+                f"OCV: {v_now:.2f} V  ·  SoC: {soc_now:.0f}%",
+                f"OCV → REST 5 min → Discharge 1C ({rated:.2f} A) → Peukert SoH",
+            ]
+        except Exception:
+            plan = ["(hardware not ready — values unavailable)"]
+        if not self._show_pretest_dialog("QUICK SCAN", plan, eta_min=90):
+            return
+        self._seq_common_start("btn_quick_scan", "Scanning…")
         import threading
         threading.Thread(target=self._quick_scan_thread, daemon=True).start()
 
+    def _on_hppc_sequence(self):
+        if self.controller is None or not getattr(self.hw, "is_connected", False):
+            if not self._headless:
+                QMessageBox.warning(self, "HPPC Sequence", "Connect hardware first")
+            return
+        if self._seq_running.is_set():
+            return
+        try:
+            v_now, _, _ = self.hw.read_vi()
+            soc_now = getattr(self.controller.estimator, "soc", 0.0)
+            pulse = float(self.ed_hppc_pulse.text() or "30")
+            relax = float(self.ed_hppc_relax.text() or "30")
+            n_cyc = self.spn_hppc_cycles.value()
+            rated = self.controller.config.battery.rated_capacity
+            plan = [
+                f"Battery: {self.controller.config.battery.battery_type}",
+                f"OCV: {v_now:.2f} V  ·  SoC: {soc_now:.0f}%",
+                f"Charge CC-CV → REST 30 min → "
+                f"HPPC {n_cyc} cycles ({pulse:.0f}s pulse / {relax:.0f}s relax) → ECM fit",
+            ]
+        except Exception:
+            plan = ["(hardware not ready — values unavailable)"]
+        eta = int(120 + self.spn_hppc_cycles.value() *
+                  (float(self.ed_hppc_pulse.text() or "30") +
+                   float(self.ed_hppc_relax.text() or "30")) // 60)
+        if not self._show_pretest_dialog("HPPC FULL SEQUENCE", plan, eta_min=eta):
+            return
+        self._seq_common_start("btn_hppc_seq", "Running…")
+        import threading
+        threading.Thread(target=self._hppc_seq_thread, daemon=True).start()
+
+    def _on_cycle_life(self):
+        if self.controller is None or not getattr(self.hw, "is_connected", False):
+            if not self._headless:
+                QMessageBox.warning(self, "Cycle Life", "Connect hardware first")
+            return
+        if self._seq_running.is_set():
+            return
+        try:
+            n = self.spn_cycle_n.value()
+            rated = self.controller.config.battery.rated_capacity
+            c_ch = self.cb_cycle_charge_crate.currentText()
+            c_di = self.cb_cycle_dis_crate.currentText()
+            plan = [
+                f"Battery: {self.controller.config.battery.battery_type}",
+                f"Cycles: {n}  ·  Charge: {c_ch}  ·  Discharge: {c_di}",
+                f"Rest/cycle: {self.spn_cycle_rest.value()} min  ·  "
+                f"Estimated capacity_ah: {rated:.2f} Ah",
+            ]
+        except Exception:
+            plan = ["(hardware not ready — values unavailable)"]
+        n = self.spn_cycle_n.value()
+        eta = int(n * (90 + self.spn_cycle_rest.value()))  # rough: 90 min/cycle
+        if not self._show_pretest_dialog("CYCLE LIFE TEST", plan, eta_min=eta):
+            return
+        self._seq_common_start("btn_cycle_life", f"Cycling…")
+        import threading
+        threading.Thread(target=self._cycle_life_thread, daemon=True).start()
+
+    # ── Safety helpers ───────────────────────────────────────────────────────
+    _WATCHDOG_TIMEOUT_S: int = 300   # 5 min without a measurement → abort
+
+    def _otp_limit(self) -> float:
+        try:
+            return float(self.controller.config.system.safety_limits["max_temperature"])
+        except Exception:
+            return 60.0
+
+    def _seq_kick_watchdog(self):
+        """Call after every successful measurement read inside a sequence thread."""
+        import time as _t
+        self._seq_last_meas_time = _t.time()
+
+    def _seq_check_otp(self, temp: float) -> bool:
+        """Returns True if temperature is safe.  Clears _seq_running + alarms if OTP."""
+        limit = self._otp_limit()
+        if temp > limit:
+            self._seq_running.clear()
+            self.sig_alarm.emit(
+                f"[SAFETY] OTP triggered: {temp:.1f}°C > {limit:.0f}°C — sequence aborted")
+            return False
+        return True
+
     def _seq_sleep(self, seconds: float) -> bool:
-        """Sleep แบบ interruptible — คืน True ถ้าครบเวลา, False ถ้า cancel"""
+        """Sleep แบบ interruptible — คืน True ถ้าครบเวลา, False ถ้า cancel หรือ watchdog หมดเวลา"""
         import time
         t_end = time.time() + seconds
-        while self._auto_seq_running:
+        while self._seq_running.is_set():
             left = t_end - time.time()
             if left <= 0:
                 return True
+            # watchdog: abort if no measurement update for _WATCHDOG_TIMEOUT_S
+            last = getattr(self, "_seq_last_meas_time", 0.0)
+            if last and (time.time() - last) > self._WATCHDOG_TIMEOUT_S:
+                self._seq_running.clear()
+                self.sig_alarm.emit(
+                    "[SAFETY] Watchdog: ไม่มีการวัดค่า > 5 นาที — sequence ถูกยกเลิก")
+                return False
             time.sleep(min(0.3, left))
         return False
 
     def _on_seq_cancel(self):
-        self._auto_seq_running = False
+        self._seq_running.clear()
         # หยุด hardware ทันที
         try:
             if self.controller:
@@ -2347,8 +3006,10 @@ class BatteryQtWindow(QMainWindow):
             pass
         self.lbl_wf_status.setText("ยกเลิก")
         self.btn_seq_cancel.setEnabled(False)
-        self.sig_loading.emit("btn_auto_seq", False, "")
-        self.sig_loading.emit("btn_quick_scan", False, "")
+        self.sig_phase_progress.emit(0, 0)
+        self.frm_seq_result.hide()
+        for btn in ("btn_auto_seq", "btn_quick_scan", "btn_hppc_seq", "btn_cycle_life"):
+            self.sig_loading.emit(btn, False, "")
         self.sig_alarm.emit("[AUTO] Sequence cancelled — hardware stopped.")
 
     def _auto_sequence_thread(self):
@@ -2358,6 +3019,10 @@ class BatteryQtWindow(QMainWindow):
         def status(msg):
             self.sig_charge_status.emit(msg)
             self.sig_wf_status.emit(msg)
+
+        skip_charge = self.chk_skip_charge.isChecked()
+        skip_rest   = self.chk_skip_rest.isChecked()
+        soc_thresh  = self.spn_soc_threshold.value()
 
         try:
             # ── PHASE 0: OCV CALIBRATE ────────────────────────────────────
@@ -2372,52 +3037,64 @@ class BatteryQtWindow(QMainWindow):
             self.sig_alarm.emit(f"[AUTO] OCV: {v:.3f} V → SoC {soc:.1f}%")
             self.sig_workflow.emit(0, "done")
 
-            # ── PHASE 1: CHARGE (ถ้า SoC < 95%) ─────────────────────────
-            if soc < 95.0:
+            # ── PHASE 1: CHARGE ──────────────────────────────────────────
+            if skip_charge or soc >= soc_thresh:
+                reason = "skip-charge checked" if skip_charge else f"SoC={soc:.0f}% ≥ {soc_thresh}%"
+                self.sig_alarm.emit(f"[AUTO] Skipping charge ({reason})")
+                self.sig_workflow.emit(1, "skip")
+            else:
                 self.sig_workflow.emit(1, "active")
                 try:
                     _c_rate_override = float(self.cb_seq_crate.currentText().rstrip("C"))
                 except (ValueError, AttributeError):
                     _c_rate_override = None
-                status(f"CHARGE: SoC={soc:.0f}% — เริ่มชาร์จ "
+                status(f"CHARGE: SoC={soc:.0f}% → charging "
                        f"({self.cb_seq_crate.currentText()})...")
                 self.controller.start_charge(strategy=None,
                                              bulk_c_rate_override=_c_rate_override)
-                while self._auto_seq_running:
+                _ch_t0 = time.time()
+                while self._seq_running.is_set():
                     if not getattr(self.controller, "is_charging", False):
                         break
                     try:
                         v2, _, _ = self.hw.read_vi()
-                        status(f"CHARGE: {v2:.2f} V กำลังชาร์จ...")
+                        elapsed_ch = int(time.time() - _ch_t0)
+                        status(f"CHARGE: {v2:.2f} V  (elapsed {elapsed_ch//60}m {elapsed_ch%60:02d}s)")
+                        self.sig_phase_progress.emit(elapsed_ch, 0)  # indeterminate — total unknown
                     except Exception:
                         pass
                     if not self._seq_sleep(30.0):
                         break
-                if not self._auto_seq_running:
+                if not self._seq_running.is_set():
                     return
+                self.sig_phase_progress.emit(0, 0)
                 self.sig_workflow.emit(1, "done")
                 self.sig_alarm.emit("[AUTO] Charge complete")
-            else:
-                self.sig_alarm.emit(f"[AUTO] SoC={soc:.0f}% ≥ 95% — ข้ามชาร์จ")
-                self.sig_workflow.emit(1, "skip")
 
-            # ── PHASE 2: REST 30 นาที ────────────────────────────────────
-            self.sig_workflow.emit(2, "active")
-            rest_total = self.spn_rest_min.value() * 60
-            t_rest_end = time.time() + rest_total
-            while self._auto_seq_running:
-                remaining = int(t_rest_end - time.time())
-                if remaining <= 0:
-                    break
-                mins, secs = divmod(remaining, 60)
-                status(f"REST: เหลือ {mins:d}:{secs:02d} นาที")
-                if not self._seq_sleep(10.0):
-                    return
-            # OCV reset after rest
-            soc2 = self.controller.calibrate_from_ocv()
-            v2, _, _ = self.hw.read_vi()
-            self.sig_alarm.emit(f"[AUTO] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}%")
-            self.sig_workflow.emit(2, "done")
+            # ── PHASE 2: REST ─────────────────────────────────────────────
+            if skip_rest:
+                self.sig_alarm.emit("[AUTO] Skipping REST phase")
+                self.sig_workflow.emit(2, "skip")
+            else:
+                self.sig_workflow.emit(2, "active")
+                rest_total = self.spn_rest_min.value() * 60
+                t_rest_end = time.time() + rest_total
+                while self._seq_running.is_set():
+                    remaining = int(t_rest_end - time.time())
+                    if remaining <= 0:
+                        break
+                    elapsed_r = rest_total - remaining
+                    mins, secs = divmod(remaining, 60)
+                    status(f"REST: เหลือ {mins:d}:{secs:02d} นาที")
+                    self.sig_phase_progress.emit(elapsed_r, rest_total)
+                    if not self._seq_sleep(10.0):
+                        return
+                self.sig_phase_progress.emit(0, 0)
+                # OCV reset after rest
+                soc2 = self.controller.calibrate_from_ocv()
+                v2, _, _ = self.hw.read_vi()
+                self.sig_alarm.emit(f"[AUTO] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}%")
+                self.sig_workflow.emit(2, "done")
 
             # ── PHASE 3: DISCHARGE TEST (IEC — C-rate จาก cb_test_crate) ───────
             self.sig_workflow.emit(3, "active")
@@ -2434,7 +3111,11 @@ class BatteryQtWindow(QMainWindow):
             self.hw.set_load(True, i_dis)
             import time as _t
             last_log = _t.time()
-            while self._auto_seq_running:
+            _dis_t0 = _t.time()
+            # Estimate discharge duration from SoC and C-rate (seconds)
+            rated2 = self.controller.config.battery.rated_capacity
+            _dis_est = int(rated2 / max(i_dis, 0.01) * 3600)
+            while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
                     temp3 = self.hw.current_temp
@@ -2443,7 +3124,12 @@ class BatteryQtWindow(QMainWindow):
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
                     self.controller._log_sample(v3, i3)
+                    self._seq_kick_watchdog()
+                    elapsed_d = int(now - _dis_t0)
                     status(f"TEST: {v3:.2f} V  {i3:.2f} A  SoC {state3['soc']:.0f}%")
+                    self.sig_phase_progress.emit(elapsed_d, _dis_est)
+                    if not self._seq_check_otp(temp3):
+                        break
                     if v3 <= pack_min:
                         break
                 except Exception as e:
@@ -2452,7 +3138,8 @@ class BatteryQtWindow(QMainWindow):
                 if not self._seq_sleep(5.0):
                     break
             self.hw.set_load(False)
-            if not self._auto_seq_running:
+            self.sig_phase_progress.emit(0, 0)
+            if not self._seq_running.is_set():
                 return
             self.controller._ocv_reset_after_rest("discharge")
             self.sig_workflow.emit(3, "done")
@@ -2461,16 +3148,22 @@ class BatteryQtWindow(QMainWindow):
             # ── PHASE 4: ANALYZE ─────────────────────────────────────────
             self.sig_workflow.emit(4, "active")
             status("ANALYZE: วิเคราะห์ CSV...")
-            self.controller._auto_analyze()
+            res = self.controller._auto_analyze()
             self.sig_workflow.emit(4, "done")
+            if res:
+                self.sig_seq_result.emit(self._format_seq_result(res))
             status("เสร็จสิ้น — ดูผลที่แท็บ Analytics")
             self.sig_alarm.emit("[AUTO] Sequence complete ✓")
+            grade_str = res.get("grade", "?") if res else "?"
+            self.sig_seq_done.emit("IEC 61960 Sequence Complete",
+                                   f"Grade: {grade_str}\nดูผลเพิ่มเติมที่แท็บ Analytics")
 
         except Exception as exc:
             self.sig_alarm.emit(f"[AUTO] Error: {exc}")
             status(f"Error: {exc}")
         finally:
-            self._auto_seq_running = False
+            self._seq_running.clear()
+            self.sig_phase_progress.emit(0, 0)
             self.sig_loading.emit("btn_auto_seq", False, "")
             self.sig_button.emit("btn_seq_cancel", False)
 
@@ -2499,16 +3192,20 @@ class BatteryQtWindow(QMainWindow):
 
             # ── Phase 1: REST 5 นาที ─────────────────────────────────────
             self.sig_qs_workflow.emit(1, "active")
-            t_end = _t.time() + 5 * 60
-            while self._auto_seq_running:
+            _rest_total = 5 * 60
+            t_end = _t.time() + _rest_total
+            while self._seq_running.is_set():
                 remaining = int(t_end - _t.time())
                 if remaining <= 0:
                     break
+                elapsed_r = _rest_total - remaining
                 mins, secs = divmod(remaining, 60)
                 status(f"QUICK REST: เหลือ {mins}:{secs:02d}")
+                self.sig_phase_progress.emit(elapsed_r, _rest_total)
                 if not self._seq_sleep(10.0):
                     break
-            if not self._auto_seq_running:
+            self.sig_phase_progress.emit(0, 0)
+            if not self._seq_running.is_set():
                 return
             soc2 = self.controller.calibrate_from_ocv()
             v2, _, _ = self.hw.read_vi()
@@ -2526,7 +3223,9 @@ class BatteryQtWindow(QMainWindow):
             self.controller._ensure_logging()
             self.hw.set_load(True, i_dis)
             last_log = _t.time()
-            while self._auto_seq_running:
+            _dis_t0 = _t.time()
+            _dis_est = int(rated / max(i_dis, 0.01) * 3600)
+            while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
                     temp3  = self.hw.current_temp
@@ -2535,7 +3234,12 @@ class BatteryQtWindow(QMainWindow):
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
                     self.controller._log_sample(v3, i3)
+                    self._seq_kick_watchdog()
+                    elapsed_d = int(now - _dis_t0)
                     status(f"QUICK: {v3:.2f} V  {i3:.2f} A  SoC {state3['soc']:.0f}%")
+                    self.sig_phase_progress.emit(elapsed_d, _dis_est)
+                    if not self._seq_check_otp(temp3):
+                        break
                     if v3 <= pack_min:
                         break
                 except Exception as exc:
@@ -2544,7 +3248,8 @@ class BatteryQtWindow(QMainWindow):
                 if not self._seq_sleep(5.0):
                     break
             self.hw.set_load(False)
-            if not self._auto_seq_running:
+            self.sig_phase_progress.emit(0, 0)
+            if not self._seq_running.is_set():
                 return
             # รอ 30 วิให้แรงดันนิ่ง แล้ว re-anchor SoC
             status("QUICK: รอ 30 วิ OCV settle...")
@@ -2557,17 +3262,348 @@ class BatteryQtWindow(QMainWindow):
             # ── Phase 3: ANALYZE ─────────────────────────────────────────
             self.sig_qs_workflow.emit(3, "active")
             status("QUICK ANALYZE: คำนวณ Peukert-corrected SoH...")
-            self.controller._auto_analyze()
+            res = self.controller._auto_analyze()
             self.sig_qs_workflow.emit(3, "done")
+            if res:
+                self.sig_seq_result.emit(self._format_seq_result(res))
             status("QUICK SCAN เสร็จ — ดูผลที่แท็บ Analytics  (ค่า capacity ถูก Peukert-correct แล้ว)")
             self.sig_alarm.emit("[QUICK] Scan complete ✓")
+            grade_str = res.get("grade", "?") if res else "?"
+            self.sig_seq_done.emit("Quick Scan Complete",
+                                   f"Grade: {grade_str}\nดูผลเพิ่มเติมที่แท็บ Analytics")
 
         except Exception as exc:
             self.sig_alarm.emit(f"[QUICK] Error: {exc}")
             status(f"QUICK Error: {exc}")
         finally:
-            self._auto_seq_running = False
+            self._seq_running.clear()
+            self.sig_phase_progress.emit(0, 0)
             self.sig_loading.emit("btn_quick_scan", False, "")
+            self.sig_button.emit("btn_seq_cancel", False)
+
+    # ---- result formatting -----------------------------------------------
+    @staticmethod
+    def _format_seq_result(res: dict) -> str:
+        """Format an analyze_csv result dict into a short HTML string for the
+        inline result card."""
+        grade   = res.get("grade", "?")
+        soh     = res.get("soh", float("nan"))
+        cap     = res.get("capacity_ah", float("nan"))
+        dcir    = res.get("dcir_mohm", float("nan"))
+        conf    = res.get("confidence", 0.0)
+        ecm     = res.get("ecm_identified", False)
+        r0      = res.get("r0_mohm", float("nan"))
+        r1      = res.get("r1_mohm", float("nan"))
+        tau     = res.get("tau_s", float("nan"))
+        r2      = res.get("ecm_r2", float("nan"))
+        import math
+        soh_str = f"{soh:.1f}%" if not math.isnan(soh) else "N/A"
+        cap_str = f"{cap:.2f} Ah" if not math.isnan(cap) else "N/A"
+        dcir_str = f"{dcir:.1f} mΩ" if not math.isnan(dcir) else "N/A"
+        lines = [
+            f"<b>Grade: {grade}</b>   SoH: {soh_str}   Cap: {cap_str}",
+            f"DCIR: {dcir_str}   Confidence: {conf*100:.0f}%",
+        ]
+        if ecm and not math.isnan(r0):
+            lines.append(
+                f"ECM — R0: {r0:.1f} mΩ  R1: {r1:.1f} mΩ  τ: {tau:.1f}s  R²: {r2:.3f}"
+            )
+        return "<br>".join(lines)
+
+    # ---- HPPC full-sequence thread ----------------------------------------
+    def _hppc_seq_thread(self):
+        """HPPC Full Sequence: CHARGE → REST 30 min → N×HPPC pulse/relax → ECM fit."""
+        import time as _t
+
+        def status(msg):
+            self.sig_charge_status.emit(msg)
+            self.sig_wf_status.emit(msg)
+
+        try:
+            # ── PHASE 0: CHARGE CC-CV ─────────────────────────────────────
+            self.sig_hppc_seq_wf.emit(0, "active")
+            status("HPPC SEQ: ชาร์จ CC-CV → 100%...")
+            rated = self.controller.config.battery.rated_capacity
+            self.controller.start_charge(strategy=None)
+            _ch_t0 = _t.time()
+            while self._seq_running.is_set():
+                if not getattr(self.controller, "is_charging", False):
+                    break
+                try:
+                    v_c, _, _ = self.hw.read_vi()
+                    elapsed_ch = int(_t.time() - _ch_t0)
+                    status(f"HPPC CHARGE: {v_c:.2f} V  ({elapsed_ch//60}m {elapsed_ch%60:02d}s)")
+                    self.sig_phase_progress.emit(elapsed_ch, 0)
+                except Exception:
+                    pass
+                if not self._seq_sleep(30.0):
+                    break
+            self.sig_phase_progress.emit(0, 0)
+            if not self._seq_running.is_set():
+                return
+            self.sig_hppc_seq_wf.emit(0, "done")
+            self.sig_alarm.emit("[HPPC SEQ] Charge complete")
+
+            # ── PHASE 1: REST 30 min ─────────────────────────────────────
+            self.sig_hppc_seq_wf.emit(1, "active")
+            _rest_total = 30 * 60
+            t_rest_end = _t.time() + _rest_total
+            while self._seq_running.is_set():
+                remaining = int(t_rest_end - _t.time())
+                if remaining <= 0:
+                    break
+                elapsed_r = _rest_total - remaining
+                mins, secs = divmod(remaining, 60)
+                status(f"HPPC REST (OCV settle): เหลือ {mins}:{secs:02d}")
+                self.sig_phase_progress.emit(elapsed_r, _rest_total)
+                if not self._seq_sleep(10.0):
+                    break
+            self.sig_phase_progress.emit(0, 0)
+            if not self._seq_running.is_set():
+                return
+            soc_h = self.controller.calibrate_from_ocv()
+            v_h, _, _ = self.hw.read_vi()
+            self.sig_alarm.emit(f"[HPPC SEQ] Post-rest OCV: {v_h:.3f} V → SoC {soc_h:.1f}%")
+            self.sig_hppc_seq_wf.emit(1, "done")
+
+            # ── PHASE 2: HPPC N cycles ────────────────────────────────────
+            self.sig_hppc_seq_wf.emit(2, "active")
+            n_cyc    = self.spn_hppc_cycles.value()
+            try:
+                pulse_s = max(1.0, float(self.ed_hppc_pulse.text() or "30"))
+                relax_s = max(1.0, float(self.ed_hppc_relax.text() or "30"))
+                crate   = max(0.1, float(self.ed_hppc_crate.text() or "1.0"))
+            except (ValueError, AttributeError):
+                pulse_s, relax_s, crate = 30.0, 30.0, 1.0
+            max_dis = self.controller.config.battery.max_current
+            i_pulse = min(crate * rated, max_dis)
+            pack_min = self.controller.config.battery.pack_min_voltage
+            _hppc_total = n_cyc * (relax_s + pulse_s)
+            self.controller._ensure_logging()
+            self.hw.psu_off()
+            self.hw.load_off()
+            _hppc_t0 = _t.time()
+            for cyc in range(1, n_cyc + 1):
+                if not self._seq_running.is_set():
+                    break
+                # Relax (REST) leg
+                status(f"HPPC {cyc}/{n_cyc}: REST {relax_s:.0f}s...")
+                t_phase = _t.time() + relax_s
+                while self._seq_running.is_set() and _t.time() < t_phase:
+                    try:
+                        v_r, _, _ = self.hw.read_vi()
+                        self.controller._log_sample(v_r, 0.0)
+                        self._seq_kick_watchdog()
+                        elapsed_h = int(_t.time() - _hppc_t0)
+                        self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
+                        if v_r <= pack_min:
+                            self._seq_running.clear(); break
+                        temp_h = self.hw.current_temp
+                        if not self._seq_check_otp(temp_h):
+                            break
+                    except Exception:
+                        pass
+                    _t.sleep(1.0)
+                if not self._seq_running.is_set():
+                    break
+                # Pulse leg
+                self.hw.set_load(True, str(i_pulse))
+                status(f"HPPC {cyc}/{n_cyc}: PULSE {pulse_s:.0f}s  {i_pulse:.2f} A")
+                t_phase = _t.time() + pulse_s
+                while self._seq_running.is_set() and _t.time() < t_phase:
+                    try:
+                        v_p, i_p = self.hw.read_measurements(prefer_load_v=True)
+                        self.controller._log_sample(v_p, -i_p)
+                        self._seq_kick_watchdog()
+                        elapsed_h = int(_t.time() - _hppc_t0)
+                        self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
+                        if v_p <= pack_min:
+                            self._seq_running.clear(); break
+                        temp_h = self.hw.current_temp
+                        if not self._seq_check_otp(temp_h):
+                            break
+                    except Exception:
+                        pass
+                    _t.sleep(1.0)
+                self.hw.load_off()
+                if not self._seq_running.is_set():
+                    break
+            self.sig_phase_progress.emit(0, 0)
+            if not self._seq_running.is_set():
+                return
+            self.sig_hppc_seq_wf.emit(2, "done")
+            self.sig_alarm.emit(f"[HPPC SEQ] {n_cyc} HPPC cycles complete")
+
+            # ── PHASE 3: ANALYZE (ECM fit) ────────────────────────────────
+            self.sig_hppc_seq_wf.emit(3, "active")
+            status("HPPC SEQ ANALYZE: ECM fit R0/R1/C1/τ...")
+            res = self.controller._auto_analyze(force_hppc=True)
+            self.sig_hppc_seq_wf.emit(3, "done")
+            if res:
+                self.sig_seq_result.emit(self._format_seq_result(res))
+            status("HPPC SEQUENCE เสร็จ — ดูผลที่แท็บ Analytics")
+            self.sig_alarm.emit("[HPPC SEQ] Complete ✓")
+            grade_str = res.get("grade", "?") if res else "?"
+            ecm_str = res.get("ecm_model", "1RC") if res else "1RC"
+            self.sig_seq_done.emit("HPPC Sequence Complete",
+                                   f"Grade: {grade_str}  ({ecm_str} ECM)\nดูผลที่แท็บ Analytics")
+
+        except Exception as exc:
+            self.sig_alarm.emit(f"[HPPC SEQ] Error: {exc}")
+            status(f"HPPC SEQ Error: {exc}")
+        finally:
+            self._seq_running.clear()
+            self.sig_phase_progress.emit(0, 0)
+            self.hw.load_off()
+            self.sig_loading.emit("btn_hppc_seq", False, "")
+            self.sig_button.emit("btn_seq_cancel", False)
+
+    # ---- Cycle Life test thread -------------------------------------------
+    def _cycle_life_thread(self):
+        """Cycle Life: N × (Charge CC-CV → REST → Discharge CC) with capacity fade tracking."""
+        import time as _t
+
+        def status(msg):
+            self.sig_charge_status.emit(msg)
+            self.sig_wf_status.emit(msg)
+
+        try:
+            n_cyc     = self.spn_cycle_n.value()
+            rest_s    = self.spn_cycle_rest.value() * 60
+            rated     = self.controller.config.battery.rated_capacity
+            try:
+                c_ch  = float(self.cb_cycle_charge_crate.currentText().rstrip("C"))
+            except (ValueError, AttributeError):
+                c_ch  = 0.3
+            try:
+                c_di  = float(self.cb_cycle_dis_crate.currentText().rstrip("C"))
+            except (ValueError, AttributeError):
+                c_di  = 0.2
+            max_current = self.controller.config.battery.max_current
+            pack_min  = self.controller.config.battery.pack_min_voltage
+            i_ch      = min(c_ch * rated, max_current)
+            i_dis     = min(c_di * rated, max_current)
+            cap_history: list[float] = []
+
+            for cyc in range(1, n_cyc + 1):
+                if not self._seq_running.is_set():
+                    break
+                status(f"CYCLE {cyc}/{n_cyc}: ชาร์จ {i_ch:.2f} A ({c_ch}C)...")
+                # ── step 1: CHARGE
+                self.sig_cycle_wf.emit(0, "active")
+                self.controller.start_charge(strategy=None,
+                                             bulk_c_rate_override=c_ch)
+                _ch_t0 = _t.time()
+                while self._seq_running.is_set():
+                    if not getattr(self.controller, "is_charging", False):
+                        break
+                    try:
+                        v_c, _, _ = self.hw.read_vi()
+                        elapsed_c = int(_t.time() - _ch_t0)
+                        status(f"CYCLE {cyc}/{n_cyc} CHARGE: {v_c:.2f} V  "
+                               f"({elapsed_c//60}m {elapsed_c%60:02d}s)")
+                        self.sig_phase_progress.emit(elapsed_c, 0)
+                    except Exception:
+                        pass
+                    if not self._seq_sleep(30.0):
+                        break
+                self.sig_phase_progress.emit(0, 0)
+                if not self._seq_running.is_set():
+                    break
+                self.sig_cycle_wf.emit(0, "done")
+
+                # ── step 2: REST
+                self.sig_cycle_wf.emit(1, "active") if cyc == 1 else None
+                t_rest_end = _t.time() + rest_s
+                while self._seq_running.is_set():
+                    remaining = int(t_rest_end - _t.time())
+                    if remaining <= 0:
+                        break
+                    elapsed_r = rest_s - remaining
+                    mins, secs = divmod(remaining, 60)
+                    status(f"CYCLE {cyc}/{n_cyc} REST: เหลือ {mins}:{secs:02d}")
+                    self.sig_phase_progress.emit(elapsed_r, rest_s)
+                    if not self._seq_sleep(10.0):
+                        break
+                self.sig_phase_progress.emit(0, 0)
+                if not self._seq_running.is_set():
+                    break
+
+                # ── step 3: DISCHARGE (integrate capacity)
+                self.sig_cycle_wf.emit(1, "active")
+                status(f"CYCLE {cyc}/{n_cyc}: ดิสชาร์จ {i_dis:.2f} A ({c_di}C)...")
+                self.controller._ensure_logging()
+                self.hw.set_load(True, str(i_dis))
+                _dis_t0 = _t.time()
+                _dis_est = int(rated / max(i_dis, 0.01) * 3600)
+                ah_acc = 0.0
+                last_log = _t.time()
+                while self._seq_running.is_set():
+                    try:
+                        v_d, i_d = self.hw.read_measurements(prefer_load_v=True)
+                        now = _t.time()
+                        dt  = now - last_log
+                        last_log = now
+                        ah_acc += abs(i_d) * dt / 3600.0
+                        self.controller._log_sample(v_d, -i_d)
+                        self._seq_kick_watchdog()
+                        elapsed_d = int(now - _dis_t0)
+                        temp_d = self.hw.current_temp
+                        status(f"CYCLE {cyc}/{n_cyc} DIS: {v_d:.2f} V  "
+                               f"{ah_acc:.3f} Ah  SoC ~{max(0, 100-100*ah_acc/rated):.0f}%")
+                        self.sig_phase_progress.emit(elapsed_d, _dis_est)
+                        if not self._seq_check_otp(temp_d):
+                            break
+                        if v_d <= pack_min:
+                            break
+                    except Exception as exc:
+                        self.sig_alarm.emit(f"[CYCLE] read error: {exc}")
+                        break
+                    if not self._seq_sleep(5.0):
+                        break
+                self.hw.set_load(False)
+                self.sig_phase_progress.emit(0, 0)
+                if not self._seq_running.is_set():
+                    break
+                cap_history.append(ah_acc)
+                fade = 100.0 * ah_acc / rated if rated else 0.0
+                self.lbl_cycle_counter.setText(
+                    f"Cycle {cyc}/{n_cyc}  —  {ah_acc:.3f} Ah  ({fade:.1f}% of rated)"
+                )
+                self.sig_alarm.emit(
+                    f"[CYCLE] Cycle {cyc}: {ah_acc:.3f} Ah  ({fade:.1f}%)"
+                )
+                self.sig_cycle_wf.emit(1, "done")
+
+            self.sig_cycle_wf.emit(2, "done")
+            # Final summary
+            if cap_history:
+                first, last = cap_history[0], cap_history[-1]
+                import math
+                soh_init  = 100.0 * first / rated if rated else float("nan")
+                soh_final = 100.0 * last  / rated if rated else float("nan")
+                fade_pct  = 100.0 * (first - last) / first if first else 0.0
+                result_html = (
+                    f"<b>Cycle Life ({len(cap_history)} cycles)</b><br>"
+                    f"Cap(1): {first:.3f} Ah  →  Cap(N): {last:.3f} Ah<br>"
+                    f"SoH init: {soh_init:.1f}%  SoH final: {soh_final:.1f}%  "
+                    f"Fade: {fade_pct:.1f}%"
+                )
+                self.sig_seq_result.emit(result_html)
+            self.sig_cycle_wf.emit(3, "done")
+            status(f"CYCLE LIFE เสร็จ — {n_cyc} รอบ, ดูผลที่แท็บ Analytics")
+            self.sig_alarm.emit("[CYCLE] Cycle Life complete ✓")
+            self.sig_seq_done.emit("Cycle Life Test Complete",
+                                   f"ทดสอบครบ {len(cap_history)} รอบ\nดูผล capacity fade ที่แท็บ Analytics")
+
+        except Exception as exc:
+            self.sig_alarm.emit(f"[CYCLE] Error: {exc}")
+            status(f"CYCLE Error: {exc}")
+        finally:
+            self._seq_running.clear()
+            self.sig_phase_progress.emit(0, 0)
+            self.hw.load_off()
+            self.sig_loading.emit("btn_cycle_life", False, "")
             self.sig_button.emit("btn_seq_cancel", False)
 
     # ---- characterization test (acquisition worker on the real HAL) -------
@@ -2585,9 +3621,13 @@ class BatteryQtWindow(QMainWindow):
         p = profile_from_config(self.config)
         p.hppc_pulse_duration = _fld(self.ed_hppc_pulse, 30.0)
         p.hppc_relaxation_duration = _fld(self.ed_hppc_relax, 30.0)
+        p.hppc_pulse_crate = _fld(self.ed_hppc_crate, 1.0)
         return p
 
-    def _on_run_test(self):
+    def _on_run_hppc(self):
+        self._on_run_test(mode=OperationMode.HPPC)
+
+    def _on_run_test(self, mode=None):
         if self._test_thread is not None:
             return
         if not getattr(self.hw, "is_connected", False):
@@ -2600,12 +3640,14 @@ class BatteryQtWindow(QMainWindow):
         if self.controller and self.controller.monitor_running:
             self.controller.stop_monitor()
 
-        cfg = TestConfig(self._acq_profile(), OperationMode(self.cb_op_mode.currentText()))
+        op_mode = mode or OperationMode(self.cb_op_mode.currentText())
+        cfg = TestConfig(self._acq_profile(), op_mode)
         self.buf_t.clear(); self.buf_v.clear(); self.buf_i.clear()
-        self.buf_soc.clear(); self.buf_temp.clear()
+        self.buf_soc.clear(); self.buf_rin.clear(); self.buf_temp.clear()
+        self._elapsed_t0 = None
         os.makedirs("sessions", exist_ok=True)
         csv_path = os.path.join("sessions", f"test_{datetime.now():%Y%m%d_%H%M%S}.csv")
-        self._last_csv = csv_path                       # most-recent run → Analyze/PDF use this
+        self._last_csv = csv_path
         self.lbl_csv.setText(f"CSV: {csv_path}")
 
         backend = HardwareBackend(self.hw)
@@ -2619,8 +3661,17 @@ class BatteryQtWindow(QMainWindow):
         self._test_worker.finished.connect(self._on_test_finished)
         self._test_worker.finished.connect(self._test_thread.quit)
         self._test_thread.finished.connect(self._cleanup_test_thread)
+        if op_mode == OperationMode.HPPC:
+            self._test_worker.telemetry.connect(self._on_hppc_telemetry)
+            self.btn_run_hppc.setEnabled(False)
+            self.lbl_hppc_phase.setText("RUNNING…")
+            self.lbl_hppc_phase.setStyleSheet(
+                f"background:{INFO}; color:white; border:1px solid {BORDER}; "
+                f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
+            )
+        else:
+            self.btn_run_test.setEnabled(False)
         self._test_thread.start()
-        self.btn_run_test.setEnabled(False)
         self._log_alarm(f"Characterization started: {cfg.mode.value}")
 
     def _on_stop_test(self):
@@ -2642,6 +3693,31 @@ class BatteryQtWindow(QMainWindow):
             row["temp"], self.config.system.safety_limits.get("max_temperature", 55) - 10,
             self.config.system.safety_limits.get("max_temperature", 55))
         self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
+
+    def _on_hppc_telemetry(self, row: dict):
+        """Update the HPPC phase indicator (REST / PULSE / cycle count) from elapsed time."""
+        try:
+            pulse = max(1.0, float(self.ed_hppc_pulse.text() or "30"))
+            relax = max(1.0, float(self.ed_hppc_relax.text() or "30"))
+            elapsed = row["elapsed"]
+            cycle = pulse + relax
+            cycle_num = int(elapsed / cycle) + 1
+            t_in_cycle = elapsed % cycle
+            if t_in_cycle < relax:
+                remaining = int(relax - t_in_cycle)
+                text = f"Cycle {cycle_num}  ·  REST  ({remaining} s left)"
+                bg, fg = PANEL2, MUTED
+            else:
+                remaining = int(pulse - (t_in_cycle - relax))
+                text = f"Cycle {cycle_num}  ·  PULSE  ({remaining} s left)"
+                bg, fg = OK, "white"
+            self.lbl_hppc_phase.setText(text)
+            self.lbl_hppc_phase.setStyleSheet(
+                f"background:{bg}; color:{fg}; border:1px solid {BORDER}; "
+                f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
+            )
+        except Exception:
+            pass
 
     def _on_test_finished(self, results: dict):
         # SoH is N/A when not measurable (e.g. HPPC pulse test — see analyze_series).
@@ -2702,6 +3778,17 @@ class BatteryQtWindow(QMainWindow):
         if hasattr(self, "lbl_run_grade"):
             self.lbl_run_grade.setText(
                 f"Grade: {grade} · SoH {soh_txt}% · conf {conf*100:.0f}%")
+        if hasattr(self, "lbl_hppc_phase") and results.get("ecm_identified"):
+            ecm_r2 = results.get("ecm_r2", 0.0)
+            r0 = results.get("r0_mohm", 0.0)
+            r1 = results.get("r1_mohm", 0.0)
+            tau = results.get("tau_s", 0.0)
+            self.lbl_hppc_phase.setText(
+                f"DONE · R₀={r0:.1f} mΩ  R₁={r1:.1f} mΩ  τ={tau:.1f} s  R²={ecm_r2:.3f}")
+            self.lbl_hppc_phase.setStyleSheet(
+                f"background:{INFO}; color:white; border:1px solid {BORDER}; "
+                f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
+            )
         self._log_alarm(
             f"Test complete — Grade {grade} (conf {conf*100:.0f}%), "
             f"SoH {soh_txt}%, DCIR {dcir:.1f}±{dstd:.1f} mΩ{wmsg}")
@@ -2712,6 +3799,14 @@ class BatteryQtWindow(QMainWindow):
         self._test_thread = None
         self._test_worker = None
         self.btn_run_test.setEnabled(True)
+        if hasattr(self, "btn_run_hppc"):
+            self.btn_run_hppc.setEnabled(True)
+        if hasattr(self, "lbl_hppc_phase"):
+            self.lbl_hppc_phase.setText("IDLE")
+            self.lbl_hppc_phase.setStyleSheet(
+                f"background:{PANEL2}; color:{MUTED}; border:1px solid {BORDER}; "
+                f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
+            )
         self.lbl_test_status.setText("Test idle")
 
     def _on_estop(self):
@@ -2808,15 +3903,71 @@ class BatteryQtWindow(QMainWindow):
         except ValueError:
             return fname
 
+    # ── Session metadata (rename / tag) ──────────────────────────────────
+    _SESSION_META_FILE = os.path.join("sessions", ".session_meta.json")
+
+    def _load_session_meta(self) -> dict:
+        try:
+            import json as _json
+            with open(self._SESSION_META_FILE, encoding="utf-8") as f:
+                return _json.load(f)
+        except Exception:
+            return {}
+
+    def _save_session_meta(self, meta: dict):
+        try:
+            import json as _json
+            os.makedirs("sessions", exist_ok=True)
+            with open(self._SESSION_META_FILE, "w", encoding="utf-8") as f:
+                _json.dump(meta, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            self._log_alarm(f"session meta save failed: {e}")
+
+    def _on_session_context_menu(self, pos):
+        item = self.lst_sessions.itemAt(pos)
+        if item is None:
+            return
+        fpath = item.data(Qt.ItemDataRole.UserRole)
+        fname = os.path.basename(fpath)
+        from PySide6.QtWidgets import QMenu, QInputDialog
+        menu = QMenu(self)
+        act_rename = menu.addAction("✏  Rename / Label")
+        act_tag    = menu.addAction("🏷  Add Tag")
+        act_clear  = menu.addAction("✗  Clear Label & Tag")
+        action = menu.exec(self.lst_sessions.mapToGlobal(pos))
+        meta = self._load_session_meta()
+        entry = meta.get(fname, {})
+        if action == act_rename:
+            text, ok = QInputDialog.getText(self, "Rename Session",
+                                            "Label:", text=entry.get("label", ""))
+            if ok:
+                entry["label"] = text.strip()
+                meta[fname] = entry
+                self._save_session_meta(meta)
+                self._refresh_session_list()
+        elif action == act_tag:
+            text, ok = QInputDialog.getText(self, "Add Tag",
+                                            "Tag:", text=entry.get("tag", ""))
+            if ok:
+                entry["tag"] = text.strip()
+                meta[fname] = entry
+                self._save_session_meta(meta)
+                self._refresh_session_list()
+        elif action == act_clear:
+            meta.pop(fname, None)
+            self._save_session_meta(meta)
+            self._refresh_session_list()
+
     def _refresh_session_list(self):
         """อัพเดทรายการ session files จาก sessions/ directory.
-        แสดง: ลำดับ · ชนิดการทดสอบ · วันเวลา · ขนาด."""
+        แสดง: ลำดับ · ชนิดการทดสอบ · วันเวลา · ขนาด · label/tag ถ้ามี"""
         if not hasattr(self, "lst_sessions"):
             return
         self.lst_sessions.clear()
         logs_dir = "sessions"
         if not os.path.isdir(logs_dir):
             return
+        meta = self._load_session_meta()
         files = sorted(
             [f for f in os.listdir(logs_dir) if f.startswith("test_") and f.endswith(".csv")],
             reverse=True,
@@ -2830,10 +3981,14 @@ class BatteryQtWindow(QMainWindow):
                 size_txt = f"{size_kb:.0f} KB"
             except OSError:
                 size_txt = "—"
-            label = f"{seq}.  {ttype:<10}{when}   ·  {size_txt}"
+            entry   = meta.get(fname, {})
+            label_s = f"  [{entry['label']}]" if entry.get("label") else ""
+            tag_s   = f"  #{entry['tag']}" if entry.get("tag") else ""
+            label   = f"{seq}.  {ttype:<10}{when}   ·  {size_txt}{label_s}{tag_s}"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, fpath)
-            item.setToolTip(f"{fname}\nType: {ttype}\n{when}  ·  {size_txt}")
+            item.setToolTip(f"{fname}\nType: {ttype}\n{when}  ·  {size_txt}"
+                            f"{label_s}{tag_s}\nRight-click to rename/tag")
             self.lst_sessions.addItem(item)
 
     def _on_session_selected(self, item):
@@ -2883,6 +4038,153 @@ class BatteryQtWindow(QMainWindow):
             self._log_alarm(f"PDF failed: {payload}")
             if not self._headless:
                 QMessageBox.critical(self, "PDF Report", payload)
+
+    # ── SoH Trend chart ──────────────────────────────────────────────────
+    def _on_soh_trend(self):
+        """Parse all sessions for SoH, show a matplotlib window with timeline."""
+        import threading
+        threading.Thread(target=self._soh_trend_worker, daemon=True).start()
+
+    def _soh_trend_worker(self):
+        try:
+            import matplotlib
+            matplotlib.use("Qt5Agg")
+            import matplotlib.pyplot as plt
+            from aset_batt.acquisition.analysis import analyze_csv, profile_from_config
+
+            logs_dir = "sessions"
+            if not os.path.isdir(logs_dir):
+                return
+            files = sorted(
+                [f for f in os.listdir(logs_dir) if f.startswith("test_") and f.endswith(".csv")]
+            )
+            profile = profile_from_config(self.config)
+            dates, sohs, labels = [], [], []
+            for fname in files:
+                fpath = os.path.join(logs_dir, fname)
+                try:
+                    res = analyze_csv(fpath, profile)
+                    import math
+                    if not math.isnan(res.get("soh", float("nan"))):
+                        from datetime import datetime as _dt
+                        stem = fname[len("test_"):-len(".csv")]
+                        d = _dt.strptime(stem, "%Y%m%d_%H%M%S")
+                        dates.append(d)
+                        sohs.append(res["soh"])
+                        meta = self._load_session_meta()
+                        e = meta.get(fname, {})
+                        labels.append(e.get("label") or e.get("tag") or stem[-6:])
+                except Exception:
+                    continue
+
+            if not sohs:
+                self.sig_alarm.emit("[TREND] No sessions with valid SoH found")
+                return
+            fig, ax = plt.subplots(figsize=(9, 4))
+            ax.plot(dates, sohs, "o-", color="#005a9e", linewidth=1.8)
+            for d, s, lb in zip(dates, sohs, labels):
+                ax.annotate(f"{s:.1f}%", (d, s), textcoords="offset points",
+                            xytext=(0, 7), ha="center", fontsize=8)
+            ax.axhline(80, color="orange", linestyle="--", linewidth=0.9, label="80% SoH limit")
+            ax.set_ylabel("SoH (%)")
+            ax.set_title("State of Health Trend")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            fig.autofmt_xdate()
+            fig.tight_layout()
+            plt.show()
+        except Exception as e:
+            self.sig_alarm.emit(f"[TREND] Error: {e}")
+
+    # ── Capacity Fade chart ───────────────────────────────────────────────
+    def _on_capacity_fade(self):
+        """Parse cycle-life sessions and show capacity fade bar chart."""
+        import threading
+        threading.Thread(target=self._capacity_fade_worker, daemon=True).start()
+
+    def _capacity_fade_worker(self):
+        try:
+            import matplotlib
+            matplotlib.use("Qt5Agg")
+            import matplotlib.pyplot as plt
+            import csv as _csv
+
+            logs_dir = "sessions"
+            if not os.path.isdir(logs_dir):
+                return
+            files = sorted(
+                [f for f in os.listdir(logs_dir) if f.startswith("test_") and f.endswith(".csv")]
+            )
+            # collect per-session capacity
+            session_caps = []
+            session_labels = []
+            meta = self._load_session_meta()
+            for fname in files:
+                fpath = os.path.join(logs_dir, fname)
+                try:
+                    cap_ah = 0.0
+                    with open(fpath, encoding="utf-8-sig") as f:
+                        reader = _csv.DictReader(f)
+                        rows = list(reader)
+                    # find last Capacity_Ah value
+                    for row in reversed(rows):
+                        v = row.get("Capacity_Ah") or row.get("capacity_ah", "")
+                        try:
+                            cap_ah = float(v)
+                            break
+                        except (ValueError, TypeError):
+                            continue
+                    if cap_ah > 0.01:
+                        e = meta.get(fname, {})
+                        stem = fname[len("test_"):-len(".csv")]
+                        session_caps.append(cap_ah)
+                        session_labels.append(e.get("label") or stem[-8:])
+                except Exception:
+                    continue
+
+            if not session_caps:
+                self.sig_alarm.emit("[FADE] No sessions with capacity data found")
+                return
+
+            fig, ax = plt.subplots(figsize=(max(6, len(session_caps) * 0.6 + 2), 4))
+            colors_list = ["#005a9e" if c >= session_caps[0] * 0.8 else "#d83b01"
+                           for c in session_caps]
+            bars = ax.bar(range(len(session_caps)), session_caps, color=colors_list)
+            ax.set_xticks(range(len(session_caps)))
+            ax.set_xticklabels(session_labels, rotation=45, ha="right", fontsize=8)
+            ax.set_ylabel("Capacity (Ah)")
+            ax.set_title("Capacity Fade — Session History")
+            ax.axhline(session_caps[0] * 0.8, color="orange", linestyle="--",
+                       linewidth=0.9, label="80% of first session")
+            for bar, cap in zip(bars, session_caps):
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.002,
+                        f"{cap:.3f}", ha="center", va="bottom", fontsize=7)
+            ax.legend()
+            ax.grid(axis="y", alpha=0.3)
+            fig.tight_layout()
+            plt.show()
+        except Exception as e:
+            self.sig_alarm.emit(f"[FADE] Error: {e}")
+
+    def _on_cloud_push_toggle(self, state):
+        enabled = bool(state)
+        self.config.system.cloud_push_enabled = enabled
+        self.config.save_config()
+        if enabled:
+            self._cloud_push_stop()
+            self._cloud_push_start()
+        else:
+            self._cloud_push_stop()
+        self._log_alarm(f"[CLOUD] Push {'enabled' if enabled else 'disabled'}")
+
+    def _on_cloud_url_changed(self):
+        url = self.ed_cloud_url.text().strip()
+        self.config.system.cloud_dashboard_url = url
+        self.config.save_config()
+        # restart push service with new URL
+        if getattr(self.config.system, "cloud_push_enabled", False):
+            self._cloud_push_stop()
+            self._cloud_push_start()
 
     def _on_open_dashboard(self):
         url = getattr(self.config.system, "cloud_dashboard_url", "").strip()

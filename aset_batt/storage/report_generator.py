@@ -124,20 +124,80 @@ def generate_pdf_report(path, config, estimator=None, analysis=None, csv_path=No
             logger.warning(f"estimator state ไม่พร้อม: {e}")
 
     # --- AI grade ---
-    if analysis is not None and getattr(analysis, "success", False):
-        f = analysis.features
-        story.append(Paragraph("AI Grading Result", h2))
-        grade_tbl = _info_table([
-            ["Grade", f"{analysis.grade}  ({analysis.confidence * 100:.0f}% conf, {analysis.method})"],
-            ["SoH", f"{f.soh_pct:.1f} %"],
-            ["Capacity", f"{f.capacity_ah:.3f} Ah"],
-            ["Energy", f"{f.energy_wh:.2f} Wh"],
-            ["R0 (ohmic)", f"{f.r0_mohm:.2f} mΩ"],
-            ["Rp (polarization)", f"{f.rp_mohm:.2f} mΩ"],
-            ["Avg Temperature", f"{f.avg_temp_c:.1f} °C"],
-        ])
-        story.append(grade_tbl)
-        story.append(Spacer(1, 6 * mm))
+    # Supports two formats:
+    #   dict  — keys: grade, soh, capacity_ah, dcir_mohm, r0_mohm, r1_mohm, c1_farad,
+    #                  tau_s, ecm_identified, ecm_r2, confidence, quality_warnings
+    #   legacy object — has .success attr (old AnalysisResult)
+    if analysis is not None:
+        if isinstance(analysis, dict):
+            _grade = analysis.get("grade", "?")
+            _conf = analysis.get("confidence", 0.0)
+            _soh = analysis.get("soh", 0.0)
+            _cap = analysis.get("capacity_ah", 0.0)
+            _dcir = analysis.get("dcir_mohm", 0.0)
+            _r0 = analysis.get("r0_mohm", 0.0)
+            _r1 = analysis.get("r1_mohm", 0.0)
+            _tau = analysis.get("tau_s", 0.0)
+            _ecm_id = analysis.get("ecm_identified", False)
+            _ecm_r2 = analysis.get("ecm_r2", 0.0)
+            _warnings = analysis.get("quality_warnings") or []
+            _show = True
+        elif getattr(analysis, "success", False):
+            f = analysis.features
+            _grade = analysis.grade
+            _conf = analysis.confidence
+            _soh = getattr(f, "soh_pct", 0.0)
+            _cap = getattr(f, "capacity_ah", 0.0)
+            _dcir = getattr(f, "r0_mohm", 0.0) + getattr(f, "rp_mohm", 0.0)
+            _r0 = getattr(f, "r0_mohm", 0.0)
+            _r1 = getattr(f, "rp_mohm", 0.0)
+            _tau = 0.0
+            _ecm_id = False
+            _ecm_r2 = 0.0
+            _warnings = []
+            _show = True
+        else:
+            _show = False
+
+        if _show:
+            story.append(Paragraph("AI Grading Result", h2))
+            grade_rows = [
+                ["Grade", f"{_grade}  ({_conf * 100:.0f}% confidence)"],
+                ["SoH", f"{_soh:.1f} %"],
+                ["Capacity", f"{_cap:.3f} Ah"],
+                ["DCIR", f"{_dcir:.2f} mΩ"],
+                ["R0 (ohmic)", f"{_r0:.2f} mΩ"],
+                ["R1 (polarisation)", f"{_r1:.2f} mΩ"],
+                ["τ (time constant)", f"{_tau:.2f} s"],
+            ]
+            if _ecm_id:
+                grade_rows.append(["ECM R²", f"{_ecm_r2:.4f}"])
+            if _warnings:
+                grade_rows.append(["Warnings", "; ".join(str(w) for w in _warnings)])
+            story.append(_info_table(grade_rows))
+
+            # ECM summary note when equivalent-circuit model was identified
+            if _ecm_id:
+                ecm_style = ParagraphStyle(
+                    "ecm_note",
+                    parent=styles["Normal"],
+                    fontSize=9,
+                    textColor=colors.HexColor("#374151"),
+                    backColor=colors.HexColor("#f0f9ff"),
+                    borderColor=colors.HexColor("#93c5fd"),
+                    borderWidth=0.5,
+                    borderPadding=4,
+                )
+                story.append(Spacer(1, 3 * mm))
+                story.append(Paragraph(
+                    f"ECM: 1-RC model identified — "
+                    f"R0 = {_r0:.1f} mΩ  "
+                    f"R1 = {_r1:.1f} mΩ  "
+                    f"τ = {_tau:.1f} s  "
+                    f"R² = {_ecm_r2:.3f}",
+                    ecm_style,
+                ))
+            story.append(Spacer(1, 6 * mm))
 
     # --- CSV plot ---
     plot_path = None

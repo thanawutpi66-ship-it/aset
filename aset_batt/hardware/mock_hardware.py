@@ -161,14 +161,12 @@ class MockHardwareController:
         self.load_inst = _MockInst()
 
     def read_measurements(self, prefer_load_v=False):
-        # Convention: discharge = positive. Mirror bleed compensation of HardwareController.
+        # Convention: discharge = positive. Mirrors HardwareController.read_measurements().
         v, psu_i, load_i = self.read_vi()
         if prefer_load_v:
-            # Discharge: PSU disconnected → no bleed → battery supplies only load current
-            return v, load_i
+            return v, load_i          # discharge: PSU disconnected, no bleed
         else:
-            # Charge/idle: PSU measures I_battery + I_bleed → subtract bleed (negative = charging)
-            return v, -(psu_i - self.psu_bleed_a)
+            return v, -psu_i          # charge/idle: bleed inactive while OUTPUT ON
 
     def set_charge(self, state, current_val="0"):
         if state:
@@ -178,8 +176,7 @@ class MockHardwareController:
         """จำลอง CC-CV charge: ตั้ง target + กระแส bulk ให้ read_vi ขับ state machine ได้"""
         self._cccv_v = float(voltage)
         if not self._charging:
-            # แบตรับ current; PSU จ่าย current + bleed (mock ไม่มี bleed จริงๆ แต่ store ค่า target)
-            self._charge_i = float(current)
+            self._charge_i = float(current)   # bleed inactive during charge — no offset
         self._charging = True
 
 
