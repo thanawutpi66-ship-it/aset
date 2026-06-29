@@ -385,7 +385,7 @@ def _read_csv(path):
             np.asarray(TEMP, float), np.asarray(CAP, float), modes)
 
 
-def analyze_csv(csv_path: str, profile: BatteryProfile) -> dict:
+def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False) -> dict:
     """Parse a telemetry CSV and run the unified analysis. HPPC is inferred from
     the ``Mode`` column; capacity is integrated from current if not logged."""
     if not csv_path or not os.path.exists(csv_path):
@@ -393,7 +393,7 @@ def analyze_csv(csv_path: str, profile: BatteryProfile) -> dict:
     t, v, i, temp, cap, modes = _read_csv(csv_path)
     if t.size < 2:
         raise ValueError("CSV has too few samples to analyse.")
-    is_hppc = any("hppc" in (m or "").lower() for m in modes)
+    is_hppc = force_hppc or any("hppc" in (m or "").lower() for m in modes)
     if np.all(np.isnan(cap)):                       # no capacity column → integrate
         dt = np.diff(t, prepend=t[0])
         cap = np.cumsum(np.clip(i, 0, None) * dt) / 3600.0

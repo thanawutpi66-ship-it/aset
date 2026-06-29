@@ -839,18 +839,21 @@ class AutoController:
         except Exception as e:
             logger.debug("log_sample error: %s", e)
 
-    def _auto_analyze(self):
+    def _auto_analyze(self, force_hppc: bool = False) -> dict | None:
         """รัน unified analysis (ECM/grade) บน CSV ล่าสุด แล้ว post ANALYSIS_COMPLETED -> UI.
-        ใช้วิธีวิเคราะห์เดียวกับ characterization test และปุ่ม Analyze CSV (วิธีเดียวทั้งระบบ)"""
+        ใช้วิธีวิเคราะห์เดียวกับ characterization test และปุ่ม Analyze CSV (วิธีเดียวทั้งระบบ)
+        Returns the result dict, or None on failure."""
         try:
             from aset_batt.acquisition.analysis import analyze_csv, profile_from_config
             csv_path = self.data.current_path or self.config.system.csv_filepath
-            res = analyze_csv(csv_path, profile_from_config(self.config))
+            res = analyze_csv(csv_path, profile_from_config(self.config),
+                              force_hppc=force_hppc)
         except Exception as e:
             logger.warning("auto-analyze ล้มเหลว: %s", e)
-            return
+            return None
         if self.event_handler:
             self.event_handler.post_event(EventType.ANALYSIS_COMPLETED, res)
+        return res
 
     def _ocv_reset_after_rest(self, phase: str, rest_s: float = 30.0):
         """Wait for surface charge to relax then sync SoC from OCV.
