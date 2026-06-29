@@ -36,15 +36,13 @@ class HardwareController:
         # with output off and stores it here; _meas_vi subtracts it automatically.
         self._psu_current_offset: float = 0.0
 
-        # Internal bleed resistor compensation: PSU has a permanent bleed resistor across
-        # its output terminals.  During CHARGE the PSU covers the bleed from its own
-        # output (battery is NOT drained).  During REST (PSU OUTPUT OFF, load OFF) the
-        # bleed resistor is still connected to the battery terminals and drains the battery.
-        # During DISCHARGE the PSU is effectively disconnected so there is no bleed path.
+        # PSU bleed resistor — active ONLY when OUTPUT is OFF (REST phase).
+        # While OUTPUT is ON (CHARGE) the bleed path is disconnected; PSU current = battery
+        # current exactly and no compensation is applied to setpoints or readback.
+        # During REST the bleed drains the battery but is not measurable via SCPI (PSU
+        # meter reads ~0 when output is off after zero-offset calibration).  The value is
+        # retained here so capacity calculations can optionally correct for REST bleed loss.
         # Set this from config.hardware.psu_bleed_a after connecting.
-        # set_psu_cccv()/set_charge() add bleed to the PSU current setpoint so the battery
-        # actually receives the requested charge current; read_measurements() subtracts it
-        # back on the charge side so the displayed current reflects the battery, not the PSU.
         self.psu_bleed_a: float = 0.0
 
     def get_visa_ports(self):
@@ -216,7 +214,10 @@ class HardwareController:
         it (``MEAS:SCAL:ALL:DC?`` → ``V,I,P`` — measured at the same instant, single
         round-trip), else two separate ``MEAS:VOLT?``/``MEAS:CURR?`` queries. The
         capability is probed once and cached in ``which`` so an unsupported instrument
-        isn't retried every sample. Caller must hold ``inst_lock``."""
+        isn't retried every sample. Caller must hold ``inst_lock``.
+
+        A single transient VISA timeout is retried after 200 ms before propagating —
+        this absorbs USB bus resets that clear on their own without killing the session."""
         cap = getattr(self, which)
         if cap is not False:                       # None (unknown) or True → try combined
             try:
@@ -229,11 +230,20 @@ class HardwareController:
                 return v, i
             except Exception:
                 setattr(self, which, False)        # not supported → stop trying
-        v = float(inst.query("MEAS:VOLT?").strip())
-        i = float(inst.query("MEAS:CURR?").strip())
-        if which == "_psu_all":
-            i -= self._psu_current_offset
-        return v, i
+        # Separate MEAS:VOLT? + MEAS:CURR? with one retry on transient VisaIOError.
+        for attempt in range(2):
+            try:
+                v = float(inst.query("MEAS:VOLT?").strip())
+                i = float(inst.query("MEAS:CURR?").strip())
+                if which == "_psu_all":
+                    i -= self._psu_current_offset
+                return v, i
+            except Exception as exc:
+                if attempt == 0:
+                    logger.debug("_meas_vi transient error (%s), retrying in 200 ms", exc)
+                    time.sleep(0.2)
+                else:
+                    raise
 
     def read_vi(self):
         with self.inst_lock:
@@ -388,9 +398,10 @@ class HardwareController:
                 # exactly the load current.  No bleed correction needed here.
                 return v, i_load
             v, i_psu = self._meas_vi(self.psu_inst, "_psu_all")
-            # Charge / idle: i_psu from _meas_vi already has _psu_current_offset removed.
-            # PSU measures (I_battery + I_bleed) → subtract bleed to get true battery current.
-            return v, -(i_psu - self.psu_bleed_a)
+            # Charge / idle: bleed resistor is only active when PSU OUTPUT is OFF (REST
+            # phase).  While OUTPUT is ON the bleed path is disconnected, so the PSU
+            # current equals the battery current exactly — no bleed subtraction here.
+            return v, -i_psu
 
     def set_charge(self, state, current_val="0"):
         """Optional charge control hook for IEC cycle-life tests."""
@@ -399,12 +410,8 @@ class HardwareController:
         with self.inst_lock:
             try:
                 if state:
-                    # PSU supplies battery + bleed; add bleed so battery receives current_val
-                    try:
-                        adjusted = float(current_val) + self.psu_bleed_a
-                    except (ValueError, TypeError):
-                        adjusted = current_val
-                    self.psu_inst.write(f":CURR {adjusted}")
+                    # Bleed is inactive while OUTPUT is ON; PSU limit = battery target exactly.
+                    self.psu_inst.write(f":CURR {current_val}")
                     self.psu_inst.write(":OUTP ON")
                 else:
                     self.psu_inst.write(":OUTP OFF")
@@ -423,8 +430,8 @@ class HardwareController:
         with self.inst_lock:
             try:
                 self.psu_inst.write(f":VOLT {voltage}")
-                # battery receives `current`; PSU must supply current + bleed
-                self.psu_inst.write(f":CURR {current + self.psu_bleed_a}")
+                # Bleed inactive while OUTPUT is ON → PSU limit = requested current.
+                self.psu_inst.write(f":CURR {current}")
                 self.psu_inst.write(":OUTP ON")
             except Exception as e:
                 logger.error(f"set_psu_cccv error: {e}")

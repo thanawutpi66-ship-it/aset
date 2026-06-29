@@ -490,7 +490,7 @@ class BatteryQtWindow(QMainWindow):
         self._test_thread = None      # characterization worker (QThread)
         self._test_worker = None
         self._last_csv = None         # CSV written by the most recent test/monitor run
-        self._auto_seq_running = False
+        self._seq_running = threading.Event()   # SET while a sequence thread is active
 
         self._build_ui()
         self._connect_signals()
@@ -1320,19 +1320,18 @@ class BatteryQtWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
-        # Operation toggle — swaps the controls below between Charge / Discharge / HPPC.
+        # Operation toggle — swaps the controls below between Charge / Discharge / HPPC / Direct.
         trow = QHBoxLayout()
-        self.rb_charge = QRadioButton("Charge")
+        self.rb_charge    = QRadioButton("Charge")
         self.rb_discharge = QRadioButton("Discharge")
-        self.rb_hppc = QRadioButton("HPPC")
+        self.rb_hppc      = QRadioButton("HPPC")
+        self.rb_direct    = QRadioButton("Direct")
+        self.rb_direct.setToolTip("ควบคุม PSU / Load โดยตรง (manual voltage/current)")
         self.rb_discharge.setChecked(True)
         grp = QButtonGroup(self)
-        grp.addButton(self.rb_charge)
-        grp.addButton(self.rb_discharge)
-        grp.addButton(self.rb_hppc)
-        trow.addWidget(self.rb_charge)
-        trow.addWidget(self.rb_discharge)
-        trow.addWidget(self.rb_hppc)
+        for rb in (self.rb_charge, self.rb_discharge, self.rb_hppc, self.rb_direct):
+            grp.addButton(rb)
+            trow.addWidget(rb)
         trow.addStretch(1)
         lay.addLayout(trow)
 
@@ -1340,16 +1339,68 @@ class BatteryQtWindow(QMainWindow):
         self.run_stack.addWidget(self._charge_page())      # index 0
         self.run_stack.addWidget(self._discharge_page())   # index 1
         self.run_stack.addWidget(self._hppc_page())        # index 2
+        self.run_stack.addWidget(self._direct_page())      # index 3
         self.run_stack.setCurrentIndex(1)
-        self.rb_charge.toggled.connect(lambda on: on and self.run_stack.setCurrentIndex(0))
+        self.rb_charge.toggled.connect(   lambda on: on and self.run_stack.setCurrentIndex(0))
         self.rb_discharge.toggled.connect(lambda on: on and self.run_stack.setCurrentIndex(1))
-        self.rb_hppc.toggled.connect(lambda on: on and self.run_stack.setCurrentIndex(2))
+        self.rb_hppc.toggled.connect(     lambda on: on and self.run_stack.setCurrentIndex(2))
+        self.rb_direct.toggled.connect(   self._on_direct_toggled)
         lay.addWidget(self.run_stack)
 
         # Last grade echo (the full breakdown stays in the Analytics tab).
         self.lbl_run_grade = QLabel("Grade: —")
         self.lbl_run_grade.setStyleSheet(f"color:{MUTED}; padding-top:4px;")
         lay.addWidget(self.lbl_run_grade)
+        lay.addStretch(1)
+        return w
+
+    def _direct_page(self):
+        """Direct hardware control — PSU voltage/current and e-load current."""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(8)
+
+        lay.addWidget(self._subheader("PSU"))
+        psu_row = QHBoxLayout()
+        psu_row.addWidget(QLabel("V:"))
+        self.ed_psu_v = QLineEdit("13.8")
+        self.ed_psu_v.setMaximumWidth(72)
+        self.ed_psu_v.setToolTip("Output voltage (V)")
+        psu_row.addWidget(self.ed_psu_v)
+        psu_row.addWidget(QLabel("A:"))
+        self.ed_psu_i = QLineEdit("1.0")
+        self.ed_psu_i.setMaximumWidth(56)
+        self.ed_psu_i.setValidator(QDoubleValidator(0.0, 40.0, 2))
+        self.ed_psu_i.setToolTip("CC current limit (A)")
+        psu_row.addWidget(self.ed_psu_i)
+        psu_on  = _btn("ON",  bg=OK,       fg="white", hover="#266a2a")
+        psu_off = _btn("OFF", bg="#d0d4d7",            hover="#c2c6ca")
+        psu_on.clicked.connect( lambda: self._psu_manual(True))
+        psu_off.clicked.connect(lambda: self._psu_manual(False))
+        psu_row.addWidget(psu_on)
+        psu_row.addWidget(psu_off)
+        lay.addLayout(psu_row)
+
+        lay.addWidget(self._subheader("E-LOAD"))
+        load_row = QHBoxLayout()
+        load_row.addWidget(QLabel("A:"))
+        self.ed_load_a = QLineEdit("0.7")
+        self.ed_load_a.setMaximumWidth(72)
+        self.ed_load_a.setToolTip("CC load current (A)")
+        load_row.addWidget(self.ed_load_a)
+        load_on  = _btn("ON",  bg=OK,       fg="white", hover="#266a2a")
+        load_off = _btn("OFF", bg="#d0d4d7",            hover="#c2c6ca")
+        load_on.clicked.connect( lambda: self._load_manual(True))
+        load_off.clicked.connect(lambda: self._load_manual(False))
+        load_row.addWidget(load_on)
+        load_row.addWidget(load_off)
+        lay.addLayout(load_row)
+
+        note = QLabel("⚠  ใช้เฉพาะทดสอบฮาร์ดแวร์  —  ไม่มี SoC หรือ safety interlock")
+        note.setStyleSheet(f"color:{WARN}; font-size:10px;")
+        note.setWordWrap(True)
+        lay.addWidget(note)
         lay.addStretch(1)
         return w
 
@@ -1506,63 +1557,16 @@ class BatteryQtWindow(QMainWindow):
 
         return tabs
 
-    # ---- ZONE 3: TOOLS (advanced / occasional) -----------------------------
+    # ---- ZONE 3: TOOLS (data / reporting) ----------------------------------
     def _zone_tools(self):
         w = QWidget()
-        root = QVBoxLayout(w)
-        root.setContentsMargins(0, 0, 0, 0)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(6)
 
-        tabs = QTabWidget()
-        tabs.setDocumentMode(True)
-
-        # ── Tab 1: Control ──────────────────────────────────────────────────
-        t1 = QWidget()
-        t1l = QVBoxLayout(t1)
-        t1l.setContentsMargins(6, 6, 6, 6)
-        t1l.setSpacing(6)
-
-        t1l.addWidget(self._subheader("MANUAL CONTROL"))
-
-        # PSU row: V field + A (CC limit) field
-        psu_row = QHBoxLayout()
-        psu_row.addWidget(QLabel("PSU V:"))
-        self.ed_psu_v = QLineEdit("13.8")
-        self.ed_psu_v.setMaximumWidth(72)
-        psu_row.addWidget(self.ed_psu_v)
-        psu_row.addWidget(QLabel("A:"))
-        self.ed_psu_i = QLineEdit("1.0")
-        self.ed_psu_i.setMaximumWidth(48)
-        self.ed_psu_i.setValidator(QDoubleValidator(0.0, 40.0, 2))
-        self.ed_psu_i.setToolTip("กระแส limit (CC) ของ PSU (A)")
-        psu_row.addWidget(self.ed_psu_i)
-        psu_on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
-        psu_off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
-        psu_on.clicked.connect(lambda: self._psu_manual(True))
-        psu_off.clicked.connect(lambda: self._psu_manual(False))
-        psu_row.addWidget(psu_on)
-        psu_row.addWidget(psu_off)
-        t1l.addLayout(psu_row)
-
-        # Load row
-        load_row = QHBoxLayout()
-        load_row.addWidget(QLabel("Load A:"))
-        self.ed_load_a = QLineEdit("0.7")
-        self.ed_load_a.setMaximumWidth(72)
-        load_row.addWidget(self.ed_load_a)
-        load_on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
-        load_off = _btn("OFF", bg="#d0d4d7", hover="#c2c6ca")
-        load_on.clicked.connect(lambda: self._load_manual(True))
-        load_off.clicked.connect(lambda: self._load_manual(False))
-        load_row.addWidget(load_on)
-        load_row.addWidget(load_off)
-        t1l.addLayout(load_row)
-
-        t1l.addStretch()
-        tabs.addTab(t1, "Control")
-
-        # ── Monitor buttons (hidden widgets, used by toolbar actions) ───────
+        # Hidden monitor buttons — triggered by toolbar actions, not shown directly.
         self.btn_start_monitor = _btn("START MONITOR", bg=OK, fg="white", hover="#266a2a")
-        self.btn_stop_monitor = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_stop_monitor  = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
         self.btn_start_monitor.clicked.connect(self._on_start_monitor)
         self.btn_stop_monitor.clicked.connect(
             lambda: self.controller and self.controller.stop_monitor())
@@ -1570,28 +1574,25 @@ class BatteryQtWindow(QMainWindow):
         self.btn_start_monitor.hide()
         self.btn_stop_monitor.hide()
 
-        # ── Tab 3: Data ─────────────────────────────────────────────────────
-        t3 = QWidget()
-        t3l = QVBoxLayout(t3)
-        t3l.setContentsMargins(6, 6, 6, 6)
-        t3l.setSpacing(6)
-
+        # ── Data / Reporting ────────────────────────────────────────────────
+        lay.addWidget(self._subheader("DATA"))
         self.lbl_csv = QLabel("CSV: —")
         self.lbl_csv.setStyleSheet(f"color:{MUTED}; font-size:11px;")
         self.lbl_csv.setWordWrap(True)
-        t3l.addWidget(self.lbl_csv)
+        lay.addWidget(self.lbl_csv)
 
         self.btn_log = _btn("START DATA LOGGING", bg="#d0d4d7", hover="#c2c6ca")
         self.btn_log.clicked.connect(self._on_toggle_logging)
-        t3l.addWidget(self.btn_log)
+        lay.addWidget(self.btn_log)
         self.btn_pdf = _btn("Generate PDF Report", bg=PANEL2, hover=FIELD)
         self.btn_pdf.clicked.connect(self._on_pdf_report)
-        t3l.addWidget(self.btn_pdf)
+        lay.addWidget(self.btn_pdf)
         btn_dash = _btn("Open Cloud Dashboard", bg="#d0d4d7", hover="#c2c6ca")
         btn_dash.clicked.connect(self._on_open_dashboard)
-        t3l.addWidget(btn_dash)
-        t3l.addWidget(_hline())
-        t3l.addWidget(self._subheader("CLOUD PUSH"))
+        lay.addWidget(btn_dash)
+
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("CLOUD PUSH"))
         self.chk_cloud_push = QCheckBox("Enable cloud push")
         self.chk_cloud_push.setChecked(
             getattr(self.config.system, "cloud_push_enabled", False))
@@ -1599,7 +1600,7 @@ class BatteryQtWindow(QMainWindow):
             "ส่งข้อมูล V/I/SoC/Temp ไปยัง cloud endpoint ทุก push interval\n"
             "ตั้ง cloud_dashboard_url และ push interval ใน config.json")
         self.chk_cloud_push.stateChanged.connect(self._on_cloud_push_toggle)
-        t3l.addWidget(self.chk_cloud_push)
+        lay.addWidget(self.chk_cloud_push)
         cloud_url_row = QHBoxLayout()
         cloud_url_row.addWidget(QLabel("Endpoint URL:"))
         self.ed_cloud_url = QLineEdit(
@@ -1607,10 +1608,9 @@ class BatteryQtWindow(QMainWindow):
         self.ed_cloud_url.setPlaceholderText("https://...")
         self.ed_cloud_url.editingFinished.connect(self._on_cloud_url_changed)
         cloud_url_row.addWidget(self.ed_cloud_url, 1)
-        t3l.addLayout(cloud_url_row)
-        tabs.addTab(t3, "Data")
+        lay.addLayout(cloud_url_row)
 
-        root.addWidget(tabs)
+        lay.addStretch(1)
         return w
 
     def _build_right_panel(self):
@@ -1660,6 +1660,12 @@ class BatteryQtWindow(QMainWindow):
         lay.addWidget(t)
         lay.addWidget(val)
         self.metric_labels[name] = (val, unit)
+        # Current card: add a direction badge below the number (CHG / DSG / REST)
+        if name == "Current":
+            self._lbl_i_dir = QLabel("—")
+            self._lbl_i_dir.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+            self._lbl_i_dir.setStyleSheet(f"color:{MUTED}; border:0;")
+            lay.addWidget(self._lbl_i_dir)
         return card
 
     def _tab_analytics(self):
@@ -2033,12 +2039,26 @@ class BatteryQtWindow(QMainWindow):
     @Slot(float, float, float, float, float, float)
     def _slot_display(self, v, i, soc, rin, temp, soh):
         rin_mohm = rin * 1000.0
-        # LIVE metrics (valid every sample): Voltage, Current, SoC, Temp.
-        live = {"Voltage": (v, "{:.2f}"), "Current": (i, "{:.2f}"),
-                "SoC": (soc, "{:.1f}"), "Temp": (temp, "{:.2f}")}
-        for name, (val, fmt) in live.items():
+        # LIVE metrics (valid every sample): Voltage, SoC, Temp — shown with signed value.
+        for name, val, fmt in [("Voltage", v, "{:.2f}"), ("SoC", soc, "{:.1f}"), ("Temp", temp, "{:.2f}")]:
             lbl, unit = self.metric_labels[name]
             lbl.setText(f"{fmt.format(val)} {unit}")
+        # Current: always show absolute value; direction shown by badge + color.
+        i_lbl, i_unit = self.metric_labels["Current"]
+        i_lbl.setText(f"{abs(i):.2f} {i_unit}")
+        _IDLE = 0.05   # A — threshold below which current is considered "at rest"
+        if i < -_IDLE:                              # charging (convention: negative)
+            i_lbl.setStyleSheet(f"color:{INFO}; border:0;")
+            self._lbl_i_dir.setText("▲  CHG")
+            self._lbl_i_dir.setStyleSheet(f"color:{INFO}; border:0;")
+        elif i > _IDLE:                             # discharging (convention: positive)
+            i_lbl.setStyleSheet(f"color:{WARN}; border:0;")
+            self._lbl_i_dir.setText("▼  DSG")
+            self._lbl_i_dir.setStyleSheet(f"color:{WARN}; border:0;")
+        else:                                       # at rest
+            i_lbl.setStyleSheet(f"color:{TEXT}; border:0;")
+            self._lbl_i_dir.setText("—  REST")
+            self._lbl_i_dir.setStyleSheet(f"color:{MUTED}; border:0;")
         # Rin: a DC resistance reading needs current flowing. At rest, (OCV−V)/I is
         # undefined and explodes on the flat LFP plateau → keep "pending" rather than
         # show a wild number. The final analysis fills the proper R0+R1.
@@ -2063,7 +2083,10 @@ class BatteryQtWindow(QMainWindow):
         self._cloud_push_update(v, i, soc, temp)
 
         self._update_temp_gauge(temp)
-        self.status_label.setText(f"V={v:.2f} V  I={i:.2f} A  SoC={soc:.1f}%  Rin={rin_mohm:.1f} mΩ  Temp={temp:.1f} °C")
+        i_dir = "CHG" if i < -_IDLE else "DSG" if i > _IDLE else "REST"
+        self.status_label.setText(
+            f"V={v:.2f} V  I={abs(i):.2f} A ({i_dir})  SoC={soc:.1f}%  Rin={rin_mohm:.1f} mΩ  Temp={temp:.1f} °C"
+        )
 
     def _update_temp_gauge(self, temp):
         if hasattr(self, "_temp_gauge") and self._temp_gauge is not None:
@@ -2517,7 +2540,29 @@ class BatteryQtWindow(QMainWindow):
         except Exception:
             pass
 
+    def _on_direct_toggled(self, on: bool):
+        if not on:
+            return
+        if self._seq_running.is_set():
+            # A sequence is active — refuse to switch into direct control.
+            if not self._headless:
+                QMessageBox.warning(
+                    self, "Direct Control",
+                    "ไม่สามารถใช้ Direct Control ขณะที่ AUTO sequence กำลังรันอยู่\n"
+                    "กด CANCEL SEQUENCE ก่อน"
+                )
+            # Revert radio selection back to whichever page was showing.
+            idx = self.run_stack.currentIndex()
+            [self.rb_charge, self.rb_discharge, self.rb_hppc][min(idx, 2)].setChecked(True)
+            return
+        self.run_stack.setCurrentIndex(3)
+
     def _psu_manual(self, on):
+        if on and self._seq_running.is_set():
+            if not self._headless:
+                QMessageBox.warning(self, "Direct Control",
+                                    "ไม่สามารถใช้ Direct Control ขณะที่ AUTO sequence กำลังรันอยู่")
+            return
         try:
             if on:
                 self.hw.set_psu(
@@ -2532,6 +2577,11 @@ class BatteryQtWindow(QMainWindow):
                 QMessageBox.warning(self, "PSU", "Invalid voltage / current")
 
     def _load_manual(self, on):
+        if on and self._seq_running.is_set():
+            if not self._headless:
+                QMessageBox.warning(self, "Direct Control",
+                                    "ไม่สามารถใช้ Direct Control ขณะที่ AUTO sequence กำลังรันอยู่")
+            return
         try:
             self.hw.set_load(on, str(float(self.ed_load_a.text())) if on else "0")
         except ValueError:
@@ -2787,7 +2837,7 @@ class BatteryQtWindow(QMainWindow):
         self._seq_last_meas_time = 0.0   # reset watchdog
         self.sig_phase_progress.emit(0, 0)   # hide progress bar
         self.frm_seq_result.hide()
-        self._auto_seq_running = True
+        self._seq_running.set()
         self.btn_seq_cancel.setEnabled(True)
         self.sig_loading.emit(btn_key, True, loading_label)
 
@@ -2796,7 +2846,7 @@ class BatteryQtWindow(QMainWindow):
             if not self._headless:
                 QMessageBox.warning(self, "Auto Sequence", "Connect hardware first")
             return
-        if self._auto_seq_running:
+        if self._seq_running.is_set():
             return
         try:
             v_now, _, _ = self.hw.read_vi()
@@ -2824,7 +2874,7 @@ class BatteryQtWindow(QMainWindow):
             if not self._headless:
                 QMessageBox.warning(self, "Quick Scan", "Connect hardware first")
             return
-        if self._auto_seq_running:
+        if self._seq_running.is_set():
             return
         try:
             v_now, _, _ = self.hw.read_vi()
@@ -2848,7 +2898,7 @@ class BatteryQtWindow(QMainWindow):
             if not self._headless:
                 QMessageBox.warning(self, "HPPC Sequence", "Connect hardware first")
             return
-        if self._auto_seq_running:
+        if self._seq_running.is_set():
             return
         try:
             v_now, _, _ = self.hw.read_vi()
@@ -2879,7 +2929,7 @@ class BatteryQtWindow(QMainWindow):
             if not self._headless:
                 QMessageBox.warning(self, "Cycle Life", "Connect hardware first")
             return
-        if self._auto_seq_running:
+        if self._seq_running.is_set():
             return
         try:
             n = self.spn_cycle_n.value()
@@ -2917,10 +2967,10 @@ class BatteryQtWindow(QMainWindow):
         self._seq_last_meas_time = _t.time()
 
     def _seq_check_otp(self, temp: float) -> bool:
-        """Returns True if temperature is safe.  Sets _auto_seq_running=False + alarms if OTP."""
+        """Returns True if temperature is safe.  Clears _seq_running + alarms if OTP."""
         limit = self._otp_limit()
         if temp > limit:
-            self._auto_seq_running = False
+            self._seq_running.clear()
             self.sig_alarm.emit(
                 f"[SAFETY] OTP triggered: {temp:.1f}°C > {limit:.0f}°C — sequence aborted")
             return False
@@ -2930,14 +2980,14 @@ class BatteryQtWindow(QMainWindow):
         """Sleep แบบ interruptible — คืน True ถ้าครบเวลา, False ถ้า cancel หรือ watchdog หมดเวลา"""
         import time
         t_end = time.time() + seconds
-        while self._auto_seq_running:
+        while self._seq_running.is_set():
             left = t_end - time.time()
             if left <= 0:
                 return True
             # watchdog: abort if no measurement update for _WATCHDOG_TIMEOUT_S
             last = getattr(self, "_seq_last_meas_time", 0.0)
             if last and (time.time() - last) > self._WATCHDOG_TIMEOUT_S:
-                self._auto_seq_running = False
+                self._seq_running.clear()
                 self.sig_alarm.emit(
                     "[SAFETY] Watchdog: ไม่มีการวัดค่า > 5 นาที — sequence ถูกยกเลิก")
                 return False
@@ -2945,7 +2995,7 @@ class BatteryQtWindow(QMainWindow):
         return False
 
     def _on_seq_cancel(self):
-        self._auto_seq_running = False
+        self._seq_running.clear()
         # หยุด hardware ทันที
         try:
             if self.controller:
@@ -3003,7 +3053,7 @@ class BatteryQtWindow(QMainWindow):
                 self.controller.start_charge(strategy=None,
                                              bulk_c_rate_override=_c_rate_override)
                 _ch_t0 = time.time()
-                while self._auto_seq_running:
+                while self._seq_running.is_set():
                     if not getattr(self.controller, "is_charging", False):
                         break
                     try:
@@ -3015,7 +3065,7 @@ class BatteryQtWindow(QMainWindow):
                         pass
                     if not self._seq_sleep(30.0):
                         break
-                if not self._auto_seq_running:
+                if not self._seq_running.is_set():
                     return
                 self.sig_phase_progress.emit(0, 0)
                 self.sig_workflow.emit(1, "done")
@@ -3029,7 +3079,7 @@ class BatteryQtWindow(QMainWindow):
                 self.sig_workflow.emit(2, "active")
                 rest_total = self.spn_rest_min.value() * 60
                 t_rest_end = time.time() + rest_total
-                while self._auto_seq_running:
+                while self._seq_running.is_set():
                     remaining = int(t_rest_end - time.time())
                     if remaining <= 0:
                         break
@@ -3065,7 +3115,7 @@ class BatteryQtWindow(QMainWindow):
             # Estimate discharge duration from SoC and C-rate (seconds)
             rated2 = self.controller.config.battery.rated_capacity
             _dis_est = int(rated2 / max(i_dis, 0.01) * 3600)
-            while self._auto_seq_running:
+            while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
                     temp3 = self.hw.current_temp
@@ -3089,7 +3139,7 @@ class BatteryQtWindow(QMainWindow):
                     break
             self.hw.set_load(False)
             self.sig_phase_progress.emit(0, 0)
-            if not self._auto_seq_running:
+            if not self._seq_running.is_set():
                 return
             self.controller._ocv_reset_after_rest("discharge")
             self.sig_workflow.emit(3, "done")
@@ -3112,7 +3162,7 @@ class BatteryQtWindow(QMainWindow):
             self.sig_alarm.emit(f"[AUTO] Error: {exc}")
             status(f"Error: {exc}")
         finally:
-            self._auto_seq_running = False
+            self._seq_running.clear()
             self.sig_phase_progress.emit(0, 0)
             self.sig_loading.emit("btn_auto_seq", False, "")
             self.sig_button.emit("btn_seq_cancel", False)
@@ -3144,7 +3194,7 @@ class BatteryQtWindow(QMainWindow):
             self.sig_qs_workflow.emit(1, "active")
             _rest_total = 5 * 60
             t_end = _t.time() + _rest_total
-            while self._auto_seq_running:
+            while self._seq_running.is_set():
                 remaining = int(t_end - _t.time())
                 if remaining <= 0:
                     break
@@ -3155,7 +3205,7 @@ class BatteryQtWindow(QMainWindow):
                 if not self._seq_sleep(10.0):
                     break
             self.sig_phase_progress.emit(0, 0)
-            if not self._auto_seq_running:
+            if not self._seq_running.is_set():
                 return
             soc2 = self.controller.calibrate_from_ocv()
             v2, _, _ = self.hw.read_vi()
@@ -3175,7 +3225,7 @@ class BatteryQtWindow(QMainWindow):
             last_log = _t.time()
             _dis_t0 = _t.time()
             _dis_est = int(rated / max(i_dis, 0.01) * 3600)
-            while self._auto_seq_running:
+            while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
                     temp3  = self.hw.current_temp
@@ -3199,7 +3249,7 @@ class BatteryQtWindow(QMainWindow):
                     break
             self.hw.set_load(False)
             self.sig_phase_progress.emit(0, 0)
-            if not self._auto_seq_running:
+            if not self._seq_running.is_set():
                 return
             # รอ 30 วิให้แรงดันนิ่ง แล้ว re-anchor SoC
             status("QUICK: รอ 30 วิ OCV settle...")
@@ -3226,7 +3276,7 @@ class BatteryQtWindow(QMainWindow):
             self.sig_alarm.emit(f"[QUICK] Error: {exc}")
             status(f"QUICK Error: {exc}")
         finally:
-            self._auto_seq_running = False
+            self._seq_running.clear()
             self.sig_phase_progress.emit(0, 0)
             self.sig_loading.emit("btn_quick_scan", False, "")
             self.sig_button.emit("btn_seq_cancel", False)
@@ -3276,7 +3326,7 @@ class BatteryQtWindow(QMainWindow):
             rated = self.controller.config.battery.rated_capacity
             self.controller.start_charge(strategy=None)
             _ch_t0 = _t.time()
-            while self._auto_seq_running:
+            while self._seq_running.is_set():
                 if not getattr(self.controller, "is_charging", False):
                     break
                 try:
@@ -3289,7 +3339,7 @@ class BatteryQtWindow(QMainWindow):
                 if not self._seq_sleep(30.0):
                     break
             self.sig_phase_progress.emit(0, 0)
-            if not self._auto_seq_running:
+            if not self._seq_running.is_set():
                 return
             self.sig_hppc_seq_wf.emit(0, "done")
             self.sig_alarm.emit("[HPPC SEQ] Charge complete")
@@ -3298,7 +3348,7 @@ class BatteryQtWindow(QMainWindow):
             self.sig_hppc_seq_wf.emit(1, "active")
             _rest_total = 30 * 60
             t_rest_end = _t.time() + _rest_total
-            while self._auto_seq_running:
+            while self._seq_running.is_set():
                 remaining = int(t_rest_end - _t.time())
                 if remaining <= 0:
                     break
@@ -3309,7 +3359,7 @@ class BatteryQtWindow(QMainWindow):
                 if not self._seq_sleep(10.0):
                     break
             self.sig_phase_progress.emit(0, 0)
-            if not self._auto_seq_running:
+            if not self._seq_running.is_set():
                 return
             soc_h = self.controller.calibrate_from_ocv()
             v_h, _, _ = self.hw.read_vi()
@@ -3334,12 +3384,12 @@ class BatteryQtWindow(QMainWindow):
             self.hw.load_off()
             _hppc_t0 = _t.time()
             for cyc in range(1, n_cyc + 1):
-                if not self._auto_seq_running:
+                if not self._seq_running.is_set():
                     break
                 # Relax (REST) leg
                 status(f"HPPC {cyc}/{n_cyc}: REST {relax_s:.0f}s...")
                 t_phase = _t.time() + relax_s
-                while self._auto_seq_running and _t.time() < t_phase:
+                while self._seq_running.is_set() and _t.time() < t_phase:
                     try:
                         v_r, _, _ = self.hw.read_vi()
                         self.controller._log_sample(v_r, 0.0)
@@ -3347,20 +3397,20 @@ class BatteryQtWindow(QMainWindow):
                         elapsed_h = int(_t.time() - _hppc_t0)
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                         if v_r <= pack_min:
-                            self._auto_seq_running = False; break
+                            self._seq_running.clear(); break
                         temp_h = self.hw.current_temp
                         if not self._seq_check_otp(temp_h):
                             break
                     except Exception:
                         pass
                     _t.sleep(1.0)
-                if not self._auto_seq_running:
+                if not self._seq_running.is_set():
                     break
                 # Pulse leg
                 self.hw.set_load(True, str(i_pulse))
                 status(f"HPPC {cyc}/{n_cyc}: PULSE {pulse_s:.0f}s  {i_pulse:.2f} A")
                 t_phase = _t.time() + pulse_s
-                while self._auto_seq_running and _t.time() < t_phase:
+                while self._seq_running.is_set() and _t.time() < t_phase:
                     try:
                         v_p, i_p = self.hw.read_measurements(prefer_load_v=True)
                         self.controller._log_sample(v_p, -i_p)
@@ -3368,7 +3418,7 @@ class BatteryQtWindow(QMainWindow):
                         elapsed_h = int(_t.time() - _hppc_t0)
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                         if v_p <= pack_min:
-                            self._auto_seq_running = False; break
+                            self._seq_running.clear(); break
                         temp_h = self.hw.current_temp
                         if not self._seq_check_otp(temp_h):
                             break
@@ -3376,10 +3426,10 @@ class BatteryQtWindow(QMainWindow):
                         pass
                     _t.sleep(1.0)
                 self.hw.load_off()
-                if not self._auto_seq_running:
+                if not self._seq_running.is_set():
                     break
             self.sig_phase_progress.emit(0, 0)
-            if not self._auto_seq_running:
+            if not self._seq_running.is_set():
                 return
             self.sig_hppc_seq_wf.emit(2, "done")
             self.sig_alarm.emit(f"[HPPC SEQ] {n_cyc} HPPC cycles complete")
@@ -3402,7 +3452,7 @@ class BatteryQtWindow(QMainWindow):
             self.sig_alarm.emit(f"[HPPC SEQ] Error: {exc}")
             status(f"HPPC SEQ Error: {exc}")
         finally:
-            self._auto_seq_running = False
+            self._seq_running.clear()
             self.sig_phase_progress.emit(0, 0)
             self.hw.load_off()
             self.sig_loading.emit("btn_hppc_seq", False, "")
@@ -3436,7 +3486,7 @@ class BatteryQtWindow(QMainWindow):
             cap_history: list[float] = []
 
             for cyc in range(1, n_cyc + 1):
-                if not self._auto_seq_running:
+                if not self._seq_running.is_set():
                     break
                 status(f"CYCLE {cyc}/{n_cyc}: ชาร์จ {i_ch:.2f} A ({c_ch}C)...")
                 # ── step 1: CHARGE
@@ -3444,7 +3494,7 @@ class BatteryQtWindow(QMainWindow):
                 self.controller.start_charge(strategy=None,
                                              bulk_c_rate_override=c_ch)
                 _ch_t0 = _t.time()
-                while self._auto_seq_running:
+                while self._seq_running.is_set():
                     if not getattr(self.controller, "is_charging", False):
                         break
                     try:
@@ -3458,14 +3508,14 @@ class BatteryQtWindow(QMainWindow):
                     if not self._seq_sleep(30.0):
                         break
                 self.sig_phase_progress.emit(0, 0)
-                if not self._auto_seq_running:
+                if not self._seq_running.is_set():
                     break
                 self.sig_cycle_wf.emit(0, "done")
 
                 # ── step 2: REST
                 self.sig_cycle_wf.emit(1, "active") if cyc == 1 else None
                 t_rest_end = _t.time() + rest_s
-                while self._auto_seq_running:
+                while self._seq_running.is_set():
                     remaining = int(t_rest_end - _t.time())
                     if remaining <= 0:
                         break
@@ -3476,7 +3526,7 @@ class BatteryQtWindow(QMainWindow):
                     if not self._seq_sleep(10.0):
                         break
                 self.sig_phase_progress.emit(0, 0)
-                if not self._auto_seq_running:
+                if not self._seq_running.is_set():
                     break
 
                 # ── step 3: DISCHARGE (integrate capacity)
@@ -3488,7 +3538,7 @@ class BatteryQtWindow(QMainWindow):
                 _dis_est = int(rated / max(i_dis, 0.01) * 3600)
                 ah_acc = 0.0
                 last_log = _t.time()
-                while self._auto_seq_running:
+                while self._seq_running.is_set():
                     try:
                         v_d, i_d = self.hw.read_measurements(prefer_load_v=True)
                         now = _t.time()
@@ -3513,7 +3563,7 @@ class BatteryQtWindow(QMainWindow):
                         break
                 self.hw.set_load(False)
                 self.sig_phase_progress.emit(0, 0)
-                if not self._auto_seq_running:
+                if not self._seq_running.is_set():
                     break
                 cap_history.append(ah_acc)
                 fade = 100.0 * ah_acc / rated if rated else 0.0
@@ -3550,7 +3600,7 @@ class BatteryQtWindow(QMainWindow):
             self.sig_alarm.emit(f"[CYCLE] Error: {exc}")
             status(f"CYCLE Error: {exc}")
         finally:
-            self._auto_seq_running = False
+            self._seq_running.clear()
             self.sig_phase_progress.emit(0, 0)
             self.hw.load_off()
             self.sig_loading.emit("btn_cycle_life", False, "")
