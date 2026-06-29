@@ -432,16 +432,11 @@ class AutoController:
             # ปิด load ก่อนชาร์จ (กันชาร์จ-ดิสชาร์จพร้อมกัน)
             self.hw.load_off()
 
-            # Pre-charge OCV sync: PSU ยังปิดอยู่ → terminal voltage ≈ OCV
-            # Reset SoC ก่อนเปิด PSU เพื่อให้ตัวเลข SoC/Rin ตรงตั้งแต่ต้น
-            if self.estimator is not None:
-                try:
-                    time.sleep(2.0)   # รอ polarisation หายก่อนวัด
-                    v_ocv, _, _ = self.hw.read_vi()
-                    soc_pre = self.estimator.sync_with_ocv(v_ocv, self.hw.current_temp)
-                    logger.info("Pre-charge OCV sync: %.3fV → SoC %.1f%%", v_ocv, soc_pre)
-                except Exception as exc:
-                    logger.warning("Pre-charge OCV sync failed: %s", exc)
+            # NOTE: no pre-charge OCV sync here.
+            # When called from AUTO SEQUENCE the PREPARE phase already waited the
+            # chemistry-aware minimum rest and called calibrate_from_ocv(), so
+            # soc_initial is already correct.  A 2 s sync here would OVERWRITE that
+            # anchor with a still-polarised voltage and re-introduce the same bug.
 
             self._charge_ctrl = ChargeController(
                 self.hw, self.config, self.estimator.battery_model,

@@ -3033,10 +3033,17 @@ class BatteryQtWindow(QMainWindow):
         try:
             # ── PHASE 0: OCV CALIBRATE ────────────────────────────────────
             self.sig_workflow.emit(0, "active")
-            status("PREPARE: ปิดอุปกรณ์, รอ 3 วิ...")
             self.hw.psu_off()
             self.hw.load_off()
-            if not self._seq_sleep(3.0):
+            # Wait chemistry-aware minimum rest before reading OCV.
+            # 3 s was too short — surface charge from a previous discharge or HPPC pulse
+            # left the terminal voltage depressed, so calibrate_from_ocv() returned a
+            # falsely low SoC (e.g. 6.5%) and poisoned the entire coulomb counter.
+            min_rest = getattr(
+                getattr(self.controller, "estimator", None), "_min_rest_s", 30.0
+            )
+            status(f"PREPARE: ปิดอุปกรณ์, รอ OCV settle ({int(min_rest)} วิ)...")
+            if not self._seq_sleep(min_rest):
                 return
             soc = self.controller.calibrate_from_ocv()
             v, _, _ = self.hw.read_vi()
