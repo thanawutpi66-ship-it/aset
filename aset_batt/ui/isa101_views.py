@@ -2225,6 +2225,10 @@ class BatteryQtWindow(QMainWindow):
             self.sig_qs_workflow.emit(i, "idle")
         self._auto_seq_running = True
         self.btn_seq_cancel.setEnabled(True)
+        # Reset graph buffers so new run starts from t=0, not appended to old data
+        for buf in (self.buf_t, self.buf_v, self.buf_i, self.buf_soc, self.buf_rin, self.buf_temp):
+            buf.clear()
+        self._elapsed_t0 = None
         self.sig_loading.emit("btn_auto_seq", True, "Running…")
         import threading
         threading.Thread(target=self._auto_sequence_thread, daemon=True).start()
@@ -2242,6 +2246,9 @@ class BatteryQtWindow(QMainWindow):
             self.sig_workflow.emit(i, "idle")
         self._auto_seq_running = True
         self.btn_seq_cancel.setEnabled(True)
+        for buf in (self.buf_t, self.buf_v, self.buf_i, self.buf_soc, self.buf_rin, self.buf_temp):
+            buf.clear()
+        self._elapsed_t0 = None
         self.sig_loading.emit("btn_quick_scan", True, "Scanning…")
         import threading
         threading.Thread(target=self._quick_scan_thread, daemon=True).start()
@@ -2524,7 +2531,7 @@ class BatteryQtWindow(QMainWindow):
 
         cfg = TestConfig(self._acq_profile(), OperationMode(self.cb_op_mode.currentText()))
         self.buf_t.clear(); self.buf_v.clear(); self.buf_i.clear()
-        self.buf_soc.clear(); self.buf_temp.clear()
+        self.buf_soc.clear(); self.buf_rin.clear(); self.buf_temp.clear()
         os.makedirs("sessions", exist_ok=True)
         csv_path = os.path.join("sessions", f"test_{datetime.now():%Y%m%d_%H%M%S}.csv")
         self._last_csv = csv_path                       # most-recent run → Analyze/PDF use this

@@ -246,8 +246,12 @@ class HardwareController:
             # round-trip (aligned timestamp, fast).
             v, i_load = self._meas_vi(self.load_inst, "_load_all")
             # PSU current is still needed to see charge current: while charging the load
-            # input is OFF (i_load = 0) and the current flows battery⇄PSU. (v ignored.)
-            _v_psu, i_psu = self._meas_vi(self.psu_inst, "_psu_all")
+            # input is OFF (i_load = 0) and the current flows battery⇄PSU.
+            v_psu, i_psu = self._meas_vi(self.psu_inst, "_psu_all")
+            # Some e-loads return 0 V when their input is OFF (charge/rest phase).
+            # Fall back to PSU terminal voltage in that case so the graph stays valid.
+            if v < 1.0 and v_psu > 1.0:
+                v = v_psu
             return v, i_psu, i_load
 
     def read_load_current(self):
