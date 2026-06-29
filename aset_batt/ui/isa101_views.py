@@ -2652,7 +2652,7 @@ class BatteryQtWindow(QMainWindow):
             rated = self.controller.config.battery.rated_capacity
             crate = self.cb_seq_crate.currentText()
             plan = [
-                f"Battery: {self.controller.config.battery.name}",
+                f"Battery: {self.controller.config.battery.battery_type}",
                 f"OCV: {v_now:.2f} V  ·  SoC: {soc_now:.0f}%  ·  Temp: {temp_now:.1f} °C",
                 f"Charge: {crate} ({float(crate.rstrip('C'))*rated:.2f} A)  →  "
                 f"REST {self.spn_rest_min.value()} min  →  "
@@ -2678,7 +2678,7 @@ class BatteryQtWindow(QMainWindow):
             soc_now = getattr(self.controller.estimator, "soc", 0.0)
             rated = self.controller.config.battery.rated_capacity
             plan = [
-                f"Battery: {self.controller.config.battery.name}",
+                f"Battery: {self.controller.config.battery.battery_type}",
                 f"OCV: {v_now:.2f} V  ·  SoC: {soc_now:.0f}%",
                 f"OCV → REST 5 min → Discharge 1C ({rated:.2f} A) → Peukert SoH",
             ]
@@ -2705,7 +2705,7 @@ class BatteryQtWindow(QMainWindow):
             n_cyc = self.spn_hppc_cycles.value()
             rated = self.controller.config.battery.rated_capacity
             plan = [
-                f"Battery: {self.controller.config.battery.name}",
+                f"Battery: {self.controller.config.battery.battery_type}",
                 f"OCV: {v_now:.2f} V  ·  SoC: {soc_now:.0f}%",
                 f"Charge CC-CV → REST 30 min → "
                 f"HPPC {n_cyc} cycles ({pulse:.0f}s pulse / {relax:.0f}s relax) → ECM fit",
@@ -2734,7 +2734,7 @@ class BatteryQtWindow(QMainWindow):
             c_ch = self.cb_cycle_charge_crate.currentText()
             c_di = self.cb_cycle_dis_crate.currentText()
             plan = [
-                f"Battery: {self.controller.config.battery.name}",
+                f"Battery: {self.controller.config.battery.battery_type}",
                 f"Cycles: {n}  ·  Charge: {c_ch}  ·  Discharge: {c_di}",
                 f"Rest/cycle: {self.spn_cycle_rest.value()} min  ·  "
                 f"Estimated capacity_ah: {rated:.2f} Ah",
@@ -3078,7 +3078,6 @@ class BatteryQtWindow(QMainWindow):
             self.sig_hppc_seq_wf.emit(0, "active")
             status("HPPC SEQ: ชาร์จ CC-CV → 100%...")
             rated = self.controller.config.battery.rated_capacity
-            max_charge_a = self.controller.config.battery.max_charge_a
             self.controller.start_charge(strategy=None)
             _ch_t0 = _t.time()
             while self._auto_seq_running:
@@ -3130,7 +3129,7 @@ class BatteryQtWindow(QMainWindow):
                 crate   = max(0.1, float(self.ed_hppc_crate.text() or "1.0"))
             except (ValueError, AttributeError):
                 pulse_s, relax_s, crate = 30.0, 30.0, 1.0
-            max_dis = self.controller.config.battery.max_discharge_a
+            max_dis = self.controller.config.battery.max_current
             i_pulse = min(crate * rated, max_dis)
             pack_min = self.controller.config.battery.pack_min_voltage
             _hppc_total = n_cyc * (relax_s + pulse_s)
@@ -3222,11 +3221,10 @@ class BatteryQtWindow(QMainWindow):
                 c_di  = float(self.cb_cycle_dis_crate.currentText().rstrip("C"))
             except (ValueError, AttributeError):
                 c_di  = 0.2
-            max_ch    = self.controller.config.battery.max_charge_a
-            max_dis   = self.controller.config.battery.max_discharge_a
+            max_current = self.controller.config.battery.max_current
             pack_min  = self.controller.config.battery.pack_min_voltage
-            i_ch      = min(c_ch * rated, max_ch)
-            i_dis     = min(c_di * rated, max_dis)
+            i_ch      = min(c_ch * rated, max_current)
+            i_dis     = min(c_di * rated, max_current)
             cap_history: list[float] = []
 
             for cyc in range(1, n_cyc + 1):
