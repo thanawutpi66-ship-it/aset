@@ -74,7 +74,9 @@ class HardwareBackend(InstrumentBackend):
             want_load = (elapsed % cycle) >= self._hppc_relax
             if want_load != self._hppc_loaded:
                 if want_load:
-                    self.hw.set_load(True, str(self._cfg.profile.max_discharge_a * 0.6))
+                    p = self._cfg.profile
+                    i_pulse = min(p.hppc_pulse_crate * p.capacity_ah, p.max_discharge_a)
+                    self.hw.set_load(True, str(i_pulse))
                 else:
                     self.hw.load_off()
                 self._hppc_loaded = want_load

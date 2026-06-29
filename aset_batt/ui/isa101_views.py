@@ -1139,24 +1139,30 @@ class BatteryQtWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
-        # Operation toggle — swaps the controls below between Charge and Discharge.
+        # Operation toggle — swaps the controls below between Charge / Discharge / HPPC.
         trow = QHBoxLayout()
         self.rb_charge = QRadioButton("Charge")
         self.rb_discharge = QRadioButton("Discharge")
-        self.rb_discharge.setChecked(True)          # grading/discharge is the common task
+        self.rb_hppc = QRadioButton("HPPC")
+        self.rb_discharge.setChecked(True)
         grp = QButtonGroup(self)
-        grp.addButton(self.rb_charge); grp.addButton(self.rb_discharge)
+        grp.addButton(self.rb_charge)
+        grp.addButton(self.rb_discharge)
+        grp.addButton(self.rb_hppc)
         trow.addWidget(self.rb_charge)
         trow.addWidget(self.rb_discharge)
+        trow.addWidget(self.rb_hppc)
         trow.addStretch(1)
         lay.addLayout(trow)
 
         self.run_stack = QStackedWidget()
         self.run_stack.addWidget(self._charge_page())      # index 0
         self.run_stack.addWidget(self._discharge_page())   # index 1
+        self.run_stack.addWidget(self._hppc_page())        # index 2
         self.run_stack.setCurrentIndex(1)
-        self.rb_charge.toggled.connect(
-            lambda on: self.run_stack.setCurrentIndex(0 if on else 1))
+        self.rb_charge.toggled.connect(lambda on: on and self.run_stack.setCurrentIndex(0))
+        self.rb_discharge.toggled.connect(lambda on: on and self.run_stack.setCurrentIndex(1))
+        self.rb_hppc.toggled.connect(lambda on: on and self.run_stack.setCurrentIndex(2))
         lay.addWidget(self.run_stack)
 
         # Last grade echo (the full breakdown stays in the Analytics tab).
@@ -1202,7 +1208,8 @@ class BatteryQtWindow(QMainWindow):
         trow.addWidget(QLabel("Discharge mode:"))
         self.cb_op_mode = QComboBox()
         self.cb_op_mode.addItems([m.value for m in OperationMode
-                                  if m != OperationMode.CC_CV_CHARGE])
+                                  if m not in (OperationMode.CC_CV_CHARGE,
+                                               OperationMode.HPPC)])
         trow.addWidget(self.cb_op_mode, 1)
         lay.addLayout(trow)
         crow2 = QHBoxLayout()
@@ -1216,6 +1223,71 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_test_status = QLabel("Test idle")
         self.lbl_test_status.setStyleSheet(f"color:{MUTED};")
         lay.addWidget(self.lbl_test_status)
+        return w
+
+    def _hppc_page(self):
+        """Dedicated HPPC Pulse Test page — pulse/relax sequencer with phase indicator."""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+
+        # Capability note
+        note = QLabel(
+            "R₀ from 250 ms voltage step · R₁/C₁ from RC-tail fit · "
+            "Max observable: ~2 Hz  (SCPI limit) · pulse ≥ 3×τ recommended"
+        )
+        note.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        lay.addWidget(_hline())
+
+        form = QFormLayout()
+        form.setSpacing(4)
+        form.setContentsMargins(0, 0, 0, 0)
+
+        self.ed_hppc_crate = QLineEdit("1.0")
+        self.ed_hppc_crate.setValidator(QDoubleValidator(0.1, 10.0, 2))
+        self.ed_hppc_crate.setToolTip(
+            "Pulse C-rate × rated capacity = pulse current (A)\n"
+            "Clamped to max_discharge_a from the active profile."
+        )
+        form.addRow("Pulse C-rate:", self.ed_hppc_crate)
+
+        self.ed_hppc_pulse = QLineEdit("30")
+        self.ed_hppc_pulse.setValidator(QDoubleValidator(1.0, 600.0, 1))
+        self.ed_hppc_pulse.setToolTip(
+            "Pulse duration (s)\nLead-acid τ ≈ 10–60 s → use ≥ 30 s to resolve R₁/C₁"
+        )
+        form.addRow("Pulse (s):", self.ed_hppc_pulse)
+
+        self.ed_hppc_relax = QLineEdit("30")
+        self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))
+        self.ed_hppc_relax.setToolTip("Rest/relaxation duration (s) between pulses")
+        form.addRow("Relax (s):", self.ed_hppc_relax)
+
+        lay.addLayout(form)
+
+        # Phase indicator — updates live via _on_hppc_telemetry
+        self.lbl_hppc_phase = QLabel("IDLE")
+        self.lbl_hppc_phase.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_hppc_phase.setStyleSheet(
+            f"background:{PANEL2}; color:{MUTED}; border:1px solid {BORDER}; "
+            f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
+        )
+        lay.addWidget(self.lbl_hppc_phase)
+
+        brow = QHBoxLayout()
+        self.btn_run_hppc = _btn("RUN HPPC", bg=INFO, fg="white", hover="#0d4a89")
+        self.btn_run_hppc.clicked.connect(self._on_run_hppc)
+        self._buttons["btn_run_hppc"] = self.btn_run_hppc
+        self.btn_stop_hppc = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_stop_hppc.clicked.connect(self._on_stop_test)
+        brow.addWidget(self.btn_run_hppc, 2)
+        brow.addWidget(self.btn_stop_hppc, 1)
+        lay.addLayout(brow)
+
+        lay.addStretch(1)
         return w
 
     # ---- ZONE: TEST MODE — AUTO tab (workflow) + MANUAL tab (charge/discharge) --
@@ -1304,17 +1376,6 @@ class BatteryQtWindow(QMainWindow):
         load_row.addWidget(load_off)
         t1l.addLayout(load_row)
 
-        t1l.addWidget(_hline())
-        t1l.addWidget(self._subheader("HPPC TIMING"))
-        hppc = QFormLayout()
-        hppc.setSpacing(4)
-        self.ed_hppc_pulse = QLineEdit("30")
-        self.ed_hppc_pulse.setValidator(QDoubleValidator(1.0, 600.0, 1))
-        self.ed_hppc_relax = QLineEdit("30")
-        self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))
-        hppc.addRow("Pulse (s):", self.ed_hppc_pulse)
-        hppc.addRow("Relax (s):", self.ed_hppc_relax)
-        t1l.addLayout(hppc)
         t1l.addStretch()
         tabs.addTab(t1, "Control")
 
@@ -2592,9 +2653,13 @@ class BatteryQtWindow(QMainWindow):
         p = profile_from_config(self.config)
         p.hppc_pulse_duration = _fld(self.ed_hppc_pulse, 30.0)
         p.hppc_relaxation_duration = _fld(self.ed_hppc_relax, 30.0)
+        p.hppc_pulse_crate = _fld(self.ed_hppc_crate, 1.0)
         return p
 
-    def _on_run_test(self):
+    def _on_run_hppc(self):
+        self._on_run_test(mode=OperationMode.HPPC)
+
+    def _on_run_test(self, mode=None):
         if self._test_thread is not None:
             return
         if not getattr(self.hw, "is_connected", False):
@@ -2607,12 +2672,14 @@ class BatteryQtWindow(QMainWindow):
         if self.controller and self.controller.monitor_running:
             self.controller.stop_monitor()
 
-        cfg = TestConfig(self._acq_profile(), OperationMode(self.cb_op_mode.currentText()))
+        op_mode = mode or OperationMode(self.cb_op_mode.currentText())
+        cfg = TestConfig(self._acq_profile(), op_mode)
         self.buf_t.clear(); self.buf_v.clear(); self.buf_i.clear()
         self.buf_soc.clear(); self.buf_rin.clear(); self.buf_temp.clear()
+        self._elapsed_t0 = None
         os.makedirs("sessions", exist_ok=True)
         csv_path = os.path.join("sessions", f"test_{datetime.now():%Y%m%d_%H%M%S}.csv")
-        self._last_csv = csv_path                       # most-recent run → Analyze/PDF use this
+        self._last_csv = csv_path
         self.lbl_csv.setText(f"CSV: {csv_path}")
 
         backend = HardwareBackend(self.hw)
@@ -2626,8 +2693,17 @@ class BatteryQtWindow(QMainWindow):
         self._test_worker.finished.connect(self._on_test_finished)
         self._test_worker.finished.connect(self._test_thread.quit)
         self._test_thread.finished.connect(self._cleanup_test_thread)
+        if op_mode == OperationMode.HPPC:
+            self._test_worker.telemetry.connect(self._on_hppc_telemetry)
+            self.btn_run_hppc.setEnabled(False)
+            self.lbl_hppc_phase.setText("RUNNING…")
+            self.lbl_hppc_phase.setStyleSheet(
+                f"background:{INFO}; color:white; border:1px solid {BORDER}; "
+                f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
+            )
+        else:
+            self.btn_run_test.setEnabled(False)
         self._test_thread.start()
-        self.btn_run_test.setEnabled(False)
         self._log_alarm(f"Characterization started: {cfg.mode.value}")
 
     def _on_stop_test(self):
@@ -2649,6 +2725,31 @@ class BatteryQtWindow(QMainWindow):
             row["temp"], self.config.system.safety_limits.get("max_temperature", 55) - 10,
             self.config.system.safety_limits.get("max_temperature", 55))
         self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
+
+    def _on_hppc_telemetry(self, row: dict):
+        """Update the HPPC phase indicator (REST / PULSE / cycle count) from elapsed time."""
+        try:
+            pulse = max(1.0, float(self.ed_hppc_pulse.text() or "30"))
+            relax = max(1.0, float(self.ed_hppc_relax.text() or "30"))
+            elapsed = row["elapsed"]
+            cycle = pulse + relax
+            cycle_num = int(elapsed / cycle) + 1
+            t_in_cycle = elapsed % cycle
+            if t_in_cycle < relax:
+                remaining = int(relax - t_in_cycle)
+                text = f"Cycle {cycle_num}  ·  REST  ({remaining} s left)"
+                bg, fg = PANEL2, MUTED
+            else:
+                remaining = int(pulse - (t_in_cycle - relax))
+                text = f"Cycle {cycle_num}  ·  PULSE  ({remaining} s left)"
+                bg, fg = OK, "white"
+            self.lbl_hppc_phase.setText(text)
+            self.lbl_hppc_phase.setStyleSheet(
+                f"background:{bg}; color:{fg}; border:1px solid {BORDER}; "
+                f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
+            )
+        except Exception:
+            pass
 
     def _on_test_finished(self, results: dict):
         # SoH is N/A when not measurable (e.g. HPPC pulse test — see analyze_series).
@@ -2709,6 +2810,17 @@ class BatteryQtWindow(QMainWindow):
         if hasattr(self, "lbl_run_grade"):
             self.lbl_run_grade.setText(
                 f"Grade: {grade} · SoH {soh_txt}% · conf {conf*100:.0f}%")
+        if hasattr(self, "lbl_hppc_phase") and results.get("ecm_identified"):
+            ecm_r2 = results.get("ecm_r2", 0.0)
+            r0 = results.get("r0_mohm", 0.0)
+            r1 = results.get("r1_mohm", 0.0)
+            tau = results.get("tau_s", 0.0)
+            self.lbl_hppc_phase.setText(
+                f"DONE · R₀={r0:.1f} mΩ  R₁={r1:.1f} mΩ  τ={tau:.1f} s  R²={ecm_r2:.3f}")
+            self.lbl_hppc_phase.setStyleSheet(
+                f"background:{INFO}; color:white; border:1px solid {BORDER}; "
+                f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
+            )
         self._log_alarm(
             f"Test complete — Grade {grade} (conf {conf*100:.0f}%), "
             f"SoH {soh_txt}%, DCIR {dcir:.1f}±{dstd:.1f} mΩ{wmsg}")
@@ -2719,6 +2831,14 @@ class BatteryQtWindow(QMainWindow):
         self._test_thread = None
         self._test_worker = None
         self.btn_run_test.setEnabled(True)
+        if hasattr(self, "btn_run_hppc"):
+            self.btn_run_hppc.setEnabled(True)
+        if hasattr(self, "lbl_hppc_phase"):
+            self.lbl_hppc_phase.setText("IDLE")
+            self.lbl_hppc_phase.setStyleSheet(
+                f"background:{PANEL2}; color:{MUTED}; border:1px solid {BORDER}; "
+                f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
+            )
         self.lbl_test_status.setText("Test idle")
 
     def _on_estop(self):
