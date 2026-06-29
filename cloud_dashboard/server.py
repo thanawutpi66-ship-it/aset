@@ -29,6 +29,8 @@ for _stream in (sys.stdout, sys.stderr):
 PORT = int(os.environ.get("PORT", "8001"))
 INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
 SNAPSHOT_PATH = os.environ.get("SNAPSHOT_PATH", "snapshot.json")
+SESSIONS_PATH = os.environ.get("SESSIONS_PATH", "sessions.json")
+MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "20"))
 
 # Static frontend lives in ./static (index.html + style.css + app.js). It is served
 # for any non-/api path; the whole UI is editable there without touching this file.
@@ -49,6 +51,7 @@ _CONTENT_TYPES = {
 # ---------------------------------------------------------------------------
 _lock = threading.Lock()
 _store = {"payload": None, "received_at": 0.0}
+_sessions: list = []   # [{idx, received_at, battery, row_count, size_bytes, payload}]
 
 
 def _load_snapshot() -> None:
@@ -68,6 +71,32 @@ def _save_snapshot() -> None:
             json.dump(_store, f)
     except Exception:
         pass  # ระบบไฟล์ ephemeral (Heroku) ล้มได้ — ไม่เป็นไร
+
+
+def _sessions_meta(sessions: list) -> list:
+    """Return session list without full payload (for disk / list API)."""
+    return [{"idx": s["idx"], "received_at": s["received_at"],
+             "battery": s["battery"], "row_count": s["row_count"],
+             "size_bytes": s["size_bytes"]} for s in sessions]
+
+
+def _load_sessions() -> None:
+    try:
+        if os.path.exists(SESSIONS_PATH):
+            with open(SESSIONS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for m in data.get("sessions", []):
+                _sessions.append({**m, "payload": None})  # payloads lost on restart
+    except Exception:
+        pass
+
+
+def _save_sessions() -> None:
+    try:
+        with open(SESSIONS_PATH, "w", encoding="utf-8") as f:
+            json.dump({"sessions": _sessions_meta(_sessions[-MAX_SESSIONS:])}, f)
+    except Exception:
+        pass
 
 
 def _make_handler():
@@ -95,7 +124,7 @@ def _make_handler():
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             # HTML must stay fresh; static assets can be cached briefly.
-            self.send_header("Cache-Control", "no-cache" if ext == ".html" else "public, max-age=300")
+            self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(body)
             return True
@@ -120,9 +149,25 @@ def _make_handler():
                 self._json({"error": f"bad payload: {e}"}, 400)
                 return
             with _lock:
+                now = time.time()
                 _store["payload"] = payload
-                _store["received_at"] = time.time()
+                _store["received_at"] = now
                 _save_snapshot()
+                entry = {
+                    "idx": len(_sessions) + 1,
+                    "received_at": now,
+                    "battery": (payload.get("meta") or {}).get("battery", "–"),
+                    "row_count": int((payload.get("summary") or {}).get("row_count") or 0),
+                    "size_bytes": len(raw),
+                    "payload": payload,
+                }
+                _sessions.append(entry)
+                if len(_sessions) > MAX_SESSIONS:
+                    _sessions.pop(0)
+                # Re-index after trim
+                for i, s in enumerate(_sessions):
+                    s["idx"] = i + 1
+                _save_sessions()
             self._json({"ok": True, "received_at": _store["received_at"]})
 
         # ---- serve (ให้ผู้ชม) --------------------------------------------
@@ -148,6 +193,30 @@ def _make_handler():
                 if path == "/api/snapshot":
                     self._json({"payload": payload, "received_at": received_at})
                     return
+
+                if path == "/api/sessions":
+                    with _lock:
+                        self._json({"sessions": _sessions_meta(_sessions)})
+                    return
+
+                import re as _re
+                _sm = _re.match(r"^/api/session/(\d+)$", path)
+                if _sm:
+                    sidx = int(_sm.group(1))
+                    with _lock:
+                        match = next((s for s in _sessions if s["idx"] == sidx), None)
+                    if match and match.get("payload"):
+                        self._json({"payload": match["payload"],
+                                    "received_at": match["received_at"]})
+                    elif match:
+                        # metadata only (payload lost on restart) — fall back to latest
+                        self._json({"payload": _store["payload"],
+                                    "received_at": _store["received_at"],
+                                    "fallback": True})
+                    else:
+                        self._json({"error": "session not found"}, 404)
+                    return
+
                 if payload is None:
                     self._json({"error": "no data yet"}, 404)
                     return
@@ -184,6 +253,7 @@ def main():
     if not INGEST_TOKEN:
         print("WARNING: INGEST_TOKEN ไม่ได้ตั้ง — /api/ingest จะถูกปฏิเสธทั้งหมด")
     _load_snapshot()
+    _load_sessions()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), _make_handler())
     print(f"ASET Cloud Dashboard listening on :{PORT}")
     server.serve_forever()

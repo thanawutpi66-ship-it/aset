@@ -6,9 +6,9 @@
 <meta name="description" content="ASET Cloud Dashboard — แสดงผลการทดสอบแบตเตอรี่ Li-ion แบบเรียลไทม์ (SoC / SoH)"/>
 <title>ASET Cloud Dashboard · Battery Health</title>
 <link rel="preconnect" href="https://cdn.jsdelivr.net"/>
-<link rel="stylesheet" href="style.css"/>
+<link rel="stylesheet" href="style.css?v=5"/>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script defer src="app.js"></script>
+<script defer src="app.js?v=5"></script>
 </head>
 <body>
 
@@ -23,7 +23,8 @@
 <!-- sticky top bar -->
 <header class="topbar">
   <div class="brand">
-    <span class="logo">🔋</span>
+    <img src="logo_en_ubu.png" alt="UBU" class="ubu-logo"/>
+    <div class="brand-divider"></div>
     <div class="brand-txt">
       <strong>ASET</strong><span>Cloud Battery Dashboard</span>
     </div>
@@ -46,88 +47,249 @@
 
   <div id="content" hidden>
 
-    <!-- HERO: SoC + SoH gauges + sorting grade -->
-    <section class="hero">
-      <!-- SoC gauge -->
-      <article class="gauge-card">
-        <div class="gauge-wrap">
-          <svg viewBox="0 0 200 200" class="gauge" aria-hidden="true">
-            <circle class="g-track" cx="100" cy="100" r="82"/>
-            <circle class="g-fill" id="socArc" cx="100" cy="100" r="82"/>
-          </svg>
-          <div class="gauge-center">
-            <div class="gauge-val"><span id="socVal">–</span><span class="unit">%</span></div>
-            <div class="gauge-label">State of Charge</div>
-          </div>
-        </div>
-        <div class="gauge-foot"><span id="socFoot">ระดับประจุปัจจุบัน</span></div>
-      </article>
+    <!-- title bar -->
+    <div class="chart-title-bar">
+      <div class="chart-title-main">CASE TEMPERATURE</div>
+      <div class="chart-title-val" id="tempTitle">-- °C</div>
+    </div>
 
-      <!-- SoH gauge -->
-      <article class="gauge-card">
-        <div class="gauge-wrap">
-          <svg viewBox="0 0 200 200" class="gauge" aria-hidden="true">
-            <circle class="g-track" cx="100" cy="100" r="82"/>
-            <circle class="g-fill" id="sohArc" cx="100" cy="100" r="82"/>
-          </svg>
-          <div class="gauge-center">
-            <div class="gauge-val"><span id="sohVal">–</span><span class="unit">%</span></div>
-            <div class="gauge-label">State of Health</div>
-          </div>
-        </div>
-        <div class="gauge-foot"><span id="sohFoot">สุขภาพแบตเตอรี่</span></div>
-      </article>
-
-      <!-- sorting grade + key analysis -->
-      <article class="grade-card">
-        <div class="grade-head">
-          <span class="caption">AI SORTING GRADE</span>
-          <span class="grade-badge" id="grade">–</span>
-          <span class="grade-meta" id="gradeMeta"></span>
-          <div class="conf-bar"><span id="confFill"></span></div>
-          <span class="conf-txt" id="confTxt"></span>
-        </div>
-        <div class="grade-grid">
-          <div class="mini"><span class="mk">Capacity</span><span class="mv"><b id="cap">–</b> Ah</span></div>
-          <div class="mini"><span class="mk">DCIR @25°C</span><span class="mv"><b id="dcir">–</b> mΩ</span></div>
-          <div class="mini"><span class="mk">Voltage sag</span><span class="mv"><b id="sag">–</b> V</span></div>
-          <div class="mini"><span class="mk">CCA proxy</span><span class="mv"><b id="cca">–</b> A</span></div>
-          <div class="mini"><span class="mk">Rested OCV</span><span class="mv"><b id="ocv">–</b> V</span></div>
-          <div class="mini"><span class="mk">Method</span><span class="mv"><b id="method">–</b></span></div>
-        </div>
-      </article>
-    </section>
-
-    <!-- live telemetry strip -->
+    <!-- telemetry strip — above chart -->
     <section class="telemetry">
       <div class="tcard" style="--accent:var(--v)">
         <span class="tk">VOLTAGE</span>
-        <span class="tv"><b id="mV">–</b><span class="tu">V</span></span>
+        <span class="tv"><b id="mV">0.0</b><span class="tu">V</span></span>
       </div>
       <div class="tcard" style="--accent:var(--i)">
         <span class="tk">CURRENT</span>
-        <span class="tv"><b id="mI">–</b><span class="tu">A</span></span>
+        <span class="tv"><b id="mI">0.0</b><span class="tu">A</span></span>
+      </div>
+      <div class="tcard" style="--accent:var(--soc)">
+        <span class="tk">SOC</span>
+        <span class="tv"><b id="mSoC">0.0</b><span class="tu">%</span></span>
       </div>
       <div class="tcard" style="--accent:var(--r)">
-        <span class="tk">RESISTANCE</span>
+        <span class="tk">RIN</span>
         <span class="tv"><b id="mR">–</b></span>
       </div>
       <div class="tcard" style="--accent:var(--t)">
-        <span class="tk">TEMPERATURE</span>
-        <span class="tv"><b id="mT">–</b><span class="tu">°C</span></span>
+        <span class="tk">TEMP</span>
+        <span class="tv"><b id="mT">0.0</b><span class="tu">°C</span></span>
       </div>
-      <div class="tcard" id="phaseCard">
-        <span class="tk">TEST PHASE</span>
-        <span class="tv"><b id="testPhase">–</b></span>
-      </div>
-      <div class="tcard" id="safetyCard">
-        <span class="tk">SAFETY</span>
-        <span class="tv"><b id="safety">…</b></span>
+      <div class="tcard">
+        <span class="tk">SOH</span>
+        <span class="tv"><b id="mSoH">–</b></span>
       </div>
     </section>
 
-    <!-- charts -->
-    <section class="charts" id="charts"></section>
+    <!-- graph mode selector -->
+    <div class="mode-bar">
+      <button class="ch-btn" id="btnCh">A</button>
+      <div class="mode-opts">
+        <span class="mode-label">Graph mode:</span>
+        <button class="mode-btn active" data-mode="combined">Combined</button>
+        <button class="mode-btn" data-mode="split2">Split 2</button>
+        <button class="mode-btn" data-mode="split3">Split 3</button>
+      </div>
+    </div>
+
+    <!-- main layout: chart + right panel -->
+    <div class="main-layout">
+
+      <!-- test activity monitor (left) -->
+      <div class="test-panel">
+
+        <!-- Header: mode -->
+        <div class="tp-mode-hdr">
+          <span class="tp-mode-lbl">TEST MODE</span>
+          <span class="tp-mode-chip" id="tpModeChip">–</span>
+        </div>
+
+        <!-- What is the GUI doing RIGHT NOW -->
+        <div class="tp-act-banner">
+          <div class="tp-act-phase" id="tpActPhase">Idle</div>
+          <div class="tp-act-detail" id="tpActDetail">Waiting for test start</div>
+          <div class="tp-act-sub" id="tpActSub"></div>
+        </div>
+
+        <!-- Workflow progress -->
+        <div class="tp-wf-lbl">Workflow: <span id="tpWorkflow">–</span></div>
+        <div class="tp-steps">
+          <div class="tp-step" data-step="0">
+            <span class="step-dot"></span>
+            <div class="step-info">
+              <span class="step-name">PREPARE</span>
+              <span class="step-desc">OCV calibrate</span>
+            </div>
+          </div>
+          <div class="tp-step" data-step="1">
+            <span class="step-dot"></span>
+            <div class="step-info">
+              <span class="step-name">CHARGE</span>
+              <span class="step-desc" id="tpChargeDesc">Bulk→Absorption→Float</span>
+            </div>
+          </div>
+          <div class="tp-step" data-step="2">
+            <span class="step-dot"></span>
+            <div class="step-info">
+              <span class="step-name">REST</span>
+              <span class="step-desc" id="tpRestDesc">30 min rest</span>
+            </div>
+          </div>
+          <div class="tp-step" data-step="3">
+            <span class="step-dot"></span>
+            <div class="step-info">
+              <span class="step-name">TEST</span>
+              <span class="step-desc" id="tpTestDesc">Discharge 0.2C</span>
+            </div>
+          </div>
+          <div class="tp-step" data-step="4">
+            <span class="step-dot"></span>
+            <div class="step-info">
+              <span class="step-name">ANALYZE</span>
+              <span class="step-desc">SoH + Grade</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Status dot -->
+        <div class="tp-status-row">
+          <span class="tp-status-dot" id="tpStatusDot"></span>
+          <span class="tp-status-txt" id="tpStatusTxt">IDLE</span>
+        </div>
+
+      </div>
+
+      <!-- chart area -->
+      <div class="chart-area" id="charts"></div>
+
+      <!-- right panel: 3 tabs -->
+      <div class="right-panel">
+
+        <div class="lp-tabs">
+          <button class="lptab active" data-lptab="analytics">Analytics</button>
+          <button class="lptab" data-lptab="diagnostics">Diagnostics (ICA/DTV)</button>
+          <button class="lptab" data-lptab="alarms">Alarm Log</button>
+        </div>
+
+        <!-- Analytics tab -->
+        <div class="lptab-content" id="lptab-analytics">
+          <button class="ecm-toggle" id="ecmToggle">▶ Show Equivalent Circuit</button>
+          <div class="ecm-content" id="ecmContent" hidden>
+            <!-- Randles ECM — dark theme, Cd parallel branch above Rd -->
+            <svg class="ecm-svg" viewBox="0 0 285 145" xmlns="http://www.w3.org/2000/svg">
+              <!-- Battery (Voc) — vertical cell stack on left -->
+              <line x1="22" y1="70" x2="22" y2="93" style="stroke:var(--muted);stroke-width:1.5"/>
+              <line x1="12" y1="95" x2="32" y2="95" style="stroke:var(--muted);stroke-width:2.5"/>
+              <line x1="16" y1="104" x2="28" y2="104" style="stroke:var(--muted);stroke-width:1.5"/>
+              <line x1="22" y1="106" x2="22" y2="128" style="stroke:var(--muted);stroke-width:1.5"/>
+              <text x="1" y="102" style="fill:var(--muted);font-size:9px;font-family:monospace">Voc</text>
+              <text x="33" y="92" style="fill:var(--ok);font-size:9px;font-family:monospace">+</text>
+              <text x="33" y="115" style="fill:var(--crit);font-size:9px;font-family:monospace">−</text>
+              <!-- Top wire: Voc(+) → Ra -->
+              <line x1="22" y1="70" x2="48" y2="70" style="stroke:var(--muted);stroke-width:1.5"/>
+              <!-- Ra resistor -->
+              <rect x="48" y="64" width="52" height="12" style="stroke:var(--muted);stroke-width:1.5;fill:none"/>
+              <text x="74" y="60" text-anchor="middle" style="fill:var(--muted);font-size:9px;font-family:monospace">Ra</text>
+              <!-- Wire Ra → junction A -->
+              <line x1="100" y1="70" x2="118" y2="70" style="stroke:var(--muted);stroke-width:1.5"/>
+              <circle cx="118" cy="70" r="2.5" style="fill:var(--muted)"/>
+              <!-- Cd branch ABOVE main line (parallel to Rd) -->
+              <line x1="118" y1="70" x2="118" y2="28" style="stroke:var(--muted);stroke-width:1.5"/>
+              <line x1="118" y1="28" x2="152" y2="28" style="stroke:var(--muted);stroke-width:1.5"/>
+              <line x1="156" y1="20" x2="156" y2="36" style="stroke:var(--muted);stroke-width:2"/>
+              <line x1="164" y1="20" x2="164" y2="36" style="stroke:var(--muted);stroke-width:2"/>
+              <line x1="168" y1="28" x2="225" y2="28" style="stroke:var(--muted);stroke-width:1.5"/>
+              <line x1="225" y1="28" x2="225" y2="70" style="stroke:var(--muted);stroke-width:1.5"/>
+              <text x="160" y="14" text-anchor="middle" style="fill:var(--muted);font-size:9px;font-family:monospace">Cd</text>
+              <!-- Rd on main line -->
+              <line x1="118" y1="70" x2="138" y2="70" style="stroke:var(--muted);stroke-width:1.5"/>
+              <rect x="138" y="64" width="62" height="12" style="stroke:var(--muted);stroke-width:1.5;fill:none"/>
+              <line x1="200" y1="70" x2="225" y2="70" style="stroke:var(--muted);stroke-width:1.5"/>
+              <text x="169" y="88" text-anchor="middle" style="fill:var(--muted);font-size:9px;font-family:monospace">Rd</text>
+              <circle cx="225" cy="70" r="2.5" style="fill:var(--muted)"/>
+              <!-- Wire junction B → Vt(+) terminal -->
+              <line x1="225" y1="70" x2="256" y2="70" style="stroke:var(--muted);stroke-width:1.5"/>
+              <circle cx="260" cy="70" r="5" style="stroke:var(--muted);stroke-width:1.5;fill:none"/>
+              <text x="267" y="74" style="fill:var(--ok);font-size:10px;font-family:monospace">+</text>
+              <!-- Bottom rail: Voc(−) → Vt(−) -->
+              <line x1="22" y1="128" x2="256" y2="128" style="stroke:var(--muted);stroke-width:1.5"/>
+              <circle cx="260" cy="128" r="5" style="stroke:var(--muted);stroke-width:1.5;fill:none"/>
+              <text x="267" y="132" style="fill:var(--crit);font-size:10px;font-family:monospace">−</text>
+              <text x="252" y="100" text-anchor="middle" style="fill:var(--faint);font-size:9px;font-family:monospace">Vt</text>
+            </svg>
+            <div class="ecm-vals">
+              <div class="mini"><span class="mk">Voc (OCV)</span><span class="mv"><b id="ecmVoc">–</b></span></div>
+              <div class="mini"><span class="mk">R₀ / Ra</span><span class="mv"><b id="r0">–</b> mΩ</span></div>
+              <div class="mini"><span class="mk">R₁ / Rd</span><span class="mv"><b id="r1">–</b> mΩ</span></div>
+              <div class="mini"><span class="mk">τ (s)</span><span class="mv"><b id="tau">–</b></span></div>
+              <div class="mini"><span class="mk">CCA proxy</span><span class="mv"><b id="cca">–</b> A</span></div>
+            </div>
+          </div>
+
+          <div class="sess-header">
+            <span class="sess-label">Sessions:</span>
+            <button class="sess-refresh" id="refreshSessions" title="Refresh sessions">↻</button>
+          </div>
+          <div class="sess-list" id="sessionsList">
+            <div class="sess-empty">No sessions yet.</div>
+          </div>
+          <div class="sess-prompt" id="sessPrompt">Select a session above to analyze.</div>
+
+          <div class="an-results" id="anResults" hidden>
+            <div class="sum-head">Summary</div>
+            <div class="sum-table">
+              <div class="sum-row">
+                <span>Grade</span>
+                <span><b id="grade" class="grade-txt">–</b><span class="conf-label"> conf <b id="gradeConf">–</b>%</span></span>
+              </div>
+              <div class="sum-row">
+                <span>State of Health</span>
+                <span><b id="sumSoH">N/A</b> %</span>
+              </div>
+              <div class="sum-row">
+                <span>Capacity</span>
+                <span><b id="cap">–</b> Ah</span>
+              </div>
+              <div class="sum-row">
+                <span>Rested OCV</span>
+                <span><b id="ocv">–</b> V</span>
+              </div>
+            </div>
+            <div class="sum-section-head">Resistance &amp; Cranking (DCIR @ ~250 ms)</div>
+            <div class="sum-table">
+              <div class="sum-row">
+                <span>DCIR</span>
+                <span><b id="dcir">–</b> ± <b id="dcirUnc">–</b> mΩ</span>
+              </div>
+            </div>
+            <button class="grade-action-btn" id="gradeActionBtn">–</button>
+            <button class="analyze-btn" id="analyzeBtn">Analyze Last CSV</button>
+          </div>
+        </div>
+
+        <!-- Diagnostics tab -->
+        <div class="lptab-content" id="lptab-diagnostics" hidden>
+          <div class="ica-title">ICA (Incremental Capacity)</div>
+          <div class="ica-wrap">
+            <canvas id="icaChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Alarm Log tab -->
+        <div class="lptab-content" id="lptab-alarms" hidden>
+          <div class="alarm-list" id="alarmList">
+            <div class="alarm-empty">No alarms recorded.</div>
+          </div>
+        </div>
+
+        <div class="lp-footer">
+          <span class="conn-dot" id="connDot"></span>
+          <span id="connStatus">Connecting…</span>
+        </div>
+
+      </div><!-- /right-panel -->
+
+    </div><!-- /main-layout -->
 
   </div><!-- /content -->
 

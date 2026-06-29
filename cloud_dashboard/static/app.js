@@ -1,210 +1,460 @@
 /* ===========================================================================
    ASET Cloud Dashboard — frontend logic
-   Data source: GET /api/snapshot  ->  { payload:{meta,summary,analysis,series}, received_at }
-   Tolerant of BOTH the unified analyze_csv dict AND the legacy {success,features} shape.
    =========================================================================== */
 'use strict';
 
-/* ---- small helpers ------------------------------------------------------- */
 const $ = (id) => document.getElementById(id);
 const f = (x, d = 2) => (x == null || x === '' || isNaN(x)) ? '–' : Number(x).toFixed(d);
 const num = (o, ...keys) => { for (const k of keys) { if (o && o[k] != null && !isNaN(o[k])) return Number(o[k]); } return null; };
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 function fmtR(mOhm){ if (mOhm == null) return '–'; return mOhm >= 1000 ? (mOhm/1000).toFixed(3)+' Ω' : mOhm.toFixed(1)+' mΩ'; }
+function fmtKB(bytes){ return bytes >= 1024 ? Math.round(bytes/1024)+' KB' : bytes+' B'; }
+function fmtDate(ts){
+  const d = new Date(ts * 1000);
+  const day = d.getDate(), mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+  const yr = d.getFullYear(), hh = String(d.getHours()).padStart(2,'0'), mm = String(d.getMinutes()).padStart(2,'0');
+  return `${day} ${mon} ${yr}  ${hh}:${mm}`;
+}
 
-const TEMP_CRIT = 55;     // °C — trips the emergency overlay
+const TEMP_CRIT = 55;
 let isMuted = false;
+let graphMode = 'combined';
+let mainCharts = {};
+let icaChart = null;
+let alarmLog = [];
+let selectedSession = null;
 
-/* ---- radial gauges ------------------------------------------------------- */
-const R = 82;                                   // must match the SVG circle r
-const CIRC = 2 * Math.PI * R;                   // full circumference
-const ARC = CIRC * 0.75;                        // 270° sweep
-function initGauge(arcId){
-  const el = $(arcId);
-  el.style.strokeDasharray = ARC + ' ' + CIRC;
-  el.style.strokeDashoffset = ARC;              // start empty
-  // track shares the same dash so it draws the 270° arc too
-  const track = el.previousElementSibling;
-  if (track) { track.style.strokeDasharray = ARC + ' ' + CIRC; track.style.strokeDashoffset = 0; }
-}
-/* set gauge to fraction 0..1 with a colour */
-function setGauge(arcId, valEl, value, color){
-  const arc = $(arcId);
-  if (value == null) {
-    arc.style.strokeDashoffset = ARC;
-    valEl.textContent = '–';
-    return;
-  }
-  const frac = clamp(value / 100, 0, 1);
-  arc.style.strokeDashoffset = ARC * (1 - frac);
-  arc.style.stroke = color;
-  arc.style.filter = 'drop-shadow(0 0 6px ' + color + '88)';
-  valEl.textContent = Math.round(value);
-}
-/* colour ramps */
-function socColor(v){ return v >= 60 ? css('--ok') : v >= 25 ? css('--t') : css('--crit'); }
-function sohColor(v){ return v >= 85 ? css('--ok') : v >= 70 ? css('--t') : css('--crit'); }
-function socWord(v){ return v >= 80 ? 'เต็ม' : v >= 50 ? 'ปานกลาง' : v >= 20 ? 'ต่ำ' : 'ใกล้หมด'; }
-function sohWord(v){ return v >= 90 ? 'ดีเยี่ยม' : v >= 80 ? 'ดี' : v >= 70 ? 'พอใช้' : 'เสื่อม'; }
+function sohColor(v){ return v >= 85 ? css('--ok') : v >= 70 ? css('--warn') : css('--crit'); }
 
-/* ---- charts -------------------------------------------------------------- */
-const CH = [
-  { key:'Voltage_V',      id:'cV',   label:'Voltage (V)',     v:'--v'  },
-  { key:'Current_A',      id:'cI',   label:'Current (A)',     v:'--i'  },
-  { key:'SoC_pct',        id:'cSoC', label:'SoC (%)',         v:'--soc'},
-  { key:'Resistance_mOhm',id:'cR',   label:'Resistance (mΩ)', v:'--r'  },
-  { key:'Temperature_C',  id:'cT',   label:'Temperature (°C)',v:'--t'  },
-];
-const charts = {};
-function mkChart(id, label, color){
-  return new Chart($(id), {
-    type:'line',
-    data:{ labels:[], datasets:[{ label, data:[], borderColor:color,
-      backgroundColor:color+'22', borderWidth:1.8, pointRadius:0, fill:true, tension:.18 }] },
-    options:{
-      responsive:true, maintainAspectRatio:true, animation:false,
-      interaction:{ intersect:false, mode:'index' },
-      scales:{
-        x:{ grid:{ color:'rgba(255,255,255,.04)' }, ticks:{ color:css('--faint'), maxTicksLimit:7, font:{size:10} } },
-        y:{ grid:{ color:'rgba(255,255,255,.05)' }, ticks:{ color:css('--faint'), font:{size:10} } },
+/* ---- axis / dataset helpers ---------------------------------------------- */
+function mkDataset(label, data, color, yAxisID) {
+  return { label, data, borderColor: color, backgroundColor: color + '22',
+    borderWidth: 1.8, pointRadius: 0, fill: false, tension: 0.18, yAxisID };
+}
+function mkScale(pos, color, label, drawGrid) {
+  return {
+    type: 'linear', position: pos,
+    ticks: { color, font: { size: 10 } },
+    grid: { color: drawGrid ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,0)' },
+    border: { color, width: pos === 'right' ? 2 : 1 },
+    title: { display: true, text: label, color, font: { size: 10 } },
+  };
+}
+function baseOpts(extraScales) {
+  return {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { intersect: false, mode: 'index' },
+    scales: {
+      x: {
+        ticks: { color: css('--faint'), font: { size: 10 }, maxTicksLimit: 8 },
+        grid: { color: 'rgba(255,255,255,.04)' },
+        title: { display: true, text: 'Elapsed (s)', color: css('--muted'), font: { size: 10 } },
       },
-      plugins:{ legend:{ display:false },
-        tooltip:{ backgroundColor:'#0b1220', borderColor:'rgba(255,255,255,.12)', borderWidth:1 } },
+      ...extraScales,
+    },
+    plugins: {
+      legend: { display: true, labels: { color: css('--muted'), font: { size: 11 }, boxWidth: 12 } },
+      tooltip: { backgroundColor: '#0b1220', borderColor: 'rgba(255,255,255,.12)', borderWidth: 1 },
+    },
+  };
+}
+
+/* ---- build / destroy main charts ----------------------------------------- */
+function destroyMainCharts() {
+  Object.values(mainCharts).forEach(c => { try { c.destroy(); } catch(e){} });
+  mainCharts = {};
+  $('charts').innerHTML = '';
+}
+function addWrap(heightPx) {
+  const host = $('charts');
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap';
+  wrap.style.height = heightPx + 'px';
+  const canvas = document.createElement('canvas');
+  wrap.appendChild(canvas);
+  host.appendChild(wrap);
+  return canvas;
+}
+function buildMainCharts() {
+  destroyMainCharts();
+  const vC = css('--v'), iC = css('--i'), tC = css('--t');
+  if (graphMode === 'combined') {
+    const canvas = addWrap(420);
+    mainCharts.combined = new Chart(canvas, {
+      type: 'line',
+      data: { labels: [], datasets: [
+        mkDataset('Voltage (V)', [], vC, 'yV'),
+        mkDataset('Current (A)', [], iC, 'yI'),
+        mkDataset('Temp (°C)',   [], tC, 'yT'),
+      ]},
+      options: baseOpts({
+        yV: mkScale('left',  vC, 'Voltage (V)', true),
+        yI: mkScale('right', iC, 'Current (A)', false),
+        yT: mkScale('right', tC, 'Temp (°C)',   false),
+      }),
+    });
+  } else if (graphMode === 'split2') {
+    const c1 = addWrap(205);
+    mainCharts.vc = new Chart(c1, {
+      type: 'line',
+      data: { labels: [], datasets: [mkDataset('Voltage (V)', [], vC, 'yV'), mkDataset('Current (A)', [], iC, 'yI')] },
+      options: baseOpts({ yV: mkScale('left', vC, 'Voltage (V)', true), yI: mkScale('right', iC, 'Current (A)', false) }),
+    });
+    const c2 = addWrap(205);
+    mainCharts.temp = new Chart(c2, {
+      type: 'line',
+      data: { labels: [], datasets: [mkDataset('Temp (°C)', [], tC, 'yT')] },
+      options: baseOpts({ yT: mkScale('left', tC, 'Temp (°C)', true) }),
+    });
+  } else {
+    [['Voltage (V)', vC, 'yV'], ['Current (A)', iC, 'yI'], ['Temp (°C)', tC, 'yT']].forEach(([label, color, axis]) => {
+      const c = addWrap(135);
+      mainCharts[axis] = new Chart(c, {
+        type: 'line',
+        data: { labels: [], datasets: [mkDataset(label, [], color, axis)] },
+        options: baseOpts({ [axis]: mkScale('left', color, label, true) }),
+      });
+    });
+  }
+}
+function updateMainCharts(ser) {
+  const elapsed = (ser.Elapsed_s || []).map(v => v.toFixed(1));
+  const vD = ser.Voltage_V || [], iD = ser.Current_A || [], tD = ser.Temperature_C || [];
+  if (graphMode === 'combined' && mainCharts.combined) {
+    const ch = mainCharts.combined;
+    ch.data.labels = elapsed; ch.data.datasets[0].data = vD; ch.data.datasets[1].data = iD; ch.data.datasets[2].data = tD;
+    ch.update('none');
+  } else if (graphMode === 'split2') {
+    if (mainCharts.vc)   { mainCharts.vc.data.labels = elapsed;   mainCharts.vc.data.datasets[0].data = vD; mainCharts.vc.data.datasets[1].data = iD; mainCharts.vc.update('none'); }
+    if (mainCharts.temp) { mainCharts.temp.data.labels = elapsed; mainCharts.temp.data.datasets[0].data = tD; mainCharts.temp.update('none'); }
+  } else {
+    if (mainCharts.yV) { mainCharts.yV.data.labels = elapsed; mainCharts.yV.data.datasets[0].data = vD; mainCharts.yV.update('none'); }
+    if (mainCharts.yI) { mainCharts.yI.data.labels = elapsed; mainCharts.yI.data.datasets[0].data = iD; mainCharts.yI.update('none'); }
+    if (mainCharts.yT) { mainCharts.yT.data.labels = elapsed; mainCharts.yT.data.datasets[0].data = tD; mainCharts.yT.update('none'); }
+  }
+}
+
+/* ---- ICA chart (in Diagnostics tab) -------------------------------------- */
+function buildIcaChart() {
+  const canvas = $('icaChart');
+  if (!canvas) return;
+  if (icaChart) { try { icaChart.destroy(); } catch(e){} icaChart = null; }
+  icaChart = new Chart(canvas, {
+    type: 'line',
+    data: { datasets: [{ label: 'dQ/dV', data: [],
+      borderColor: css('--soc'), backgroundColor: css('--soc') + '22',
+      borderWidth: 1.5, pointRadius: 0, tension: 0.3, fill: false }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      scales: {
+        x: { type: 'linear', title: { display: true, text: 'Voltage (V)', color: css('--muted'), font: { size: 9 } }, ticks: { color: css('--faint'), font: { size: 9 }, maxTicksLimit: 6 }, grid: { color: 'rgba(255,255,255,.04)' } },
+        y: { title: { display: true, text: 'dQ/dV', color: css('--muted'), font: { size: 9 } }, ticks: { color: css('--faint'), font: { size: 9 } }, grid: { color: 'rgba(255,255,255,.05)' } },
+      },
+      plugins: { legend: { display: false }, tooltip: { backgroundColor: '#0b1220' } },
     },
   });
 }
-function ensureCharts(series){
-  const host = $('charts');
-  for (const c of CH){
-    const has = Array.isArray(series[c.key]) && series[c.key].length;
-    if (has && !charts[c.id]){
-      const color = css(c.v);
-      const card = document.createElement('div');
-      card.className = 'chart-card';
-      card.innerHTML = '<h3><span class="swatch" style="background:'+color+'"></span>'+c.label+'</h3>'
-                     + '<canvas id="'+c.id+'"></canvas>';
-      host.appendChild(card);
-      charts[c.id] = mkChart(c.id, c.label, color);
-    }
+function updateIcaChart(voltageArr, socArr) {
+  if (!icaChart) return;
+  if (!voltageArr || !socArr || voltageArr.length < 5) { icaChart.data.datasets[0].data = []; icaChart.update('none'); return; }
+  const pts = [];
+  for (let i = 1; i < voltageArr.length; i++) {
+    const dV = voltageArr[i] - voltageArr[i-1], dQ = socArr[i] - socArr[i-1];
+    if (Math.abs(dV) > 1e-4) pts.push({ x: voltageArr[i], y: dQ / dV });
   }
+  const w = 5;
+  const smoothed = pts.map((p, i) => { const sl = pts.slice(Math.max(0,i-w),i+w+1); return { x: p.x, y: sl.reduce((s,q)=>s+q.y,0)/sl.length }; });
+  icaChart.data.datasets[0].data = smoothed;
+  icaChart.update('none');
+}
+
+/* ---- sessions list ------------------------------------------------------- */
+async function fetchSessions() {
+  try {
+    const res = await fetch('/api/sessions');
+    if (!res.ok) return;
+    const data = await res.json();
+    renderSessions(data.sessions || []);
+  } catch(e) {}
+}
+
+function renderSessions(sessions) {
+  const list = $('sessionsList');
+  if (!sessions.length) { list.innerHTML = '<div class="sess-empty">No sessions yet.</div>'; return; }
+  list.innerHTML = '';
+  // Show newest first
+  [...sessions].reverse().forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'sess-item' + (selectedSession === s.idx ? ' selected' : '');
+    div.dataset.idx = s.idx;
+    div.innerHTML =
+      `<span class="sess-num">${s.idx}.</span>` +
+      `<span class="sess-info"><span class="sess-name">Data Log</span>` +
+      `<span class="sess-date">${fmtDate(s.received_at)}</span></span>` +
+      `<span class="sess-size">${fmtKB(s.size_bytes)}</span>`;
+    div.addEventListener('click', () => selectSession(s.idx));
+    list.appendChild(div);
+  });
+}
+
+async function selectSession(idx) {
+  selectedSession = idx;
+  document.querySelectorAll('.sess-item').forEach(el => el.classList.toggle('selected', +el.dataset.idx === idx));
+  $('sessPrompt').hidden = true;
+  $('anResults').hidden  = false;
+  try {
+    const res = await fetch('/api/session/' + idx);
+    if (!res.ok) return;
+    const snap = await res.json();
+    if (snap.payload) renderPayload(snap.payload, snap.received_at);
+  } catch(e) {}
+}
+
+/* ---- render payload (used by both live poll and session select) ----------- */
+function renderPayload(p, received_at) {
+  const s = p.summary || {}, a = p.analysis || {}, ser = p.series || {},
+        L = s.latest || {}, feat = a.features || {};
+
+  $('battery').innerHTML = '<i class="dot"></i>battery: <b>' + ((p.meta||{}).battery || '–') + '</b>';
+
+  const T = num(L, 'Temperature_C');
+  $('tempTitle').textContent = T != null ? f(T, 1) + ' °C' : '-- °C';
+
+  // Telemetry
+  const V = num(L,'Voltage_V'), I = num(L,'Current_A'), soc = num(L,'SoC_pct');
+  const soh = num(a,'soh') ?? num(feat,'soh_pct');
+  $('mV').textContent   = V   != null ? f(V,   1) : '0.0';
+  $('mI').textContent   = I   != null ? f(I,   1) : '0.0';
+  $('mSoC').textContent = soc != null ? f(soc, 1) : '0.0';
+  $('mR').textContent   = fmtR(num(L,'Resistance_mOhm'));
+  $('mT').textContent   = T   != null ? f(T,   1) : '0.0';
+  $('mSoH').textContent = soh != null ? Math.round(soh) + '%' : '–';
+  const mSoHEl = $('mSoH'); if (mSoHEl && soh != null) mSoHEl.style.color = sohColor(soh);
+
+  // Analytics tab — grade + confidence
+  const grade = a.grade || '–';
+  const gEl = $('grade');
+  if (gEl) {
+    gEl.textContent = grade;
+    const gc = css('--g' + grade);
+    gEl.style.color = gc || css('--text');
+  }
+  const conf = num(a,'confidence') ?? num(a,'conf_pct');
+  if ($('gradeConf')) $('gradeConf').textContent = conf != null ? Math.round(conf) : '–';
+
+  // Grade action button
+  const gaBtn = $('gradeActionBtn');
+  if (gaBtn) {
+    gaBtn.textContent = grade;
+    const gc = css('--g' + grade);
+    gaBtn.style.background = gc ? gc + '28' : 'rgba(255,255,255,.04)';
+    gaBtn.style.color = gc || css('--text');
+    gaBtn.style.borderColor = gc || css('--border-2');
+  }
+
+  // Summary table
+  const capNorm = num(a,'capacity_norm_ah'), capRaw = num(a,'capacity_ah') ?? num(s,'capacity_ah');
+  const capVal  = capNorm ?? capRaw;
+  if ($('cap'))     $('cap').textContent     = f(capVal, 2);
+  if ($('ocv'))     $('ocv').textContent     = f(num(a,'ocv_v'), 3);
+  if ($('dcir'))    $('dcir').textContent    = f(num(a,'dcir_mohm','ri_mohm'), 1);
+  if ($('dcirUnc')) $('dcirUnc').textContent = f(num(a,'dcir_unc_mohm'), 1);
+  if ($('sumSoH')) {
+    $('sumSoH').textContent = soh != null ? Math.round(soh) : 'N/A';
+    if (soh != null) $('sumSoH').style.color = sohColor(soh);
+  }
+
+  // ECM values grid
+  if ($('ecmVoc')) $('ecmVoc').textContent = num(a,'ocv_v') != null ? f(num(a,'ocv_v'),3) + ' V' : '–';
+  if ($('r0'))  $('r0').textContent  = num(a,'r0_mohm') != null ? f(num(a,'r0_mohm'),1) : '–';
+  if ($('r1'))  $('r1').textContent  = num(a,'r1_mohm') != null ? f(num(a,'r1_mohm'),1) : '–';
+  if ($('tau')) $('tau').textContent = f(num(a,'tau_s'), 2);
+  if ($('cca')) $('cca').textContent = f(num(a,'cca_est_a'), 0);
+
+  const safe = s.safety_status || (p.meta||{}).safety_status || 'NORMAL';
+
+  // Test status panel
+  updateTestPanel(p.meta || {}, s);
+
+  // Charts
+  updateMainCharts(ser);
+  updateIcaChart(ser.Voltage_V, ser.SoC_pct);
+
+  // Alarm tracking
+  const explicitAlarm = safe === 'ALARM';
+  const hot = T != null && T >= TEMP_CRIT;
+  if (explicitAlarm || hot) {
+    const msg = 'TEMP: ' + f(T,1) + '°C  GRADE: ' + grade + (explicitAlarm ? '  SAFETY ALARM' : '  OVER-TEMP');
+    const ts = new Date(received_at * 1000).toLocaleTimeString();
+    pushAlarm(ts, msg);
+    setSafety(true, msg);
+  } else {
+    setSafety(false, '');
+  }
+
+  // Freshness (for live poll only — called from load())
+  if (received_at) {
+    const ageMs = Date.now() - received_at * 1000;
+    const ageS  = Math.max(0, Math.round(ageMs / 1000));
+    $('updated').textContent = ageS < 90 ? ageS + 's ago' : Math.round(ageS / 60) + 'm ago';
+    const live = ageMs < 60000;
+    $('live').textContent    = live ? 'LIVE' : 'idle';
+    $('livePill').className  = 'pill ' + (live ? 'live' : 'stale');
+    setConnected(live ? 'connected' : 'idle');
+    if (s.row_count != null) $('rowInfo').textContent = s.row_count + ' samples · ' + f(s.energy_wh,1) + ' Wh logged';
+  }
+}
+
+/* ---- test panel ---------------------------------------------------------- */
+const PHASE_MAP = {
+  prepare:0, ocv:0,
+  charge:1, bulk:1, absorption:1, float:1, cc:1, cv:1,
+  rest:2,
+  test:3, discharge:3, dcir:3,
+  analyze:4, complete:4, done:4
+};
+function updateTestPanel(meta, summary) {
+  const mode = (meta.test_mode || '').toUpperCase();
+  const chip = $('tpModeChip');
+  if (chip) chip.textContent = mode || '–';
+
+  if ($('tpWorkflow')) $('tpWorkflow').textContent = meta.workflow || 'IEC 61960 Standard';
+
+  const phase = (meta.phase || summary.phase || '').toLowerCase();
+  const activeIdx = PHASE_MAP[phase] ?? -1;
+
+  document.querySelectorAll('.tp-step').forEach((el, i) => {
+    el.classList.remove('active','complete');
+    if (activeIdx >= 0) {
+      if (i < activeIdx) el.classList.add('complete');
+      else if (i === activeIdx) el.classList.add('active');
+    }
+  });
+
+  const nom = num(meta,'nominal_ah') ?? num(summary,'nominal_ah');
+  const cc  = num(meta,'charge_crate');
+  const dc  = num(meta,'discharge_crate');
+  const restMin = num(meta,'rest_duration_min') ?? num(summary,'rest_duration_min');
+
+  if ($('tpChargeMode'))    $('tpChargeMode').textContent    = meta.charge_mode || 'Auto (by chemistry)';
+  if ($('tpChargeRate') && cc != null) {
+    const a = nom != null ? ' = ' + f(cc * nom, 2) + ' A' : '';
+    $('tpChargeRate').textContent = cc + 'C' + a;
+  }
+  if ($('tpRestMin'))       $('tpRestMin').textContent       = restMin != null ? restMin + ' min' : '–';
+  if ($('tpDischargeRate') && dc != null) {
+    const a = nom != null ? ' = ' + f(dc * nom, 2) + ' A' : '';
+    $('tpDischargeRate').textContent = dc + 'C' + a;
+    if ($('tpTestDesc')) $('tpTestDesc').textContent = 'Discharge ' + dc + 'C' + a;
+  }
+  if ($('tpRestDesc') && restMin != null) $('tpRestDesc').textContent = restMin + ' min rest';
+  if ($('tpChargeDesc') && cc != null)
+    $('tpChargeDesc').textContent = cc <= 0.15 ? 'Full 3-stage (Bulk→Absorption→Float)' : 'CC-CV Charge';
+
+  const dot = $('tpStatusDot'), txt = $('tpStatusTxt');
+  if (dot && txt) {
+    const running = activeIdx >= 0 && activeIdx < 4;
+    const done    = activeIdx === 4;
+    dot.className = 'tp-status-dot' + (running ? ' running' : done ? ' done' : '');
+    txt.textContent = running ? 'RUNNING — ' + ['PREPARE','CHARGE','REST','TEST','ANALYZE'][activeIdx]
+                    : done    ? 'COMPLETE'
+                    :           'IDLE';
+  }
+}
+
+/* ---- alarm log ----------------------------------------------------------- */
+function pushAlarm(ts, msg) {
+  alarmLog.unshift({ ts, msg });
+  if (alarmLog.length > 50) alarmLog.pop();
+  renderAlarmLog();
+}
+function renderAlarmLog() {
+  const list = $('alarmList');
+  if (!alarmLog.length) { list.innerHTML = '<div class="alarm-empty">No alarms recorded.</div>'; return; }
+  list.innerHTML = alarmLog.map(a =>
+    `<div class="alarm-item"><span class="alarm-ts">${a.ts}</span><span class="alarm-msg">${a.msg}</span></div>`
+  ).join('');
+}
+
+/* ---- graph mode ---------------------------------------------------------- */
+function setMode(mode) {
+  graphMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  buildMainCharts();
+}
+
+/* ---- left panel tab switching -------------------------------------------- */
+function switchLpTab(name) {
+  document.querySelectorAll('.lptab').forEach(b => b.classList.toggle('active', b.dataset.lptab === name));
+  document.querySelectorAll('.lptab-content').forEach(el => { el.hidden = el.id !== 'lptab-' + name; });
+}
+
+/* ---- ECM accordion ------------------------------------------------------- */
+function toggleEcm() {
+  const btn = $('ecmToggle'), content = $('ecmContent');
+  const open = !content.hidden;
+  content.hidden = open;
+  btn.textContent = (open ? '▶' : '▼') + ' Show Equivalent Circuit';
 }
 
 /* ---- safety / overlay ---------------------------------------------------- */
 function setSafety(alarm, msg){
-  const box = $('safety'), ov = $('overlay');
-  if (alarm){
-    box.textContent = 'ALARM'; box.style.background = css('--crit');
-    if (!isMuted){ ov.style.display = 'flex'; $('overlayMsg').textContent = msg; }
-  } else {
-    box.textContent = 'NORMAL'; box.style.background = css('--ok');
-    ov.style.display = 'none'; isMuted = false;
-  }
+  const ov = $('overlay');
+  if (alarm){ if (!isMuted){ ov.style.display = 'flex'; $('overlayMsg').textContent = msg; } }
+  else { ov.style.display = 'none'; isMuted = false; }
 }
 function muteAlarm(){ isMuted = true; $('overlay').style.display = 'none'; }
 window.muteAlarm = muteAlarm;
 
-/* ---- main load loop ------------------------------------------------------ */
+/* ---- connection status --------------------------------------------------- */
+function setConnected(state) {
+  const dot = $('connDot'), txt = $('connStatus');
+  if (!dot || !txt) return;
+  dot.className = 'conn-dot ' + state;
+  txt.textContent = state === 'connected' ? 'Connected' : state === 'idle' ? 'Idle' : 'Disconnected';
+}
+
+/* ---- live poll ------------------------------------------------------------ */
 async function load(){
   try{
     const snap = await (await fetch('/api/snapshot?t=' + Date.now())).json();
     const wait = $('waiting'), content = $('content'), pill = $('livePill');
-
     if (!snap.payload){
       wait.style.display = 'block'; content.hidden = true;
       $('live').textContent = 'waiting'; pill.className = 'pill stale';
+      setConnected('idle');
       return;
     }
     wait.style.display = 'none'; content.hidden = false;
-
-    const p = snap.payload, s = p.summary || {}, a = p.analysis || {},
-          ser = p.series || {}, L = s.latest || {}, feat = a.features || {};
-
-    $('battery').innerHTML = '<i class="dot"></i>battery: <b>' + ((p.meta||{}).battery || '–') + '</b>';
-
-    /* --- gauges --- */
-    const soc = num(L,'SoC_pct');
-    const soh = num(a,'soh') ?? num(feat,'soh_pct');
-    if (soc != null){ setGauge('socArc', $('socVal'), soc, socColor(soc));
-      $('socFoot').innerHTML = 'สถานะ: <b>'+socWord(soc)+'</b>'; }
-    if (soh != null){ setGauge('sohArc', $('sohVal'), soh, sohColor(soh));
-      $('sohFoot').innerHTML = 'สภาพ: <b>'+sohWord(soh)+'</b>'; }
-
-    /* --- sorting grade --- */
-    const grade = a.grade || '–';
-    const gEl = $('grade');
-    gEl.textContent = grade;
-    gEl.style.fontSize = grade.length > 2 ? '16px' : '';
-    gEl.style.color = css('--g'+grade) || css('--text');
-    gEl.style.borderColor = (css('--g'+grade) || css('--border-2'));
-    $('gradeMeta').textContent = sohWord(soh ?? 0) + ' battery';
-    const conf = num(a,'confidence');
-    $('confFill').style.width = conf != null ? Math.round(conf*100)+'%' : '0%';
-    $('confTxt').textContent = conf != null ? 'confidence ' + Math.round(conf*100) + '%' : '';
-
-    $('cap').textContent    = f(num(a,'capacity_ah') ?? num(s,'capacity_ah'), 2);
-    $('dcir').textContent   = f(num(a,'dcir_mohm','ri_mohm'), 1);
-    $('sag').textContent    = f(num(a,'voltage_sag_v'), 3);
-    $('cca').textContent    = f(num(a,'cca_est_a'), 0);
-    $('ocv').textContent    = f(num(a,'ocv_v'), 3);
-    $('method').textContent = a.method || (a.ecm_identified ? 'ECM' : '–');
-
-    /* --- live telemetry --- */
-    const V = num(L,'Voltage_V'), I = num(L,'Current_A'), T = num(L,'Temperature_C');
-    $('mV').textContent = f(V, 3);
-    $('mI').textContent = f(I, 3);
-    $('mR').textContent = fmtR(num(L,'Resistance_mOhm'));
-    $('mT').textContent = f(T, 1);
-
-    /* --- test phase --- */
-    const phase = s.test_phase || null;
-    const phaseEl = $('testPhase'), phaseCard = $('phaseCard');
-    if (phase) {
-      phaseEl.textContent = phase;
-      const phaseColor = phase.includes('CC') && phase.includes('CV') ? css('--i')
-                       : phase.includes('CC') ? css('--v')
-                       : phase.includes('HPPC') ? css('--r')
-                       : css('--faint');
-      phaseCard.style.setProperty('--accent', phaseColor);
-    } else {
-      phaseEl.textContent = '–';
-      phaseCard.style.removeProperty('--accent');
+    // Always render latest data if no manual session is selected
+    if (selectedSession === null) {
+      renderPayload(snap.payload, snap.received_at);
+      $('anResults').hidden  = false;
+      $('sessPrompt').hidden = true;
     }
-
-    /* --- charts --- */
-    ensureCharts(ser);
-    const x = (ser.Elapsed_s || []).map(v => Math.round(v/60) + 'm');
-    for (const c of CH){
-      const ch = charts[c.id]; if (!ch) continue;
-      ch.data.labels = x; ch.data.datasets[0].data = ser[c.key] || []; ch.update('none');
-    }
-
-    /* --- freshness + footer --- */
-    const ageMs = Date.now() - snap.received_at * 1000;
-    const ageS = Math.max(0, Math.round(ageMs/1000));
-    $('updated').textContent = ageS < 90 ? ageS+'s ago' : Math.round(ageS/60)+'m ago';
-    const live = ageMs < 60000;
-    $('live').textContent = live ? 'LIVE' : 'idle';
-    $('livePill').className = 'pill ' + (live ? 'live' : 'stale');
-    if (s.row_count != null) $('rowInfo').textContent = s.row_count + ' samples · ' + f(s.energy_wh,1) + ' Wh logged';
-
-    /* --- safety --- */
-    const explicitAlarm = (s.safety_status || (p.meta||{}).safety_status) === 'ALARM';
-    const hot = T != null && T >= TEMP_CRIT;
-    setSafety(explicitAlarm || hot,
-      'TEMP: ' + f(T,1) + '°C · GRADE: ' + grade + (explicitAlarm ? ' · SAFETY ALARM' : ''));
-
+    // Refresh sessions list silently
+    fetchSessions();
   } catch(e){
-    $('live').textContent = 'error';
+    $('live').textContent   = 'error';
     $('livePill').className = 'pill off';
-    const sb = $('safety'); if (sb){ sb.textContent = 'OFFLINE'; sb.style.background = css('--faint'); }
+    setConnected('disconnected');
   }
 }
 
-/* boot once Chart.js (defer) and DOM are ready */
+/* ---- boot ---------------------------------------------------------------- */
 window.addEventListener('DOMContentLoaded', () => {
-  initGauge('socArc');
-  initGauge('sohArc');
+  document.querySelectorAll('.mode-btn').forEach(btn =>
+    btn.addEventListener('click', () => setMode(btn.dataset.mode)));
+  document.querySelectorAll('.lptab').forEach(btn =>
+    btn.addEventListener('click', () => switchLpTab(btn.dataset.lptab)));
+  $('ecmToggle').addEventListener('click', toggleEcm);
+  $('refreshSessions').addEventListener('click', fetchSessions);
+  $('analyzeBtn').addEventListener('click', fetchSessions);
+
+  buildMainCharts();
+  buildIcaChart();
+  fetchSessions();
   load();
   setInterval(load, 5000);
 });
