@@ -456,6 +456,7 @@ class BatteryQtWindow(QMainWindow):
     sig_wf_status       = Signal(str)       # workflow status label text (cross-thread safe)
     sig_phase_progress  = Signal(int, int)  # (elapsed_s, total_s); (0,0) = hide
     sig_seq_result      = Signal(str)       # inline result summary after analyze
+    sig_seq_done        = Signal(str, str)  # (title, body) — notify when sequence finishes
 
     def __init__(self, config_manager):
         super().__init__()
@@ -831,6 +832,10 @@ class BatteryQtWindow(QMainWindow):
         actions.addWidget(self.btn_detect, 2)
         actions.addWidget(self.btn_save_default, 1)
         lay.addLayout(actions)
+        btn_edit_profile = _btn("Edit Battery Profile…", bg="#e8f0fe", hover="#c5d8fd")
+        btn_edit_profile.setToolTip("แก้ไขค่า BatteryConfig ในแอพโดยตรง")
+        btn_edit_profile.clicked.connect(self._on_edit_battery_profile)
+        lay.addWidget(btn_edit_profile)
 
         # Connections — each port row has a status LED (● gray=idle, ✓ green=ok, ✗ red=fail)
         lay.addWidget(_hline())
@@ -1585,6 +1590,24 @@ class BatteryQtWindow(QMainWindow):
         btn_dash = _btn("Open Cloud Dashboard", bg="#d0d4d7", hover="#c2c6ca")
         btn_dash.clicked.connect(self._on_open_dashboard)
         t3l.addWidget(btn_dash)
+        t3l.addWidget(_hline())
+        t3l.addWidget(self._subheader("CLOUD PUSH"))
+        self.chk_cloud_push = QCheckBox("Enable cloud push")
+        self.chk_cloud_push.setChecked(
+            getattr(self.config.system, "cloud_push_enabled", False))
+        self.chk_cloud_push.setToolTip(
+            "ส่งข้อมูล V/I/SoC/Temp ไปยัง cloud endpoint ทุก push interval\n"
+            "ตั้ง cloud_dashboard_url และ push interval ใน config.json")
+        self.chk_cloud_push.stateChanged.connect(self._on_cloud_push_toggle)
+        t3l.addWidget(self.chk_cloud_push)
+        cloud_url_row = QHBoxLayout()
+        cloud_url_row.addWidget(QLabel("Endpoint URL:"))
+        self.ed_cloud_url = QLineEdit(
+            getattr(self.config.system, "cloud_dashboard_url", ""))
+        self.ed_cloud_url.setPlaceholderText("https://...")
+        self.ed_cloud_url.editingFinished.connect(self._on_cloud_url_changed)
+        cloud_url_row.addWidget(self.ed_cloud_url, 1)
+        t3l.addLayout(cloud_url_row)
         tabs.addTab(t3, "Data")
 
         root.addWidget(tabs)
@@ -1658,8 +1681,10 @@ class BatteryQtWindow(QMainWindow):
         self.lst_sessions = QListWidget()
         self.lst_sessions.setMaximumHeight(110)
         self.lst_sessions.setFont(QFont("Consolas", 9))
-        self.lst_sessions.setToolTip("Click session to analyze")
+        self.lst_sessions.setToolTip("Click to analyze  ·  Right-click for rename/tag")
         self.lst_sessions.itemClicked.connect(self._on_session_selected)
+        self.lst_sessions.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.lst_sessions.customContextMenuRequested.connect(self._on_session_context_menu)
         lay.addWidget(self.lst_sessions)
         self._refresh_session_list()
 
@@ -1706,6 +1731,18 @@ class BatteryQtWindow(QMainWindow):
         btn = _btn("Analyze Last CSV", bg=INFO, fg="white", hover="#0d4a89")
         btn.clicked.connect(self._on_analyze_csv)
         lay.addWidget(btn)
+
+        # ── SoH trend + capacity fade charts ─────────────────────────────
+        trend_row = QHBoxLayout()
+        btn_trend = _btn("SoH Trend", bg=PANEL2, hover=FIELD)
+        btn_trend.setToolTip("Plot SoH history across all sessions")
+        btn_trend.clicked.connect(self._on_soh_trend)
+        btn_fade = _btn("Capacity Fade", bg=PANEL2, hover=FIELD)
+        btn_fade.setToolTip("Plot capacity fade from Cycle Life sessions")
+        btn_fade.clicked.connect(self._on_capacity_fade)
+        trend_row.addWidget(btn_trend)
+        trend_row.addWidget(btn_fade)
+        lay.addLayout(trend_row)
         return w
 
     def _build_ecm_svg(self, r0=None, r1=None, c1=None, ocv=None, tau=None) -> str:
@@ -1957,6 +1994,7 @@ class BatteryQtWindow(QMainWindow):
         self.sig_wf_status.connect(self._slot_wf_status)
         self.sig_phase_progress.connect(self._slot_phase_progress)
         self.sig_seq_result.connect(self._slot_seq_result)
+        self.sig_seq_done.connect(self._slot_seq_done)
 
     def update_display(self, v, i, soc, rin, temp=None, soh=None):
         if temp is None:
@@ -2022,6 +2060,7 @@ class BatteryQtWindow(QMainWindow):
         self.buf_temp.append(temp)
         self._sample_index += 1
         self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
+        self._cloud_push_update(v, i, soc, temp)
 
         self._update_temp_gauge(temp)
         self.status_label.setText(f"V={v:.2f} V  I={i:.2f} A  SoC={soc:.1f}%  Rin={rin_mohm:.1f} mΩ  Temp={temp:.1f} °C")
@@ -2318,6 +2357,63 @@ class BatteryQtWindow(QMainWindow):
         elif not self._headless:
             QMessageBox.critical(self, "Save as Default", "Save failed")
 
+    def _on_edit_battery_profile(self):
+        """In-app dialog to edit BatteryConfig fields and save to config.json."""
+        b = self.config.battery
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Edit Battery Profile")
+        dlg.setMinimumWidth(340)
+        lay = QVBoxLayout(dlg)
+        form = QFormLayout()
+        form.setSpacing(6)
+
+        fields = [
+            ("battery_type",  "Chemistry / Type",   str),
+            ("nominal_voltage","Nominal V (per cell)", float),
+            ("max_voltage",    "Max V (per cell)",   float),
+            ("min_voltage",    "Min V cutoff (per cell)", float),
+            ("rated_capacity", "Rated Capacity (Ah)", float),
+            ("max_current",    "Max Current (A)",    float),
+            ("cells_series",   "Cells Series",       int),
+            ("cells_parallel", "Cells Parallel",     int),
+            ("mass_grams",     "Mass (g)",           float),
+        ]
+        editors: dict[str, QLineEdit] = {}
+        for attr, label, _typ in fields:
+            ed = QLineEdit(str(getattr(b, attr, "")))
+            form.addRow(label + ":", ed)
+            editors[attr] = ed
+        lay.addLayout(form)
+
+        hint = QLabel("Changes saved to config.json and applied immediately.")
+        hint.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        btn_row = QHBoxLayout()
+        btn_ok = _btn("Save", bg=INFO, fg="white", hover="#0d4a89")
+        btn_cancel = _btn("Cancel", bg="#d0d4d7", hover="#c2c6ca")
+        btn_ok.clicked.connect(dlg.accept)
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_row.addWidget(btn_ok, 2); btn_row.addWidget(btn_cancel, 1)
+        lay.addLayout(btn_row)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        errors = []
+        for attr, label, typ in fields:
+            raw = editors[attr].text().strip()
+            try:
+                setattr(b, attr, typ(raw))
+            except (ValueError, TypeError):
+                errors.append(f"{label}: '{raw}' is not a valid {typ.__name__}")
+        if errors:
+            QMessageBox.warning(self, "Edit Battery Profile",
+                                "Some fields were invalid:\n" + "\n".join(errors))
+        self.config.save_config()
+        self._on_product_changed(self.cb_product.currentText())
+        self._log_alarm("[CONFIG] Battery profile updated and saved")
+
     def _on_detect_chemistry(self):
         if self.estimator is None:
             return
@@ -2364,6 +2460,7 @@ class BatteryQtWindow(QMainWindow):
                 self.hw.psu_bleed_a = getattr(self.config.hardware, "psu_bleed_a", 0.0)
             self._update_connection_status()
             self._log_alarm("Hardware connected.")
+            self._cloud_push_start()
         except Exception as exc:
             # connect_error already set in hw.connect_instruments — let _slot_conn show ✗
             self._update_connection_status()
@@ -2372,6 +2469,7 @@ class BatteryQtWindow(QMainWindow):
 
     def _on_disconnect(self):
         try:
+            self._cloud_push_stop()
             if hasattr(self.hw, "disconnect_instruments"):
                 self.hw.disconnect_instruments()
             if hasattr(self.hw, "disconnect_esp32"):
@@ -2381,6 +2479,43 @@ class BatteryQtWindow(QMainWindow):
         except Exception as exc:
             if not self._headless:
                 QMessageBox.critical(self, "Disconnect Error", str(exc))
+
+    # ── Cloud push helpers ────────────────────────────────────────────────
+    _cloud_svc = None
+
+    def _cloud_push_start(self):
+        try:
+            from aset_batt.services.cloud_push import CloudPushService
+            self._cloud_svc = CloudPushService(self.config)
+            self._cloud_svc.start()
+            if getattr(self.config.system, "cloud_push_enabled", False):
+                self._log_alarm("[CLOUD] Push service started")
+        except Exception as e:
+            self._log_alarm(f"[CLOUD] Start failed: {e}")
+
+    def _cloud_push_stop(self):
+        try:
+            if self._cloud_svc:
+                self._cloud_svc.stop()
+                self._cloud_svc = None
+        except Exception:
+            pass
+
+    def _cloud_push_update(self, v, i, soc, temp):
+        """Call from the telemetry slot to keep the cloud payload fresh."""
+        try:
+            if self._cloud_svc:
+                from datetime import datetime as _dt
+                self._cloud_svc.push_now({
+                    "ts": _dt.utcnow().isoformat(),
+                    "voltage_v": round(v, 3),
+                    "current_a": round(i, 3),
+                    "soc_pct":   round(soc, 1),
+                    "temp_c":    round(temp, 1),
+                    "battery":   self.config.battery.battery_type,
+                })
+        except Exception:
+            pass
 
     def _psu_manual(self, on):
         try:
@@ -2582,6 +2717,23 @@ class BatteryQtWindow(QMainWindow):
         self.lbl_seq_result.setText(html)
         self.frm_seq_result.show()
 
+    @Slot(str, str)
+    def _slot_seq_done(self, title: str, body: str):
+        """Sound + popup notification when a sequence finishes."""
+        try:
+            import winsound
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        except Exception:
+            QApplication.beep()
+        if not self._headless:
+            msg = QMessageBox(self)
+            msg.setWindowTitle(title)
+            msg.setText(body)
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.setWindowModality(Qt.WindowModality.NonModal)
+            msg.show()
+
     def _show_pretest_dialog(self, title: str, plan_lines: list, eta_min: int) -> bool:
         """Show a pre-test confirmation card.  Returns True iff user clicks Confirm."""
         if self._headless:
@@ -2632,6 +2784,7 @@ class BatteryQtWindow(QMainWindow):
                     self.buf_soc, self.buf_rin, self.buf_temp):
             buf.clear()
         self._elapsed_t0 = None
+        self._seq_last_meas_time = 0.0   # reset watchdog
         self.sig_phase_progress.emit(0, 0)   # hide progress bar
         self.frm_seq_result.hide()
         self._auto_seq_running = True
@@ -2749,14 +2902,45 @@ class BatteryQtWindow(QMainWindow):
         import threading
         threading.Thread(target=self._cycle_life_thread, daemon=True).start()
 
+    # ── Safety helpers ───────────────────────────────────────────────────────
+    _WATCHDOG_TIMEOUT_S: int = 300   # 5 min without a measurement → abort
+
+    def _otp_limit(self) -> float:
+        try:
+            return float(self.controller.config.system.safety_limits["max_temperature"])
+        except Exception:
+            return 60.0
+
+    def _seq_kick_watchdog(self):
+        """Call after every successful measurement read inside a sequence thread."""
+        import time as _t
+        self._seq_last_meas_time = _t.time()
+
+    def _seq_check_otp(self, temp: float) -> bool:
+        """Returns True if temperature is safe.  Sets _auto_seq_running=False + alarms if OTP."""
+        limit = self._otp_limit()
+        if temp > limit:
+            self._auto_seq_running = False
+            self.sig_alarm.emit(
+                f"[SAFETY] OTP triggered: {temp:.1f}°C > {limit:.0f}°C — sequence aborted")
+            return False
+        return True
+
     def _seq_sleep(self, seconds: float) -> bool:
-        """Sleep แบบ interruptible — คืน True ถ้าครบเวลา, False ถ้า cancel"""
+        """Sleep แบบ interruptible — คืน True ถ้าครบเวลา, False ถ้า cancel หรือ watchdog หมดเวลา"""
         import time
         t_end = time.time() + seconds
         while self._auto_seq_running:
             left = t_end - time.time()
             if left <= 0:
                 return True
+            # watchdog: abort if no measurement update for _WATCHDOG_TIMEOUT_S
+            last = getattr(self, "_seq_last_meas_time", 0.0)
+            if last and (time.time() - last) > self._WATCHDOG_TIMEOUT_S:
+                self._auto_seq_running = False
+                self.sig_alarm.emit(
+                    "[SAFETY] Watchdog: ไม่มีการวัดค่า > 5 นาที — sequence ถูกยกเลิก")
+                return False
             time.sleep(min(0.3, left))
         return False
 
@@ -2890,9 +3074,12 @@ class BatteryQtWindow(QMainWindow):
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
                     self.controller._log_sample(v3, i3)
+                    self._seq_kick_watchdog()
                     elapsed_d = int(now - _dis_t0)
                     status(f"TEST: {v3:.2f} V  {i3:.2f} A  SoC {state3['soc']:.0f}%")
                     self.sig_phase_progress.emit(elapsed_d, _dis_est)
+                    if not self._seq_check_otp(temp3):
+                        break
                     if v3 <= pack_min:
                         break
                 except Exception as e:
@@ -2917,6 +3104,9 @@ class BatteryQtWindow(QMainWindow):
                 self.sig_seq_result.emit(self._format_seq_result(res))
             status("เสร็จสิ้น — ดูผลที่แท็บ Analytics")
             self.sig_alarm.emit("[AUTO] Sequence complete ✓")
+            grade_str = res.get("grade", "?") if res else "?"
+            self.sig_seq_done.emit("IEC 61960 Sequence Complete",
+                                   f"Grade: {grade_str}\nดูผลเพิ่มเติมที่แท็บ Analytics")
 
         except Exception as exc:
             self.sig_alarm.emit(f"[AUTO] Error: {exc}")
@@ -2994,9 +3184,12 @@ class BatteryQtWindow(QMainWindow):
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
                     self.controller._log_sample(v3, i3)
+                    self._seq_kick_watchdog()
                     elapsed_d = int(now - _dis_t0)
                     status(f"QUICK: {v3:.2f} V  {i3:.2f} A  SoC {state3['soc']:.0f}%")
                     self.sig_phase_progress.emit(elapsed_d, _dis_est)
+                    if not self._seq_check_otp(temp3):
+                        break
                     if v3 <= pack_min:
                         break
                 except Exception as exc:
@@ -3025,6 +3218,9 @@ class BatteryQtWindow(QMainWindow):
                 self.sig_seq_result.emit(self._format_seq_result(res))
             status("QUICK SCAN เสร็จ — ดูผลที่แท็บ Analytics  (ค่า capacity ถูก Peukert-correct แล้ว)")
             self.sig_alarm.emit("[QUICK] Scan complete ✓")
+            grade_str = res.get("grade", "?") if res else "?"
+            self.sig_seq_done.emit("Quick Scan Complete",
+                                   f"Grade: {grade_str}\nดูผลเพิ่มเติมที่แท็บ Analytics")
 
         except Exception as exc:
             self.sig_alarm.emit(f"[QUICK] Error: {exc}")
@@ -3147,10 +3343,14 @@ class BatteryQtWindow(QMainWindow):
                     try:
                         v_r, _, _ = self.hw.read_vi()
                         self.controller._log_sample(v_r, 0.0)
+                        self._seq_kick_watchdog()
                         elapsed_h = int(_t.time() - _hppc_t0)
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                         if v_r <= pack_min:
                             self._auto_seq_running = False; break
+                        temp_h = self.hw.current_temp
+                        if not self._seq_check_otp(temp_h):
+                            break
                     except Exception:
                         pass
                     _t.sleep(1.0)
@@ -3164,10 +3364,14 @@ class BatteryQtWindow(QMainWindow):
                     try:
                         v_p, i_p = self.hw.read_measurements(prefer_load_v=True)
                         self.controller._log_sample(v_p, -i_p)
+                        self._seq_kick_watchdog()
                         elapsed_h = int(_t.time() - _hppc_t0)
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                         if v_p <= pack_min:
                             self._auto_seq_running = False; break
+                        temp_h = self.hw.current_temp
+                        if not self._seq_check_otp(temp_h):
+                            break
                     except Exception:
                         pass
                     _t.sleep(1.0)
@@ -3189,6 +3393,10 @@ class BatteryQtWindow(QMainWindow):
                 self.sig_seq_result.emit(self._format_seq_result(res))
             status("HPPC SEQUENCE เสร็จ — ดูผลที่แท็บ Analytics")
             self.sig_alarm.emit("[HPPC SEQ] Complete ✓")
+            grade_str = res.get("grade", "?") if res else "?"
+            ecm_str = res.get("ecm_model", "1RC") if res else "1RC"
+            self.sig_seq_done.emit("HPPC Sequence Complete",
+                                   f"Grade: {grade_str}  ({ecm_str} ECM)\nดูผลที่แท็บ Analytics")
 
         except Exception as exc:
             self.sig_alarm.emit(f"[HPPC SEQ] Error: {exc}")
@@ -3288,10 +3496,14 @@ class BatteryQtWindow(QMainWindow):
                         last_log = now
                         ah_acc += abs(i_d) * dt / 3600.0
                         self.controller._log_sample(v_d, -i_d)
+                        self._seq_kick_watchdog()
                         elapsed_d = int(now - _dis_t0)
+                        temp_d = self.hw.current_temp
                         status(f"CYCLE {cyc}/{n_cyc} DIS: {v_d:.2f} V  "
                                f"{ah_acc:.3f} Ah  SoC ~{max(0, 100-100*ah_acc/rated):.0f}%")
                         self.sig_phase_progress.emit(elapsed_d, _dis_est)
+                        if not self._seq_check_otp(temp_d):
+                            break
                         if v_d <= pack_min:
                             break
                     except Exception as exc:
@@ -3331,6 +3543,8 @@ class BatteryQtWindow(QMainWindow):
             self.sig_cycle_wf.emit(3, "done")
             status(f"CYCLE LIFE เสร็จ — {n_cyc} รอบ, ดูผลที่แท็บ Analytics")
             self.sig_alarm.emit("[CYCLE] Cycle Life complete ✓")
+            self.sig_seq_done.emit("Cycle Life Test Complete",
+                                   f"ทดสอบครบ {len(cap_history)} รอบ\nดูผล capacity fade ที่แท็บ Analytics")
 
         except Exception as exc:
             self.sig_alarm.emit(f"[CYCLE] Error: {exc}")
@@ -3639,15 +3853,71 @@ class BatteryQtWindow(QMainWindow):
         except ValueError:
             return fname
 
+    # ── Session metadata (rename / tag) ──────────────────────────────────
+    _SESSION_META_FILE = os.path.join("sessions", ".session_meta.json")
+
+    def _load_session_meta(self) -> dict:
+        try:
+            import json as _json
+            with open(self._SESSION_META_FILE, encoding="utf-8") as f:
+                return _json.load(f)
+        except Exception:
+            return {}
+
+    def _save_session_meta(self, meta: dict):
+        try:
+            import json as _json
+            os.makedirs("sessions", exist_ok=True)
+            with open(self._SESSION_META_FILE, "w", encoding="utf-8") as f:
+                _json.dump(meta, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            self._log_alarm(f"session meta save failed: {e}")
+
+    def _on_session_context_menu(self, pos):
+        item = self.lst_sessions.itemAt(pos)
+        if item is None:
+            return
+        fpath = item.data(Qt.ItemDataRole.UserRole)
+        fname = os.path.basename(fpath)
+        from PySide6.QtWidgets import QMenu, QInputDialog
+        menu = QMenu(self)
+        act_rename = menu.addAction("✏  Rename / Label")
+        act_tag    = menu.addAction("🏷  Add Tag")
+        act_clear  = menu.addAction("✗  Clear Label & Tag")
+        action = menu.exec(self.lst_sessions.mapToGlobal(pos))
+        meta = self._load_session_meta()
+        entry = meta.get(fname, {})
+        if action == act_rename:
+            text, ok = QInputDialog.getText(self, "Rename Session",
+                                            "Label:", text=entry.get("label", ""))
+            if ok:
+                entry["label"] = text.strip()
+                meta[fname] = entry
+                self._save_session_meta(meta)
+                self._refresh_session_list()
+        elif action == act_tag:
+            text, ok = QInputDialog.getText(self, "Add Tag",
+                                            "Tag:", text=entry.get("tag", ""))
+            if ok:
+                entry["tag"] = text.strip()
+                meta[fname] = entry
+                self._save_session_meta(meta)
+                self._refresh_session_list()
+        elif action == act_clear:
+            meta.pop(fname, None)
+            self._save_session_meta(meta)
+            self._refresh_session_list()
+
     def _refresh_session_list(self):
         """อัพเดทรายการ session files จาก sessions/ directory.
-        แสดง: ลำดับ · ชนิดการทดสอบ · วันเวลา · ขนาด."""
+        แสดง: ลำดับ · ชนิดการทดสอบ · วันเวลา · ขนาด · label/tag ถ้ามี"""
         if not hasattr(self, "lst_sessions"):
             return
         self.lst_sessions.clear()
         logs_dir = "sessions"
         if not os.path.isdir(logs_dir):
             return
+        meta = self._load_session_meta()
         files = sorted(
             [f for f in os.listdir(logs_dir) if f.startswith("test_") and f.endswith(".csv")],
             reverse=True,
@@ -3661,10 +3931,14 @@ class BatteryQtWindow(QMainWindow):
                 size_txt = f"{size_kb:.0f} KB"
             except OSError:
                 size_txt = "—"
-            label = f"{seq}.  {ttype:<10}{when}   ·  {size_txt}"
+            entry   = meta.get(fname, {})
+            label_s = f"  [{entry['label']}]" if entry.get("label") else ""
+            tag_s   = f"  #{entry['tag']}" if entry.get("tag") else ""
+            label   = f"{seq}.  {ttype:<10}{when}   ·  {size_txt}{label_s}{tag_s}"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, fpath)
-            item.setToolTip(f"{fname}\nType: {ttype}\n{when}  ·  {size_txt}")
+            item.setToolTip(f"{fname}\nType: {ttype}\n{when}  ·  {size_txt}"
+                            f"{label_s}{tag_s}\nRight-click to rename/tag")
             self.lst_sessions.addItem(item)
 
     def _on_session_selected(self, item):
@@ -3714,6 +3988,153 @@ class BatteryQtWindow(QMainWindow):
             self._log_alarm(f"PDF failed: {payload}")
             if not self._headless:
                 QMessageBox.critical(self, "PDF Report", payload)
+
+    # ── SoH Trend chart ──────────────────────────────────────────────────
+    def _on_soh_trend(self):
+        """Parse all sessions for SoH, show a matplotlib window with timeline."""
+        import threading
+        threading.Thread(target=self._soh_trend_worker, daemon=True).start()
+
+    def _soh_trend_worker(self):
+        try:
+            import matplotlib
+            matplotlib.use("Qt5Agg")
+            import matplotlib.pyplot as plt
+            from aset_batt.acquisition.analysis import analyze_csv, profile_from_config
+
+            logs_dir = "sessions"
+            if not os.path.isdir(logs_dir):
+                return
+            files = sorted(
+                [f for f in os.listdir(logs_dir) if f.startswith("test_") and f.endswith(".csv")]
+            )
+            profile = profile_from_config(self.config)
+            dates, sohs, labels = [], [], []
+            for fname in files:
+                fpath = os.path.join(logs_dir, fname)
+                try:
+                    res = analyze_csv(fpath, profile)
+                    import math
+                    if not math.isnan(res.get("soh", float("nan"))):
+                        from datetime import datetime as _dt
+                        stem = fname[len("test_"):-len(".csv")]
+                        d = _dt.strptime(stem, "%Y%m%d_%H%M%S")
+                        dates.append(d)
+                        sohs.append(res["soh"])
+                        meta = self._load_session_meta()
+                        e = meta.get(fname, {})
+                        labels.append(e.get("label") or e.get("tag") or stem[-6:])
+                except Exception:
+                    continue
+
+            if not sohs:
+                self.sig_alarm.emit("[TREND] No sessions with valid SoH found")
+                return
+            fig, ax = plt.subplots(figsize=(9, 4))
+            ax.plot(dates, sohs, "o-", color="#005a9e", linewidth=1.8)
+            for d, s, lb in zip(dates, sohs, labels):
+                ax.annotate(f"{s:.1f}%", (d, s), textcoords="offset points",
+                            xytext=(0, 7), ha="center", fontsize=8)
+            ax.axhline(80, color="orange", linestyle="--", linewidth=0.9, label="80% SoH limit")
+            ax.set_ylabel("SoH (%)")
+            ax.set_title("State of Health Trend")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            fig.autofmt_xdate()
+            fig.tight_layout()
+            plt.show()
+        except Exception as e:
+            self.sig_alarm.emit(f"[TREND] Error: {e}")
+
+    # ── Capacity Fade chart ───────────────────────────────────────────────
+    def _on_capacity_fade(self):
+        """Parse cycle-life sessions and show capacity fade bar chart."""
+        import threading
+        threading.Thread(target=self._capacity_fade_worker, daemon=True).start()
+
+    def _capacity_fade_worker(self):
+        try:
+            import matplotlib
+            matplotlib.use("Qt5Agg")
+            import matplotlib.pyplot as plt
+            import csv as _csv
+
+            logs_dir = "sessions"
+            if not os.path.isdir(logs_dir):
+                return
+            files = sorted(
+                [f for f in os.listdir(logs_dir) if f.startswith("test_") and f.endswith(".csv")]
+            )
+            # collect per-session capacity
+            session_caps = []
+            session_labels = []
+            meta = self._load_session_meta()
+            for fname in files:
+                fpath = os.path.join(logs_dir, fname)
+                try:
+                    cap_ah = 0.0
+                    with open(fpath, encoding="utf-8-sig") as f:
+                        reader = _csv.DictReader(f)
+                        rows = list(reader)
+                    # find last Capacity_Ah value
+                    for row in reversed(rows):
+                        v = row.get("Capacity_Ah") or row.get("capacity_ah", "")
+                        try:
+                            cap_ah = float(v)
+                            break
+                        except (ValueError, TypeError):
+                            continue
+                    if cap_ah > 0.01:
+                        e = meta.get(fname, {})
+                        stem = fname[len("test_"):-len(".csv")]
+                        session_caps.append(cap_ah)
+                        session_labels.append(e.get("label") or stem[-8:])
+                except Exception:
+                    continue
+
+            if not session_caps:
+                self.sig_alarm.emit("[FADE] No sessions with capacity data found")
+                return
+
+            fig, ax = plt.subplots(figsize=(max(6, len(session_caps) * 0.6 + 2), 4))
+            colors_list = ["#005a9e" if c >= session_caps[0] * 0.8 else "#d83b01"
+                           for c in session_caps]
+            bars = ax.bar(range(len(session_caps)), session_caps, color=colors_list)
+            ax.set_xticks(range(len(session_caps)))
+            ax.set_xticklabels(session_labels, rotation=45, ha="right", fontsize=8)
+            ax.set_ylabel("Capacity (Ah)")
+            ax.set_title("Capacity Fade — Session History")
+            ax.axhline(session_caps[0] * 0.8, color="orange", linestyle="--",
+                       linewidth=0.9, label="80% of first session")
+            for bar, cap in zip(bars, session_caps):
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.002,
+                        f"{cap:.3f}", ha="center", va="bottom", fontsize=7)
+            ax.legend()
+            ax.grid(axis="y", alpha=0.3)
+            fig.tight_layout()
+            plt.show()
+        except Exception as e:
+            self.sig_alarm.emit(f"[FADE] Error: {e}")
+
+    def _on_cloud_push_toggle(self, state):
+        enabled = bool(state)
+        self.config.system.cloud_push_enabled = enabled
+        self.config.save_config()
+        if enabled:
+            self._cloud_push_stop()
+            self._cloud_push_start()
+        else:
+            self._cloud_push_stop()
+        self._log_alarm(f"[CLOUD] Push {'enabled' if enabled else 'disabled'}")
+
+    def _on_cloud_url_changed(self):
+        url = self.ed_cloud_url.text().strip()
+        self.config.system.cloud_dashboard_url = url
+        self.config.save_config()
+        # restart push service with new URL
+        if getattr(self.config.system, "cloud_push_enabled", False):
+            self._cloud_push_stop()
+            self._cloud_push_start()
 
     def _on_open_dashboard(self):
         url = getattr(self.config.system, "cloud_dashboard_url", "").strip()

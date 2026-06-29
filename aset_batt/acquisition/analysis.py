@@ -238,20 +238,23 @@ _ECM_MIN_R2 = 0.90      # accept the 1-RC fit only if it explains the transient 
 
 
 def identify_ecm_fit(time_s, current_a, voltage_v, voc):
-    """1-RC Thevenin fit on an HPPC pulse — the RIGHT use of 5 Hz data.
+    """1-RC (and optionally 2-RC) Thevenin fit on an HPPC pulse.
 
     The polarisation/diffusion transient has τ ≈ 10–60 s, so a 30 s pulse at 5 Hz gives
     ~150 points — dense enough for the bounded TRF fit to pin **R1 and C1** precisely.
     **R0** is the fit's intercept at t=0 (backward extrapolation), which removes the slow
     transient's contamination that a single 200 ms step would include. (Sub-200 ms
     dynamics — pure ohmic + fast charge-transfer — are still unresolved at 5 Hz; for that
-    a hardware fast-capture would be needed.) Returns the fit dict, or None if it fails to
-    converge or the fit quality (R²) is too low to trust.
+    a hardware fast-capture would be needed.)
+
+    After the 1-RC fit a 2-RC fit is attempted; it is used only when it is meaningfully
+    better (R²(2RC) > R²(1RC) + 0.015 AND R²(2RC) > 0.92). Returns the fit dict
+    (either 1-RC or 2-RC), or None if both fail or quality is too low to trust.
     """
     try:
         from aset_batt.core.parameter_id import BatteryParameterIdentifier
-        res = BatteryParameterIdentifier(smooth_window=5).fit_model(
-            time_s, current_a, voltage_v, voc)
+        identifier = BatteryParameterIdentifier(smooth_window=5)
+        res = identifier.fit_model(time_s, current_a, voltage_v, voc)
     except Exception as e:
         logger.info("1-RC ECM fit skipped (%s) — using single-step DCIR", e)
         return None
@@ -259,6 +262,14 @@ def identify_ecm_fit(time_s, current_a, voltage_v, voc):
         logger.info("1-RC ECM fit rejected (R²=%.3f) — using single-step DCIR",
                     res.get("r_squared", 0.0))
         return None
+    # Attempt 2-RC upgrade; reuse same identifier instance (same smoothing/thresholds).
+    try:
+        res_2rc = identifier.fit_model_2rc(time_s, current_a, voltage_v, voc,
+                                           r1rc_result=res)
+        if res_2rc is not None:
+            res = res_2rc
+    except Exception:
+        pass
     return res
 
 
@@ -312,19 +323,28 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     warnings, temp_drift = _quality_flags(current_a, voltage_v, temp_c, profile,
                                           is_hppc, n_steps, reached_cutoff)
 
-    # 1-RC ECM for HPPC (reported ALONGSIDE the DCIR, not instead of it).
+    # 1-RC / 2-RC ECM for HPPC (reported ALONGSIDE the DCIR, not instead of it).
     ecm = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc else None
+    is_2rc = bool(ecm and "R2_ohm" in ecm)
     if ecm:
         r0, r1 = float(ecm["R0_ohm"]), float(ecm["R1_ohm"])
-        c1, tau, r2 = float(ecm["C1_farad"]), float(ecm["tau_s"]), float(ecm["r_squared"])
-        ri_total = r0 + r1
-        # cross-check: the DCIR@~250 ms should sit between R0 and R0+R1; a big gap means
-        # the fit and the step disagree → surface it.
+        # 2-RC dict uses tau1_s; 1-RC uses tau_s
+        c1 = float(ecm["C1_farad"])
+        tau = float(ecm.get("tau1_s", ecm.get("tau_s", 0.0)))
+        r2_ecm_fit = float(ecm["r_squared"])
+        # 2-RC extra parameters (zero when only 1-RC was accepted)
+        r2_rc = float(ecm.get("R2_ohm", 0.0))
+        c2 = float(ecm.get("C2_farad", 0.0))
+        tau2 = float(ecm.get("tau2_s", 0.0))
+        ri_total = r0 + r1 + r2_rc
+        # cross-check: the DCIR@~250 ms should sit between R0 and R0+R1+R2; a big gap
+        # means the fit and the step disagree → surface it.
         if measured and dcir > 0 and not (0.5 * r0 <= dcir <= 1.5 * ri_total):
             warnings = warnings + [f"DCIR@250ms ({dcir*1e3:.0f} mΩ) disagrees with fit "
                                    f"R0+R1 ({ri_total*1e3:.0f} mΩ) — check the pulse"]
     else:
-        r0, r1, c1, tau, r2 = dcir, 0.0, 0.0, 0.0, 0.0
+        r0, r1, c1, tau, r2_ecm_fit = dcir, 0.0, 0.0, 0.0, 0.0
+        r2_rc, c2, tau2 = 0.0, 0.0, 0.0
         ri_total = dcir
 
     gradeable = measured or bool(ecm) or not np.isnan(soh)
@@ -337,7 +357,7 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
 
     confidence = _confidence(dcir, dcir_std, n_steps, profile, len(warnings))
     if ecm:
-        confidence *= 0.7 + 0.3 * max(0.0, min(1.0, r2))         # reward a good fit
+        confidence *= 0.7 + 0.3 * max(0.0, min(1.0, r2_ecm_fit))  # reward a good fit
     if not gradeable:
         confidence = 0.0
 
@@ -353,9 +373,12 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "voltage_sag_v": sag, "cca_est_a": cca_est, "ocv_v": ocv,
         "grade": grade, "gradeable": gradeable,
         "confidence": confidence, "quality_warnings": warnings, "temp_drift_c": temp_drift,
-        # 1-RC ECM (HPPC): R0 extrapolated, R1/C1/τ fitted; zeros + ecm=False when only DCIR
+        # ECM (HPPC): R0 extrapolated, R1/C1/τ fitted; zeros + ecm=False when only DCIR.
+        # When 2-RC is accepted, R2/C2/τ2 carry the second RC branch; otherwise zeros.
         "r0_mohm": r0 * 1000.0, "r1_mohm": r1 * 1000.0, "c1_farad": c1, "tau_s": tau,
-        "ecm_identified": bool(ecm), "ecm_r2": r2,
+        "ecm_identified": bool(ecm), "ecm_r2": r2_ecm_fit,
+        "ecm_model": "2RC" if is_2rc else "1RC",
+        "r2_mohm": r2_rc * 1000.0, "c2_farad": c2, "tau2_s": tau2,
         "ica": (ica_v, ica),
     }
 

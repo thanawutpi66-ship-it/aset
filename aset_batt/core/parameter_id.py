@@ -71,6 +71,47 @@ class FitResult:
         }
 
 
+@dataclass
+class FitResult2RC:
+    """Structured result of a 2-RC Thevenin ECM identification run.
+
+    The model is:
+        V(t) = Voc - I*R0 - I*R1*(1-exp(-t/τ1)) - I*R2*(1-exp(-t/τ2))
+    where τ1 = R1*C1 and τ2 = R2*C2.
+    """
+    R0_ohm: float
+    R1_ohm: float
+    C1_farad: float
+    tau1_s: float
+    R2_ohm: float
+    C2_farad: float
+    tau2_s: float
+    r_squared: float
+    rmse_v: float
+    current_a: float
+    voc_v: float
+    # arrays kept for plotting / inspection (not part of the summary dict)
+    _t: np.ndarray = field(default=None, repr=False)
+    _v_meas: np.ndarray = field(default=None, repr=False)
+    _v_pred: np.ndarray = field(default=None, repr=False)
+
+    def to_dict(self) -> dict:
+        """Summary dictionary (the public, serialisable result)."""
+        return {
+            "R0_ohm": self.R0_ohm,
+            "R1_ohm": self.R1_ohm,
+            "C1_farad": self.C1_farad,
+            "tau1_s": self.tau1_s,
+            "R2_ohm": self.R2_ohm,
+            "C2_farad": self.C2_farad,
+            "tau2_s": self.tau2_s,
+            "r_squared": self.r_squared,
+            "rmse_v": self.rmse_v,
+            "current_a": self.current_a,
+            "voc_v": self.voc_v,
+        }
+
+
 class BatteryParameterIdentifier:
     """Identify 1-RC Thevenin ECM parameters from current-pulse time-series data.
 
@@ -237,6 +278,138 @@ class BatteryParameterIdentifier:
         logger.info("ECM fit: R0=%.4f Ω, R1=%.4f Ω, C1=%.1f F, τ=%.2f s, R²=%.4f",
                     r0, r1, c1, r1 * c1, r2)
         return self._last.to_dict()
+
+    # ------------------------------------------------------------------
+    # 2-RC Thevenin fit
+    # ------------------------------------------------------------------
+    def fit_model_2rc(self, time_array, current_array, voltage_array,
+                      initial_voc: float, r1rc_result: Optional[dict] = None
+                      ) -> Optional[dict]:
+        """Identify R0, R1, C1, R2, C2 (2-RC Thevenin ECM) from a current-pulse.
+
+        Model:
+            V(t) = Voc - I*R0 - I*R1*(1-exp(-t/τ1)) - I*R2*(1-exp(-t/τ2))
+
+        The fit is only accepted when ALL of the following hold:
+
+        * scipy.optimize.curve_fit converges within bounds.
+        * The two time constants differ by at least a factor of 5
+          (τ_fast / τ_slow <= 0.2) — ensures the two RC branches represent
+          genuinely different dynamics rather than a degenerate duplicate.
+        * R²(2-RC) > R²(1-RC) + 0.015 — 2-RC must be meaningfully better.
+        * R²(2-RC) > 0.92 — the fit must explain the transient well.
+
+        Parameters
+        ----------
+        time_array, current_array, voltage_array : array-like
+            Equal-length raw time-series (seconds, amps, volts).
+        initial_voc : float
+            Open-circuit voltage (held fixed).
+        r1rc_result : dict, optional
+            Previously computed 1-RC result dict (keys ``r_squared``, ``R0_ohm``
+            etc.).  When supplied the acceptance threshold is applied; when None
+            the function still attempts the fit but skips the 1-RC comparison.
+
+        Returns
+        -------
+        dict or None
+            Keys: R0_ohm, R1_ohm, C1_farad, tau1_s, R2_ohm, C2_farad, tau2_s,
+            r_squared, rmse_v, current_a, voc_v.  Returns None on any failure.
+        """
+        try:
+            t = np.asarray(time_array, dtype=float)
+            i = np.asarray(current_array, dtype=float)
+            v = np.asarray(voltage_array, dtype=float)
+            if not (t.shape == i.shape == v.shape) or t.ndim != 1:
+                return None
+            if t.size < 10:
+                return None
+
+            k = self._detect_step(i)
+            r0_step = self._extract_r0(i, v, k)
+            end = self._pulse_segment(i, k, self.step_threshold_a)
+            if end - (k + 1) < 5:
+                return None
+
+            seg = slice(k + 1, end)
+            t_rel = t[seg] - t[k + 1]
+            v_seg = self._moving_average(v[seg])
+            i_pulse = float(np.median(i[seg]))
+            voc = float(initial_voc)
+
+            def model_2rc(tt, r0, r1, c1, r2, c2):
+                tau1 = r1 * c1
+                tau2 = r2 * c2
+                return (voc
+                        - i_pulse * r0
+                        - i_pulse * r1 * (1.0 - np.exp(-tt / tau1))
+                        - i_pulse * r2 * (1.0 - np.exp(-tt / tau2)))
+
+            # Initial guesses: split the total polarisation droop evenly across
+            # two RC branches with a ~10x spread in time constants.
+            droop = abs(voc - v_seg[-1]) / max(abs(i_pulse), 1e-9)
+            r_rc_total = max(droop - r0_step, 1e-4)
+            r1_guess = r_rc_total * 0.6
+            r2_guess = r_rc_total * 0.4
+            span = max(t_rel[-1] - t_rel[0], 1e-3)
+            tau_fast = max(span / 10.0, 1e-3)
+            tau_slow = max(span / 1.5, tau_fast * 5.0)
+            c1_guess = max(tau_fast / r1_guess, 1e-3)
+            c2_guess = max(tau_slow / r2_guess, 1e-3)
+
+            p0 = [max(r0_step, 1e-5), r1_guess, c1_guess, r2_guess, c2_guess]
+            bounds = (
+                [1e-6, 1e-6, 1e-3, 1e-6, 1e-3],
+                [10.0, 10.0, 1e7,  10.0, 1e7],
+            )
+
+            popt, _ = curve_fit(
+                model_2rc, t_rel, v_seg, p0=p0, bounds=bounds,
+                method="trf", maxfev=self.max_iterations,
+            )
+            r0, r1, c1, r2, c2 = (float(x) for x in popt)
+            tau1 = r1 * c1
+            tau2 = r2 * c2
+
+            # Reject degenerate fit: time constants must differ by at least 5x.
+            tau_min, tau_max = min(tau1, tau2), max(tau1, tau2)
+            if tau_max < 1e-12 or (tau_min / tau_max) > (1.0 / 5.0):
+                logger.info("2-RC fit rejected: τ1=%.3f s, τ2=%.3f s (< 5x ratio)", tau1, tau2)
+                return None
+
+            v_pred = model_2rc(t_rel, r0, r1, c1, r2, c2)
+            residuals = v_seg - v_pred
+            rmse = float(np.sqrt(np.mean(residuals ** 2)))
+            ss_res = float(np.sum(residuals ** 2))
+            ss_tot = float(np.sum((v_seg - np.mean(v_seg)) ** 2))
+            r2_val = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+
+            # Acceptance: must beat 1-RC by margin AND reach absolute quality floor.
+            if r2_val <= 0.92:
+                logger.info("2-RC fit rejected: R²=%.4f < 0.92", r2_val)
+                return None
+            if r1rc_result is not None:
+                r2_1rc = float(r1rc_result.get("r_squared", 0.0))
+                if r2_val <= r2_1rc + 0.015:
+                    logger.info("2-RC fit rejected: R²=%.4f not > 1-RC R²=%.4f + 0.015",
+                                r2_val, r2_1rc)
+                    return None
+
+            result = FitResult2RC(
+                R0_ohm=r0, R1_ohm=r1, C1_farad=c1, tau1_s=tau1,
+                R2_ohm=r2, C2_farad=c2, tau2_s=tau2,
+                r_squared=r2_val, rmse_v=rmse,
+                current_a=i_pulse, voc_v=voc,
+                _t=t_rel, _v_meas=v_seg, _v_pred=v_pred,
+            )
+            logger.info(
+                "2-RC ECM fit: R0=%.4f Ω, R1=%.4f Ω τ1=%.2f s, R2=%.4f Ω τ2=%.2f s, R²=%.4f",
+                r0, r1, tau1, r2, tau2, r2_val,
+            )
+            return result.to_dict()
+        except Exception as exc:
+            logger.debug("2-RC fit failed: %s", exc)
+            return None
 
     # ------------------------------------------------------------------
     # Visualisation
