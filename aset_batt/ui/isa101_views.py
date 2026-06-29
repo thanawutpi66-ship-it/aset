@@ -2325,12 +2325,15 @@ class BatteryQtWindow(QMainWindow):
             )
 
     def _on_psu_bleed_changed(self, value: float):
-        """ผู้ใช้เปลี่ยน PSU bleed compensation — อัป config + driver ทันที"""
+        """ผู้ใช้เปลี่ยน PSU bleed compensation — อัป config + driver + estimator ทันที"""
         if self.config:
             self.config.hardware.psu_bleed_a = value
             self.config.save_config()
         if hasattr(self.hw, "psu_bleed_a"):
             self.hw.psu_bleed_a = value
+        # keep state estimator in sync so OCV correction window tracks actual bleed
+        if self.estimator is not None and hasattr(self.estimator, "set_standby_current"):
+            self.estimator.set_standby_current(value)
 
     def _on_seq_crate_changed(self, text: str):
         """ผู้ใช้เปลี่ยน C-rate selector — อัป amp label + stage breakdown"""
@@ -2478,9 +2481,12 @@ class BatteryQtWindow(QMainWindow):
             self.config.hardware.load_port = load
             self.config.hardware.esp_port = esp
             self.config.save_config()
-            # sync bleed compensation จาก config เข้า driver
+            # sync bleed compensation จาก config เข้า driver + state estimator
+            bleed = getattr(self.config.hardware, "psu_bleed_a", 0.0)
             if hasattr(self.hw, "psu_bleed_a"):
-                self.hw.psu_bleed_a = getattr(self.config.hardware, "psu_bleed_a", 0.0)
+                self.hw.psu_bleed_a = bleed
+            if self.estimator is not None and hasattr(self.estimator, "set_standby_current"):
+                self.estimator.set_standby_current(bleed)
             self._update_connection_status()
             self._log_alarm("Hardware connected.")
             self._cloud_push_start()

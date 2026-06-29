@@ -28,9 +28,15 @@ class StateEstimator:
         self.last_ocv_correction_time = time.time()
         self.ocv_correction_interval = 300  # วินาที (5 นาที)
         self.last_static_voltage = None
-        self.standby_current = 0.6            # A — PSU quiescent draw even when OUTP OFF
+        # standby_current = PSU bleed when OUTPUT is OFF (discharge-positive convention).
+        # Must be kept in sync with HardwareController.psu_bleed_a — call
+        # set_standby_current(hw.psu_bleed_a) after connecting hardware.
+        self.standby_current = 0.6            # A — default; override via set_standby_current()
         self.static_current_threshold = 0.15  # A — window around standby
         self._rested_s = 0.0                  # accumulated rest time (s) for endpoint anchor
+        # Minimum rest time before OCV correction fires (chemistry-dependent).
+        # LFP plateau relaxation needs 10-30 min; Li-ion ~2-5 min.
+        self._min_rest_s = self._default_min_rest_s()
 
         # Exponential smoothing
         self.alpha = 0.05
@@ -42,6 +48,21 @@ class StateEstimator:
     # ------------------------------------------------------------------
     # Initialization helpers
     # ------------------------------------------------------------------
+
+    def _default_min_rest_s(self) -> float:
+        """Minimum seconds the current must be near standby before OCV correction fires.
+        LFP plateau relaxation is slow; firing too early anchors on polarized voltage."""
+        chem = getattr(self.battery_model, "battery_type", "").lower()
+        if "lifepo" in chem or "lfp" in chem:
+            return 120.0    # 2 minutes: partial relaxation OK for periodic correction
+        if "lead" in chem:
+            return 60.0
+        return 30.0         # Li-ion / LiPO: faster kinetics
+
+    def set_standby_current(self, bleed_a: float) -> None:
+        """Sync PSU bleed current from hardware config.
+        Call this after connecting: estimator.set_standby_current(hw.psu_bleed_a)"""
+        self.standby_current = max(0.0, float(bleed_a))
 
     def init_from_voltage(self, voltage: float, temp: float = 25.0) -> None:
         """Initialize SoC จาก measured OCV (voltage) หลัง rest"""
@@ -149,7 +170,7 @@ class StateEstimator:
             steep = slope >= 2.0 * self.min_ocv_slope          # ปลาย/knee ที่ OCV เชื่อได้มาก
             periodic = (now - self.last_ocv_correction_time) >= self.ocv_correction_interval
             # เงื่อนไข: พักนานพอ (กัน transient) + ไม่ใช่ plateau แบน + (อยู่ปลาย หรือ ถึงรอบ+drift)
-            if (self._rested_s >= 5.0 and slope >= self.min_ocv_slope
+            if (self._rested_s >= self._min_rest_s and slope >= self.min_ocv_slope
                     and (steep or (periodic and drift > 3.0))):
                 w = 0.9 if steep else 0.8                       # ปลาย anchor หนักกว่า
                 corrected = w * ocv_soc + (1.0 - w) * soc_cc
