@@ -57,12 +57,20 @@ class BatteryModel:
         """สร้าง OCV lookup tables สำหรับอุณหภูมิต่างๆ จาก chemistry profile
 
         Base table = rested OCV ต่อเซลล์ ณ 25°C (จาก battery_profiles).
-        OCV ถือว่า ~independent ของอุณหภูมิ (entropic ~mV/K เล็กน้อย) — ผลของอุณหภูมิ
-        ที่มีนัยสำคัญอยู่ที่ internal resistance (ดู _calculate_base_rin) จึงใช้ table
-        เดียวกันทุกอุณหภูมิ
+        ถ้าเคมีมี temp_coeff_mv_per_degc != 0 (เช่น Lead-Acid Nernst ~+0.40 mV/°C/cell)
+        จะ shift ทุกจุดใน OCV table ตามอุณหภูมิ relative จาก 25°C reference.
+        Li-ion/LFP: tc=0 → ใช้ table เดิมทุกอุณหภูมิ (ผลเล็กน้อย vs. Rin ที่เปลี่ยนมาก)
         """
         base_table = self.chemistry.ocv_curve
-        return {temp: dict(base_table) for temp in self.temp_range}
+        tc = getattr(self.chemistry, "temp_coeff_mv_per_degc", 0.0)
+        if tc == 0.0:
+            return {temp: dict(base_table) for temp in self.temp_range}
+        # Nernst shift: delta_v = tc[mV/°C/cell] × (T − 25°C) / 1000 → V/cell
+        result = {}
+        for t in self.temp_range:
+            delta_v = tc * (t - 25.0) * 1e-3
+            result[t] = {soc: ocv + delta_v for soc, ocv in base_table.items()}
+        return result
 
     def _get_rin_parameters(self) -> Dict[str, float]:
         """Parameters สำหรับ internal resistance model (จาก chemistry profile)
@@ -133,15 +141,27 @@ class BatteryModel:
         รับแรงดันระดับแพ็ค หารด้วย series ก่อน lookup per-cell
         หมายเหตุ: ช่วง plateau ของ LFP มี dOCV/dSoC ≈ 0 → SoC ที่ได้ ill-conditioned
         (V คลาดนิดเดียว SoC เพี้ยนมาก) — ควรใช้เฉพาะหลัง rest นานพอ
+
+        ใช้ temperature interpolation (เหมือน get_ocv_from_soc) เพื่อให้ symmetric —
+        การ snap ไป nearest table เดิมทำให้ SoC กระโดดเมื่ออุณหภูมิข้ามจุดกึ่งกลาง
         """
         temp = self._clamp_temperature(temp)
         cell_ocv = ocv / self.series_cells
 
-        # ใช้ table ที่ใกล้เคียงที่สุดสำหรับ reverse lookup
-        closest_temp = min(self.temp_range, key=lambda x: abs(x - temp))
-        data = self._interp_data[closest_temp]
+        temp_idx = self._find_temp_index(temp)
+        if temp_idx >= len(self.temp_range) - 1:
+            data = self._interp_data[self.temp_range[-1]]
+            soc = float(np.interp(cell_ocv, data['ocv_vals'], data['soc_keys']))
+        else:
+            t1, t2 = self.temp_range[temp_idx], self.temp_range[temp_idx + 1]
+            w2 = (temp - t1) / (t2 - t1)   # weight toward upper temp
+            w1 = 1.0 - w2
+            d1 = self._interp_data[t1]
+            d2 = self._interp_data[t2]
+            soc1 = float(np.interp(cell_ocv, d1['ocv_vals'], d1['soc_keys']))
+            soc2 = float(np.interp(cell_ocv, d2['ocv_vals'], d2['soc_keys']))
+            soc = w1 * soc1 + w2 * soc2
 
-        soc = float(np.interp(cell_ocv, data['ocv_vals'], data['soc_keys']))
         return max(0.0, min(100.0, soc))
 
     def _clamp_temperature(self, temp: float) -> float:
@@ -164,12 +184,22 @@ class BatteryModel:
         if abs(current) < 0.01:
             return self._calculate_base_rin(soc, temp)
 
-        # คำนวณจาก Thevenin model
-        ocv = self.get_ocv_from_soc(soc, temp)
-        rin_calculated = abs((ocv - voltage) / current)
-
-        # คำนวณ base resistance จาก model
+        # คำนวณ base resistance จาก model ก่อน (ใช้เป็น sanity bound)
         rin_base = self._calculate_base_rin(soc, temp)
+
+        # Thevenin model: rin = (OCV − V) / I.  Only reliable when |I| is large enough
+        # that the voltage drop dominates measurement noise.  At low currents (< 0.5A)
+        # a ±5 mV noise floor causes >10 mΩ error, so fall back to model entirely.
+        if abs(current) >= 0.5:
+            ocv = self.get_ocv_from_soc(soc, temp)
+            rin_raw = abs((ocv - voltage) / current)
+            # Reject physically unreasonable values (> 10× base or negative)
+            if 0 < rin_raw <= 10.0 * rin_base:
+                rin_calculated = rin_raw
+            else:
+                rin_calculated = rin_base
+        else:
+            rin_calculated = rin_base
 
         # Blend calculated และ model values
         rin = 0.6 * rin_calculated + 0.4 * rin_base

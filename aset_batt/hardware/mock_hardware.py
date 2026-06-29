@@ -35,6 +35,7 @@ class MockHardwareController:
         self._load_off_t = None     # monotonic time the load last turned off
         self._relax_v0 = 0.0        # R1 overpotential at pulse end (decays in rest)
         self.psu_bleed_a: float = 0.0  # mirror HardwareController.psu_bleed_a
+        self._psu_output_on: bool = False  # mirror HardwareController._psu_output_on
 
     # ------------------------------------------------------------------
     # Port enumeration
@@ -66,8 +67,10 @@ class MockHardwareController:
     def set_psu(self, state, voltage_val="0", current_val="1.0"):
         if state:
             self._psu_voltage = float(voltage_val)
+            self._psu_output_on = True
         else:
             self._charging = False
+            self._psu_output_on = False
 
     def set_load(self, state, current_val="0"):
         if state:
@@ -100,6 +103,7 @@ class MockHardwareController:
     def psu_off(self):
         self._psu_voltage = 0.0
         self._charging = False
+        self._psu_output_on = False
 
     # ------------------------------------------------------------------
     # Measurement — จำลองแบตเตอรี่ลดแรงดันตามเวลา
@@ -165,8 +169,9 @@ class MockHardwareController:
         v, psu_i, load_i = self.read_vi()
         if prefer_load_v:
             return v, load_i          # discharge: PSU disconnected, no bleed
-        else:
-            return v, -psu_i          # charge/idle: bleed inactive while OUTPUT ON
+        if self._psu_output_on:
+            return v, -psu_i          # charging: PSU is source → negative
+        return v, psu_i               # REST: battery discharges via bleed → positive
 
     def set_charge(self, state, current_val="0"):
         if state:
@@ -178,6 +183,7 @@ class MockHardwareController:
         if not self._charging:
             self._charge_i = float(current)   # bleed inactive during charge — no offset
         self._charging = True
+        self._psu_output_on = True
 
 
 class _MockInst:

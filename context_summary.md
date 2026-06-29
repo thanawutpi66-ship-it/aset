@@ -1,6 +1,6 @@
 # ASET Battery Project — Context Summary
 
-สรุปสถานะโปรเจกต์ ณ **2026-06-21** (architecture ล่าสุด, การ pivot, และ to-do)
+สรุปสถานะโปรเจกต์ ณ **2026-06-29** (architecture ล่าสุด, การ pivot, และ to-do)
 ใช้เป็นเอกสาร handoff / ทำความเข้าใจร่วมกัน
 
 ---
@@ -74,32 +74,42 @@ ASET_BATT/
 
 ## 4. Config ปัจจุบัน (`config.json`)
 - default: **LiFePO4 4S (12.8V)** — max 3.65/cell, min 2.5/cell, rated 7.0Ah, safety UVP 9.0V
-  *(เลือก product อื่นจาก dropdown ได้: YTZ7V lead-acid 6S, Little Bee MV20-12 lead-acid 6S 20Ah)*
-- **simulation_mode: true** (ใช้ MockHardwareController) — ตั้ง `false` เพื่อรันฮาร์ดแวร์จริง
-- web_server เปิด (8000), auto-push cloud เปิด
+- **Product dropdown** ที่ใช้งานจริง: **FB FTZ6V (12V 5.3Ah VRLA AGM)**, YTZ7V, YTZ6V, Little Bee MV20-12 (20Ah SLA), Lithium Valley LFP 25.6V 50Ah
+- **simulation_mode: false** สำหรับรันฮาร์ดแวร์จริง (PSU + Load + ESP32)
+- web_server เปิด (8000)
 
 ---
 
-## 5. ⚠️ สถานะข้อมูล — **ยังเป็น simulation ล้วน ยังไม่เคยรันแบตจริง**
-ค่า R0/R1/C1/SoH/grade ที่เห็นในจอ/ที่ผ่านมา **มาจาก MockHardwareController** ที่ตั้งค่าไว้เอง
-(`_mock_r0=30 mΩ, _mock_r1=20 mΩ, τ=12 s`) — เป็นการพิสูจน์ว่า **ซอฟต์แวร์คำนวณถูก** (ป้อนค่าเข้า ฟิตได้ค่ากลับ)
-**ไม่ใช่ค่าจริงของแบต** จนกว่าจะ `simulation_mode:false` + ต่อ PEL-3111/PSW จริง + กด RUN TEST กับแบตจริง
+## 5. สถานะการทดสอบจริง — **ทดสอบกับ hardware จริงแล้ว**
+ทดสอบกับ **FB FTZ6V (12V 5.3Ah VRLA AGM)** — แบตมอเตอร์ไซค์ Honda จริง โดยใช้ `simulation_mode:false`
+- PSU GW Instek PSW/PSB-1080L, Load PEL-3111 ต่อจริง
+- ยืนยัน: OCV ~12.57 V ตรงตาม SoC ~100%, CV absorption 14.4V, taper current 0.18A
+- ACIR GBM-3080 วัดได้ **38 mΩ** (vs. 30 mΩ model-based — ต่างเพราะ AC/DC + aging)
+- HPPC Full Sequence AUTO workflow ทดสอบจริงหลายรอบ (session log เก็บใน `data/`)
+
+> **ข้อควรระวัง:** แบต FB FTZ6V ที่ใช้ทดสอบปัจจุบันอาจเสื่อมสภาพแล้ว (ต้องยืนยัน capacity จาก discharge จริง)
+> — ค่า R0 จาก GBM ≈ 38 mΩ (new ≈ 30 mΩ) บ่งชี้ aging แต่ยังทำงานได้
 
 ---
 
 ## 6. สิ่งที่ทำเสร็จแล้ว (history โดยย่อ)
 - ✅ **Restructure → package `aset_batt/`** (layered) + pyproject.toml; ลบ flat layout
-- ✅ **GUI เหลือ PySide6 ISA-101 ตัวเดียว** (ลบ Tkinter, retire PyQt6, ลบ command_center bench)
-- ✅ **Unified acquisition engine** (`aset_batt/acquisition/`): worker(QThread) + HardwareBackend จริง + วิธีวิเคราะห์เดียว
-- ✅ **1-RC ECM identifier** (`parameter_id.py`) — ฟิต R0/R1/C1/τ (recover ค่าสังเคราะห์แม่นยำ, R²≈0.998)
-- ✅ **ต่อ ECM เข้า HPPC** + **two-resistance grading** (R0 ohmic/contact + R1 charge-transfer/SEI)
-- ✅ **HPPC pulse/relaxation duration ปรับได้** (per-profile) — แก้ปัญหาพัลส์สั้นทำให้ R1 เพี้ยน
-- ✅ Battery profile DB + charge state machine (3-stage/CC-CV) + chemistry-aware charge dropdown
-- ✅ ICA/DTV diagnostics + PDF report + Analyze-CSV ใช้ไฟล์ test ล่าสุด + canonical CSV schema
-- ✅ DCIR two-pulse (IEC 61960), SoC estimator correctness, Cloud dashboard (Azure) + auto-push
+- ✅ **GUI เหลือ PySide6 ISA-101 ตัวเดียว** (ลบ Tkinter, retire PyQt6)
+- ✅ **Unified acquisition engine** (`aset_batt/acquisition/`): worker(QThread) + HardwareBackend + วิธีวิเคราะห์เดียว
+- ✅ **1-RC ECM identifier** (`parameter_id.py`) — ฟิต R0/R1/C1/τ (R²≈0.998)
+- ✅ **HPPC Full Sequence AUTO** workflow: PREPARE→CHARGE→REST→TEST→ANALYZE ทดสอบจริงกับ FB FTZ6V
+- ✅ Battery profile DB (6 products รวม FB FTZ6V) + charge state machine (3-stage/CC-CV)
+- ✅ ICA/DTV diagnostics + PDF report + Analyze-CSV + canonical CSV schema
 - ✅ **tests: 64 passed**
-- ✅ แก้ฟอร์มเสนอหัวข้อ capstone (.docx) หัวข้อ 2/3/4 + เพิ่มหัวข้อ 8 Validation → ตรงกับ pivot
-  (ไฟล์: `Downloads/ฟอร์มรายละเอียดหัวข้อโปรเจค (แก้ไข2).docx`)
+- ✅ แก้ฟอร์มเสนอหัวข้อ capstone (.docx)
+- ✅ **State estimation accuracy fixes (2026-06-29) — 4 ปัญหา Lead-Acid:**
+  - Nernst OCV temperature compensation: +0.40 mV/°C/cell ตาม temp
+  - State-dependent coulomb efficiency: η=0.97/0.92/0.75 ตาม SoC (Faraday gassing)
+  - Peukert real-time correction: k=1.30, C10 rated current
+  - ΔV/Δt criterion ใน PREPARE: `calibrate_from_ocv_stable()` 300s min + convergence + cancel support
+- ✅ **Previous bug fixes:** chemistry-aware OCV settle (60s lead-acid), pre-charge sync removed,
+  endpoint anchor tolerance widened (1.5×+0.25A), REST current sign, PSU output state tracking,
+  thread safety, VISA retry, direct-mode interlock
 
 📄 สถาปัตยกรรมเชิงลึก: [ARCHITECTURE.md](ARCHITECTURE.md)
 
@@ -107,24 +117,24 @@ ASET_BATT/
 
 ## 7. เป้าหมาย & To-do List
 
-### 🔜 งานหลัก (คัดดี/เสีย lead-acid)
-- [ ] **แก้ค่า YTZ7V ใน profile/config**: ปัจจุบัน 7Ah/CCA 130 — datasheet Yuasa จริง = **6.3Ah(20HR)/CCA 105A**
-- [ ] **SequenceWorker / TestProtocol** (ที่ทีมเสนอ — *ยังไม่ได้ทำ*): ร้อยไซเคิลเดียวอัตโนมัติ
-      charge→rest→HPPC→discharge(capacity)→analyze โดย**ดึงแรงดัน/กระแสจาก profile** (ไม่ hardcode)
-      + pause/resume + E-Stop ทุกสเตท → แก้ปัญหาแผง OPERATIONS ที่ปุ่มซ้อนทับกัน
-- [ ] grader: เพิ่ม feature CCA / voltage-sag + retune เกณฑ์ lead-acid
-- [ ] wire `ChemistryDetector` เข้าไปป์ไลน์อัตโนมัติ (detect→เลือก profile/safety)
+### 🔜 งานหลัก
+- [ ] **แก้ค่า YTZ7V ใน profile**: ปัจจุบัน 7Ah/CCA 130 — datasheet จริง = **6.3Ah(20HR)/CCA 105A**
+- [ ] **เก็บ dataset capacity จริง**: discharge เต็มรูปแบบ (0.2C ถึง UVP) กับ FB FTZ6V + แบตอื่น
+  → ยืนยัน SoH จาก capacity จริง เทียบ datasheet
+- [ ] **grader calibration**: retune heuristic เกณฑ์ lead-acid จากข้อมูลจริง; เพิ่ม feature CCA proxy + voltage-sag
+- [ ] **Peukert optimization**: k=1.30 เป็นค่าเริ่มต้น — ควร fit จาก Peukert plot ของแบตจริงที่หลาย C-rate
+- [ ] **auto-analyze ต่อจาก AUTO SEQUENCE**: trigger `analyze_series()` อัตโนมัติเมื่อ sequence เสร็จ
 
-### 🧪 Validation (มี reference จริงแล้ว — ดู §8)
-- [ ] เก็บ **dataset แบตดี/เสียหลายลูก** (lead-acid + lithium)
-- [ ] เทียบ **R0 ↔ ACIR ของ GBM-3080/HRM-10**, **capacity ↔ discharge PEL-3111** vs datasheet/IEC
-- [ ] R1/C1: ไม่มีเครื่องเทียบตรง → validate ด้วย R²≥0.95 + repeatability (ระบุเป็นข้อจำกัด)
+### 🧪 Validation
+- [ ] เทียบ **R0 ↔ ACIR ของ GBM-3080** (R0 model = 30 mΩ new, วัดได้ 38 mΩ ← aging + AC/DC ต่าง)
+- [ ] เทียบ **capacity ↔ discharge PEL-3111** vs datasheet 5.3Ah
+- [ ] เก็บ **dataset แบตดี/เสียหลายลูก** สำหรับ train grader
 
 ### 📋 บริหาร/รายงาน
-- [ ] ตรวจฉลากแบตจริง (โดยเฉพาะ Little Bee MV20-12 — ตอนนี้ใช้ค่ากลางคลาส SLA)
-- [ ] อัปเดตหัวข้อ 6 (deliverable: Tkinter→PySide6) + หัวข้อ 7 (ตัด Active Safety) ในฟอร์ม .docx
+- [ ] ตรวจฉลากแบตจริง (Little Bee MV20-12 — ใช้ค่ากลางคลาส SLA)
+- [ ] อัปเดตฟอร์ม .docx หัวข้อ 6 (Tkinter→PySide6) + หัวข้อ 7 (ตัด Active Safety)
 
-### 🔐 Security (ค้างจาก session ก่อน)
+### 🔐 Security
 - [ ] **revoke/rotate Gmail app password** + **rotate cloud ingest token** ที่หลุดในแชต
 
 ---
@@ -134,7 +144,8 @@ ASET_BATT/
 ### DUT + อุปกรณ์ควบคุม
 | อุปกรณ์ | spec |
 |---|---|
-| แบต DUT | **YTZ7V** (12V, 6.3Ah/20HR, CCA 105A, AGM) · **Little Bee MV20-12** (12V 20Ah SLA) |
+| แบต DUT (ทดสอบจริงแล้ว) | **FB FTZ6V** (12V 5.3Ah 90CCA VRLA AGM, Siam Furukawa, Honda) |
+| แบต DUT (ในแผน) | **YTZ7V** (12V, 6.3Ah/20HR, CCA 105A, AGM) · **Little Bee MV20-12** (12V 20Ah SLA) |
 | DC Load | GW Instek **PEL-3111** (1.5–150V, 210A, 1050W, SCPI) |
 | DC Supply | GW Instek **PSW/PSB-1080L** (0–80V, 0–40.5A, source-only) |
 | Temp | **MLX90614 / GY-906** (IR, ±0.5°C, I2C) |

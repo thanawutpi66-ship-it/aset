@@ -14,7 +14,10 @@
     "LeadAcid": {
       "ocv_curve": [[0,1.960],[5,1.980],[10,1.995],[15,2.005],[20,2.015],[25,2.025],[30,2.033],[35,2.040],[40,2.047],[45,2.053],[50,2.060],[55,2.066],[60,2.072],[65,2.078],[70,2.085],[75,2.092],[80,2.100],[85,2.108],[90,2.115],[95,2.122],[100,2.130]],
       "rin": {"r0": 0.005, "temp_coeff": 0.005, "soc_coeff": 0.0010, "aging_coeff": 0.003},
-      "charge": {"strategy": "three_stage", "bulk_c_rate": 0.10, "absorption_voltage_per_cell": 2.40, "float_voltage_per_cell": 2.275, "tail_current_c_rate": 0.02, "stage_timeout_min": 240.0}
+      "charge": {"strategy": "three_stage", "bulk_c_rate": 0.10, "absorption_voltage_per_cell": 2.40, "float_voltage_per_cell": 2.275, "tail_current_c_rate": 0.02, "stage_timeout_min": 240.0},
+      "temp_coeff_mv_per_degc": 0.40,
+      "peukert_k": 1.30,
+      "peukert_hr": 10.0
     },
     "Li-ion": {
       "ocv_curve": [[0,3.00],[5,3.40],[10,3.50],[15,3.58],[20,3.63],[25,3.67],[30,3.70],[35,3.73],[40,3.76],[45,3.79],[50,3.82],[55,3.85],[60,3.88],[65,3.92],[70,3.96],[75,4.00],[80,4.05],[85,4.10],[90,4.14],[95,4.17],[100,4.20]],
@@ -34,6 +37,12 @@
       "rated_capacity_ah": 5.0, "max_voltage_per_cell": 2.45, "min_voltage_per_cell": 1.75,
       "safety_ovp_pack": 15.0, "safety_uvp_pack": 10.0, "mass_grams": 1900.0, "cca_a": 95.0,
       "notes": "YTZ6V มอเตอร์ไซค์ lead-acid AGM 12V 5Ah; charge 3-stage absorption 14.4V/float 13.65V; mass+CCA ประมาณการ โปรดยืนยันกับฉลากจริง"
+    },
+    "FB FTZ6V (12V 5.3Ah VRLA AGM)": {
+      "chemistry": "LeadAcid", "nominal_voltage_per_cell": 2.0, "cells_series": 6, "cells_parallel": 1,
+      "rated_capacity_ah": 5.3, "max_voltage_per_cell": 2.45, "min_voltage_per_cell": 1.75,
+      "safety_ovp_pack": 15.0, "safety_uvp_pack": 10.0, "mass_grams": 1700.0, "cca_a": 90.0,
+      "notes": "Furukawa Battery (FB) SUPER MF FTZ6V — Honda มอเตอร์ไซค์ VRLA AGM 12V 5.3Ah 90CCA. ชาร์จ STD 0.5A×5-10h (0.094C), QUICK 3.0A×1h (0.57C). Absorption 14.4V (2.40V/cell), Float 13.65V (2.275V/cell). Siam Furukawa Co., Ltd. Made in Thailand."
     },
     "Generic 4S LiFePO4 (12.8V)": {
       "chemistry": "LiFePO4", "nominal_voltage_per_cell": 3.2, "cells_series": 4, "cells_parallel": 1,

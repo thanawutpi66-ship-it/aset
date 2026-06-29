@@ -1,171 +1,106 @@
-# 🚀 Quick Start Guide - SoC Calibration & Accuracy
+# Quick Start — ASET Battery Test System
 
-## โจทย์ที่แก้ไข
-❌ **ปัญหา**: ข้อมูล SoC ที่คำนวณไม่ตรงกับข้อมูลจริงของแบต
-✅ **วิธีแก้**: Advanced state estimation + OCV calibration
+> มหาวิทยาลัยอุบลราชธานี · Capstone A19/2568 · อัปเดต 2026-06-29
 
 ---
 
-## การใช้งานอย่างถูกต้อง 📋
+## ติดตั้ง
 
-### Step 1: เตรียมแบต (5-10 min) 🔌
-```
-1. เสียบ PSU + Electronic Load
-2. เสียบ ESP32 (optional)
-3. ให้แบต **rest** (หยุดการชาร์จ/ดิสชาร์จ) ≥ 30 นาที
-   → เพื่อให้ terminal voltage = OCV
+```bash
+python -m venv venv && venv\Scripts\activate   # Windows
+pip install -r requirements.txt
+python main.py                                  # เปิด GUI (PySide6 ISA-101)
 ```
 
-### Step 2: Connect & Calibrate ⚡
-```
-1. Run main.py
-2. เลือก COM ports → กด "Connect Instruments"
-3. ใส่ Battery Capacity: 50.0 Ah (ของจริง)
-4. **กด "📊 Calibrate from OCV"**
-   → ระบบจะอ่าน voltage แล้ว estimate SoC จากตาราง OCV
-5. ผลลัพธ์:
-   ✅ SoC = 45.2% (calibrated from 3.19V)
-   ✅ Temperature: 25.3°C (compensated)
-```
-
-### Step 3: Run Test ▶️
-```
-1. กำหนด Load Profile หรือ Manual Control
-2. กด "Start Test" / "Run Profile"
-3. เฝ้าดู SoC บน display:
-   - ถ้า discharging 1A × 1h → ลด 2%
-   - ถ้าไม่ลด = มีปัญหา​ hardware
-4. ข้อมูลถูกบันทึกใน CSV → download
-```
-
-### Step 4: Verify & Plot 📊
-```python
-# อ่านข้อมูลที่บันทึก
-import pandas as pd
-df = pd.read_csv('battery_data.csv')
-
-# Plot SoC over time
-import matplotlib.pyplot as plt
-plt.plot(df['Elapsed_s'], df['SoC_pct'], label='SoC')
-plt.xlabel('Time (s)')
-plt.ylabel('SoC (%)')
-plt.grid()
-plt.show()
-
-# ตรวจสอบ: ควรลดลงอย่างสม่ำเสมอ ไม่ jump
-```
+`config.json` → `"simulation_mode": false` เพื่อใช้ฮาร์ดแวร์จริง
 
 ---
 
-## ตัวอย่างผลลัพธ์ที่คาดหวัง 📈
+## เชื่อมต่อฮาร์ดแวร์
 
-### Test: 50Ah LiFePO4, Discharging 5A, 2 hours
-
-| Time | Current | SoC (Old) | SoC (New) | Rin | Status |
-|------|---------|-----------|-----------|-----|--------|
-| 0 min | 0 A | 50.0% ✓ | 50.0% ✓ | 0.05Ω | Calibrated |
-| 30 min | 5 A | 47.0% | 47.1% | 0.047Ω | Discharging |
-| 60 min | 5 A | 44.0% | 44.2% | 0.048Ω | Discharging |
-| 90 min | 5 A | 41.0% | 41.1% | 0.049Ω | Discharging |
-| 120 min | 5 A | 38.0% ⚠️ drift | 38.0% ✅ | 0.050Ω | Rest & correct |
-
-✔️ **Difference**: โดยทั่วไป < 1% ต่อชั่วโมง
+1. เปิดโปรแกรม → แถบ **CONNECT**
+2. เลือก VISA port ของ PSU + Load (ตัวอย่าง `ASRL3::INSTR`)
+3. เลือก COM port ของ ESP32 (temperature)
+4. กด **Connect Instruments** — ไฟสีเขียว = เชื่อมต่อสำเร็จ
+5. เลือก **battery profile** จาก dropdown (เช่น `FB FTZ6V (12V 5.3Ah VRLA AGM)`)
 
 ---
 
-## Config ที่ดี (Best Practice) 🎯
+## AUTO SEQUENCE (แนะนำ)
 
-### `config.json`
+วิธีทดสอบแบบอัตโนมัติ 5 ขั้น: PREPARE → CHARGE → REST → TEST → ANALYZE
+
+### แถบ TEST MODE → AUTO
+
+| ขั้น | ระยะเวลา (lead-acid) | รายละเอียด |
+|---|---|---|
+| **1 PREPARE** | ~5 นาที | ปิด PSU+Load, รอ OCV settle (ΔV/Δt < 10 mV/60s, ขั้นต่ำ 300s), anchor SoC |
+| **2 CHARGE** | 2–5 ชั่วโมง | 3-stage (bulk CC → absorption CV 14.4V → float 13.65V) |
+| **3 REST** | 30 นาที | พักหลังชาร์จ + OCV re-anchor |
+| **4 TEST** | 1–3 ชั่วโมง | HPPC Full Sequence (discharge pulses + rest + capacity) |
+| **5 ANALYZE** | < 1 นาที | ECM fit (R0/R1/C1), SoH, grading A/B/C/Reject |
+
+กด **RUN AUTO SEQUENCE** → ระบบทำงานเอง — กด **CANCEL** หยุดได้ทุกขั้น
+
+> ข้ามการชาร์จได้: เช็ค "Skip charge if SoC ≥ \_\_ %"
+
+---
+
+## MANUAL (ใช้ทดสอบเฉพาะส่วน)
+
+แถบ TEST MODE → MANUAL
+
+- **HPPC tab**: กำหนด pulse/relax duration, กด **START HPPC SEQUENCE**
+- **Control tab**: ควบคุม PSU/Load แบบ manual (on/off, voltage, current)
+- **Profile tab**: IEC 61960 profiles
+
+---
+
+## อ่านผลลัพธ์
+
+### Live display
+| ค่า | หมายความว่า |
+|---|---|
+| **SoC** | State of Charge %, anchor จาก OCV + Coulomb counting (Peukert-corrected สำหรับ lead-acid) |
+| **Rin** | Internal resistance (mΩ) — model-based เมื่อ I < 0.5A, measured จาก DCIR pulse เมื่อ I ≥ 0.5A |
+| **SoH** | State of Health % จาก capacity จริงเทียบ rated |
+| **Temp** | อุณหภูมิผิวจาก MLX90614 (ESP32) |
+
+### Analytics tab
+- เลือก session → วิเคราะห์ทันที
+- **Show Circuit** → ดูโมเดล ECM (R₀ + R₁∥C₁)
+- ผลลัพธ์: grade badge A/B/C/Reject + R0/R1/C1/τ + SoH + CCA proxy
+
+---
+
+## SoC ไม่ถูกต้อง — ตรวจสอบ
+
+| อาการ | สาเหตุที่พบบ่อย | วิธีแก้ |
+|---|---|---|
+| SoC ต่ำผิดปกติเมื่อเริ่ม | PREPARE phase รอไม่ถึง 300s → terminal voltage ยังมี surface charge | ปล่อย PREPARE รอจนครบ (อย่ากด CANCEL กลางคัน) |
+| SoC ไม่ขึ้นระหว่างชาร์จ CV | η near full = 0.75 (Faraday gassing) — ปกติ | ไม่ใช่ bug; กระแสจริงส่วนใหญ่ไปสร้าง H₂+O₂ |
+| Rin ≠ GBM-3080 | GBM วัด ACIR 1kHz; โปรแกรมวัด DCIR ที่ I < 0.5A ใช้ model | คนละนิยาม — ต่างกัน 5–15 mΩ เป็นเรื่องปกติ |
+| SoC drift ระหว่าง discharge | Peukert k=1.30 จาก default; ค่าจริงอาจต่าง | ทำ Peukert plot จากการ discharge หลาย C-rate เพื่อ fit k |
+
+---
+
+## Config หลัก (`config.json`)
+
 ```json
 {
-    "battery_type": "LiFePO4",
-    "nominal_voltage": 3.2,
-    "rated_capacity": 50.0,
-    "max_points": 100,
-    "simulation_mode": false
+  "battery_type": "LeadAcid",
+  "cells_series": 6,
+  "rated_capacity": 5.3,
+  "simulation_mode": false
 }
 ```
 
-### Battery Type ที่สนับสนุน
-- `"LiFePO4"` ← ค่า default สำหรับ
-  - Voltage range: 2.5V - 3.8V
-  - ใช้กับ 24/48V Solar system
-  
-- `"Li-ion"` ← สำหรับ 18650 type
-  - Voltage range: 2.5V - 4.3V
+Battery type ที่รองรับ: `LeadAcid` · `LiFePO4` · `Li-ion` · `LiPO`
 
 ---
 
-## Troubleshooting 🔧
+## Reference
 
-### ปัญหา: SoC ไม่ลดลง
-```
-✓ เช็ค:
-  1. Current sensor connected?
-     → Load ON?
-  2. Data recording?
-     → Check CSV file
-  3. Coulomb efficiency:
-     → Default 99%, ปรับได้ใน state_estimator.py
-```
-
-### ปัญหา: SoC jump ขึ้นลง
-```
-✓ เช็ค:
-  1. Current noise?
-     → บ่อย = sensor problem
-  2. Smooth factor (alpha)?
-     → ปัจจุบัน 0.05, ↑ = ↓ responsive
-  3. OCV correction?
-     → Interval = 300s, ปรับได้
-```
-
-### ปัญหา: Calibration แปลก
-```
-✓ เช็ค:
-  1. System rest > 30 min?
-     → Voltage = OCV ต้องพอ
-  2. Temperature sensor OK?
-     → ESP32 connected?
-  3. Voltage reading:
-     → Multimeter ตรวจ vs display
-```
-
----
-
-## Logging & Debug 📝
-
-View logs:
-```python
-import logging
-logging.basicConfig(level=logging.DEBUG)  # ใน main.py
-```
-
-Example output:
-```
-INFO:root:SoC synchronized: 50.0% | Capacity: 50.0 Ah
-INFO:root:SoC calibrated from OCV: 3.225V -> 50.1%
-INFO:root:OCV Correction: CC=48.5% -> OCV=49.8% -> Blended=49.2%
-```
-
----
-
-## สำคัญ! ⚠️
-1. **ไม่ต้อง restart test ทั้งหมด** เพื่อ calibrate
-   → เพียง rest + "📊 Calibrate from OCV"
-   
-2. **Temperature matters!**
-   → HoT (50°C): SoC -2% ถึง -5%
-   → COLD (0°C): SoC +2% ถึง +5%
-
-3. **OCV table ต้อง match battery type**
-   → ใช้ LiFePO4 table กับ Li-ion → ผิด!
-
----
-
-## Reference 📚
-- Paper: "Battery management systems review"
-- Standard: IEEE 1188 (Battery guide)
-- LiFePO4 specs: typical 3.2V nominal
-
-**Happy Testing! 🎓**
+- [ARCHITECTURE.md](ARCHITECTURE.md) — สถาปัตยกรรมเชิงลึก + threading + physics algorithms
+- [context_summary.md](context_summary.md) — สถานะโปรเจกต์ปัจจุบัน + to-do
+- [docs/limitations_future_work.md](docs/limitations_future_work.md) — ข้อจำกัดทางวิทยาศาสตร์ + วรรณกรรม

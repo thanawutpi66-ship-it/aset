@@ -144,7 +144,7 @@ class AutoController:
         "LiPO":     ( 60,  30, 0.005),
     }
 
-    def calibrate_from_ocv_stable(self, on_progress=None):
+    def calibrate_from_ocv_stable(self, on_progress=None, cancel_check=None):
         """OCV calibration แบบ wait-for-settle ตามมาตรฐาน ΔV/Δt criterion.
 
         อ่านแรงดันทุก 5 วิ จนกว่าจะผ่านทั้งสองเงื่อนไข:
@@ -153,6 +153,9 @@ class AutoController:
 
         on_progress(elapsed_s, voltage, dv_mv, status)
           status: "waiting" | "checking" | "settled" | "timeout"
+
+        cancel_check: callable() → bool; คืน True เมื่อ sequence ยังทำงานอยู่
+          (เช่น self._seq_running.is_set). ถ้าคืน False → หยุดรอทันที
 
         คืน (soc, voltage, status)
         """
@@ -172,6 +175,9 @@ class AutoController:
         settled   = False
 
         while True:
+            if cancel_check is not None and not cancel_check():
+                break
+
             elapsed = _t.time() - t_start
             if elapsed > timeout:
                 break
@@ -204,11 +210,13 @@ class AutoController:
             if settled:
                 break
 
-            # sleep แบบ interruptible (ทุก 0.5s ตรวจ is_connected)
+            # sleep แบบ interruptible (ทุก 0.5s ตรวจ is_connected + cancel_check)
             t_end = _t.time() + interval
             while _t.time() < t_end:
                 if not self.hw.is_connected:
                     raise HardwareError("Hardware disconnected during OCV settle")
+                if cancel_check is not None and not cancel_check():
+                    break
                 _t.sleep(0.5)
 
         # อ่านค่าสุดท้าย + sync estimator
@@ -240,10 +248,18 @@ class AutoController:
                     #               ~0 A (after zero-offset removal); i_net ≈ 0
                     #
                     v, psu_i, load_i = self.hw.read_vi()
-                    if load_i > 0.02:   # discharge phase
+                    if load_i > 0.02:
+                        # Discharge via e-load: battery → load (positive by convention).
                         i_net = load_i
-                    else:               # charge (psu_i > 0) or rest (psu_i ≈ 0)
+                    elif getattr(self.hw, "_psu_output_on", False):
+                        # PSU OUTPUT ON → PSU is the source (charging).
+                        # Convention: charge = negative.
                         i_net = -psu_i
+                    else:
+                        # PSU OUTPUT OFF → battery discharges through internal bleed
+                        # resistor (REST phase).  Convention: discharge = positive.
+                        # psu_i ≈ bleed_a (real current, not an artefact).
+                        i_net = psu_i
 
                     # Monitor loop only checks temperature & overcurrent —
                     # voltage OVP/UVP is handled by the discharge test loop and
@@ -424,16 +440,11 @@ class AutoController:
             # ปิด load ก่อนชาร์จ (กันชาร์จ-ดิสชาร์จพร้อมกัน)
             self.hw.load_off()
 
-            # Pre-charge OCV sync: PSU ยังปิดอยู่ → terminal voltage ≈ OCV
-            # Reset SoC ก่อนเปิด PSU เพื่อให้ตัวเลข SoC/Rin ตรงตั้งแต่ต้น
-            if self.estimator is not None:
-                try:
-                    time.sleep(2.0)   # รอ polarisation หายก่อนวัด
-                    v_ocv, _, _ = self.hw.read_vi()
-                    soc_pre = self.estimator.sync_with_ocv(v_ocv, self.hw.current_temp)
-                    logger.info("Pre-charge OCV sync: %.3fV → SoC %.1f%%", v_ocv, soc_pre)
-                except Exception as exc:
-                    logger.warning("Pre-charge OCV sync failed: %s", exc)
+            # NOTE: no pre-charge OCV sync here.
+            # When called from AUTO SEQUENCE the PREPARE phase already waited the
+            # chemistry-aware minimum rest and called calibrate_from_ocv(), so
+            # soc_initial is already correct.  A 2 s sync here would OVERWRITE that
+            # anchor with a still-polarised voltage and re-introduce the same bug.
 
             self._charge_ctrl = ChargeController(
                 self.hw, self.config, self.estimator.battery_model,

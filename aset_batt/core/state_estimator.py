@@ -22,15 +22,21 @@ class StateEstimator:
 
         # Coulomb counting
         self.ah_accumulated = 0.0   # Ah นับจาก initial SoC
-        self.coulomb_efficiency = 0.99
+        self.coulomb_efficiency = 0.99  # fallback for non-lead-acid chemistries
 
         # OCV correction
         self.last_ocv_correction_time = time.time()
         self.ocv_correction_interval = 300  # วินาที (5 นาที)
         self.last_static_voltage = None
-        self.standby_current = 0.6            # A — PSU quiescent draw even when OUTP OFF
+        # standby_current = PSU bleed when OUTPUT is OFF (discharge-positive convention).
+        # Must be kept in sync with HardwareController.psu_bleed_a — call
+        # set_standby_current(hw.psu_bleed_a) after connecting hardware.
+        self.standby_current = 0.6            # A — default; override via set_standby_current()
         self.static_current_threshold = 0.15  # A — window around standby
         self._rested_s = 0.0                  # accumulated rest time (s) for endpoint anchor
+        # Minimum rest time before OCV correction fires (chemistry-dependent).
+        # LFP plateau relaxation needs 10-30 min; Li-ion ~2-5 min.
+        self._min_rest_s = self._default_min_rest_s()
 
         # Exponential smoothing
         self.alpha = 0.05
@@ -42,6 +48,71 @@ class StateEstimator:
     # ------------------------------------------------------------------
     # Initialization helpers
     # ------------------------------------------------------------------
+
+    def _default_min_rest_s(self) -> float:
+        """Minimum seconds the current must be near standby before OCV correction fires.
+        LFP plateau relaxation is slow; firing too early anchors on polarized voltage."""
+        chem = getattr(self.battery_model, "battery_type", "").lower()
+        if "lifepo" in chem or "lfp" in chem:
+            return 120.0    # 2 minutes: partial relaxation OK for periodic correction
+        if "lead" in chem:
+            return 60.0
+        return 30.0         # Li-ion / LiPO: faster kinetics
+
+    # ------------------------------------------------------------------
+    # Physics helpers
+    # ------------------------------------------------------------------
+
+    def _coulomb_eta(self, soc: float, current: float) -> float:
+        """Faraday coulombic efficiency for a charging step.
+
+        Lead-acid gassing loss is SoC-dependent (Faraday's 2nd law applied to
+        competitive H₂O electrolysis reaction near full charge):
+          SoC < 75%:  bulk, minor gassing → η = 0.97
+          75–90%:     absorption, rising gassing → η = 0.92
+          SoC > 90%:  heavy gassing (H₂ + O₂) → η = 0.75
+
+        Li-ion / LFP: no significant side reaction → fixed η = 0.99.
+        Discharge (current ≥ 0): no coulombic loss on discharge side → η = 1.0.
+        """
+        if current >= 0:
+            return 1.0
+        chem = getattr(self.battery_model, "battery_type", "").lower()
+        if "lead" in chem:
+            if soc < 75.0:
+                return 0.97
+            if soc < 90.0:
+                return 0.92
+            return 0.75
+        return self.coulomb_efficiency
+
+    def _peukert_dah(self, current: float, dah: float) -> float:
+        """Apply Peukert correction to a discharge Ah increment.
+
+        Peukert's law: C_eff = C_rated × (I_rated / I)^(k-1)
+        Equivalently, the incremental Ah cost at current I is scaled by
+        (I / I_rated)^(k-1).  k=1.0 → no correction (Li-ion).
+        Lead-acid k≈1.30, rated at 10-hour rate → I_rated = C_10 / 10.
+
+        High current (I > I_rated): scale > 1 → SoC depletes faster (less
+        usable capacity per actual Ah discharged).
+        Low current (I < I_rated): scale < 1 → SoC depletes slower (more
+        usable capacity at slow discharge).
+        """
+        k   = getattr(self.battery_model.chemistry, "peukert_k",  1.0)
+        hr  = getattr(self.battery_model.chemistry, "peukert_hr", 20.0)
+        if k <= 1.0 or hr <= 0 or self.rated_capacity <= 0:
+            return dah
+        i_rated = self.rated_capacity / hr
+        if i_rated <= 0:
+            return dah
+        scale = (current / i_rated) ** (k - 1.0)
+        return dah * min(scale, 5.0)   # cap at 5× — protects against huge pulse spikes
+
+    def set_standby_current(self, bleed_a: float) -> None:
+        """Sync PSU bleed current from hardware config.
+        Call this after connecting: estimator.set_standby_current(hw.psu_bleed_a)"""
+        self.standby_current = max(0.0, float(bleed_a))
 
     def init_from_voltage(self, voltage: float, temp: float = 25.0) -> None:
         """Initialize SoC จาก measured OCV (voltage) หลัง rest"""
@@ -91,11 +162,15 @@ class StateEstimator:
 
         # === 1. Coulomb Counting ===
         # current > 0 = discharge → SoC ลดลง ; current < 0 = charge → SoC เพิ่มขึ้น
-        # coulombic efficiency ใช้กับ "charge" เท่านั้น (ประจุที่ใส่เข้าไม่ได้เก็บหมด);
-        # ตอน discharge ประจุที่จ่ายออกนับเต็ม
         dah = current * (dt / 3600.0)
-        if current < 0:  # charge
-            dah *= self.coulomb_efficiency
+        if current < 0:
+            # Charging: apply state-dependent coulombic efficiency (Faraday gassing loss).
+            # For lead-acid near full SoC most current goes to H₂O electrolysis, not storage.
+            dah *= self._coulomb_eta(self.soc, current)
+        else:
+            # Discharging: apply Peukert correction for lead-acid.
+            # High-rate discharge depletes effective capacity faster than nominal Ah suggests.
+            dah = self._peukert_dah(current, dah)
         self.ah_accumulated += dah
 
         # ใช้ soc_initial เป็นฐาน ไม่ hardcode 50%
@@ -113,7 +188,8 @@ class StateEstimator:
         full_v_cell = cp.cv_voltage_per_cell or cp.absorption_voltage_per_cell
         if full_v_cell > 0:
             anchor_v_full = full_v_cell * s * 0.986      # 3.65 × 0.986 × 8 = 28.8V (LFP 8S)
-            anchor_i_tail = self.rated_capacity * cp.tail_current_c_rate * 1.2
+            # 1.5× headroom + 0.25 A floor so small C-rate rounding never blocks the anchor.
+            anchor_i_tail = max(0.25, self.rated_capacity * cp.tail_current_c_rate * 1.5)
             if (current < 0 and voltage >= anchor_v_full
                     and abs(current) <= anchor_i_tail and self.soc < 98.0):
                 logger.info("Endpoint anchor → 100%%: %.3fV (≥%.3f) I=%.3fA tail=%.3fA",
@@ -149,7 +225,7 @@ class StateEstimator:
             steep = slope >= 2.0 * self.min_ocv_slope          # ปลาย/knee ที่ OCV เชื่อได้มาก
             periodic = (now - self.last_ocv_correction_time) >= self.ocv_correction_interval
             # เงื่อนไข: พักนานพอ (กัน transient) + ไม่ใช่ plateau แบน + (อยู่ปลาย หรือ ถึงรอบ+drift)
-            if (self._rested_s >= 5.0 and slope >= self.min_ocv_slope
+            if (self._rested_s >= self._min_rest_s and slope >= self.min_ocv_slope
                     and (steep or (periodic and drift > 3.0))):
                 w = 0.9 if steep else 0.8                       # ปลาย anchor หนักกว่า
                 corrected = w * ocv_soc + (1.0 - w) * soc_cc
