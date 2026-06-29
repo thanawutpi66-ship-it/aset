@@ -45,6 +45,11 @@ class HardwareController:
         # Set this from config.hardware.psu_bleed_a after connecting.
         self.psu_bleed_a: float = 0.0
 
+        # Tracks whether PSU OUTPUT is currently ON.  Used by the monitor loop to
+        # distinguish CHARGE (OUTPUT ON → i_net = −psu_i) from REST (OUTPUT OFF →
+        # i_net = +psu_i, battery discharging via bleed, positive by convention).
+        self._psu_output_on: bool = False
+
     def get_visa_ports(self):
         try:
             return self.rm.list_resources()
@@ -123,6 +128,7 @@ class HardwareController:
             self.load_inst.write(":INP OFF")
         except Exception:
             pass
+        self._psu_output_on = False
 
         # NOTE: calibrate_psu_zero() is NOT called automatically here because when a
         # battery is connected the PSU already reads psu_bleed_a (real current, not an
@@ -138,8 +144,10 @@ class HardwareController:
                     self.psu_inst.write(f":VOLT {voltage_val}")
                     self.psu_inst.write(f":CURR {current_val}")
                     self.psu_inst.write(":OUTP ON")
+                    self._psu_output_on = True
                 else:
                     self.psu_inst.write(":OUTP OFF")
+                    self._psu_output_on = False
             except Exception as e:
                 logger.error(f"PSU Command Error: {e}")
 
@@ -185,6 +193,7 @@ class HardwareController:
         with self.inst_lock:
             try:
                 self.psu_inst.write(":OUTP OFF")
+                self._psu_output_on = False
             except Exception as e:
                 logger.error(f"psu_off error: {e}")
 
@@ -355,6 +364,7 @@ class HardwareController:
 
     def disconnect_instruments(self):
         self.is_connected = False
+        self._psu_output_on = False
         with self.inst_lock:
             try:
                 if self.psu_inst:
@@ -397,10 +407,13 @@ class HardwareController:
                 # Discharge: PSU is disconnected → no bleed path → battery supplies
                 # exactly the load current.  No bleed correction needed here.
                 return v, i_load
-            v, i_psu = self._meas_vi(self.psu_inst, "_psu_all")
-            # Charge / idle: bleed resistor is only active when PSU OUTPUT is OFF (REST
-            # phase).  While OUTPUT is ON the bleed path is disconnected, so the PSU
-            # current equals the battery current exactly — no bleed subtraction here.
+            # Charge / idle: read V from the load (it senses terminal voltage reliably even
+            # when its input is OFF), fall back to PSU only if load returns near-zero (some
+            # e-loads report 0 V when disconnected).  I always from PSU (only active source).
+            v, _ = self._meas_vi(self.load_inst, "_load_all")
+            v_psu, i_psu = self._meas_vi(self.psu_inst, "_psu_all")
+            if v < 1.0 and v_psu > 1.0:
+                v = v_psu
             return v, -i_psu
 
     def set_charge(self, state, current_val="0"):
@@ -413,8 +426,10 @@ class HardwareController:
                     # Bleed is inactive while OUTPUT is ON; PSU limit = battery target exactly.
                     self.psu_inst.write(f":CURR {current_val}")
                     self.psu_inst.write(":OUTP ON")
+                    self._psu_output_on = True
                 else:
                     self.psu_inst.write(":OUTP OFF")
+                    self._psu_output_on = False
             except Exception as e:
                 logger.error(f"Charge control error: {e}")
 
@@ -433,5 +448,6 @@ class HardwareController:
                 # Bleed inactive while OUTPUT is ON → PSU limit = requested current.
                 self.psu_inst.write(f":CURR {current}")
                 self.psu_inst.write(":OUTP ON")
+                self._psu_output_on = True
             except Exception as e:
                 logger.error(f"set_psu_cccv error: {e}")

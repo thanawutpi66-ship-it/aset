@@ -240,10 +240,18 @@ class AutoController:
                     #               ~0 A (after zero-offset removal); i_net ≈ 0
                     #
                     v, psu_i, load_i = self.hw.read_vi()
-                    if load_i > 0.02:   # discharge phase
+                    if load_i > 0.02:
+                        # Discharge via e-load: battery → load (positive by convention).
                         i_net = load_i
-                    else:               # charge (psu_i > 0) or rest (psu_i ≈ 0)
+                    elif getattr(self.hw, "_psu_output_on", False):
+                        # PSU OUTPUT ON → PSU is the source (charging).
+                        # Convention: charge = negative.
                         i_net = -psu_i
+                    else:
+                        # PSU OUTPUT OFF → battery discharges through internal bleed
+                        # resistor (REST phase).  Convention: discharge = positive.
+                        # psu_i ≈ bleed_a (real current, not an artefact).
+                        i_net = psu_i
 
                     # Monitor loop only checks temperature & overcurrent —
                     # voltage OVP/UVP is handled by the discharge test loop and
