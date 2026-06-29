@@ -11,6 +11,12 @@ logger = logging.getLogger(__name__)
 
 _CHANNELS = ["Voltage_V", "Current_A", "SoC_pct", "Resistance_mOhm", "Temperature_C"]
 
+_MODE_LABEL = {
+    "cc-cv charge":               "CC-CV Charge",
+    "constant current discharge":  "CC Discharge",
+    "hppc pulse test":             "HPPC",
+}
+
 
 def _tail_csv_rows(csv_path: str, limit: int = 20000) -> list:
     """Return up to *limit* rows from *csv_path* as a list of dicts."""
@@ -51,6 +57,14 @@ def _compute_summary(rows: list) -> dict:
         except (ValueError, TypeError):
             return None
 
+    # test phase — ดึงจาก Mode column ของแถวล่าสุดที่ไม่ว่าง
+    test_phase = None
+    for r in reversed(rows):
+        raw = r.get("Mode", "").strip()
+        if raw:
+            test_phase = _MODE_LABEL.get(raw.lower(), raw)
+            break
+
     v_vals = []
     i_vals = []
     elapsed = 0.0
@@ -80,6 +94,7 @@ def _compute_summary(rows: list) -> dict:
         "avg_current_a": avg_i,
         "capacity_ah": capacity_ah,
         "energy_wh": energy_wh,
+        "test_phase": test_phase,
         "latest": {
             "Voltage_V": _f("Voltage_V"),
             "Current_A": _f("Current_A"),

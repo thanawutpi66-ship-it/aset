@@ -41,6 +41,35 @@ from **SoH + DCIR@~250 ms + 1-RC ECM (R0/R1/C1, HPPC) + voltage-sag + CCA proxy*
 this rig can measure at its ~5 Hz SCPI readback. A prominent E-Stop, CSV logging, and a PDF report
 round it out.
 
+### Graph panel
+
+The live trend panel supports three display modes toggled by the **Combined / Split 2 / Split 3** bar:
+
+| Mode | Layout |
+|---|---|
+| **Combined** | Voltage + Current + Temperature on one multi-axis plot |
+| **Split 2** | Voltage & Current (top) / Temperature (bottom) |
+| **Split 3** | Three fully independent plots |
+
+Press the **A** button (top-left of the graph bar) to zoom the X-axis to the **last 10 seconds**; press again to restore full range. All data from the start of the test is retained (no rolling window).
+
+### Analytics & ECM circuit diagram
+
+Selecting a session in the **Analytics** tab triggers analysis immediately. A **Show Circuit** button reveals an SVG schematic of the equivalent circuit model:
+
+- **HPPC test** → full 1-RC Thevenin model (OCV + R₀ + R₁ ∥ C₁) with fitted values
+- **Other tests** → simplified model (OCV + R₀/DCIR only)
+
+### 3 · TOOLS panel
+
+Reorganised into three tabs to reduce visual clutter:
+
+| Tab | Contents |
+|---|---|
+| **Control** | Manual PSU/Load on-off + HPPC pulse/relax timing |
+| **Profile** | IEC 61960 profile selector + Live Monitor |
+| **Data** | CSV logging, PDF report, Cloud Dashboard |
+
 > **Scope** (see [docs/project_pivot.md](docs/project_pivot.md)): this is a multi-chemistry
 > **grading/sorting** bench, not a high-rate characteriser. What ~5 Hz **can** do: a 1-RC ECM
 > fit on an HPPC pulse resolves **R1/C1** well (diffusion τ ≈ 10–60 s → ~150 points/30 s) and
