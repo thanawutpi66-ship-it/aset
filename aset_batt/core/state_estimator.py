@@ -134,7 +134,8 @@ class StateEstimator:
         full_v_cell = cp.cv_voltage_per_cell or cp.absorption_voltage_per_cell
         if full_v_cell > 0:
             anchor_v_full = full_v_cell * s * 0.986      # 3.65 × 0.986 × 8 = 28.8V (LFP 8S)
-            anchor_i_tail = self.rated_capacity * cp.tail_current_c_rate * 1.2
+            # 1.5× headroom + 0.25 A floor so small C-rate rounding never blocks the anchor.
+            anchor_i_tail = max(0.25, self.rated_capacity * cp.tail_current_c_rate * 1.5)
             if (current < 0 and voltage >= anchor_v_full
                     and abs(current) <= anchor_i_tail and self.soc < 98.0):
                 logger.info("Endpoint anchor → 100%%: %.3fV (≥%.3f) I=%.3fA tail=%.3fA",
