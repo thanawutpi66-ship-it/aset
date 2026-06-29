@@ -26,7 +26,9 @@ from PySide6.QtGui import QDoubleValidator, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -43,6 +45,7 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QDoubleSpinBox,
+    QProgressBar,
     QSpinBox,
     QSizePolicy,
     QSplitter,
