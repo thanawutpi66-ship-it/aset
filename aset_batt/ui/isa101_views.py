@@ -22,7 +22,8 @@ from PySide6.QtSvgWidgets import QSvgWidget
 from aset_batt.acquisition.models import TestConfig, OperationMode, BatteryProfile as AcqProfile
 from aset_batt.acquisition.backends import HardwareBackend
 from aset_batt.acquisition.worker import AcquisitionWorker
-from PySide6.QtGui import QDoubleValidator, QFont, QPixmap
+import re
+from PySide6.QtGui import QColor, QDoubleValidator, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -49,7 +50,10 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSizePolicy,
     QSplitter,
+    QHeaderView,
     QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QTabWidget,
     QVBoxLayout,
@@ -2109,12 +2113,77 @@ class BatteryQtWindow(QMainWindow):
     def _tab_alarms(self):
         w = QWidget()
         lay = QVBoxLayout(w)
-        self.txt_alarms = QTextEdit()
-        self.txt_alarms.setReadOnly(True)
-        self.txt_alarms.setFont(QFont("Consolas", 10))
-        lay.addWidget(self.txt_alarms, 1)
+        lay.setSpacing(0)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        # ── Header bar ────────────────────────────────────────────────
+        hdr = QFrame()
+        hdr.setStyleSheet(f"background:{PANEL}; border-bottom:1px solid #888;")
+        hdr_lay = QHBoxLayout(hdr)
+        hdr_lay.setContentsMargins(8, 5, 8, 5)
+        lbl_title = QLabel("EVENT / ALARM LOG")
+        lbl_title.setStyleSheet(f"font-weight:700; font-size:12px; color:{TEXT}; border:0; background:transparent;")
+        hdr_lay.addWidget(lbl_title)
+        hdr_lay.addStretch()
+        lbl_count = QLabel("0 events")
+        lbl_count.setObjectName("alarm_count")
+        lbl_count.setStyleSheet(f"color:{MUTED}; font-size:10px; border:0; background:transparent;")
+        self._alarm_count_lbl = lbl_count
+        hdr_lay.addWidget(lbl_count)
+        hdr_lay.addSpacing(12)
+        btn_clear = QPushButton("Clear")
+        btn_clear.setFixedSize(60, 24)
+        btn_clear.setStyleSheet(
+            f"QPushButton{{background:{PANEL2};border:1px solid #999;border-radius:3px;font-size:10px;}}"
+            f"QPushButton:hover{{background:{FIELD};}}"
+        )
+        btn_clear.clicked.connect(self._alarm_clear)
+        hdr_lay.addWidget(btn_clear)
+        lay.addWidget(hdr)
+
+        # ── Table ─────────────────────────────────────────────────────
+        self.tbl_alarms = QTableWidget()
+        self.tbl_alarms.setColumnCount(4)
+        self.tbl_alarms.setHorizontalHeaderLabels(["DATE/TIME", "POINT NAME", "STATE", "EVENT"])
+        hh = self.tbl_alarms.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.Stretch)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        hh.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.tbl_alarms.verticalHeader().setVisible(False)
+        self.tbl_alarms.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tbl_alarms.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tbl_alarms.setAlternatingRowColors(False)
+        self.tbl_alarms.setShowGrid(True)
+        self.tbl_alarms.setStyleSheet(
+            f"QTableWidget{{background:#1C1F23; color:#E0E3E6; gridline-color:#333; border:0; font-size:11px;}}"
+            f"QHeaderView::section{{background:#2C3036; color:#A8B0B8; padding:4px 8px; border:0;"
+            f" border-bottom:1px solid #444; font-size:11px; font-weight:700;}}"
+            f"QTableWidget::item{{padding:2px 8px; border:0;}}"
+            f"QTableWidget::item:selected{{background:#3A5080; color:white;}}"
+        )
+        lay.addWidget(self.tbl_alarms, 1)
+
+        # ── Status bar ────────────────────────────────────────────────
+        self._alarm_statusbar = QLabel("  SYSTEM READY")
+        self._alarm_statusbar.setStyleSheet(
+            "background:#1C1F23; color:#7A9A5A; padding:3px 10px; font-size:10px;"
+            " font-family:Consolas,monospace; border-top:1px solid #333;"
+        )
+        lay.addWidget(self._alarm_statusbar)
+
         self._log_alarm("System ready.")
         return w
+
+    def _alarm_clear(self):
+        self.tbl_alarms.setRowCount(0)
+        self._alarm_count_lbl.setText("0 events")
+        self._alarm_statusbar.setText("  LOG CLEARED")
+        self._alarm_statusbar.setStyleSheet(
+            "background:#1C1F23; color:#7A9A5A; padding:3px 10px; font-size:10px;"
+            " font-family:Consolas,monospace; border-top:1px solid #333;"
+        )
 
     def _connect_signals(self):
         self.sig_display.connect(self._slot_display)
@@ -2329,9 +2398,100 @@ class BatteryQtWindow(QMainWindow):
         self._last_analysis = result
         self._on_test_finished(result)
 
-    def _log_alarm(self, msg):
-        ts = datetime.now().strftime("%H:%M:%S")
-        self.txt_alarms.append(f"[{ts}] {msg}")
+    def _log_alarm(self, msg: str):
+        ts = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+        m = msg.strip()
+        m_low = m.lower()
+
+        # ── Classify event ─────────────────────────────────────────
+        if any(x in m_low for x in ["safety", "estop", "e-stop", "fail", "error",
+                                      "abort", "⛔", "alarm", "overvolt", "underv",
+                                      "overtemp", "otp"]):
+            event, state = "ALARM",   "ACTIVE"
+            row_bg, row_fg, evt_fg = "#3D1A1A", "#E0E3E6", "#FF5555"
+        elif any(x in m_low for x in ["warn", "⚠", "timeout", "timeout"]):
+            event, state = "WARNING", "ACTIVE"
+            row_bg, row_fg, evt_fg = "#3D3010", "#E0E3E6", "#FFB700"
+        elif any(x in m_low for x in ["complete", "✓", "success", "connected",
+                                        "ready", "done", "normal"]):
+            event, state = "NORMAL",  "CLEARED"
+            row_bg, row_fg, evt_fg = "#1A2E1A", "#E0E3E6", "#55CC55"
+        elif any(x in m_low for x in ["start", "started", "enable", "begin",
+                                        "on ", "charge started", "discharge"]):
+            event, state = "ON",      "ACTIVE"
+            row_bg, row_fg, evt_fg = "#1A2240", "#E0E3E6", "#5599FF"
+        elif any(x in m_low for x in ["stop", "stopped", "disable", "disconnected",
+                                        "cancel", "off"]):
+            event, state = "OFF",     "INACTIVE"
+            row_bg, row_fg, evt_fg = "#282828", "#A8A8A8", "#888888"
+        else:
+            event, state = "INFO",    ""
+            row_bg, row_fg, evt_fg = "#1C1F23", "#C0C4C8", "#7A9A5A"
+
+        # ── Parse POINTNAME ────────────────────────────────────────
+        prefix_m = re.match(r'^\[([^\]]+)\]\s*', m)
+        if prefix_m:
+            prefix = prefix_m.group(1)
+            body   = m[prefix_m.end():]
+            point  = f"{prefix} · {body}" if body else prefix
+        else:
+            point = m
+
+        # ── Insert row ─────────────────────────────────────────────
+        if not hasattr(self, "tbl_alarms"):
+            return
+        tbl = self.tbl_alarms
+        row = tbl.rowCount()
+        tbl.insertRow(row)
+
+        bg = QColor(row_bg)
+        fg = QColor(row_fg)
+        for col, (text, bold) in enumerate([
+            (ts,    False),
+            (point, False),
+            (state, False),
+            (event, True),
+        ]):
+            item = QTableWidgetItem(text)
+            item.setBackground(bg)
+            item.setForeground(fg if col != 3 else QColor(evt_fg))
+            if bold:
+                f = item.font()
+                f.setBold(True)
+                item.setFont(f)
+            tbl.setItem(row, col, item)
+        tbl.setRowHeight(row, 22)
+        tbl.scrollToBottom()
+
+        # ── Update header count & status bar ───────────────────────
+        n = tbl.rowCount()
+        if hasattr(self, "_alarm_count_lbl"):
+            self._alarm_count_lbl.setText(f"{n} events")
+        if hasattr(self, "_alarm_statusbar"):
+            if event == "ALARM":
+                self._alarm_statusbar.setText(f"  ⛔  ALARM ACTIVE — {point}")
+                self._alarm_statusbar.setStyleSheet(
+                    "background:#7A0000; color:#FFCCCC; padding:3px 10px; font-size:10px;"
+                    " font-weight:700; font-family:Consolas,monospace; border-top:1px solid #333;"
+                )
+            elif event == "WARNING":
+                self._alarm_statusbar.setText(f"  ⚠  WARNING — {point}")
+                self._alarm_statusbar.setStyleSheet(
+                    "background:#5A4000; color:#FFE080; padding:3px 10px; font-size:10px;"
+                    " font-weight:700; font-family:Consolas,monospace; border-top:1px solid #333;"
+                )
+            elif event == "NORMAL":
+                self._alarm_statusbar.setText(f"  ✓  {point}")
+                self._alarm_statusbar.setStyleSheet(
+                    "background:#1C1F23; color:#7A9A5A; padding:3px 10px; font-size:10px;"
+                    " font-family:Consolas,monospace; border-top:1px solid #333;"
+                )
+            else:
+                self._alarm_statusbar.setText(f"  {point}")
+                self._alarm_statusbar.setStyleSheet(
+                    "background:#1C1F23; color:#7A9A5A; padding:3px 10px; font-size:10px;"
+                    " font-family:Consolas,monospace; border-top:1px solid #333;"
+                )
 
     def _refresh_ports(self):
         if self.hw is None:
