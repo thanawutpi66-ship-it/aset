@@ -66,13 +66,20 @@ class SoCEKF:
         self.C1 = max(1.0, float(c1))
 
     # -- filter steps --------------------------------------------------------
-    def predict(self, current: float, dt: float, cap_ah: float, eta: float) -> None:
+    def predict(self, current: float, dt: float, soc_delta_pct: float) -> None:
+        """Process step.
+
+        soc_delta_pct: SoC decrement (%) already computed by the caller's coulomb
+        counter — it includes coulombic efficiency, Peukert correction and the
+        trapezoidal integral, so the EKF stays consistent with coulomb counting
+        (discharge → positive delta → SoC decreases).
+        current: raw (tared) terminal current, used only for the R1‖C1 dynamics.
+        """
         dt = max(1e-3, float(dt))
         tau = max(1e-3, self.R1 * self.C1)
         a = float(np.exp(-dt / tau))
         soc, vrc = self.x
-        if cap_ah > 1e-6:
-            soc = soc - eta * current * (dt / 3600.0) / cap_ah * 100.0
+        soc = min(100.0, max(0.0, soc - float(soc_delta_pct)))
         vrc = a * vrc + self.R1 * (1.0 - a) * current
         self.x = np.array([soc, vrc])
 

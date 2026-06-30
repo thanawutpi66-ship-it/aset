@@ -16,7 +16,10 @@ class TestCurrentSignConvention(unittest.TestCase):
     def test_discharge_current_is_positive(self):
         hw = MockHardwareController()
         hw.set_load(True, 2.0)  # ดึง 2A ออก = discharge
-        _v, i_net = hw.read_measurements()
+        # Operational contract: discharge reads use prefer_load_v=True (PSU is OFF,
+        # current comes from the e-load). prefer_load_v=False is the charge/idle path
+        # which reads −i_psu (= 0 here) — both mock and real HAL behave this way.
+        _v, i_net = hw.read_measurements(prefer_load_v=True)
         self.assertGreater(
             i_net, 0,
             "discharge ต้องให้กระแสเป็นบวก (ตรงกับ convention ของ StateEstimator)"

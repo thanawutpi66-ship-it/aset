@@ -105,12 +105,14 @@ def run_config(name, cfg, t, v, i, tc, battery, rated, cells, soc_start):
         # B0: pure OCV→SoC lookup each sample (no coulomb counting)
         return [model.get_soc_from_ocv(vv, tcc) for vv, tcc in zip(v, tc)]
 
+    adaptive = cfg.pop("adaptive_r", False)
+    cfg.pop("mode", None)                       # not an estimator attribute
     for k, val in cfg.items():
-        setattr(est, k, val)
-    if cfg.get("adaptive_r"):
+        setattr(est, k, val)                    # only real StateEstimator flags remain
+    if adaptive:
         est.use_ekf = True
     est.set_initial_soc(soc_start)
-    if cfg.get("adaptive_r"):
+    if adaptive:
         est._ensure_ekf().adaptive_r = True
 
     out = []

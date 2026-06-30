@@ -216,6 +216,7 @@ class StateEstimator:
         self.soc_filtered = soc
         self.ah_accumulated = 0.0
         self.last_ocv_correction_time = time.time()
+        self._last_current = None      # avoid a stale trapezoid average after a reset
         if self._ekf is not None:
             self._ekf.set_soc(soc)
 
@@ -333,7 +334,10 @@ class StateEstimator:
         if self.use_ekf:
             ekf = self._ensure_ekf()
             s = self.battery_model.series_cells
-            ekf.predict(i_eff, dt, cap, eta)
+            # ΔSoC from the SAME coulomb increment (η + Peukert + trapezoid + SoH-cap)
+            # so Peukert/η actually affect the EKF output, not just the unused soc_cc.
+            soc_delta = dah / cap * 100.0 if cap > 0 else 0.0
+            ekf.predict(i_eff, dt, soc_delta)
             self.soc = max(0.0, min(100.0, ekf.soc))
             if self.use_ocv:
                 # direction for OCV hysteresis: discharge (cur>0)→−1, charge→+1, rest→0

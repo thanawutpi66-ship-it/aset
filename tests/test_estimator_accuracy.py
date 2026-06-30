@@ -91,13 +91,29 @@ class TestAblationFlags(unittest.TestCase):
 class TestEKF(unittest.TestCase):
     def test_ekf_discharge_decreases_soc_and_stable(self):
         ekf = SoCEKF(soc0=80.0, r0=0.03, r1=0.02, c1=1500.0)
+        # soc_delta per step: 2 A · 1 s on 50 Ah → 0.0011 %/step (caller-computed)
+        soc_delta = 2.0 * 1.0 / 3600.0 / 50.0 * 100.0
         for _ in range(200):
-            ekf.predict(current=2.0, dt=1.0, cap_ah=50.0, eta=1.0)
+            ekf.predict(current=2.0, dt=1.0, soc_delta_pct=soc_delta)
             ekf.update(v_meas=12.4, current=2.0, ocv_pack=12.6,
                        docv_dsoc_pack=0.01, r0=0.03)
         self.assertLess(ekf.soc, 80.0)
         self.assertTrue(np.all(np.isfinite(ekf.P)))
         self.assertTrue(0.0 <= ekf.soc <= 100.0)
+
+    def test_peukert_affects_ekf_output(self):
+        # Regression: Peukert must change the EKF SoC (previously the EKF predict
+        # recomputed coulomb itself and ignored Peukert entirely).
+        def run(use_peukert):
+            m = BatteryModel("LeadAcid", 2.0, 6, 1)
+            e = StateEstimator(5.3, m)
+            e.use_peukert = use_peukert
+            e.use_ocv = False           # isolate the coulomb/Peukert path in the EKF
+            e.set_initial_soc(90.0)
+            for _ in range(60):         # high-rate discharge where Peukert bites
+                e.update(12.0, 5.3, dt=10.0, temp=25.0)
+            return e.soc
+        self.assertLess(run(True), run(False) - 0.5)   # Peukert depletes faster
 
     def test_ekf_set_soc_resets(self):
         ekf = SoCEKF(soc0=50.0, r0=0.03, r1=0.02, c1=1500.0)
