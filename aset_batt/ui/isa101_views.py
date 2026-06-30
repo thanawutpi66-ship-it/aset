@@ -789,9 +789,9 @@ class BatteryQtWindow(QMainWindow):
 
         tabs = QTabWidget()
         tabs.setMinimumWidth(300)
-        tabs.addTab(_scroll(self._zone_setup()),     "1 · SETUP")
+        tabs.addTab(_scroll(self._zone_setup()),     "SETUP")
         tabs.addTab(_scroll(self._zone_test_mode()), "TEST MODE")
-        tabs.addTab(_scroll(self._zone_tools()),     "3 · TOOLS")
+        tabs.addTab(_scroll(self._zone_tools()),     "TOOLS")
         return tabs
 
     # ---- small UI helpers --------------------------------------------------
@@ -958,6 +958,16 @@ class BatteryQtWindow(QMainWindow):
         outer_lay = QVBoxLayout(outer)
         outer_lay.setContentsMargins(0, 0, 0, 0)
         outer_lay.setSpacing(6)
+
+        # ── Persistent phase banner — always shows TEST · PHASE while running ──
+        self.lbl_phase_banner = QLabel("● IDLE — เลือก workflow แล้วกด RUN")
+        self.lbl_phase_banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_phase_banner.setStyleSheet(
+            f"background:{PANEL2}; color:{MUTED}; border:1px solid {BORDER}; "
+            f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;"
+        )
+        outer_lay.addWidget(self.lbl_phase_banner)
+        self._current_test_name = ""
 
         def _step_widget(steps_list, led_list, min_name_w, desc_list=None):
             sw = QWidget()
@@ -3011,8 +3021,27 @@ class BatteryQtWindow(QMainWindow):
         except Exception:
             pass
 
+    def _set_phase_banner_idle(self):
+        self._current_test_name = ""
+        self.lbl_phase_banner.setText("● IDLE — เลือก workflow แล้วกด RUN")
+        self.lbl_phase_banner.setStyleSheet(
+            f"background:{PANEL2}; color:{MUTED}; border:1px solid {BORDER}; "
+            f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
+
+    def _banner_active(self, led_list, step: int, color: str):
+        """Update the always-visible banner to '▶ TEST · PHASE' for the active step."""
+        if 0 <= step < len(led_list):
+            phase = led_list[step][1].text()
+            test = self._current_test_name or "TEST"
+            self.lbl_phase_banner.setText(f"▶  {test}  ·  {phase}")
+            self.lbl_phase_banner.setStyleSheet(
+                f"background:{PANEL2}; color:{color}; border:1px solid {color}; "
+                f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
+
     def _slot_workflow(self, step: int, state: str):
         """Update a step indicator.  state: idle/active/done/skip."""
+        if state == "active":
+            self._banner_active(self._wf_leds, step, INFO)
         _styles = {
             "idle":   (f"color:{NEUTRAL}; font-size:16px; min-width:22px;",
                        f"color:{MUTED}; font-weight:700; min-width:65px;",   "○"),
@@ -3032,6 +3061,8 @@ class BatteryQtWindow(QMainWindow):
 
     @Slot(int, str)
     def _slot_qs_workflow(self, phase: int, state: str):
+        if state == "active":
+            self._banner_active(self._qs_leds, phase, "#e67e22")
         _styles = {
             "active": (f"color:#e67e22; font-size:16px; min-width:22px; font-weight:700;",
                        f"color:#e67e22; font-weight:700; min-width:75px;", "●"),
@@ -3056,6 +3087,8 @@ class BatteryQtWindow(QMainWindow):
 
     @Slot(int, str)
     def _slot_hppc_seq_wf(self, step: int, state: str):
+        if state == "active":
+            self._banner_active(self._hppc_seq_leds, step, "#7b2d8b")
         _styles = {
             "idle":   (f"color:{NEUTRAL}; font-size:16px; min-width:22px;",
                        f"color:{MUTED}; font-weight:700; min-width:65px;", "○"),
@@ -3074,6 +3107,8 @@ class BatteryQtWindow(QMainWindow):
 
     @Slot(int, str)
     def _slot_cycle_wf(self, step: int, state: str):
+        if state == "active":
+            self._banner_active(self._cycle_leds, step, "#6c3483")
         _styles = {
             "idle":   (f"color:{NEUTRAL}; font-size:16px; min-width:22px;",
                        f"color:{MUTED}; font-weight:700; min-width:75px;", "○"),
@@ -3110,6 +3145,10 @@ class BatteryQtWindow(QMainWindow):
     @Slot(str, str)
     def _slot_seq_done(self, title: str, body: str):
         """Sound + popup notification when a sequence finishes."""
+        self.lbl_phase_banner.setText(f"✓  {self._current_test_name or 'TEST'}  ·  เสร็จสิ้น")
+        self.lbl_phase_banner.setStyleSheet(
+            f"background:{PANEL2}; color:{OK}; border:1px solid {OK}; "
+            f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
         try:
             import winsound
             winsound.MessageBeep(winsound.MB_ICONASTERISK)
@@ -3166,6 +3205,12 @@ class BatteryQtWindow(QMainWindow):
 
     def _seq_common_start(self, btn_key: str, loading_label: str):
         """Shared startup: reset all step leds, buffers, progress, result card."""
+        # capture the test name for the always-visible phase banner
+        self._current_test_name = self.cb_workflow_type.currentText().split("(")[0].strip()
+        self.lbl_phase_banner.setText(f"▶  {self._current_test_name}  ·  เริ่ม...")
+        self.lbl_phase_banner.setStyleSheet(
+            f"background:{PANEL2}; color:{INFO}; border:1px solid {INFO}; "
+            f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
         for i in range(len(self._WF_STEPS)):       self.sig_workflow.emit(i, "idle")
         for i in range(len(self._QS_STEPS)):       self.sig_qs_workflow.emit(i, "idle")
         for i in range(len(self._HPPC_SEQ_STEPS)): self.sig_hppc_seq_wf.emit(i, "idle")
@@ -3345,12 +3390,25 @@ class BatteryQtWindow(QMainWindow):
         except Exception:
             pass
         self.lbl_wf_status.setText("ยกเลิก")
+        self._set_phase_banner_idle()
         self.btn_seq_cancel.setEnabled(False)
         self.sig_phase_progress.emit(0, 0)
         self.frm_seq_result.hide()
         for btn in ("btn_auto_seq", "btn_quick_scan", "btn_hppc_seq", "btn_cycle_life"):
             self.sig_loading.emit(btn, False, "")
         self.sig_alarm.emit("[AUTO] Sequence cancelled — hardware stopped.")
+
+    def _estimate_charge_s(self, soc_now: float, c_rate: float) -> int:
+        """Rough charge-time estimate (s) so the progress bar/ETA can show during CHARGE.
+        Ah needed to reach full ÷ bulk current, +50% headroom for the CV/absorption taper."""
+        try:
+            rated = self.config.battery.rated_capacity
+            ah_needed = max(0.0, (100.0 - soc_now) / 100.0) * rated
+            i_chg = max(0.05, abs(c_rate) * rated)
+            t_bulk = ah_needed / i_chg * 3600.0
+            return max(60, int(t_bulk * 1.5))
+        except Exception:
+            return 0
 
     def _auto_sequence_thread(self):
         """Background thread: PREPARE → CHARGE → REST → TEST → ANALYZE."""
@@ -3403,6 +3461,7 @@ class BatteryQtWindow(QMainWindow):
                 self.controller.start_charge(strategy=None,
                                              bulk_c_rate_override=_c_rate_override)
                 _ch_t0 = time.time()
+                _ch_est = self._estimate_charge_s(soc, _c_rate_override or 0.1)
                 while self._seq_running.is_set():
                     if not getattr(self.controller, "is_charging", False):
                         break
@@ -3410,7 +3469,8 @@ class BatteryQtWindow(QMainWindow):
                         v2, _, _ = self.hw.read_vi()
                         elapsed_ch = int(time.time() - _ch_t0)
                         status(f"CHARGE: {v2:.2f} V  (elapsed {elapsed_ch//60}m {elapsed_ch%60:02d}s)")
-                        self.sig_phase_progress.emit(elapsed_ch, 0)  # indeterminate — total unknown
+                        # estimated total so the bar/ETA show; clamp so it never reverses past 99%
+                        self.sig_phase_progress.emit(elapsed_ch, max(_ch_est, elapsed_ch + 30))
                     except Exception:
                         pass
                     if not self._seq_sleep(30.0):
@@ -3676,6 +3736,10 @@ class BatteryQtWindow(QMainWindow):
             rated = self.controller.config.battery.rated_capacity
             self.controller.start_charge(strategy=None)
             _ch_t0 = _t.time()
+            _soc0 = getattr(self.controller.estimator, "soc", 50.0)
+            _cp = battery_profiles.get_chemistry(
+                self.controller.config.battery.battery_type).charge
+            _ch_est = self._estimate_charge_s(_soc0, _cp.bulk_c_rate or 0.1)
             while self._seq_running.is_set():
                 if not getattr(self.controller, "is_charging", False):
                     break
@@ -3683,7 +3747,7 @@ class BatteryQtWindow(QMainWindow):
                     v_c, _, _ = self.hw.read_vi()
                     elapsed_ch = int(_t.time() - _ch_t0)
                     status(f"HPPC CHARGE: {v_c:.2f} V  ({elapsed_ch//60}m {elapsed_ch%60:02d}s)")
-                    self.sig_phase_progress.emit(elapsed_ch, 0)
+                    self.sig_phase_progress.emit(elapsed_ch, max(_ch_est, elapsed_ch + 30))
                 except Exception:
                     pass
                 if not self._seq_sleep(30.0):
@@ -3844,6 +3908,8 @@ class BatteryQtWindow(QMainWindow):
                 self.controller.start_charge(strategy=None,
                                              bulk_c_rate_override=c_ch)
                 _ch_t0 = _t.time()
+                _soc0 = getattr(self.controller.estimator, "soc", 50.0)
+                _ch_est = self._estimate_charge_s(_soc0, c_ch or 0.1)
                 while self._seq_running.is_set():
                     if not getattr(self.controller, "is_charging", False):
                         break
@@ -3852,7 +3918,7 @@ class BatteryQtWindow(QMainWindow):
                         elapsed_c = int(_t.time() - _ch_t0)
                         status(f"CYCLE {cyc}/{n_cyc} CHARGE: {v_c:.2f} V  "
                                f"({elapsed_c//60}m {elapsed_c%60:02d}s)")
-                        self.sig_phase_progress.emit(elapsed_c, 0)
+                        self.sig_phase_progress.emit(elapsed_c, max(_ch_est, elapsed_c + 30))
                     except Exception:
                         pass
                     if not self._seq_sleep(30.0):
