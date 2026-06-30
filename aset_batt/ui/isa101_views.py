@@ -2201,6 +2201,19 @@ class BatteryQtWindow(QMainWindow):
         self.sig_hppc_seq_wf.connect(self._slot_hppc_seq_wf)
         self.sig_cycle_wf.connect(self._slot_cycle_wf)
         self.sig_wf_status.connect(self._slot_wf_status)
+        # Mirror workflow phase changes to cloud dashboard
+        _IEC   = (["prepare","charge","rest","discharge","analyze"], "IEC 61960", "IEC 61960 Standard")
+        _QS    = (["ocv","rest","discharge","analyze"],              "Quick Scan", "Quick Scan")
+        _HPPC  = (["charge","rest","test","analyze"],                "HPPC Sequence", "HPPC Full Sequence")
+        _CYCLE = (["charge","discharge","test","analyze"],           "Cycle Life", "Cycle Life")
+        self.sig_workflow.connect(
+            lambda s, st, _p=_IEC: self._slot_cloud_phase(s, st, *_p))
+        self.sig_qs_workflow.connect(
+            lambda s, st, _p=_QS: self._slot_cloud_phase(s, st, *_p))
+        self.sig_hppc_seq_wf.connect(
+            lambda s, st, _p=_HPPC: self._slot_cloud_phase(s, st, *_p))
+        self.sig_cycle_wf.connect(
+            lambda s, st, _p=_CYCLE: self._slot_cloud_phase(s, st, *_p))
         self.sig_phase_progress.connect(self._slot_phase_progress)
         self.sig_seq_result.connect(self._slot_seq_result)
         self.sig_seq_done.connect(self._slot_seq_done)
@@ -2975,6 +2988,18 @@ class BatteryQtWindow(QMainWindow):
     # ---- Workflow guide slots -----------------------------------------------
 
     @Slot(int, str)
+    def _slot_cloud_phase(self, step: int, state: str,
+                          phases: list, test_mode: str, workflow: str):
+        """Mirror workflow step changes to the cloud dashboard meta."""
+        try:
+            from aset_batt.storage.cloud_push import set_cloud_meta
+            if state == "active" and step < len(phases):
+                set_cloud_meta(phase=phases[step], test_mode=test_mode, workflow=workflow)
+            elif state in ("done", "skip") and step == len(phases) - 1:
+                set_cloud_meta(phase="complete")
+        except Exception:
+            pass
+
     def _slot_workflow(self, step: int, state: str):
         """Update a step indicator.  state: idle/active/done/skip."""
         _styles = {

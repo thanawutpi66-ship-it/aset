@@ -24,6 +24,23 @@ from aset_batt.storage.data_utils import _tail_csv_rows, _compute_summary, _run_
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Module-level test-phase state — updated by GUI via set_cloud_meta()
+# ---------------------------------------------------------------------------
+_meta_override: dict = {}
+
+
+def set_cloud_meta(phase: str | None = None,
+                   test_mode: str | None = None,
+                   workflow: str | None = None) -> None:
+    """อัปเดต phase/test_mode ปัจจุบัน — ถูก merge เข้า meta ใน push ถัดไป."""
+    if phase is not None:
+        _meta_override["phase"] = phase
+    if test_mode is not None:
+        _meta_override["test_mode"] = test_mode
+    if workflow is not None:
+        _meta_override["workflow"] = workflow
+
 
 def resolve_token(explicit: str = "") -> str:
     """หา ingest token: arg ตรง > env INGEST_TOKEN > ไฟล์ cloud_token.txt (gitignored)"""
@@ -70,6 +87,7 @@ def build_payload(csv_path, max_points):
             "battery": battery_desc,
             "csv_name": os.path.basename(csv_path),
             "pushed_at": time.time(),
+            **_meta_override,   # phase, test_mode, workflow (set by GUI)
         },
         "summary": summary,
         "analysis": analysis,
