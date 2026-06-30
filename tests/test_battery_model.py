@@ -71,10 +71,12 @@ class TestStateEstimator(unittest.TestCase):
 
     def test_coulomb_counting(self):
         self.estimator.set_initial_soc(50.0)
-        # Discharge 1A for 1 hour (current > 0 = discharge)
+        # Discharge 1A for 1 hour (current > 0 = discharge) → ~2% coulomb drop.
+        # The estimator now fuses the terminal-voltage measurement via the EKF, so a
+        # small extra correction beyond the pure-coulomb 48% is expected and correct.
         result = self.estimator.update(3.0, 1.0, 3600)
         self.assertTrue(
-            48.0 < result["soc"] <= 50.1,
+            47.0 < result["soc"] <= 50.1,
             f"SoC {result['soc']} not in expected range",
         )
 

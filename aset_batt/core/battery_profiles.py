@@ -54,6 +54,11 @@ class ChemistryProfile:
     # peukert_hr = hour-rate at which rated_capacity is specified (10HR or 20HR).
     peukert_k: float = 1.0
     peukert_hr: float = 20.0
+    # OCV hysteresis half-width per cell (V): charge OCV ≈ rest+½h, discharge ≈ rest−½h.
+    # 0 = no hysteresis (current default). LFP shows the strongest hysteresis and needs
+    # this to remove a major SoC-estimation error — measure via GITT in BOTH directions
+    # (charge-GITT and discharge-GITT) then set this to half their OCV gap. (Tier-3 lab.)
+    hysteresis_v_per_cell: float = 0.0
 
 
 @dataclass
@@ -225,8 +230,11 @@ def _chemistry_from_dict(name: str, d: dict,
     tc  = d.get("temp_coeff_mv_per_degc", base.temp_coeff_mv_per_degc if base else 0.0)
     pk  = d.get("peukert_k",              base.peukert_k              if base else 1.0)
     phr = d.get("peukert_hr",             base.peukert_hr             if base else 20.0)
+    hys = d.get("hysteresis_v_per_cell",
+                base.hysteresis_v_per_cell if base else 0.0)
     return ChemistryProfile(name=name, ocv_curve=ocv, rin=rin, charge=charge,
-                            temp_coeff_mv_per_degc=tc, peukert_k=pk, peukert_hr=phr)
+                            temp_coeff_mv_per_degc=tc, peukert_k=pk, peukert_hr=phr,
+                            hysteresis_v_per_cell=hys)
 
 
 def _load_registry() -> Tuple[Dict[str, ChemistryProfile], Dict[str, ProductProfile]]:

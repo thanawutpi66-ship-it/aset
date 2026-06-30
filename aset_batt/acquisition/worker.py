@@ -167,6 +167,22 @@ class AcquisitionWorker(QObject):
             f.close()
 
         results = self._post_process(time_hist, i_hist, v_hist, q_hist, t_hist, p)
+        # Feed final analysis back into the estimator so subsequent live estimation is
+        # sharper: (a) measured SoH → SoH-adjusted coulomb capacity; (b) HPPC ECM
+        # (R0/R1/C1) → the EKF's 1-RC parameters (replaces the rough defaults).
+        if self.estimator is not None:
+            try:
+                soh = results.get("soh")
+                if soh is not None and not math.isnan(soh):
+                    self.estimator.set_soh(soh)
+                if results.get("ecm_identified") and hasattr(self.estimator, "update_ecm"):
+                    r0 = results.get("r0_mohm", 0.0) / 1000.0
+                    r1 = results.get("r1_mohm", 0.0) / 1000.0
+                    c1 = results.get("c1_farad", 0.0)
+                    if r0 > 0 and r1 > 0 and c1 > 0:
+                        self.estimator.update_ecm(r0, r1, c1)
+            except Exception as e:
+                logger.debug("estimator feedback skipped: %s", e)
         self.finished.emit(results)
         if not self._estop:
             self.state.emit("STOPPED")

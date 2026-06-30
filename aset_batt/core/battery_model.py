@@ -92,8 +92,14 @@ class BatteryModel:
                 'ocv_vals': ocv_vals
             }
 
-    def get_ocv_from_soc(self, soc: float, temp: float = 25.0) -> float:
-        """คำนวณ OCV จาก SoC และ temperature ด้วย interpolation"""
+    def get_ocv_from_soc(self, soc: float, temp: float = 25.0,
+                         direction: int = 0) -> float:
+        """คำนวณ OCV จาก SoC และ temperature ด้วย interpolation
+
+        direction: +1 = charging, −1 = discharging, 0 = rest (default).
+        ถ้า chemistry.hysteresis_v_per_cell > 0 จะบวก/ลบครึ่งของ hysteresis ตามทิศทาง
+        (charge OCV สูงกว่า discharge OCV ที่ SoC เดียวกัน). default 0 → ไม่มีผล.
+        """
         soc = max(0.0, min(100.0, soc))
         temp = self._clamp_temperature(temp)
 
@@ -120,6 +126,11 @@ class BatteryModel:
 
         # Interpolate ใน SoC domain (per-cell) แล้วคูณจำนวน series → แรงดันแพ็ค
         cell_ocv = float(np.interp(soc, data['soc_keys'], data['ocv_vals']))
+        # OCV hysteresis (direction-dependent half-offset; 0 when not characterised)
+        if direction != 0:
+            hyst = getattr(self.chemistry, "hysteresis_v_per_cell", 0.0)
+            if hyst > 0.0:
+                cell_ocv += 0.5 * hyst * (1 if direction > 0 else -1)
         return cell_ocv * self.series_cells
 
     def ocv_slope(self, soc: float, temp: float = 25.0, dsoc: float = 1.0) -> float:
@@ -217,9 +228,18 @@ class BatteryModel:
         params = self.rin_params
 
         # Temperature factor: R "เพิ่มขึ้นเมื่ออุณหภูมิต่ำลง" (Arrhenius — ionic/
-        # charge-transfer ช้าลงตอนเย็น) จึงใช้ (25 - temp) ไม่ใช่ (temp - 25)
-        # NB: เป็น linear approximation; ของจริงโตแบบ exponential ที่อุณหภูมิต่ำ
-        temp_factor = params['temp_coeff'] * (25.0 - temp)
+        # charge-transfer ช้าลงตอนเย็น).
+        # ถ้า chemistry.rin มี 'arrhenius_ea_k' (>0) ใช้รูป exponential จริง:
+        #   R(T)/R_ref = exp(Ea_k · (1/T − 1/T_ref))   [T เป็นเคลวิน, T_ref=298.15K]
+        # ค่า Ea_k (= Ea/k_B, หน่วยเคลวิน) ต้อง fit จาก DCIR หลายอุณหภูมิ (Tier-3 lab).
+        # ถ้าไม่ระบุ → fallback เป็น linear approximation เดิม (พฤติกรรมไม่เปลี่ยน).
+        ea_k = params.get('arrhenius_ea_k', 0.0)
+        if ea_k > 0:
+            t_k = temp + 273.15
+            t_ref = 298.15
+            temp_factor = float(np.exp(ea_k * (1.0 / t_k - 1.0 / t_ref))) - 1.0
+        else:
+            temp_factor = params['temp_coeff'] * (25.0 - temp)
 
         # SoC factor (สูงขึ้นเมื่อ SoC ต่ำหรือสูง)
         soc_factor = params['soc_coeff'] * abs(soc - 50.0)

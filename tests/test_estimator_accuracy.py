@@ -1,0 +1,84 @@
+"""
+Tests for the accuracy upgrades:
+- SoH-adjusted (effective) capacity in coulomb counting
+- live SoH from a full→empty capacity sweep
+- current-offset tare
+- 2-state EKF basic stability + sign
+"""
+import unittest
+import numpy as np
+
+from aset_batt.core.battery_model import BatteryModel
+from aset_batt.core.state_estimator import StateEstimator
+from aset_batt.core.soc_ekf import SoCEKF
+
+
+class TestEffectiveCapacity(unittest.TestCase):
+    def test_soh_shrinks_capacity(self):
+        e = StateEstimator(10.0, BatteryModel("LiFePO4"))
+        self.assertAlmostEqual(e.effective_capacity(), 10.0, places=3)
+        e.set_soh(80.0)
+        self.assertAlmostEqual(e.effective_capacity(), 8.0, places=3)
+
+    def test_aged_battery_soc_drops_faster(self):
+        # Same Ah removed → an aged cell (lower SoH) loses a larger SoC fraction.
+        e_new = StateEstimator(10.0, BatteryModel("LiFePO4"))
+        e_new.use_ekf = False               # isolate coulomb counting
+        e_new.set_initial_soc(100.0)
+        e_aged = StateEstimator(10.0, BatteryModel("LiFePO4"))
+        e_aged.use_ekf = False
+        e_aged.set_soh(80.0)
+        e_aged.set_initial_soc(100.0)
+        # discharge 1A for 1h = 1 Ah on a steep-ish voltage (avoid OCV correction noise)
+        e_new.update(3.30, 1.0, dt=3600)
+        e_aged.update(3.30, 1.0, dt=3600)
+        # new: 1/10 = 10% drop → ~90 ; aged: 1/8 = 12.5% drop → ~87.5
+        self.assertGreater(e_new.soc, e_aged.soc)
+
+
+class TestCurrentTare(unittest.TestCase):
+    def test_manual_offset_applied(self):
+        e = StateEstimator(10.0, BatteryModel("LiFePO4"))
+        e.use_ekf = False
+        e.set_current_offset(0.5)           # sensor reads 0.5 A high
+        e.set_initial_soc(50.0)
+        # true current 0 (reads 0.5); offset removes it → near-zero coulomb movement
+        e.update(3.28, 0.5, dt=3600)
+        self.assertAlmostEqual(e.ah_accumulated, 0.0, delta=0.05)
+
+
+class TestLiveSoH(unittest.TestCase):
+    def test_soh_from_full_to_empty_sweep(self):
+        m = BatteryModel("LeadAcid", 2.0, 6, 1)
+        e = StateEstimator(rated_capacity=5.3, battery_model=m)
+        e.set_initial_soc(100.0)
+        e._cap_counting = True               # simulate a 100% anchor just fired
+        e._cap_counter_ah = 4.0              # ~4.0 Ah delivered over the full sweep
+        # now force the empty anchor by feeding a low voltage at small current
+        v_empty = m.get_ocv_from_soc(0.0)
+        e.update(v_empty * 0.99, 0.2, dt=1.0)
+        self.assertGreater(e.soh, 50.0)
+        self.assertLess(e.soh, 100.0)
+        self.assertAlmostEqual(e.measured_capacity_ah, e.soh / 100.0 * 5.3, delta=0.1)
+
+
+class TestEKF(unittest.TestCase):
+    def test_ekf_discharge_decreases_soc_and_stable(self):
+        ekf = SoCEKF(soc0=80.0, r0=0.03, r1=0.02, c1=1500.0)
+        for _ in range(200):
+            ekf.predict(current=2.0, dt=1.0, cap_ah=50.0, eta=1.0)
+            ekf.update(v_meas=12.4, current=2.0, ocv_pack=12.6,
+                       docv_dsoc_pack=0.01, r0=0.03)
+        self.assertLess(ekf.soc, 80.0)
+        self.assertTrue(np.all(np.isfinite(ekf.P)))
+        self.assertTrue(0.0 <= ekf.soc <= 100.0)
+
+    def test_ekf_set_soc_resets(self):
+        ekf = SoCEKF(soc0=50.0, r0=0.03, r1=0.02, c1=1500.0)
+        ekf.set_soc(100.0)
+        self.assertAlmostEqual(ekf.soc, 100.0, places=6)
+        self.assertAlmostEqual(ekf.v_rc, 0.0, places=6)
+
+
+if __name__ == "__main__":
+    unittest.main()

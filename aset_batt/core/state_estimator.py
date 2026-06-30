@@ -1,8 +1,10 @@
 """
 Advanced State Estimation: SoC estimation ด้วย Coulomb counting + OCV correction
++ 2-state EKF (1-RC) fusion, live SoH, SoH-adjusted capacity, current-offset tare.
 """
 import time
 from aset_batt.core.battery_model import BatteryModel
+from aset_batt.core.soc_ekf import SoCEKF
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,26 @@ class StateEstimator:
         # Coulomb counting
         self.ah_accumulated = 0.0   # Ah นับจาก initial SoC
         self.coulomb_efficiency = 0.99  # fallback for non-lead-acid chemistries
+
+        # --- Current-offset tare (drift source #4): sensor bias removed during rest ---
+        self.current_offset = 0.0       # A — subtracted from every reading
+        self._tare_sum = 0.0            # auto-tare accumulator (during rest)
+        self._tare_n = 0
+        self._auto_tare = True          # estimate offset from rest segments
+
+        # --- Self-discharge (off by default; bench tests too short to matter) ---
+        # %/day leak; only applied when explicitly enabled via set_self_discharge().
+        self.self_discharge_pct_per_day = 0.0
+
+        # --- Live SoH from full→empty capacity sweep (#1/#2) ---
+        # capacity counter runs independently of the re-anchoring CC resets
+        self._cap_counter_ah = 0.0      # raw |discharge Ah| since last 100% anchor
+        self._cap_counting = False      # True after a 100% (full) anchor is seen
+        self.measured_capacity_ah = 0.0 # last full-sweep measured capacity
+
+        # --- EKF (2-state, 1-RC) fusion ---
+        self.use_ekf = True
+        self._ekf = None                # lazily created on first update()
 
         # OCV correction
         self.last_ocv_correction_time = time.time()
@@ -109,6 +131,50 @@ class StateEstimator:
         scale = (current / i_rated) ** (k - 1.0)
         return dah * min(scale, 5.0)   # cap at 5× — protects against huge pulse spikes
 
+    def effective_capacity(self) -> float:
+        """SoH-adjusted usable capacity (Ah).
+
+        Coulomb counting MUST divide accumulated Ah by the *actual* capacity, not the
+        nameplate rating: an aged cell at 80 % SoH that still uses rated Ah would have
+        its SoC over-estimated (Analog Devices / Sunlit Energy BMS notes). As SoH is
+        measured from a full sweep this shrinks accordingly.
+        """
+        cap = self.rated_capacity * (self.soh / 100.0)
+        return max(0.05 * self.rated_capacity, cap)   # floor: never divide by ~0
+
+    def set_soh(self, soh: float) -> None:
+        """Externally set SoH (e.g. from analysis.py full-discharge capacity)."""
+        self.soh = max(0.0, min(120.0, float(soh)))
+
+    def set_self_discharge(self, pct_per_day: float) -> None:
+        self.self_discharge_pct_per_day = max(0.0, float(pct_per_day))
+
+    def set_current_offset(self, offset_a: float) -> None:
+        """Manually set the current-sensor zero offset (A, discharge-positive)."""
+        self.current_offset = float(offset_a)
+        self._auto_tare = False
+
+    def _ekf_rc_defaults(self):
+        """Initial 1-RC parameters for the EKF from the pack model.
+        R0 from base_rin; R1≈0.6·R0, C1 chosen so τ≈30 s (lead-acid diffusion order).
+        Overwritten by a real HPPC ECM fit via update_ecm()."""
+        r0 = max(1e-3, float(self.battery_model.base_rin))
+        r1 = 0.6 * r0
+        tau = 30.0
+        c1 = tau / max(1e-4, r1)
+        return r0, r1, c1
+
+    def _ensure_ekf(self):
+        if self._ekf is None:
+            r0, r1, c1 = self._ekf_rc_defaults()
+            self._ekf = SoCEKF(self.soc, r0, r1, c1)
+        return self._ekf
+
+    def update_ecm(self, r0: float, r1: float, c1: float) -> None:
+        """Feed a fresh HPPC ECM fit into the EKF (R0/R1/C1 in Ohm/Ohm/Farad)."""
+        if self._ekf is not None and r0 > 0 and r1 > 0 and c1 > 0:
+            self._ekf.set_rc(r0, r1, c1)
+
     def set_standby_current(self, bleed_a: float) -> None:
         """Sync PSU bleed current from hardware config.
         Call this after connecting: estimator.set_standby_current(hw.psu_bleed_a)"""
@@ -139,6 +205,8 @@ class StateEstimator:
         self.soc_filtered = soc
         self.ah_accumulated = 0.0
         self.last_ocv_correction_time = time.time()
+        if self._ekf is not None:
+            self._ekf.set_soc(soc)
 
     # ------------------------------------------------------------------
     # Main update
@@ -160,22 +228,42 @@ class StateEstimator:
             dict: {soc, soh, rin, ah_accumulated}
         """
 
-        # === 1. Coulomb Counting ===
+        # === 0. Current-offset tare (#4) ===
+        # Remove sensor bias estimated during rest so coulomb counting doesn't drift.
+        # During genuine rest the true current equals the known PSU bleed (standby);
+        # any deviation is sensor offset. Auto-tare only — never perturbs an active step.
+        if self._auto_tare and abs(current - self.standby_current) < self.static_current_threshold:
+            self._tare_sum += (current - self.standby_current)
+            self._tare_n += 1
+            if self._tare_n >= 20:
+                # bounded offset update (±0.5 A guard against a wild reading)
+                self.current_offset = max(-0.5, min(0.5, self._tare_sum / self._tare_n))
+                self._tare_sum = 0.0
+                self._tare_n = 0
+        cur = current - self.current_offset
+
+        # === 1. Coulomb Counting (SoH-adjusted capacity, #2) ===
         # current > 0 = discharge → SoC ลดลง ; current < 0 = charge → SoC เพิ่มขึ้น
-        dah = current * (dt / 3600.0)
-        if current < 0:
-            # Charging: apply state-dependent coulombic efficiency (Faraday gassing loss).
-            # For lead-acid near full SoC most current goes to H₂O electrolysis, not storage.
-            dah *= self._coulomb_eta(self.soc, current)
+        eta = self._coulomb_eta(self.soc, cur)          # 1.0 on discharge
+        dah = cur * (dt / 3600.0)
+        if cur < 0:
+            dah *= eta
         else:
-            # Discharging: apply Peukert correction for lead-acid.
-            # High-rate discharge depletes effective capacity faster than nominal Ah suggests.
-            dah = self._peukert_dah(current, dah)
+            # Discharging: Peukert correction (lead-acid). Capacity counter (raw) below.
+            dah = self._peukert_dah(cur, dah)
+        # Self-discharge leak (off by default) — acts like a tiny discharge.
+        if self.self_discharge_pct_per_day > 0.0:
+            dah += (self.self_discharge_pct_per_day / 100.0) * \
+                   self.effective_capacity() * (dt / 86400.0)
         self.ah_accumulated += dah
 
-        # ใช้ soc_initial เป็นฐาน ไม่ hardcode 50%
-        # ลบ ah_accumulated เพราะ discharge (positive current) ทำให้ SoC ลดลง
-        soc_cc = self.soc_initial - (self.ah_accumulated / self.rated_capacity) * 100.0
+        # live-SoH capacity counter: raw |discharge Ah| since the last 100% anchor
+        if self._cap_counting and cur > 0:
+            self._cap_counter_ah += cur * (dt / 3600.0)
+
+        # SoC from coulomb counting — divide by *effective* (SoH-adjusted) capacity
+        cap = self.effective_capacity()
+        soc_cc = self.soc_initial - (self.ah_accumulated / cap) * 100.0
         soc_cc = max(0.0, min(100.0, soc_cc))
 
         # === 1b. Endpoint Anchors (SoC Restoring Points) ===
@@ -190,32 +278,66 @@ class StateEstimator:
             anchor_v_full = full_v_cell * s * 0.986      # 3.65 × 0.986 × 8 = 28.8V (LFP 8S)
             # 1.5× headroom + 0.25 A floor so small C-rate rounding never blocks the anchor.
             anchor_i_tail = max(0.25, self.rated_capacity * cp.tail_current_c_rate * 1.5)
-            if (current < 0 and voltage >= anchor_v_full
-                    and abs(current) <= anchor_i_tail and self.soc < 98.0):
+            if (cur < 0 and voltage >= anchor_v_full
+                    and abs(cur) <= anchor_i_tail and self.soc < 98.0):
                 logger.info("Endpoint anchor → 100%%: %.3fV (≥%.3f) I=%.3fA tail=%.3fA",
-                            voltage, anchor_v_full, current, anchor_i_tail)
+                            voltage, anchor_v_full, cur, anchor_i_tail)
                 self._reset_to_soc(100.0)
                 soc_cc = 100.0
+                # start a fresh full→empty capacity sweep for live SoH
+                self._cap_counting = True
+                self._cap_counter_ah = 0.0
         # 0% anchor: discharge + V ≤ OCV ที่ 0% ของแพ็ค (+ 1% hysteresis)
         #            2.50V/cell × 8 = 20.0V สำหรับ LFP 8S
         anchor_v_empty = self.battery_model.get_ocv_from_soc(0.0)
-        if (current > 0 and voltage <= anchor_v_empty * 1.01 and self.soc > 2.0):
+        if (cur > 0 and voltage <= anchor_v_empty * 1.01 and self.soc > 2.0):
             logger.info("Endpoint anchor → 0%%: %.3fV (≤%.3f)", voltage, anchor_v_empty)
+            # live SoH from a full→empty sweep (#1): measured capacity ÷ rated.
+            # Require a near-full sweep (> 30% rated) so partial discharges don't corrupt SoH.
+            if self._cap_counting and self._cap_counter_ah > 0.30 * self.rated_capacity:
+                self.measured_capacity_ah = self._cap_counter_ah
+                self.soh = max(0.0, min(120.0,
+                                        self._cap_counter_ah / self.rated_capacity * 100.0))
+                logger.info("Live SoH ← full→empty sweep: %.3f Ah / %.3f rated = %.1f%%",
+                            self._cap_counter_ah, self.rated_capacity, self.soh)
+            self._cap_counting = False
             self._reset_to_soc(0.0)
             soc_cc = 0.0
 
         # === 2. Update Internal Resistance (forward temp + measured_dcir ให้ถูก) ===
         self.rin = self.battery_model.estimate_rin(
-            voltage, current, self.soc, temp=temp, measured_dcir=measured_dcir
+            voltage, cur, self.soc, temp=temp, measured_dcir=measured_dcir
         )
 
-        # === 3. OCV-Based Correction + ENDPOINT RESET (เมื่อกระแสน้อย) ===
+        # === 3-EKF. 2-state EKF fusion (primary path) ===
+        # The EKF fuses the coulomb prediction with the terminal-voltage measurement
+        # using a covariance-weighted gain; dOCV/dSoC (its Jacobian) is naturally tiny
+        # on a flat plateau, so it trusts CC there and OCV near the knees automatically.
+        if self.use_ekf:
+            ekf = self._ensure_ekf()
+            s = self.battery_model.series_cells
+            ekf.predict(cur, dt, cap, eta)
+            # direction for OCV hysteresis: discharge (cur>0) → −1, charge → +1, rest → 0
+            direction = 0 if abs(cur) < 0.05 else (-1 if cur > 0 else 1)
+            ocv_pack = self.battery_model.get_ocv_from_soc(ekf.soc, temp, direction)
+            docv = self.battery_model.ocv_slope(ekf.soc, temp) * s   # V per %SoC, pack
+            ekf.update(voltage, cur, ocv_pack, docv, self.rin)
+            self.soc = max(0.0, min(100.0, ekf.soc))
+            self.soc_filtered = self.soc
+            return {
+                "soc": self.soc,
+                "soh": self.soh,
+                "rin": self.rin,
+                "ah_accumulated": self.ah_accumulated,
+            }
+
+        # === 3. OCV-Based Correction + ENDPOINT RESET (เมื่อกระแสน้อย) — fallback ===
         # หลักการ (จาก literature ของ LFP): coulomb counting drift ได้ → ต้อง re-anchor
         # ด้วย OCV "เฉพาะตรงที่ OCV เชื่อถือได้" คือบริเวณ knee/ปลาย (slope ชัน) หลัง full
         # charge / full discharge. ตรง plateau ที่ flat (slope ต่ำ) ห้ามแก้ (V คลาดนิด SoC
         # เพี้ยนมาก). ปลายที่ steep → anchor ทันที (ไม่รอ 300s) และ re-anchor coulomb counter.
         now = time.time()
-        if abs(current - self.standby_current) < self.static_current_threshold:
+        if abs(cur - self.standby_current) < self.static_current_threshold:
             self._rested_s += dt
             self.last_static_voltage = voltage
             ocv_voltage = voltage + self.standby_current * self.rin
