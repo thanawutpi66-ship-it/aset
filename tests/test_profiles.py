@@ -92,9 +92,10 @@ class TestModelMatchesProfile(unittest.TestCase):
         self.assertAlmostEqual(m.get_ocv_from_soc(50), 3.278, places=3)
         self.assertAlmostEqual(m.get_ocv_from_soc(100), 3.40, places=2)
 
-    def test_lead_acid_pack_ocv_unchanged(self):
+    def test_lead_acid_pack_ocv_agm_reference(self):
+        # AGM published reference: full-charge rested pack ~12.89V (2.148 V/cell × 6)
         m = BatteryModel("LeadAcid", 2.0, series_cells=6)
-        self.assertAlmostEqual(m.get_ocv_from_soc(100), 12.78, delta=0.1)
+        self.assertAlmostEqual(m.get_ocv_from_soc(100), 12.89, delta=0.1)
 
     def test_model_exposes_charge_profile(self):
         m = BatteryModel("LeadAcid", 2.0, series_cells=6)

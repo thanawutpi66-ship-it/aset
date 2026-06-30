@@ -78,6 +78,11 @@ class ProductProfile:
     cca_a: float = 0.0                        # Cold Cranking Amps (0 = ไม่มี/ไม่ใช่ starter)
     max_cont_discharge_a: float = 0.0         # กระแส discharge ต่อเนื่องสูงสุด (A); 0 = ไม่ระบุ
     max_peak_discharge_a: float = 0.0         # กระแส discharge peak สูงสุด (A); 0 = ไม่ระบุ
+    # Per-product Peukert override (0 = สืบทอดจาก chemistry).
+    # ใช้เมื่อรุ่นนี้ต่างจากค่ากลางของเคมี เช่น hour-rate ต่าง (มอไซค์ 10HR vs standby 20HR)
+    # หรือชนิดต่าง (AGM 1.10 vs flooded 1.2–1.6). i_rated = rated_capacity_ah / peukert_hr.
+    peukert_k: float = 0.0
+    peukert_hr: float = 0.0
     notes: str = ""
 
 
@@ -117,12 +122,16 @@ _DEFAULT_CHEMISTRIES: Dict[str, ChemistryProfile] = {
     ),
     "LeadAcid": ChemistryProfile(
         name="LeadAcid",
+        # Rested OCV per cell — published 12V AGM resting-voltage→SoC table (÷6 cells).
+        # Source: AGM voltage charts (voltagebasics / ShopSolar / BRS Battery), measured
+        # after 4–12 h rest. Range 1.938 (0%) → 2.148 (100%) V/cell ⇔ 11.63 → 12.89 V pack.
+        # ก่อนหน้านี้ใช้ curve ที่ "แบน" เกิน (1.96→2.13) ทำให้ SoC ช่วงกลางอ่านสูงเกินจริง.
         ocv_curve={
-            0: 1.960, 5: 1.980, 10: 1.995, 15: 2.005, 20: 2.015,
-            25: 2.025, 30: 2.033, 35: 2.040, 40: 2.047, 45: 2.053,
-            50: 2.060, 55: 2.066, 60: 2.072, 65: 2.078, 70: 2.085,
-            75: 2.092, 80: 2.100, 85: 2.108, 90: 2.115, 95: 2.122,
-            100: 2.130,
+            0: 1.938, 5: 1.944, 10: 1.950, 15: 1.959, 20: 1.968,
+            25: 1.981, 30: 1.993, 35: 2.006, 40: 2.018, 45: 2.028,
+            50: 2.038, 55: 2.053, 60: 2.068, 65: 2.077, 70: 2.085,
+            75: 2.097, 80: 2.108, 85: 2.119, 90: 2.130, 95: 2.139,
+            100: 2.148,
         },
         rin={"r0": 0.005, "temp_coeff": 0.005, "soc_coeff": 0.0010,
              "aging_coeff": 0.003},
@@ -133,8 +142,10 @@ _DEFAULT_CHEMISTRIES: Dict[str, ChemistryProfile] = {
                              tail_current_c_rate=0.02, stage_timeout_min=240.0),
         # Nernst: H₂SO₄ electrolyte OCV rises ~+0.40 mV/°C/cell from 25°C reference
         temp_coeff_mv_per_degc=0.40,
-        # Peukert k≈1.3 for VRLA/AGM; capacity rated at 10-hour rate (C10)
-        peukert_k=1.30,
+        # Peukert k for VRLA *AGM* ≈ 1.05–1.15 (typ. 1.10); flooded = 1.2–1.6, Victron
+        # default 1.25. ก่อนหน้านี้ตั้ง 1.30 (โซน flooded) → over-correct สำหรับ AGM.
+        # มอเตอร์ไซค์ AGM rated ที่ 10HR (C10); standby/deep-cycle override เป็น 20HR ที่ product.
+        peukert_k=1.10,
         peukert_hr=10.0,
     ),
     "Li-ion": ChemistryProfile(

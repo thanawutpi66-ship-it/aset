@@ -14,9 +14,9 @@ class TestLeadAcidModel(unittest.TestCase):
         self.m = BatteryModel("LeadAcid", nominal_voltage=2.0, series_cells=6)
 
     def test_pack_ocv_range(self):
-        # เต็ม ~12.78V, หมด ~11.76V (6S × 2V)
-        self.assertAlmostEqual(self.m.get_ocv_from_soc(100), 12.78, delta=0.1)
-        self.assertTrue(11.6 < self.m.get_ocv_from_soc(0) < 12.0)
+        # AGM reference: เต็ม ~12.89V, หมด ~11.63V (6S × per-cell 2.148/1.938)
+        self.assertAlmostEqual(self.m.get_ocv_from_soc(100), 12.89, delta=0.1)
+        self.assertTrue(11.5 < self.m.get_ocv_from_soc(0) < 12.0)
 
     def test_soc_roundtrip_sloped(self):
         # เส้น sloped → reverse lookup เสถียร (ต่างจาก LFP plateau)

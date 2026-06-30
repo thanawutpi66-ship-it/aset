@@ -2570,6 +2570,17 @@ class BatteryQtWindow(QMainWindow):
             from aset_batt.core.battery_model import BatteryModel
 
             model = BatteryModel(b.battery_type, b.nominal_voltage, b.cells_series, b.cells_parallel)
+            # Per-product Peukert override (e.g. 20HR standby vs 10HR motorcycle).
+            # Copy the shared chemistry instance so we never mutate the registry cache.
+            ov_k  = getattr(prod, "peukert_k", 0.0)
+            ov_hr = getattr(prod, "peukert_hr", 0.0)
+            if ov_k or ov_hr:
+                import dataclasses
+                model.chemistry = dataclasses.replace(
+                    model.chemistry,
+                    peukert_k=ov_k or model.chemistry.peukert_k,
+                    peukert_hr=ov_hr or model.chemistry.peukert_hr,
+                )
             if self.estimator is not None:
                 self.estimator.battery_model = model
                 if hasattr(self.estimator, "rated_capacity"):
