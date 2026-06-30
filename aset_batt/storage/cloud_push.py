@@ -194,9 +194,53 @@ class CloudPusher:
             logger.warning("cloud push ล้มเหลว: %s", e)
             return False
 
+    def _poll_and_analyze(self) -> None:
+        """Poll cloud for pending re-analysis requests; run them and push results back."""
+        try:
+            req = urllib.request.Request(
+                self.url.rstrip("/") + "/api/pending-analyses",
+                headers={"X-Ingest-Token": self.token},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            pending = data.get("pending", [])
+            if not pending:
+                return
+            for item in pending:
+                sidx = item.get("idx")
+                csv_path = item.get("csv_path", "")
+                if not csv_path or not os.path.exists(csv_path):
+                    csv_path = (self._data_handler.current_path
+                               if self._data_handler and getattr(self._data_handler, "current_path", "")
+                               else self.csv_path)
+                if not csv_path or not os.path.exists(csv_path):
+                    logger.warning("cloud analyze: ไม่พบ CSV สำหรับ session %s", sidx)
+                    continue
+                logger.info("cloud analyze: session %s — รัน analysis (csv=%s)", sidx, os.path.basename(csv_path))
+                try:
+                    analysis = _run_analysis(config_manager, csv_path)
+                    self._cached_analysis = analysis
+                    self._last_analysis_t = time.time()
+                except Exception as e:
+                    analysis = {"success": False, "error": str(e)}
+                try:
+                    body = json.dumps({"analysis": analysis}, cls=_NumpySafeEncoder).encode("utf-8")
+                    req2 = urllib.request.Request(
+                        self.url.rstrip("/") + f"/api/update-analysis/{sidx}",
+                        data=body, method="POST",
+                        headers={"Content-Type": "application/json", "X-Ingest-Token": self.token},
+                    )
+                    with urllib.request.urlopen(req2, timeout=30) as resp2:
+                        logger.info("cloud analyze: session %s → HTTP %s", sidx, resp2.status)
+                except Exception as e:
+                    logger.warning("cloud analyze: push session %s ล้มเหลว: %s", sidx, e)
+        except Exception as e:
+            logger.debug("cloud analyze poll: %s", e)
+
     def _loop(self):
         while self._running:
             self.push_once()
+            self._poll_and_analyze()
             # sleep เป็นช่วงสั้น ๆ เพื่อให้ stop ได้เร็ว
             slept = 0.0
             while self._running and slept < self.interval:

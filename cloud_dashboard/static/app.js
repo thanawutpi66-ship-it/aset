@@ -24,6 +24,7 @@ let mainCharts = {};
 let icaChart = null;
 let alarmLog = [];
 let selectedSession = null;
+let _analyzeState = null;  // {idx, queued_at, timer} while re-analysis is in flight
 
 function sohColor(v){ return v >= 85 ? css('--ok') : v >= 70 ? css('--warn') : css('--crit'); }
 
@@ -169,6 +170,48 @@ function updateIcaChart(voltageArr, socArr) {
   icaChart.update('none');
 }
 
+/* ---- re-analysis (Method 1 — lab polling) -------------------------------- */
+function _clearAnalyzeState() {
+  if (_analyzeState && _analyzeState.timer) clearInterval(_analyzeState.timer);
+  _analyzeState = null;
+  const btn = $('analyzeBtn');
+  if (btn) { btn.textContent = 'Analyze'; btn.disabled = false; }
+}
+
+async function requestAnalysis(idx) {
+  _clearAnalyzeState();
+  const btn = $('analyzeBtn');
+  btn.textContent = 'Sending to lab…';
+  btn.disabled = true;
+  let queued_at;
+  try {
+    const res = await fetch('/api/analyze-request/' + idx, { method: 'POST' });
+    if (!res.ok) { _clearAnalyzeState(); return; }
+    const data = await res.json();
+    queued_at = data.queued_at;
+    btn.textContent = 'Lab analyzing… (0s)';
+  } catch(e) { _clearAnalyzeState(); return; }
+
+  let elapsed = 0;
+  const timer = setInterval(async () => {
+    elapsed += 5;
+    const btn2 = $('analyzeBtn');
+    if (btn2) btn2.textContent = 'Lab analyzing… (' + elapsed + 's)';
+    try {
+      const res = await fetch('/api/session/' + idx);
+      if (!res.ok) return;
+      const snap = await res.json();
+      const at = (snap.payload && snap.payload.analysis && snap.payload.analysis._analyzed_at) || 0;
+      if (at > queued_at) {
+        renderPayload(snap.payload, snap.received_at);
+        _clearAnalyzeState();
+      }
+    } catch(e) {}
+    if (elapsed >= 120) _clearAnalyzeState();
+  }, 5000);
+  _analyzeState = { idx, queued_at, timer };
+}
+
 /* ---- sessions list ------------------------------------------------------- */
 async function fetchSessions() {
   try {
@@ -199,16 +242,44 @@ function renderSessions(sessions) {
 }
 
 async function selectSession(idx) {
+  _clearAnalyzeState();
   selectedSession = idx;
   document.querySelectorAll('.sess-item').forEach(el => el.classList.toggle('selected', +el.dataset.idx === idx));
   $('sessPrompt').hidden = true;
   $('anResults').hidden  = false;
+
+  // Open ECM accordion automatically
+  const ecmContent = $('ecmContent'), ecmToggle = $('ecmToggle');
+  if (ecmContent && ecmContent.hidden) {
+    ecmContent.hidden = false;
+    if (ecmToggle) ecmToggle.textContent = '▼ Show Equivalent Circuit';
+  }
+
+  // Show "viewing session" badge, show back-to-live button
+  const badge = $('sessViewingBadge');
+  if (badge) badge.textContent = 'Viewing session #' + idx;
+  const liveBtn = $('backToLiveBtn');
+  if (liveBtn) liveBtn.hidden = false;
+
   try {
     const res = await fetch('/api/session/' + idx);
     if (!res.ok) return;
     const snap = await res.json();
     if (snap.payload) renderPayload(snap.payload, snap.received_at);
   } catch(e) {}
+}
+
+function backToLive() {
+  _clearAnalyzeState();
+  selectedSession = null;
+  document.querySelectorAll('.sess-item').forEach(el => el.classList.remove('selected'));
+  const badge = $('sessViewingBadge');
+  if (badge) badge.textContent = '';
+  const liveBtn = $('backToLiveBtn');
+  if (liveBtn) liveBtn.hidden = true;
+  $('sessPrompt').hidden = false;
+  $('anResults').hidden  = true;
+  load();
 }
 
 /* ---- render payload (used by both live poll and session select) ----------- */
@@ -406,6 +477,7 @@ function setSafety(alarm, msg){
 }
 function muteAlarm(){ isMuted = true; $('overlay').style.display = 'none'; }
 window.muteAlarm = muteAlarm;
+window.backToLive = backToLive;
 
 /* ---- connection status --------------------------------------------------- */
 function setConnected(state) {
@@ -450,7 +522,10 @@ window.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', () => switchLpTab(btn.dataset.lptab)));
   $('ecmToggle').addEventListener('click', toggleEcm);
   $('refreshSessions').addEventListener('click', fetchSessions);
-  $('analyzeBtn').addEventListener('click', fetchSessions);
+  $('analyzeBtn').addEventListener('click', () => {
+    if (selectedSession !== null) requestAnalysis(selectedSession);
+    else fetchSessions();
+  });
 
   buildMainCharts();
   buildIcaChart();

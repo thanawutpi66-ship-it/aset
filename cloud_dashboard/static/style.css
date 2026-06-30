@@ -263,6 +263,13 @@ b{font-weight:700}
   transition:color .15s,background .15s;
 }
 .sess-refresh:hover{color:var(--text);background:rgba(255,255,255,.08)}
+.sess-viewing{font-size:10px;color:var(--ok);font-weight:500;flex:1;margin-left:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sess-back{
+  background:rgba(255,255,255,.06);border:1px solid var(--border-2);color:var(--muted);
+  font-size:10px;cursor:pointer;padding:2px 8px;border-radius:4px;line-height:1.4;
+  transition:color .15s,background .15s;white-space:nowrap;
+}
+.sess-back:hover{color:var(--text);background:rgba(255,255,255,.12)}
 .sess-list{flex-shrink:0;max-height:160px;overflow-y:auto;border-bottom:1px solid var(--border)}
 .sess-empty{padding:10px 14px;font-size:11px;color:var(--faint);font-style:italic}
 .sess-item{

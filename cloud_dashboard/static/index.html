@@ -6,9 +6,9 @@
 <meta name="description" content="ASET Cloud Dashboard — แสดงผลการทดสอบแบตเตอรี่ Li-ion แบบเรียลไทม์ (SoC / SoH)"/>
 <title>ASET Cloud Dashboard · Battery Health</title>
 <link rel="preconnect" href="https://cdn.jsdelivr.net"/>
-<link rel="stylesheet" href="style.css?v=5"/>
+<link rel="stylesheet" href="style.css?v=7"/>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script defer src="app.js?v=5"></script>
+<script defer src="app.js?v=7"></script>
 </head>
 <body>
 
@@ -228,6 +228,8 @@
 
           <div class="sess-header">
             <span class="sess-label">Sessions:</span>
+            <span class="sess-viewing" id="sessViewingBadge"></span>
+            <button class="sess-back" id="backToLiveBtn" hidden onclick="backToLive()">× Live</button>
             <button class="sess-refresh" id="refreshSessions" title="Refresh sessions">↻</button>
           </div>
           <div class="sess-list" id="sessionsList">

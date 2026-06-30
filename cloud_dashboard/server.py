@@ -52,6 +52,7 @@ _CONTENT_TYPES = {
 _lock = threading.Lock()
 _store = {"payload": None, "received_at": 0.0}
 _sessions: list = []   # [{idx, received_at, battery, row_count, size_bytes, payload}]
+_analyze_queue: dict = {}  # {session_idx: queued_at} — pending re-analysis requests
 
 
 def _load_snapshot() -> None:
@@ -129,9 +130,58 @@ def _make_handler():
             self.wfile.write(body)
             return True
 
-        # ---- ingest (จากเครื่องแล็บ) -------------------------------------
+        # ---- ingest + re-analysis endpoints (จากเครื่องแล็บ / web) ----------
         def do_POST(self):  # noqa: N802
-            if urlparse(self.path).path != "/api/ingest":
+            import re as _re
+            path = urlparse(self.path).path
+
+            # POST /api/analyze-request/:id — web browser requests re-analysis (no auth)
+            _ar = _re.match(r"^/api/analyze-request/(\d+)$", path)
+            if _ar:
+                sidx = int(_ar.group(1))
+                with _lock:
+                    exists = any(s["idx"] == sidx for s in _sessions)
+                if not exists:
+                    self._json({"error": "session not found"}, 404)
+                    return
+                now = time.time()
+                with _lock:
+                    _analyze_queue[sidx] = now
+                self._json({"ok": True, "queued": sidx, "queued_at": now})
+                return
+
+            # POST /api/update-analysis/:id — lab pushes fresh analysis back (auth required)
+            _ua = _re.match(r"^/api/update-analysis/(\d+)$", path)
+            if _ua:
+                if not INGEST_TOKEN:
+                    self._json({"error": "server INGEST_TOKEN not configured"}, 503)
+                    return
+                token = self.headers.get("X-Ingest-Token", "")
+                if token != INGEST_TOKEN:
+                    self._json({"error": "unauthorized"}, 401)
+                    return
+                sidx = int(_ua.group(1))
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    raw = self.rfile.read(length) if length else b"{}"
+                    body = json.loads(raw.decode("utf-8"))
+                except Exception as e:
+                    self._json({"error": f"bad payload: {e}"}, 400)
+                    return
+                analysis = body.get("analysis", {})
+                analysis["_analyzed_at"] = time.time()
+                with _lock:
+                    match = next((s for s in _sessions if s["idx"] == sidx), None)
+                    if match and match.get("payload"):
+                        match["payload"]["analysis"] = analysis
+                        if _store["payload"] and _sessions and _sessions[-1]["idx"] == sidx:
+                            _store["payload"]["analysis"] = analysis
+                    _analyze_queue.pop(sidx, None)
+                self._json({"ok": True, "updated": sidx})
+                return
+
+            # POST /api/ingest — full push from lab
+            if path != "/api/ingest":
                 self._json({"error": "not found"}, 404)
                 return
             if not INGEST_TOKEN:
@@ -197,6 +247,22 @@ def _make_handler():
                 if path == "/api/sessions":
                     with _lock:
                         self._json({"sessions": _sessions_meta(_sessions)})
+                    return
+
+                # GET /api/pending-analyses — lab polls for re-analysis requests (auth required)
+                if path == "/api/pending-analyses":
+                    token = self.headers.get("X-Ingest-Token", "")
+                    if not INGEST_TOKEN or token != INGEST_TOKEN:
+                        self._json({"error": "unauthorized"}, 401)
+                        return
+                    with _lock:
+                        pending = []
+                        for sidx, queued_at in list(_analyze_queue.items()):
+                            match = next((s for s in _sessions if s["idx"] == sidx), None)
+                            if match:
+                                csv_path = ((match.get("payload") or {}).get("summary") or {}).get("csv_path", "")
+                                pending.append({"idx": sidx, "csv_path": csv_path, "queued_at": queued_at})
+                    self._json({"pending": pending})
                     return
 
                 import re as _re
