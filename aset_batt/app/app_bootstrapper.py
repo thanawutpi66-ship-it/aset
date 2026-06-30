@@ -227,7 +227,7 @@ class ApplicationBootstrapper:
                 try:
                     controller = ServiceLocator.get(AutoController)
                     controller.shutdown()
-                except:
+                except Exception:
                     pass  # Controller might not be registered yet
 
                 # Clear all services
