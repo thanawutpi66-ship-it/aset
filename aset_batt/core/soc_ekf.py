@@ -24,15 +24,26 @@ import numpy as np
 
 class SoCEKF:
     def __init__(self, soc0: float, r0: float, r1: float, c1: float,
-                 q_soc: float = 1.0e-5, q_vrc: float = 1.0e-7,
-                 r_volt: float = 1.0e-4):
+                 q_soc: float = 5.0e-8, q_vrc: float = 1.0e-5,
+                 r_volt: float = 5.0e-5, adaptive_r: bool = False):
+        # Starting Q/R/P0 follow the derivation in the project research workbook (P5):
+        # P0 ≈ ±3% SoC initial uncertainty; Q[0,0] from η/sensor/Peukert error per step
+        # (dt-scaled in predict); Q[1,1] from R1/C1 uncertainty; R ≈ 7 mV (5 Hz SCPI +
+        # generic-OCV model error — kept above the 1 mV sensor floor until per-cell GITT).
+        # These are starting points: tune offline against ground truth via replay.py.
         self.x = np.array([float(soc0), 0.0])      # [SoC %, V_RC V]
-        self.P = np.diag([4.0, 1.0e-4])            # initial covariance
+        self.P = np.diag([10.0, 0.01])             # ±~3% SoC, ±0.1 V V_RC
         self.R0 = max(1e-4, float(r0))
         self.R1 = max(1e-4, float(r1))
         self.C1 = max(1.0, float(c1))
         self.Q = np.diag([float(q_soc), float(q_vrc)])
         self.R = float(r_volt)                      # measurement variance (V²)
+        # Adaptive R (AEKF): blend measured innovation variance into R so the filter
+        # de-weights the voltage when the model disagrees (ResearchGate AEKF / arXiv
+        # 2304.07748). Off by default; enable for noisy / model-mismatched runs.
+        self.adaptive_r = bool(adaptive_r)
+        self._innov_var = float(r_volt)
+        self._r_min = float(r_volt)
 
     # -- accessors -----------------------------------------------------------
     @property
@@ -46,7 +57,7 @@ class SoCEKF:
     def set_soc(self, soc: float) -> None:
         """Hard reset (used by endpoint anchors / OCV init). Shrinks covariance."""
         self.x = np.array([min(100.0, max(0.0, float(soc))), 0.0])
-        self.P = np.diag([1.0, 1.0e-4])
+        self.P = np.diag([1.0, 0.01])
 
     def set_rc(self, r0: float, r1: float, c1: float) -> None:
         """Update ECM parameters from a fresh HPPC fit."""
@@ -74,11 +85,15 @@ class SoCEKF:
         soc, vrc = self.x
         v_pred = ocv_pack - current * max(1e-4, r0) - vrc
         H = np.array([float(docv_dsoc_pack), -1.0])
+        innov = float(v_meas) - v_pred
+        if self.adaptive_r:
+            # EWMA of innovation² → R ≈ innovation variance (floored at sensor noise)
+            self._innov_var = 0.95 * self._innov_var + 0.05 * innov * innov
+            self.R = max(self._r_min, self._innov_var)
         S = float(H @ self.P @ H.T + self.R)
         if S <= 0:
             return
         K = (self.P @ H) / S                         # 2-vector gain
-        innov = float(v_meas) - v_pred
         self.x = self.x + K * innov
         self.x[0] = min(100.0, max(0.0, self.x[0]))
         I2 = np.eye(2)

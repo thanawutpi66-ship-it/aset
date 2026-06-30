@@ -62,6 +62,32 @@ class TestLiveSoH(unittest.TestCase):
         self.assertAlmostEqual(e.measured_capacity_ah, e.soh / 100.0 * 5.3, delta=0.1)
 
 
+class TestAblationFlags(unittest.TestCase):
+    def test_peukert_flag_gates(self):
+        e = StateEstimator(5.3, BatteryModel("LeadAcid", 2.0, 6, 1))
+        e.use_peukert = True
+        self.assertGreater(e._peukert_dah(5.3, 1.0), 1.0)
+        e.use_peukert = False
+        self.assertEqual(e._peukert_dah(5.3, 1.0), 1.0)
+
+    def test_eta_flag_gates(self):
+        e = StateEstimator(5.3, BatteryModel("LeadAcid", 2.0, 6, 1))
+        e.use_eta = True
+        self.assertLess(e._coulomb_eta(95.0, -1.0), 1.0)   # gassing loss near full
+        e.use_eta = False
+        self.assertEqual(e._coulomb_eta(95.0, -1.0), 1.0)
+
+    def test_trapezoidal_integration(self):
+        # ramped current: trapezoid ≠ rectangular. First step seeds with no history.
+        e = StateEstimator(10.0, BatteryModel("LiFePO4"))
+        e.use_ekf = False
+        e.set_initial_soc(50.0)
+        e.update(3.30, 0.0, dt=10.0)     # seed _last_current = 0
+        before = e.ah_accumulated
+        e.update(3.30, 2.0, dt=3600.0)   # trapezoid: (0+2)/2*1h = 1 Ah, not 2
+        self.assertAlmostEqual(e.ah_accumulated - before, 1.0, places=3)
+
+
 class TestEKF(unittest.TestCase):
     def test_ekf_discharge_decreases_soc_and_stable(self):
         ekf = SoCEKF(soc0=80.0, r0=0.03, r1=0.02, c1=1500.0)

@@ -46,6 +46,15 @@ class StateEstimator:
         self.use_ekf = True
         self._ekf = None                # lazily created on first update()
 
+        # --- Ablation flags (for replay.py study; all ON = full model) ---
+        self.use_ocv = True             # OCV-based correction / EKF measurement update
+        self.use_peukert = True         # Peukert discharge correction
+        self.use_eta = True             # coulombic efficiency on charge
+        self.use_temp = True            # temperature compensation (OCV Nernst + Rin)
+
+        # --- Trapezoidal current integration (research: lower drift than rectangular) ---
+        self._last_current = None       # previous tared current for trapezoid rule
+
         # OCV correction
         self.last_ocv_correction_time = time.time()
         self.ocv_correction_interval = 300  # วินาที (5 นาที)
@@ -97,7 +106,7 @@ class StateEstimator:
         Li-ion / LFP: no significant side reaction → fixed η = 0.99.
         Discharge (current ≥ 0): no coulombic loss on discharge side → η = 1.0.
         """
-        if current >= 0:
+        if current >= 0 or not self.use_eta:
             return 1.0
         chem = getattr(self.battery_model, "battery_type", "").lower()
         if "lead" in chem:
@@ -121,6 +130,8 @@ class StateEstimator:
         Low current (I < I_rated): scale < 1 → SoC depletes slower (more
         usable capacity at slow discharge).
         """
+        if not self.use_peukert:
+            return dah
         k   = getattr(self.battery_model.chemistry, "peukert_k",  1.0)
         hr  = getattr(self.battery_model.chemistry, "peukert_hr", 20.0)
         if k <= 1.0 or hr <= 0 or self.rated_capacity <= 0:
@@ -241,16 +252,22 @@ class StateEstimator:
                 self._tare_sum = 0.0
                 self._tare_n = 0
         cur = current - self.current_offset
+        # temperature compensation flag: feed 25°C when disabled (ablation studies)
+        t_use = temp if self.use_temp else 25.0
 
         # === 1. Coulomb Counting (SoH-adjusted capacity, #2) ===
         # current > 0 = discharge → SoC ลดลง ; current < 0 = charge → SoC เพิ่มขึ้น
-        eta = self._coulomb_eta(self.soc, cur)          # 1.0 on discharge
-        dah = cur * (dt / 3600.0)
-        if cur < 0:
+        # Trapezoidal integration: ΔQ = (I_k + I_{k-1})/2 · Δt — lower drift than the
+        # rectangular rule at the rig's slow ~5 Hz readback (Nature s41598-026-38281-5).
+        i_eff = cur if self._last_current is None else 0.5 * (cur + self._last_current)
+        self._last_current = cur
+        eta = self._coulomb_eta(self.soc, i_eff)        # 1.0 on discharge
+        dah = i_eff * (dt / 3600.0)
+        if i_eff < 0:
             dah *= eta
         else:
             # Discharging: Peukert correction (lead-acid). Capacity counter (raw) below.
-            dah = self._peukert_dah(cur, dah)
+            dah = self._peukert_dah(i_eff, dah)
         # Self-discharge leak (off by default) — acts like a tiny discharge.
         if self.self_discharge_pct_per_day > 0.0:
             dah += (self.self_discharge_pct_per_day / 100.0) * \
@@ -258,8 +275,8 @@ class StateEstimator:
         self.ah_accumulated += dah
 
         # live-SoH capacity counter: raw |discharge Ah| since the last 100% anchor
-        if self._cap_counting and cur > 0:
-            self._cap_counter_ah += cur * (dt / 3600.0)
+        if self._cap_counting and i_eff > 0:
+            self._cap_counter_ah += i_eff * (dt / 3600.0)
 
         # SoC from coulomb counting — divide by *effective* (SoH-adjusted) capacity
         cap = self.effective_capacity()
@@ -306,7 +323,7 @@ class StateEstimator:
 
         # === 2. Update Internal Resistance (forward temp + measured_dcir ให้ถูก) ===
         self.rin = self.battery_model.estimate_rin(
-            voltage, cur, self.soc, temp=temp, measured_dcir=measured_dcir
+            voltage, cur, self.soc, temp=t_use, measured_dcir=measured_dcir
         )
 
         # === 3-EKF. 2-state EKF fusion (primary path) ===
@@ -316,13 +333,15 @@ class StateEstimator:
         if self.use_ekf:
             ekf = self._ensure_ekf()
             s = self.battery_model.series_cells
-            ekf.predict(cur, dt, cap, eta)
-            # direction for OCV hysteresis: discharge (cur>0) → −1, charge → +1, rest → 0
-            direction = 0 if abs(cur) < 0.05 else (-1 if cur > 0 else 1)
-            ocv_pack = self.battery_model.get_ocv_from_soc(ekf.soc, temp, direction)
-            docv = self.battery_model.ocv_slope(ekf.soc, temp) * s   # V per %SoC, pack
-            ekf.update(voltage, cur, ocv_pack, docv, self.rin)
+            ekf.predict(i_eff, dt, cap, eta)
             self.soc = max(0.0, min(100.0, ekf.soc))
+            if self.use_ocv:
+                # direction for OCV hysteresis: discharge (cur>0)→−1, charge→+1, rest→0
+                direction = 0 if abs(cur) < 0.05 else (-1 if cur > 0 else 1)
+                ocv_pack = self.battery_model.get_ocv_from_soc(ekf.soc, t_use, direction)
+                docv = self.battery_model.ocv_slope(ekf.soc, t_use) * s   # V/%SoC pack
+                ekf.update(voltage, cur, ocv_pack, docv, self.rin)
+                self.soc = max(0.0, min(100.0, ekf.soc))
             self.soc_filtered = self.soc
             return {
                 "soc": self.soc,
@@ -337,12 +356,12 @@ class StateEstimator:
         # charge / full discharge. ตรง plateau ที่ flat (slope ต่ำ) ห้ามแก้ (V คลาดนิด SoC
         # เพี้ยนมาก). ปลายที่ steep → anchor ทันที (ไม่รอ 300s) และ re-anchor coulomb counter.
         now = time.time()
-        if abs(cur - self.standby_current) < self.static_current_threshold:
+        if self.use_ocv and abs(cur - self.standby_current) < self.static_current_threshold:
             self._rested_s += dt
             self.last_static_voltage = voltage
             ocv_voltage = voltage + self.standby_current * self.rin
-            ocv_soc = self.battery_model.get_soc_from_ocv(ocv_voltage, temp)
-            slope = self.battery_model.ocv_slope(ocv_soc, temp)
+            ocv_soc = self.battery_model.get_soc_from_ocv(ocv_voltage, t_use)
+            slope = self.battery_model.ocv_slope(ocv_soc, t_use)
             drift = abs(self.soc_filtered - ocv_soc)
             steep = slope >= 2.0 * self.min_ocv_slope          # ปลาย/knee ที่ OCV เชื่อได้มาก
             periodic = (now - self.last_ocv_correction_time) >= self.ocv_correction_interval
