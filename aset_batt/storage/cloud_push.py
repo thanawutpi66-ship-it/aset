@@ -71,14 +71,17 @@ def _downsample(rows, max_points):
     return {k: v[::stride] for k, v in series.items()}
 
 
-def build_payload(csv_path, max_points):
+def build_payload(csv_path, max_points, cached_analysis=None):
+    """Build push payload. Pass cached_analysis to skip the expensive ECM fitting."""
     rows = _tail_csv_rows(csv_path, limit=20000)
     summary = _compute_summary(rows)
     summary["csv_path"] = csv_path
-    try:
-        analysis = _run_analysis(config_manager, csv_path)
-    except Exception as e:
-        analysis = {"success": False, "error": str(e)}
+
+    if cached_analysis is None:
+        try:
+            cached_analysis = _run_analysis(config_manager, csv_path)
+        except Exception as e:
+            cached_analysis = {"success": False, "error": str(e)}
 
     bat = config_manager.battery
     battery_desc = f"{bat.cells_series}S{bat.cells_parallel}P {bat.battery_type} {bat.rated_capacity}Ah"
@@ -90,7 +93,7 @@ def build_payload(csv_path, max_points):
             **_meta_override,   # phase, test_mode, workflow (set by GUI)
         },
         "summary": summary,
-        "analysis": analysis,
+        "analysis": cached_analysis,
         "series": _downsample(rows, max_points),
     }
 
@@ -130,16 +133,20 @@ class CloudPusher:
     """
 
     def __init__(self, url: str, token: str = "", csv_path: str = "",
-                 interval: float = 30.0, max_points: int = 400,
+                 interval: float = 5.0, max_points: int = 400,
+                 analysis_interval: float = 60.0,
                  data_handler=None):
         self.url = (url or "").strip()
         self.token = resolve_token(token)
         self.csv_path = csv_path or config_manager.system.csv_filepath
-        self._data_handler = data_handler   # ถ้ามี — ใช้ current_path แบบ dynamic
-        self.interval = max(5.0, float(interval))
+        self._data_handler = data_handler
+        self.interval = max(3.0, float(interval))
+        self.analysis_interval = max(self.interval, float(analysis_interval))
         self.max_points = max_points
         self._running = False
         self._thread = None
+        self._cached_analysis: dict = {}
+        self._last_analysis_t: float = 0.0
 
     @property
     def enabled(self) -> bool:
@@ -161,16 +168,27 @@ class CloudPusher:
         self._running = False
 
     def push_once(self) -> bool:
-        """push หนึ่งครั้ง (best-effort — ไม่ throw)"""
+        """push หนึ่งครั้ง — ใช้ cached analysis ถ้ายังไม่ถึงเวลา refresh (best-effort)"""
         try:
-            # ใช้ session file ปัจจุบันจาก DataHandler ถ้ามี
             active = (self._data_handler.current_path
                       if self._data_handler and getattr(self._data_handler, "current_path", "")
                       else self.csv_path)
-            payload = build_payload(active, self.max_points)
+
+            now = time.time()
+            if now - self._last_analysis_t >= self.analysis_interval:
+                try:
+                    self._cached_analysis = _run_analysis(config_manager, active)
+                    self._last_analysis_t = now
+                    logger.debug("cloud push: analysis refreshed")
+                except Exception as e:
+                    logger.warning("cloud push: analysis failed — using cache: %s", e)
+
+            payload = build_payload(active, self.max_points,
+                                    cached_analysis=self._cached_analysis or None)
             status, _ = push(self.url, self.token, payload)
-            logger.debug("cloud push -> HTTP %s (rows=%s)",
-                         status, payload["summary"].get("row_count"))
+            logger.debug("cloud push -> HTTP %s (rows=%s, analysis_age=%.0fs)",
+                         status, payload["summary"].get("row_count"),
+                         now - self._last_analysis_t)
             return True
         except Exception as e:
             logger.warning("cloud push ล้มเหลว: %s", e)

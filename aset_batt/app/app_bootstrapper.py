@@ -142,7 +142,8 @@ class ApplicationBootstrapper:
                 self._cloud_pusher = CloudPusher(
                     url=config.system.cloud_dashboard_url,
                     csv_path=config.system.csv_filepath,
-                    interval=getattr(config.system, "cloud_push_interval", 30.0),
+                    interval=getattr(config.system, "cloud_push_interval", 5.0),
+                    analysis_interval=getattr(config.system, "cloud_analysis_interval", 60.0),
                     data_handler=controller.data,
                 )
                 self._cloud_pusher.start()  # log เองถ้าไม่มี token
