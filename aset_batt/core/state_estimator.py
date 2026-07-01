@@ -227,10 +227,17 @@ class StateEstimator:
         Call this after connecting: estimator.set_standby_current(hw.psu_bleed_a)"""
         self.standby_current = max(0.0, float(bleed_a))
 
+    def _ocv_init_var(self, soc: float, temp: float) -> float:
+        """SoC covariance to seed an OCV-derived anchor with. On a flat plateau (low
+        dOCV/dSoC) the inversion is unreliable → large variance (±~15%) so the EKF stays
+        correctable; near a knee (steep slope) it is trustworthy → small (±~3%)."""
+        slope = self.battery_model.ocv_slope(soc, temp)
+        return 225.0 if slope < self.min_ocv_slope else 9.0
+
     def init_from_voltage(self, voltage: float, temp: float = 25.0) -> None:
         """Initialize SoC จาก measured OCV (voltage) หลัง rest"""
         soc = self.battery_model.get_soc_from_ocv(voltage, temp)
-        self._reset_to_soc(soc)
+        self._reset_to_soc(soc, soc_var=self._ocv_init_var(soc, temp))
         logger.info(f"SoC initialized from voltage: {voltage:.3f}V -> {self.soc:.1f}%")
 
     def set_initial_soc(self, soc: float) -> None:
@@ -241,12 +248,13 @@ class StateEstimator:
     def sync_with_ocv(self, voltage: float, temp: float = 25.0) -> float:
         """Force synchronize SoC กับ OCV (ใช้หลัง rest period)"""
         soc = self.battery_model.get_soc_from_ocv(voltage, temp)
-        self._reset_to_soc(soc)
+        self._reset_to_soc(soc, soc_var=self._ocv_init_var(soc, temp))
         logger.info(f"SoC synced with OCV: {voltage:.3f}V -> {self.soc:.1f}%")
         return self.soc
 
-    def _reset_to_soc(self, soc: float) -> None:
-        """Reset state ทั้งหมดให้ตรงกับ soc ที่กำหนด"""
+    def _reset_to_soc(self, soc: float, soc_var: float = 1.0) -> None:
+        """Reset state ทั้งหมดให้ตรงกับ soc. ``soc_var`` = ความไม่แน่นอนของ SoC ที่ตั้งให้
+        EKF: ~1 สำหรับ endpoint anchor (เชื่อได้), ใหญ่สำหรับ OCV init บน plateau."""
         self.soc = soc
         self.soc_initial = soc
         self.soc_filtered = soc
@@ -254,7 +262,7 @@ class StateEstimator:
         self.last_ocv_correction_time = time.time()
         self._last_current = None      # avoid a stale trapezoid average after a reset
         if self._ekf is not None:
-            self._ekf.set_soc(soc)
+            self._ekf.set_soc(soc, soc_var)
 
     # ------------------------------------------------------------------
     # Main update
@@ -372,7 +380,12 @@ class StateEstimator:
             s = self.battery_model.series_cells
             # SoC-dependent ECM: feed the RC dynamics (and R0 for the update) that match
             # the current SoC, so voltage prediction stays accurate toward empty.
-            r0_use = self.rin
+            # R0 for the measurement update MUST be the *ohmic* resistance (ekf.R0, from
+            # the extrapolated ECM fit) — NOT self.rin, which is a full DCIR that already
+            # contains the RC polarisation. Using self.rin would double-count polarisation
+            # against the EKF's own V_RC state and bias the voltage residual (worst at
+            # high current), pulling SoC off. Fix: default to the ohmic ekf.R0.
+            r0_use = ekf.R0
             if self.ecm_table is not None:
                 r0s, r1s, c1s = self._ecm_at_soc(ekf.soc)
                 ekf.set_rc(r0s, r1s, c1s)
