@@ -18,6 +18,7 @@ class StateEstimator:
 
         # State variables
         self.soc = 50.0          # % (initial assumption)
+        self.soc_std = 10.0      # % — 1σ SoC uncertainty from the EKF covariance (live)
         self.soc_initial = 50.0  # % ใช้เป็น reference ของ Coulomb counting
         self.soh = 100.0         # %
         self.rin = self.battery_model.base_rin  # Ohm
@@ -403,8 +404,12 @@ class StateEstimator:
                 ekf.update(voltage, cur, ocv_pack, docv, r0_use)
                 self.soc = max(0.0, min(100.0, ekf.soc))
             self.soc_filtered = self.soc
+            # live 1σ SoC uncertainty from the filter covariance (large mid-plateau /
+            # early, shrinks after an OCV/endpoint anchor) — lets the UI show ±%.
+            self.soc_std = float(max(0.0, float(ekf.P[0, 0])) ** 0.5)
             return {
                 "soc": self.soc,
+                "soc_std": self.soc_std,
                 "soh": self.soh,
                 "rin": self.rin,
                 "ah_accumulated": self.ah_accumulated,
