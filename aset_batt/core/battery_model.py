@@ -223,6 +223,20 @@ class BatteryModel:
         r_max = 0.5 * self.series_cells / self.parallel_cells
         return max(0.001, min(r_max, rin))
 
+    def temp_rin_multiplier(self, temp: float) -> float:
+        """ตัวคูณความต้านทานจากอุณหภูมิล้วน (อ้างอิง 25°C = 1.0) แยกจาก SoC/aging factor
+        เพื่อเอาไปคูณกับความต้านทานที่ได้จากแหล่งอื่น (เช่น ECM fit ที่ SoC-dependent
+        อยู่แล้วแต่ไม่รู้เรื่องอุณหภูมิ) — ใช้สูตร Arrhenius เดียวกับ _calculate_base_rin"""
+        temp = self._clamp_temperature(temp)
+        params = self.rin_params
+        ea_k = params.get('arrhenius_ea_k', 0.0)
+        if ea_k > 0:
+            t_k, t_ref = temp + 273.15, 298.15
+            temp_factor = float(np.exp(ea_k * (1.0 / t_k - 1.0 / t_ref))) - 1.0
+        else:
+            temp_factor = params['temp_coeff'] * (25.0 - temp)
+        return max(0.1, 1.0 + temp_factor)
+
     def _calculate_base_rin(self, soc: float, temp: float) -> float:
         """คำนวณ base internal resistance (ระดับแพ็ค) จาก temperature และ SoC"""
         params = self.rin_params

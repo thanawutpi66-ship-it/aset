@@ -4,6 +4,7 @@ Logging configuration for ASET Battery Characterization System
 import logging
 import logging.handlers
 import os
+import sys
 from datetime import datetime
 from typing import Optional
 
@@ -46,7 +47,13 @@ class ASETLogger:
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(file_formatter)
 
-        # Console handler
+        # Console handler — force UTF-8 so Thai log messages don't crash on
+        # consoles stuck in a legacy codepage (e.g. cp1252 under Thonny on Windows).
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, ValueError):
+                pass
         console_handler = logging.StreamHandler()
         console_handler.setLevel(self.log_level)
         console_handler.setFormatter(console_formatter)

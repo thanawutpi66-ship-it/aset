@@ -54,10 +54,13 @@ class SoCEKF:
     def v_rc(self) -> float:
         return float(self.x[1])
 
-    def set_soc(self, soc: float) -> None:
-        """Hard reset (used by endpoint anchors / OCV init). Shrinks covariance."""
+    def set_soc(self, soc: float, soc_var: float = 1.0) -> None:
+        """Re-anchor SoC. ``soc_var`` is the SoC covariance to trust the anchor with:
+        ~1 (±1%) for a firm endpoint (full/empty knee), but a LARGE value when the anchor
+        came from an OCV inversion on a flat plateau (unreliable) so the filter stays
+        open to correction instead of locking onto a wrong value."""
         self.x = np.array([min(100.0, max(0.0, float(soc))), 0.0])
-        self.P = np.diag([1.0, 0.01])
+        self.P = np.diag([max(0.01, float(soc_var)), 0.01])
 
     def set_rc(self, r0: float, r1: float, c1: float) -> None:
         """Update ECM parameters from a fresh HPPC fit."""

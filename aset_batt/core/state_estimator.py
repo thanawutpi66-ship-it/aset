@@ -18,6 +18,7 @@ class StateEstimator:
 
         # State variables
         self.soc = 50.0          # % (initial assumption)
+        self.soc_std = 10.0      # % — 1σ SoC uncertainty from the EKF covariance (live)
         self.soc_initial = 50.0  # % ใช้เป็น reference ของ Coulomb counting
         self.soh = 100.0         # %
         self.rin = self.battery_model.base_rin  # Ohm
@@ -44,7 +45,16 @@ class StateEstimator:
 
         # --- EKF (2-state, 1-RC) fusion ---
         self.use_ekf = True
+        self.use_adaptive_r = True      # AEKF: de-weight voltage on model mismatch (real data)
         self._ekf = None                # lazily created on first update()
+
+        # --- SoC-dependent ECM (R0/R1/C1 vs SoC) ---
+        # R0/R1/C1 change strongly with SoC; a single fixed fit degrades the EKF's
+        # voltage prediction at the extremes. When a table is provided (from an HPPC
+        # sweep via characterization.build_ecm_table) the RC dynamics + R0 used by the
+        # EKF are interpolated at the current SoC each step. None → single fixed fit.
+        self.ecm_table = None
+        self._ecm_grid = None           # cached (soc, r0, r1, c1) numpy arrays
 
         # --- Ablation flags (for replay.py study; all ON = full model) ---
         self.use_ocv = True             # OCV-based correction / EKF measurement update
@@ -178,23 +188,63 @@ class StateEstimator:
     def _ensure_ekf(self):
         if self._ekf is None:
             r0, r1, c1 = self._ekf_rc_defaults()
-            self._ekf = SoCEKF(self.soc, r0, r1, c1)
+            # adaptive_r ON: the real bench uses a generic OCV table (until per-cell GITT),
+            # a 5 Hz readback and real sensor noise, so the voltage model is imperfect.
+            # AEKF inflates R from the measured innovation variance and de-weights the
+            # voltage when the model disagrees → more accurate/robust live SoC on real
+            # data (floored at the sensor noise so good OCV info is still used).
+            self._ekf = SoCEKF(self.soc, r0, r1, c1, adaptive_r=self.use_adaptive_r)
         return self._ekf
 
     def update_ecm(self, r0: float, r1: float, c1: float) -> None:
-        """Feed a fresh HPPC ECM fit into the EKF (R0/R1/C1 in Ohm/Ohm/Farad)."""
-        if self._ekf is not None and r0 > 0 and r1 > 0 and c1 > 0:
+        """Feed a fresh single HPPC ECM fit into the EKF (R0/R1/C1 in Ohm/Ohm/Farad).
+        Ignored while a SoC-dependent ECM table is active (the table takes precedence)."""
+        if self.ecm_table is None and self._ekf is not None and r0 > 0 and r1 > 0 and c1 > 0:
             self._ekf.set_rc(r0, r1, c1)
+
+    def set_ecm_table(self, table) -> None:
+        """Provide R0/R1/C1 vs SoC (from characterization.build_ecm_table) so the EKF
+        uses SoC-appropriate RC dynamics instead of one fixed fit. Pass None/empty to
+        revert to the single-fit behaviour."""
+        if not table:
+            self.ecm_table = None
+            self._ecm_grid = None
+            return
+        import numpy as np
+        socs = sorted(table.keys())
+        self.ecm_table = table
+        self._ecm_grid = (
+            np.asarray(socs, float),
+            np.asarray([table[s]["r0"] for s in socs], float),
+            np.asarray([table[s]["r1"] for s in socs], float),
+            np.asarray([table[s]["c1"] for s in socs], float),
+        )
+        logger.info("ECM table active: %d SoC points (R0/R1/C1 now SoC-dependent)", len(socs))
+
+    def _ecm_at_soc(self, soc: float):
+        """Interpolate (R0, R1, C1) at the given SoC from the active table."""
+        import numpy as np
+        g = self._ecm_grid
+        return (float(np.interp(soc, g[0], g[1])),
+                float(np.interp(soc, g[0], g[2])),
+                float(np.interp(soc, g[0], g[3])))
 
     def set_standby_current(self, bleed_a: float) -> None:
         """Sync PSU bleed current from hardware config.
         Call this after connecting: estimator.set_standby_current(hw.psu_bleed_a)"""
         self.standby_current = max(0.0, float(bleed_a))
 
+    def _ocv_init_var(self, soc: float, temp: float) -> float:
+        """SoC covariance to seed an OCV-derived anchor with. On a flat plateau (low
+        dOCV/dSoC) the inversion is unreliable → large variance (±~15%) so the EKF stays
+        correctable; near a knee (steep slope) it is trustworthy → small (±~3%)."""
+        slope = self.battery_model.ocv_slope(soc, temp)
+        return 225.0 if slope < self.min_ocv_slope else 9.0
+
     def init_from_voltage(self, voltage: float, temp: float = 25.0) -> None:
         """Initialize SoC จาก measured OCV (voltage) หลัง rest"""
         soc = self.battery_model.get_soc_from_ocv(voltage, temp)
-        self._reset_to_soc(soc)
+        self._reset_to_soc(soc, soc_var=self._ocv_init_var(soc, temp))
         logger.info(f"SoC initialized from voltage: {voltage:.3f}V -> {self.soc:.1f}%")
 
     def set_initial_soc(self, soc: float) -> None:
@@ -205,12 +255,13 @@ class StateEstimator:
     def sync_with_ocv(self, voltage: float, temp: float = 25.0) -> float:
         """Force synchronize SoC กับ OCV (ใช้หลัง rest period)"""
         soc = self.battery_model.get_soc_from_ocv(voltage, temp)
-        self._reset_to_soc(soc)
+        self._reset_to_soc(soc, soc_var=self._ocv_init_var(soc, temp))
         logger.info(f"SoC synced with OCV: {voltage:.3f}V -> {self.soc:.1f}%")
         return self.soc
 
-    def _reset_to_soc(self, soc: float) -> None:
-        """Reset state ทั้งหมดให้ตรงกับ soc ที่กำหนด"""
+    def _reset_to_soc(self, soc: float, soc_var: float = 1.0) -> None:
+        """Reset state ทั้งหมดให้ตรงกับ soc. ``soc_var`` = ความไม่แน่นอนของ SoC ที่ตั้งให้
+        EKF: ~1 สำหรับ endpoint anchor (เชื่อได้), ใหญ่สำหรับ OCV init บน plateau."""
         self.soc = soc
         self.soc_initial = soc
         self.soc_filtered = soc
@@ -218,7 +269,7 @@ class StateEstimator:
         self.last_ocv_correction_time = time.time()
         self._last_current = None      # avoid a stale trapezoid average after a reset
         if self._ekf is not None:
-            self._ekf.set_soc(soc)
+            self._ekf.set_soc(soc, soc_var)
 
     # ------------------------------------------------------------------
     # Main update
@@ -334,6 +385,18 @@ class StateEstimator:
         if self.use_ekf:
             ekf = self._ensure_ekf()
             s = self.battery_model.series_cells
+            # SoC-dependent ECM: feed the RC dynamics (and R0 for the update) that match
+            # the current SoC, so voltage prediction stays accurate toward empty.
+            # R0 for the measurement update MUST be the *ohmic* resistance (ekf.R0, from
+            # the extrapolated ECM fit) — NOT self.rin, which is a full DCIR that already
+            # contains the RC polarisation. Using self.rin would double-count polarisation
+            # against the EKF's own V_RC state and bias the voltage residual (worst at
+            # high current), pulling SoC off. Fix: default to the ohmic ekf.R0.
+            r0_use = ekf.R0
+            if self.ecm_table is not None:
+                r0s, r1s, c1s = self._ecm_at_soc(ekf.soc)
+                ekf.set_rc(r0s, r1s, c1s)
+                r0_use = r0s
             # ΔSoC from the SAME coulomb increment (η + Peukert + trapezoid + SoH-cap)
             # so Peukert/η actually affect the EKF output, not just the unused soc_cc.
             soc_delta = dah / cap * 100.0 if cap > 0 else 0.0
@@ -344,11 +407,21 @@ class StateEstimator:
                 direction = 0 if abs(cur) < 0.05 else (-1 if cur > 0 else 1)
                 ocv_pack = self.battery_model.get_ocv_from_soc(ekf.soc, t_use, direction)
                 docv = self.battery_model.ocv_slope(ekf.soc, t_use) * s   # V/%SoC pack
-                ekf.update(voltage, cur, ocv_pack, docv, self.rin)
+                ekf.update(voltage, cur, ocv_pack, docv, r0_use)
                 self.soc = max(0.0, min(100.0, ekf.soc))
             self.soc_filtered = self.soc
+            # live 1σ SoC uncertainty from the filter covariance (large mid-plateau /
+            # early, shrinks after an OCV/endpoint anchor) — lets the UI show ±%.
+            self.soc_std = float(max(0.0, float(ekf.P[0, 0])) ** 0.5)
+            # Live internal resistance = the IDENTIFIED DC resistance R0+R1 (ohmic +
+            # polarisation, SoC-dependent via the ECM table, and stable) rescaled by the
+            # Arrhenius temperature multiplier — so it is SoC-aware, temperature-aware,
+            # AND stable, instead of the noisy per-sample (OCV−V)/I from estimate_rin.
+            temp_mult = self.battery_model.temp_rin_multiplier(t_use) if self.use_temp else 1.0
+            self.rin = (ekf.R0 + ekf.R1) * temp_mult
             return {
                 "soc": self.soc,
+                "soc_std": self.soc_std,
                 "soh": self.soh,
                 "rin": self.rin,
                 "ah_accumulated": self.ah_accumulated,
