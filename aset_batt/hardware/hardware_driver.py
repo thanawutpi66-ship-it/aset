@@ -41,18 +41,9 @@ class HardwareController:
         # with output off and stores it here; _meas_vi subtracts it automatically.
         self._psu_current_offset: float = 0.0
 
-        # PSU bleed resistor — active ONLY when OUTPUT is OFF (REST phase).
-        # While OUTPUT is ON (CHARGE) the bleed path is disconnected; PSU current = battery
-        # current exactly and no compensation is applied to setpoints or readback.
-        # During REST the bleed drains the battery but is not measurable via SCPI (PSU
-        # meter reads ~0 when output is off after zero-offset calibration).  The value is
-        # retained here so capacity calculations can optionally correct for REST bleed loss.
-        # Set this from config.hardware.psu_bleed_a after connecting.
-        self.psu_bleed_a: float = 0.0
-
         # Tracks whether PSU OUTPUT is currently ON.  Used by the monitor loop to
-        # distinguish CHARGE (OUTPUT ON → i_net = −psu_i) from REST (OUTPUT OFF →
-        # i_net = +psu_i, battery discharging via bleed, positive by convention).
+        # distinguish CHARGE (OUTPUT ON → i_net = −psu_i) from REST (OUTPUT OFF, SSR
+        # physically disconnected → i_net ≈ 0, positive by convention).
         self._psu_output_on: bool = False
 
     def get_visa_ports(self):
@@ -136,11 +127,17 @@ class HardwareController:
         self._psu_output_on = False
 
         # NOTE: calibrate_psu_zero() is NOT called automatically here because when a
-        # battery is connected the PSU already reads psu_bleed_a (real current, not an
-        # offset). Call it manually only when the output terminals are open-circuit.
+        # battery is connected the PSU already reads real battery current, not an
+        # offset. Call it manually only when the output terminals are open-circuit.
 
     def set_psu(self, state, voltage_val="0", current_val="1.0"):
-        """Manual PSU control — current_val is the CC limit (A)."""
+        """Manual PSU control (CV with a CC current limit).
+
+        current_val is the CC limit (A) — a safety ceiling, not a target. It used to
+        be hardcoded to 5.0 A, which could blast up to 5 A into a small/deeply-
+        discharged battery on manual ON; it is now caller-supplied so the UI can pass
+        a gentle limit (e.g. 0.25–1 A for recovery).
+        """
         if not self.is_connected:
             return
         with self.inst_lock:
@@ -163,9 +160,8 @@ class HardwareController:
         with self.inst_lock:
             try:
                 if state:
-                    # No bleed compensation here: during discharge the PSU is effectively
-                    # disconnected so there is no bleed path — the load sees exactly the
-                    # requested current and the battery supplies only that current.
+                    # PSU is disconnected (SSR OFF) during discharge — the load sees
+                    # exactly the requested current and the battery supplies only that.
                     self.load_inst.write(f":CURR {current_val}")
                     self.load_inst.write(":INP ON")
                 else:
@@ -311,8 +307,18 @@ class HardwareController:
         threading.Thread(
             target=self._esp_monitor_loop, args=(callback,), daemon=True
         ).start()
+        # Defensive: force the relay OFF on every fresh connect, regardless of
+        # whatever state it was left in by a previous session/crash. Firmware
+        # already fail-safes to OFF on its own boot, but the ESP32 may still be
+        # powered (not rebooted) with a stale ON state from before.
+        self.set_ssr(False)
 
     def disconnect_esp32(self):
+        # Force the relay OFF *before* marking disconnected/closing the serial port —
+        # set_ssr() is a no-op once is_esp_connected is False, so this is the last
+        # chance to command the relay. Otherwise SSR keeps whatever state it was in
+        # (e.g. ON mid-charge) even after the operator disconnects.
+        self.set_ssr(False)
         self.is_esp_connected = False
         self.ssr_state = None
         if self.esp_serial:
@@ -341,6 +347,24 @@ class HardwareController:
                 return False
         self.ssr_state = bool(state)
         logger.info("SSR set to %s", "ON" if state else "OFF")
+        return True
+
+    def feed_watchdog(self) -> bool:
+        """Send a PING heartbeat to the ESP32 so its firmware watchdog doesn't cut
+        the SSR relay. Call this continuously (e.g. every ~1s from a UI timer) while
+        connected — if this stops arriving (process killed/crashed/hung, USB
+        unplugged), the ESP32 cuts power on its own after WATCHDOG_TIMEOUT_MS,
+        regardless of whatever the PSU/e-load's own SCPI state still says.
+        """
+        if not self.is_esp_connected or not self.esp_serial:
+            return False
+        with self._esp_write_lock:
+            try:
+                self.esp_serial.write(b"PING\n")
+                self.esp_serial.flush()
+            except Exception as exc:
+                logger.debug("Watchdog ping failed: %s", exc)
+                return False
         return True
 
     # Ordered list of patterns tried against each serial line.
@@ -396,6 +420,7 @@ class HardwareController:
     def disconnect_instruments(self):
         self.is_connected = False
         self._psu_output_on = False
+        self.set_ssr(False)   # defense in depth if ESP32 stays connected independently
         with self.inst_lock:
             try:
                 if self.psu_inst:
@@ -435,8 +460,8 @@ class HardwareController:
         with self.inst_lock:
             if prefer_load_v:
                 v, i_load = self._meas_vi(self.load_inst, "_load_all")
-                # Discharge: PSU is disconnected → no bleed path → battery supplies
-                # exactly the load current.  No bleed correction needed here.
+                # Discharge: PSU is disconnected (SSR OFF) → battery supplies exactly
+                # the load current.
                 return v, i_load
             # Charge / idle: read V from the load (it senses terminal voltage reliably even
             # when its input is OFF), fall back to PSU only if load returns near-zero (some
@@ -454,7 +479,6 @@ class HardwareController:
         with self.inst_lock:
             try:
                 if state:
-                    # Bleed is inactive while OUTPUT is ON; PSU limit = battery target exactly.
                     self.psu_inst.write(f":CURR {current_val}")
                     self.psu_inst.write(":OUTP ON")
                     self._psu_output_on = True
@@ -477,7 +501,6 @@ class HardwareController:
         with self.inst_lock:
             try:
                 self.psu_inst.write(f":VOLT {voltage}")
-                # Bleed inactive while OUTPUT is ON → PSU limit = requested current.
                 self.psu_inst.write(f":CURR {current}")
                 self.psu_inst.write(":OUTP ON")
                 self._psu_output_on = True

@@ -23,6 +23,7 @@ class AutoController:
 
         # System States
         self.monitor_running = False
+        self.live_readback_running = False   # lightweight pre-test Connect readback
         self.is_profile_running = False
         self.is_charging = False
         self.safety_triggered = False
@@ -104,6 +105,7 @@ class AutoController:
     def start_monitor(self):
         """เริ่มลูปอ่านค่าจาก Hardware"""
         if not self.monitor_running:
+            self.stop_live_readback()   # real monitor takes over V/I/temp display
             self._start_time = time.time()
             self._last_update_time = None
             self.monitor_running = True
@@ -121,6 +123,40 @@ class AutoController:
         if self.monitor_running:
             self.monitor_running = False
             logger.info("Monitor loop stopped by user")
+
+    # ------------------------------------------------------------------
+    # Live readback — lightweight V/I/Temp display right after Connect, before
+    # any test is running. No CSV logging, no state estimator (SoC/Rin need it).
+    # Stops itself automatically once a real test starts start_monitor().
+    # ------------------------------------------------------------------
+
+    def start_live_readback(self):
+        if self.live_readback_running or self.monitor_running:
+            return
+        self.live_readback_running = True
+        threading.Thread(target=self._live_readback_loop, daemon=True).start()
+
+    def stop_live_readback(self):
+        self.live_readback_running = False
+
+    def _live_readback_loop(self):
+        while self.live_readback_running and not self.monitor_running:
+            if self.hw.is_connected:
+                try:
+                    v, psu_i, load_i = self.hw.read_vi()
+                    if load_i > 0.02:
+                        i_net = load_i
+                    elif getattr(self.hw, "_psu_output_on", False):
+                        i_net = -psu_i
+                    else:
+                        i_net = psu_i
+                    if self.ui and self.root:
+                        self.root.after(0, self.ui.update_live_readback,
+                                         v, i_net, self.hw.current_temp)
+                except Exception as e:
+                    logger.debug("Live readback read failed: %s", e)
+            time.sleep(1.0)
+        self.live_readback_running = False
 
     def calibrate_from_ocv(self):
         """Calibrate SoC from OCV reading when battery is rested"""
@@ -241,11 +277,12 @@ class AutoController:
                     # Convention: discharge = บวก (ให้ตรงกับ StateEstimator,
                     # CSV/dashboard และ generate_sample_data)
                     #
-                    # Bleed physics (PSW-type: bleed only active when OUTPUT is OFF):
-                    #   CHARGE    → OUTPUT ON, bleed inactive; i_net = -psu_i      (negative)
-                    #   DISCHARGE → PSU disconnected, no bleed; i_net = load_i     (positive)
-                    #   REST      → OUTPUT OFF, bleed drains battery but SCPI reads
-                    #               ~0 A (after zero-offset removal); i_net ≈ 0
+                    # The SSR relay (ESP32 GPIO16) physically disconnects the PSU from
+                    # the battery whenever not charging, so REST/idle reads ~0 A directly
+                    # — no bleed compensation needed:
+                    #   CHARGE    → OUTPUT ON, SSR ON;  i_net = -psu_i          (negative)
+                    #   DISCHARGE → PSU disconnected;   i_net = load_i          (positive)
+                    #   REST      → OUTPUT OFF, SSR OFF; i_net ≈ 0             (positive)
                     #
                     v, psu_i, load_i = self.hw.read_vi()
                     if load_i > 0.02:
@@ -256,9 +293,8 @@ class AutoController:
                         # Convention: charge = negative.
                         i_net = -psu_i
                     else:
-                        # PSU OUTPUT OFF → battery discharges through internal bleed
-                        # resistor (REST phase).  Convention: discharge = positive.
-                        # psu_i ≈ bleed_a (real current, not an artefact).
+                        # PSU OUTPUT OFF, SSR OFF → PSU physically disconnected (REST).
+                        # Convention: discharge = positive. psu_i ≈ 0.
                         i_net = psu_i
 
                     # Monitor loop only checks temperature & overcurrent —

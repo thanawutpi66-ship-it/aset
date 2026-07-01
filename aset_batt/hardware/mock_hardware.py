@@ -34,7 +34,6 @@ class MockHardwareController:
         self._load_on_t = None      # monotonic time the load last turned on
         self._load_off_t = None     # monotonic time the load last turned off
         self._relax_v0 = 0.0        # R1 overpotential at pulse end (decays in rest)
-        self.psu_bleed_a: float = 0.0  # mirror HardwareController.psu_bleed_a
         self._psu_output_on: bool = False  # mirror HardwareController._psu_output_on
         self.ssr_state = None  # mirror HardwareController.ssr_state
 
@@ -57,8 +56,10 @@ class MockHardwareController:
 
     def connect_esp32(self, port, callback=None):
         self.is_esp_connected = True
+        self.set_ssr(False)  # mirror HardwareController.connect_esp32 fail-safe
 
     def disconnect_esp32(self):
+        self.set_ssr(False)   # mirror HardwareController.disconnect_esp32 ordering
         self.is_esp_connected = False
         self.ssr_state = None
 
@@ -66,11 +67,15 @@ class MockHardwareController:
         self.ssr_state = bool(state)
         return True
 
+    def feed_watchdog(self) -> bool:
+        return True  # mock has no firmware watchdog to feed
+
     # ------------------------------------------------------------------
     # PSU / Load control
     # ------------------------------------------------------------------
 
     def set_psu(self, state, voltage_val="0", current_val="1.0"):
+        # current_val = CC limit (A); mock just records voltage, limit ไม่มีผลในจำลอง
         if state:
             self._psu_voltage = float(voltage_val)
             self._psu_output_on = True
@@ -82,7 +87,7 @@ class MockHardwareController:
     def set_load(self, state, current_val="0"):
         if state:
             was_on = self._load_current > 0
-            # Discharge: no bleed path (PSU disconnected) → set load directly
+            # Discharge: PSU disconnected → set load directly
             self._load_current = float(current_val)
             self._charging = False   # ดิสชาร์จ → หยุดจำลองชาร์จ
             if not was_on:
@@ -169,6 +174,9 @@ class MockHardwareController:
 
     def disconnect_instruments(self):
         self.is_connected = False
+        self._charging = False
+        self._psu_output_on = False
+        self.set_ssr(False)   # mirror HardwareController.disconnect_instruments
         self.psu_inst = None
         self.load_inst = _MockInst()
 
@@ -176,10 +184,10 @@ class MockHardwareController:
         # Convention: discharge = positive. Mirrors HardwareController.read_measurements().
         v, psu_i, load_i = self.read_vi()
         if prefer_load_v:
-            return v, load_i          # discharge: PSU disconnected, no bleed
+            return v, load_i          # discharge: PSU disconnected
         if self._psu_output_on:
             return v, -psu_i          # charging: PSU is source → negative
-        return v, psu_i               # REST: battery discharges via bleed → positive
+        return v, psu_i               # REST: SSR disconnected, i ≈ 0 → positive
 
     def set_charge(self, state, current_val="0"):
         if state:
@@ -190,7 +198,7 @@ class MockHardwareController:
         """จำลอง CC-CV charge: ตั้ง target + กระแส bulk ให้ read_vi ขับ state machine ได้"""
         self._cccv_v = float(voltage)
         if not self._charging:
-            self._charge_i = float(current)   # bleed inactive during charge — no offset
+            self._charge_i = float(current)
         self._charging = True
         self._psu_output_on = True
         self.set_ssr(True)

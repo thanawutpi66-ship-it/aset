@@ -127,6 +127,7 @@ class ApplicationBootstrapper:
                     if coms:
                         controller.hw.connect_esp32(coms[0])
                     app_ui._update_connection_status()
+                    controller.start_live_readback()
                     logger.info("Auto-connected mock hardware (simulation mode)")
             except Exception as e:
                 logger.warning(f"Simulation auto-connect failed: {e}")

@@ -76,7 +76,6 @@ class HardwareConfig:
     visa_timeout: int = 5000
     serial_baudrate: int = 9600
     auto_detect_ports: bool = True
-    psu_bleed_a: float = 0.0  # กระแสที่ PSU ดูดจากแบตผ่าน internal bleed resistor ตลอดเวลา (A)
 
 class ConfigManager:
     """Centralized configuration management"""

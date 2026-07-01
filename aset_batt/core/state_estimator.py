@@ -69,10 +69,12 @@ class StateEstimator:
         self.last_ocv_correction_time = time.time()
         self.ocv_correction_interval = 300  # วินาที (5 นาที)
         self.last_static_voltage = None
-        # standby_current = PSU bleed when OUTPUT is OFF (discharge-positive convention).
-        # Must be kept in sync with HardwareController.psu_bleed_a — call
-        # set_standby_current(hw.psu_bleed_a) after connecting hardware.
-        self.standby_current = 0.6            # A — default; override via set_standby_current()
+        # standby_current = known idle/rest current offset (discharge-positive convention),
+        # e.g. residual sensor leakage. Default 0 — the SSR relay (ESP32 GPIO16) now
+        # physically disconnects the PSU from the battery whenever not charging, so
+        # there is no PSU bleed current to compensate for. Override via
+        # set_standby_current() only if a specific instrument has a known offset.
+        self.standby_current = 0.0            # A — default; override via set_standby_current()
         self.static_current_threshold = 0.15  # A — window around standby
         self._rested_s = 0.0                  # accumulated rest time (s) for endpoint anchor
         # Minimum rest time before OCV correction fires (chemistry-dependent).
@@ -229,10 +231,11 @@ class StateEstimator:
                 float(np.interp(soc, g[0], g[2])),
                 float(np.interp(soc, g[0], g[3])))
 
-    def set_standby_current(self, bleed_a: float) -> None:
-        """Sync PSU bleed current from hardware config.
-        Call this after connecting: estimator.set_standby_current(hw.psu_bleed_a)"""
-        self.standby_current = max(0.0, float(bleed_a))
+    def set_standby_current(self, standby_a: float) -> None:
+        """Set a known idle/rest current offset (A). Default is 0 since the SSR
+        physically disconnects the PSU when not charging — only needed if a
+        specific instrument has a known residual leakage current at rest."""
+        self.standby_current = max(0.0, float(standby_a))
 
     def _ocv_init_var(self, soc: float, temp: float) -> float:
         """SoC covariance to seed an OCV-derived anchor with. On a flat plateau (low
@@ -293,8 +296,9 @@ class StateEstimator:
 
         # === 0. Current-offset tare (#4) ===
         # Remove sensor bias estimated during rest so coulomb counting doesn't drift.
-        # During genuine rest the true current equals the known PSU bleed (standby);
-        # any deviation is sensor offset. Auto-tare only — never perturbs an active step.
+        # During genuine rest the true current equals the known standby current
+        # (default 0); any deviation is sensor offset. Auto-tare only — never
+        # perturbs an active step.
         if self._auto_tare and abs(current - self.standby_current) < self.static_current_threshold:
             self._tare_sum += (current - self.standby_current)
             self._tare_n += 1

@@ -19,6 +19,7 @@
  *        "SSR ON\n"   -> close relay (power connected)  -> replies "#SSR ON"
  *        "SSR OFF\n"  -> open relay  (power cut)         -> replies "#SSR OFF"
  *        "SSR?\n"     -> query current state             -> replies "#SSR ON" / "#SSR OFF"
+ *        "PING\n"     -> watchdog heartbeat, no state change -> replies "#PONG"
  *
  * WIRING:
  *   I2C (GPIO21/22) <- MLX90614 (unchanged from existing board)
@@ -31,6 +32,14 @@
  *
  * FAIL-SAFE: on boot and on any serial disconnect, the relay defaults to OFF
  * (power cut) until the PC explicitly sends "SSR ON".
+ *
+ * WATCHDOG: the PC (isa101_views.py's 1s UI timer) sends "PING\n" continuously
+ * while connected, on top of the SSR ON/OFF commands. If no command of any kind
+ * arrives for WATCHDOG_TIMEOUT_MS while the relay is ON, this firmware cuts it
+ * OFF on its own — this is what protects against the PC process dying (crash,
+ * killed from an IDE, USB unplugged) while a charge/discharge is running: the
+ * instruments themselves would otherwise keep outputting forever since nothing
+ * else tells them to stop.
  *
  * Baud rate: 9600 (must match aset_batt config.json "serial_baudrate").
  */
@@ -46,14 +55,23 @@ static const int SSR_OFF_LEVEL = LOW;
 
 static const unsigned long TEMP_INTERVAL_MS = 1000;
 
+// PC heartbeat watchdog: cuts the relay if no serial command (PING or otherwise)
+// arrives for this long while it's ON. 20x the PC's 1s heartbeat interval, so
+// normal serial/scheduling jitter never trips it — only a dead/killed PC process
+// or a disconnected cable does.
+static const unsigned long WATCHDOG_TIMEOUT_MS = 20000;
+
 Adafruit_MLX90614 mlx = Adafruit_MLX90614();
 bool mlx_ok = false;
 bool ssr_on = false;
 unsigned long last_temp_ms = 0;
+unsigned long last_cmd_ms = 0;
+bool watchdog_tripped = false;
 
 void setSsr(bool on) {
   ssr_on = on;
   digitalWrite(PIN_SSR, on ? SSR_ON_LEVEL : SSR_OFF_LEVEL);
+  if (on) watchdog_tripped = false;   // fresh ON re-arms the watchdog
 }
 
 void setup() {
@@ -65,12 +83,15 @@ void setup() {
   Wire.begin();
   mlx_ok = mlx.begin();       // MLX90614 over I2C
 
+  last_cmd_ms = millis();
   Serial.println("#BOOT esp32_temp_ssr ready — SSR OFF (fail-safe)");
 }
 
 void handleCommand(String cmd) {
   cmd.trim();
   cmd.toUpperCase();
+  if (cmd.length() == 0) return;
+  last_cmd_ms = millis();   // any recognised-or-not traffic counts as a heartbeat
   if (cmd == "SSR ON") {
     setSsr(true);
     Serial.println("#SSR ON");
@@ -79,6 +100,8 @@ void handleCommand(String cmd) {
     Serial.println("#SSR OFF");
   } else if (cmd == "SSR?") {
     Serial.println(ssr_on ? "#SSR ON" : "#SSR OFF");
+  } else if (cmd == "PING") {
+    Serial.println("#PONG");
   }
   // Unknown commands are ignored — keeps this forward-compatible with any
   // future command additions without breaking on garbled serial input.
@@ -91,6 +114,14 @@ void loop() {
   }
 
   unsigned long now = millis();
+
+  // Watchdog: PC has gone silent while the relay is ON -> cut power ourselves.
+  if (ssr_on && !watchdog_tripped && (now - last_cmd_ms >= WATCHDOG_TIMEOUT_MS)) {
+    setSsr(false);
+    watchdog_tripped = true;
+    Serial.println("#WATCHDOG SSR OFF - no PC heartbeat");
+  }
+
   if (now - last_temp_ms >= TEMP_INTERVAL_MS) {
     last_temp_ms = now;
     if (mlx_ok) {
