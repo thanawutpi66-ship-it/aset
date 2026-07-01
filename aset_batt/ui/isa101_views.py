@@ -2345,7 +2345,6 @@ class BatteryQtWindow(QMainWindow):
         self.buf_temp.append(temp)
         self._sample_index += 1
         self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
-        self._cloud_push_update(v, i, soc, temp)
 
         self._update_temp_gauge(temp)
         i_dir = "CHG" if i < -_IDLE else "DSG" if i > _IDLE else "REST"
@@ -2612,6 +2611,7 @@ class BatteryQtWindow(QMainWindow):
         if not prod or self.config is None:
             return
         b = self.config.battery
+        b.product_name = name
         b.battery_type = prod.chemistry
         b.nominal_voltage = prod.nominal_voltage_per_cell
         b.cells_series = prod.cells_series
@@ -2905,11 +2905,22 @@ class BatteryQtWindow(QMainWindow):
     _cloud_svc = None
 
     def _cloud_push_start(self):
+        if not getattr(self.config.system, "cloud_push_enabled", False):
+            return
+        if self._cloud_svc is not None and getattr(self._cloud_svc, "_running", False):
+            return  # already running — avoid spawning a duplicate push thread
         try:
-            from aset_batt.services.cloud_push import CloudPushService
-            self._cloud_svc = CloudPushService(self.config)
+            from aset_batt.storage.cloud_push import CloudPusher
+            self._cloud_svc = CloudPusher(
+                url=self.config.system.cloud_dashboard_url,
+                csv_path=self.config.system.csv_filepath,
+                interval=getattr(self.config.system, "cloud_push_interval", 5.0),
+                analysis_interval=getattr(self.config.system, "cloud_analysis_interval", 60.0),
+                data_handler=self.data,
+                config=self.config,
+            )
             self._cloud_svc.start()
-            if getattr(self.config.system, "cloud_push_enabled", False):
+            if self._cloud_svc.enabled:
                 self._log_alarm("[CLOUD] Push service started")
         except Exception as e:
             self._log_alarm(f"[CLOUD] Start failed: {e}")
@@ -2919,22 +2930,6 @@ class BatteryQtWindow(QMainWindow):
             if self._cloud_svc:
                 self._cloud_svc.stop()
                 self._cloud_svc = None
-        except Exception:
-            pass
-
-    def _cloud_push_update(self, v, i, soc, temp):
-        """Call from the telemetry slot to keep the cloud payload fresh."""
-        try:
-            if self._cloud_svc:
-                from datetime import datetime as _dt
-                self._cloud_svc.push_now({
-                    "ts": _dt.utcnow().isoformat(),
-                    "voltage_v": round(v, 3),
-                    "current_a": round(i, 3),
-                    "soc_pct":   round(soc, 1),
-                    "temp_c":    round(temp, 1),
-                    "battery":   self.config.battery.battery_type,
-                })
         except Exception:
             pass
 

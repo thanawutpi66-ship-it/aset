@@ -52,6 +52,10 @@ class FitResult:
     r_squared: float
     current_a: float
     voc_v: float
+    # ±1σ parameter uncertainties from covariance (nan when pcov is ill-conditioned)
+    r0_std_ohm: float = float("nan")
+    r1_std_ohm: float = float("nan")
+    c1_std_farad: float = float("nan")
     # arrays kept for plotting / inspection (not part of the summary dict)
     _t: np.ndarray = field(default=None, repr=False)
     _v_meas: np.ndarray = field(default=None, repr=False)
@@ -68,6 +72,9 @@ class FitResult:
             "r_squared": self.r_squared,
             "current_a": self.current_a,
             "voc_v": self.voc_v,
+            "R0_std_ohm": self.r0_std_ohm,
+            "R1_std_ohm": self.r1_std_ohm,
+            "C1_std_farad": self.c1_std_farad,
         }
 
 
@@ -246,23 +253,59 @@ class BatteryParameterIdentifier:
         def model(tt, r0, r1, c1):
             return voc - i_pulse * (r0 + r1 * (1.0 - np.exp(-tt / (r1 * c1))))
 
-        # Initial guesses from the data: steady-state droop gives R0+R1; τ ≈ 1/3 span.
         droop = abs(voc - v_seg[-1]) / max(abs(i_pulse), 1e-9)
-        r1_guess = max(droop - r0_step, 1e-4)
-        tau_guess = max((t_rel[-1] - t_rel[0]) / 3.0, 1e-3)
-        c1_guess = max(tau_guess / r1_guess, 1e-3)
-        p0 = [max(r0_step, 1e-5), r1_guess, c1_guess]
+        r_rc_base = max(droop - r0_step, 1e-4)
+        span = max(t_rel[-1] - t_rel[0], 1e-3)
         bounds = ([1e-6, 1e-6, 1e-3], [10.0, 10.0, 1e7])
 
-        try:
-            popt, _ = curve_fit(
-                model, t_rel, v_seg, p0=p0, bounds=bounds,
-                method="trf", maxfev=self.max_iterations,
-            )
-        except (RuntimeError, ValueError) as exc:
-            raise ValueError(f"Curve fit did not converge: {exc}") from exc
+        # Multi-start: try 4 sets of (R1, τ) guesses spread across physically plausible
+        # ranges. Single-guess TRF can trap in a local minimum when the initial τ is far
+        # from the true time constant; the best result (lowest RMSE) is kept.
+        candidates = [
+            (r_rc_base * 0.5, span / 5.0),   # fast τ, moderate R1
+            (r_rc_base * 0.6, span / 3.0),   # original default
+            (r_rc_base * 0.8, span / 2.0),   # slow τ, higher R1
+            (r_rc_base * 1.0, span * 0.75),  # very slow τ
+        ]
 
-        r0, r1, c1 = (float(x) for x in popt)
+        best_popt = best_pcov = None
+        best_rmse = float("inf")
+
+        for r1_g, tau_g in candidates:
+            r1_g = max(r1_g, 1e-4)
+            tau_g = max(tau_g, 1e-3)
+            c1_g = max(tau_g / r1_g, 1e-3)
+            p0 = [max(r0_step, 1e-5), r1_g, c1_g]
+            try:
+                popt_c, pcov_c = curve_fit(
+                    model, t_rel, v_seg, p0=p0, bounds=bounds,
+                    method="trf", maxfev=self.max_iterations,
+                )
+                rmse_c = float(np.sqrt(np.mean((v_seg - model(t_rel, *popt_c)) ** 2)))
+                if rmse_c < best_rmse:
+                    best_rmse = rmse_c
+                    best_popt = popt_c
+                    best_pcov = pcov_c
+            except (RuntimeError, ValueError):
+                continue
+
+        if best_popt is None:
+            raise ValueError("ECM fit: all initial guesses failed to converge. "
+                             "Check that the pulse segment is long enough.")
+
+        r0, r1, c1 = (float(x) for x in best_popt)
+
+        # ±1σ parameter uncertainties from the covariance diagonal.
+        # These quantify how well the transient data constrains each parameter —
+        # large σ relative to the value means the parameter is poorly identified.
+        try:
+            perr = np.sqrt(np.diag(best_pcov))
+            r0_std, r1_std, c1_std = float(perr[0]), float(perr[1]), float(perr[2])
+            if not (np.isfinite(r0_std) and np.isfinite(r1_std) and np.isfinite(c1_std)):
+                r0_std = r1_std = c1_std = float("nan")
+        except Exception:
+            r0_std = r1_std = c1_std = float("nan")
+
         v_pred = model(t_rel, r0, r1, c1)
         residuals = v_seg - v_pred
         rmse = float(np.sqrt(np.mean(residuals ** 2)))
@@ -273,10 +316,11 @@ class BatteryParameterIdentifier:
         self._last = FitResult(
             r0_ohm=r0, r1_ohm=r1, c1_farad=c1, tau_s=r1 * c1,
             rmse_v=rmse, r_squared=r2, current_a=i_pulse, voc_v=voc,
+            r0_std_ohm=r0_std, r1_std_ohm=r1_std, c1_std_farad=c1_std,
             _t=t_rel, _v_meas=v_seg, _v_pred=v_pred,
         )
-        logger.info("ECM fit: R0=%.4f Ω, R1=%.4f Ω, C1=%.1f F, τ=%.2f s, R²=%.4f",
-                    r0, r1, c1, r1 * c1, r2)
+        logger.info("ECM fit: R0=%.4f±%.4f Ω, R1=%.4f±%.4f Ω, C1=%.1f F, τ=%.2f s, R²=%.4f",
+                    r0, r0_std, r1, r1_std, c1, r1 * c1, r2)
         return self._last.to_dict()
 
     # ------------------------------------------------------------------
