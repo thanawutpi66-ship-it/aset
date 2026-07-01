@@ -227,18 +227,17 @@ class BatteryModel:
         """คำนวณ base internal resistance (ระดับแพ็ค) จาก temperature และ SoC"""
         params = self.rin_params
 
-        # Temperature factor: R "เพิ่มขึ้นเมื่ออุณหภูมิต่ำลง" (Arrhenius — ionic/
-        # charge-transfer ช้าลงตอนเย็น).
-        # ถ้า chemistry.rin มี 'arrhenius_ea_k' (>0) ใช้รูป exponential จริง:
-        #   R(T)/R_ref = exp(Ea_k · (1/T − 1/T_ref))   [T เป็นเคลวิน, T_ref=298.15K]
-        # ค่า Ea_k (= Ea/k_B, หน่วยเคลวิน) ต้อง fit จาก DCIR หลายอุณหภูมิ (Tier-3 lab).
-        # ถ้าไม่ระบุ → fallback เป็น linear approximation เดิม (พฤติกรรมไม่เปลี่ยน).
-        ea_k = params.get('arrhenius_ea_k', 0.0)
-        if ea_k > 0:
+        # Temperature compensation: Arrhenius (physically correct) when an Ea/R value
+        # is present in the chemistry profile. Accepts both key names for compatibility:
+        #   'arrhenius_ea_r' (Ea/R in K, our convention) or 'arrhenius_ea_k' (same).
+        # R(T) = R₀ × exp(Ea/R × (1/T_K − 1/T_ref)); falls back to linear if unset.
+        ea_r = params.get('arrhenius_ea_r', 0.0) or params.get('arrhenius_ea_k', 0.0)
+        if ea_r > 0.0:
             t_k = temp + 273.15
             t_ref = 298.15
-            temp_factor = float(np.exp(ea_k * (1.0 / t_k - 1.0 / t_ref))) - 1.0
+            temp_factor = float(np.exp(ea_r * (1.0 / t_k - 1.0 / t_ref))) - 1.0
         else:
+            # Legacy linear: only valid within ±10 °C of 25 °C
             temp_factor = params['temp_coeff'] * (25.0 - temp)
 
         # SoC factor (สูงขึ้นเมื่อ SoC ต่ำหรือสูง)

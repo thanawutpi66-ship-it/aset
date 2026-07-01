@@ -2597,6 +2597,7 @@ class BatteryQtWindow(QMainWindow):
         if not prod or self.config is None:
             return
         b = self.config.battery
+        b.product_name = name
         b.battery_type = prod.chemistry
         b.nominal_voltage = prod.nominal_voltage_per_cell
         b.cells_series = prod.cells_series
