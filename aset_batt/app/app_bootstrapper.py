@@ -145,6 +145,7 @@ class ApplicationBootstrapper:
                     interval=getattr(config.system, "cloud_push_interval", 5.0),
                     analysis_interval=getattr(config.system, "cloud_analysis_interval", 60.0),
                     data_handler=controller.data,
+                    config=self.config_manager,
                 )
                 self._cloud_pusher.start()  # log เองถ้าไม่มี token
             except Exception as e:

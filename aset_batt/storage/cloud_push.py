@@ -71,19 +71,20 @@ def _downsample(rows, max_points):
     return {k: v[::stride] for k, v in series.items()}
 
 
-def build_payload(csv_path, max_points, cached_analysis=None):
+def build_payload(csv_path, max_points, cached_analysis=None, config=None):
     """Build push payload. Pass cached_analysis to skip the expensive ECM fitting."""
+    cfg = config if config is not None else config_manager
     rows = _tail_csv_rows(csv_path, limit=20000)
     summary = _compute_summary(rows)
     summary["csv_path"] = csv_path
 
     if cached_analysis is None:
         try:
-            cached_analysis = _run_analysis(config_manager, csv_path)
+            cached_analysis = _run_analysis(cfg, csv_path)
         except Exception as e:
             cached_analysis = {"success": False, "error": str(e)}
 
-    bat = config_manager.battery
+    bat = cfg.battery
     prod = getattr(bat, "product_name", "") or ""
     battery_desc = prod if prod else (
         f"{bat.cells_series}S{bat.cells_parallel}P {bat.battery_type} {bat.rated_capacity}Ah"
@@ -138,10 +139,11 @@ class CloudPusher:
     def __init__(self, url: str, token: str = "", csv_path: str = "",
                  interval: float = 5.0, max_points: int = 400,
                  analysis_interval: float = 60.0,
-                 data_handler=None):
+                 data_handler=None, config=None):
+        self._config = config if config is not None else config_manager
         self.url = (url or "").strip()
         self.token = resolve_token(token)
-        self.csv_path = csv_path or config_manager.system.csv_filepath
+        self.csv_path = csv_path or self._config.system.csv_filepath
         self._data_handler = data_handler
         self.interval = max(3.0, float(interval))
         self.analysis_interval = max(self.interval, float(analysis_interval))
@@ -180,14 +182,15 @@ class CloudPusher:
             now = time.time()
             if now - self._last_analysis_t >= self.analysis_interval:
                 try:
-                    self._cached_analysis = _run_analysis(config_manager, active)
+                    self._cached_analysis = _run_analysis(self._config, active)
                     self._last_analysis_t = now
                     logger.debug("cloud push: analysis refreshed")
                 except Exception as e:
                     logger.warning("cloud push: analysis failed — using cache: %s", e)
 
             payload = build_payload(active, self.max_points,
-                                    cached_analysis=self._cached_analysis or None)
+                                    cached_analysis=self._cached_analysis or None,
+                                    config=self._config)
             status, _ = push(self.url, self.token, payload)
             logger.debug("cloud push -> HTTP %s (rows=%s, analysis_age=%.0fs)",
                          status, payload["summary"].get("row_count"),
@@ -221,7 +224,7 @@ class CloudPusher:
                     continue
                 logger.info("cloud analyze: session %s — รัน analysis (csv=%s)", sidx, os.path.basename(csv_path))
                 try:
-                    analysis = _run_analysis(config_manager, csv_path)
+                    analysis = _run_analysis(self._config, csv_path)
                     self._cached_analysis = analysis
                     self._last_analysis_t = time.time()
                 except Exception as e:
