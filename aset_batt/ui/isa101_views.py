@@ -896,7 +896,8 @@ class BatteryQtWindow(QMainWindow):
         lay.addWidget(btn_refresh)
 
         # SSR safety-cutoff relay (ESP32 GPIO16) — physically gates power to
-        # PSU + load, independent of each instrument's own output relay.
+        # PSU + load. Fully automatic: ON the instant charging starts (any test
+        # mode), OFF the instant it stops — no manual control, status only.
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("SSR POWER RELAY (GPIO16)"))
         ssr_row = QHBoxLayout()
@@ -905,19 +906,14 @@ class BatteryQtWindow(QMainWindow):
         ssr_row.addWidget(lbl_ssr)
         self.led_ssr = _led()
         ssr_row.addWidget(self.led_ssr)
+        self.lbl_ssr_state = QLabel("—")
+        self.lbl_ssr_state.setStyleSheet(f"color:{MUTED}; font-weight:600;")
+        ssr_row.addWidget(self.lbl_ssr_state)
         ssr_row.addStretch(1)
-        self.btn_ssr_on = _btn("ON", bg=OK, fg="white", hover="#266a2a")
-        self.btn_ssr_off = _btn("OFF", bg=CRIT, fg="white", hover="#9b2020")
-        self.btn_ssr_on.setFixedWidth(60)
-        self.btn_ssr_off.setFixedWidth(60)
-        self.btn_ssr_on.clicked.connect(lambda: self._on_ssr_toggle(True))
-        self.btn_ssr_off.clicked.connect(lambda: self._on_ssr_toggle(False))
-        ssr_row.addWidget(self.btn_ssr_on)
-        ssr_row.addWidget(self.btn_ssr_off)
         lay.addLayout(ssr_row)
         lbl_ssr_hint = QLabel(
-            "ⓘ ตัดไฟ PSU/Load ทางกายภาพผ่าน SSR ที่ ESP32 GPIO16 — "
-            "ใช้เป็น safety cutoff สำรอง ทำงานอัตโนมัติเมื่อ E-STOP")
+            "ⓘ ตัดไฟ PSU/Load ทางกายภาพผ่าน SSR ที่ ESP32 GPIO16 — ทำงานอัตโนมัติ: "
+            "ON ทันทีที่เริ่มชาร์จ (ทุกโหมดเทสต์), OFF ทันทีที่หยุดชาร์จ/E-STOP")
         lbl_ssr_hint.setStyleSheet(f"color:{MUTED}; font-size:10px;")
         lbl_ssr_hint.setWordWrap(True)
         lay.addWidget(lbl_ssr_hint)
@@ -2416,21 +2412,28 @@ class BatteryQtWindow(QMainWindow):
         _set_led(self.led_psu,  connected, conn_err, "PSU connected",   conn_err,  "PSU: not connected")
         _set_led(self.led_load, connected, conn_err, "Load connected",  conn_err,  "Load: not connected")
         _set_led(self.led_esp,  esp_ok,    esp_err,  "ESP32 connected", esp_err,   "ESP32: not connected")
-        # SSR relay LED: green=ON, red=OFF, gray=unknown/not connected
+        # SSR relay LED — fully automatic (follows charge state), status-only.
+        # Green=ON (charging), red=OFF (not charging / cut), gray=unknown.
         if hasattr(self, "led_ssr"):
             ssr_state = getattr(self.hw, "ssr_state", None)
             if not esp_ok or ssr_state is None:
                 self.led_ssr.setText("●")
                 self.led_ssr.setStyleSheet(f"color:{NEUTRAL}; font-size:15px; min-width:18px;")
                 self.led_ssr.setToolTip("SSR: unknown / ESP32 not connected")
+                self.lbl_ssr_state.setText("—")
+                self.lbl_ssr_state.setStyleSheet(f"color:{MUTED}; font-weight:600;")
             elif ssr_state:
                 self.led_ssr.setText("✓")
                 self.led_ssr.setStyleSheet(f"color:{OK}; font-size:13px; min-width:18px; font-weight:700;")
-                self.led_ssr.setToolTip("SSR: ON (power connected)")
+                self.led_ssr.setToolTip("SSR: ON (charging — power connected)")
+                self.lbl_ssr_state.setText("ON (charging)")
+                self.lbl_ssr_state.setStyleSheet(f"color:{OK}; font-weight:600;")
             else:
                 self.led_ssr.setText("✗")
                 self.led_ssr.setStyleSheet(f"color:{CRIT}; font-size:13px; min-width:18px; font-weight:700;")
                 self.led_ssr.setToolTip("SSR: OFF (power cut)")
+                self.lbl_ssr_state.setText("OFF")
+                self.lbl_ssr_state.setStyleSheet(f"color:{CRIT}; font-weight:600;")
 
     @Slot(str)
     def _slot_safety(self, reason):
@@ -2869,20 +2872,6 @@ class BatteryQtWindow(QMainWindow):
             self._update_connection_status()
             if not self._headless:
                 QMessageBox.critical(self, "เชื่อมต่อล้มเหลว", str(exc))
-
-    def _on_ssr_toggle(self, state: bool):
-        if not hasattr(self.hw, "set_ssr"):
-            self._log_alarm("SSR not supported by this hardware backend.")
-            return
-        if not getattr(self.hw, "is_esp_connected", False):
-            self._log_alarm("SSR: ESP32 ไม่ได้เชื่อมต่อ — เชื่อมต่อก่อนใช้งาน relay")
-            return
-        ok = self.hw.set_ssr(state)
-        if ok:
-            self._log_alarm(f"SSR relay → {'ON' if state else 'OFF'}")
-        else:
-            self._log_alarm("SSR command failed — check ESP32 connection.")
-        self._update_connection_status()
 
     def _on_disconnect(self):
         try:

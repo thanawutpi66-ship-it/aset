@@ -91,20 +91,13 @@ class HardwareBackend(InstrumentBackend):
         return float(getattr(self.hw, "current_temp", float("nan")))
 
     def emergency_zero(self):
-        # Independent calls so one failing instrument/relay can't block the others.
+        # Independent calls so one failing instrument can't block the other.
+        # psu_off() also cuts the SSR relay (GPIO16) — see HardwareController.psu_off.
         for fn in (self.hw.load_off, self.hw.psu_off):
             try:
                 fn()
             except Exception as e:
                 logger.error("emergency_zero step failed: %s", e)
-        # SSR (GPIO16 relay) — redundant hardware cutoff independent of each
-        # instrument's own output relay; fires even if PSU/load is stuck.
-        set_ssr = getattr(self.hw, "set_ssr", None)
-        if set_ssr:
-            try:
-                set_ssr(False)
-            except Exception as e:
-                logger.error("emergency_zero SSR cutoff failed: %s", e)
 
     def safe_shutdown(self):
         self.emergency_zero()

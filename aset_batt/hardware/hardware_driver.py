@@ -155,6 +155,7 @@ class HardwareController:
                     self._psu_output_on = False
             except Exception as e:
                 logger.error(f"PSU Command Error: {e}")
+        self.set_ssr(bool(state))
 
     def set_load(self, state, current_val="0"):
         if not self.is_connected:
@@ -194,13 +195,15 @@ class HardwareController:
                 logger.error(f"load_off error: {e}")
 
     def psu_off(self):
-        """ปิด output ของ PSU (ใช้โดย emergency shutdown + ChargeController)"""
+        """ปิด output ของ PSU (ใช้โดย emergency shutdown + ChargeController)
+        ตัด SSR (GPIO16) ตามไปด้วยเสมอ — PSU output OFF = ไม่ได้ชาร์จ = ตัดไฟ SSR"""
         with self.inst_lock:
             try:
                 self.psu_inst.write(":OUTP OFF")
                 self._psu_output_on = False
             except Exception as e:
                 logger.error(f"psu_off error: {e}")
+        self.set_ssr(False)
 
     def calibrate_psu_zero(self) -> float:
         """วัด current offset ของ PSU ขณะ OUTPUT OFF แล้วเก็บไว้ลบออกจากทุกการอ่าน
@@ -460,6 +463,7 @@ class HardwareController:
                     self._psu_output_on = False
             except Exception as e:
                 logger.error(f"Charge control error: {e}")
+        self.set_ssr(bool(state))
 
     def set_psu_cccv(self, voltage, current):
         """ตั้ง PSU เป็น CC-CV: voltage = แรงดันเป้า (CV limit), current = กระแสจำกัด (CC limit)
@@ -479,3 +483,4 @@ class HardwareController:
                 self._psu_output_on = True
             except Exception as e:
                 logger.error(f"set_psu_cccv error: {e}")
+        self.set_ssr(True)

@@ -77,6 +77,7 @@ class MockHardwareController:
         else:
             self._charging = False
             self._psu_output_on = False
+        self.set_ssr(bool(state))
 
     def set_load(self, state, current_val="0"):
         if state:
@@ -110,6 +111,7 @@ class MockHardwareController:
         self._psu_voltage = 0.0
         self._charging = False
         self._psu_output_on = False
+        self.set_ssr(False)
 
     # ------------------------------------------------------------------
     # Measurement — จำลองแบตเตอรี่ลดแรงดันตามเวลา
@@ -182,6 +184,7 @@ class MockHardwareController:
     def set_charge(self, state, current_val="0"):
         if state:
             self._psu_voltage = min(4.2, self._psu_voltage + 0.01)
+        self.set_ssr(bool(state))
 
     def set_psu_cccv(self, voltage, current):
         """จำลอง CC-CV charge: ตั้ง target + กระแส bulk ให้ read_vi ขับ state machine ได้"""
@@ -190,6 +193,7 @@ class MockHardwareController:
             self._charge_i = float(current)   # bleed inactive during charge — no offset
         self._charging = True
         self._psu_output_on = True
+        self.set_ssr(True)
 
 
 class _MockInst:
