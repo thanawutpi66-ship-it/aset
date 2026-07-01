@@ -1,12 +1,17 @@
-"""Two EKF accuracy fixes:
+"""EKF accuracy fixes, and the live SoC/Rin display accuracy work:
   #1 the measurement update uses the OHMIC R0 (ekf.R0), not the full DCIR (self.rin),
      so RC polarisation isn't double-counted against the EKF's own V_RC state;
   #3 an OCV anchor taken on a flat plateau is seeded with LARGE SoC uncertainty so the
-     filter stays correctable instead of locking onto an unreliable inversion."""
+     filter stays correctable instead of locking onto an unreliable inversion;
+  live Rin = (ekf.R0+R1) rescaled by the Arrhenius temperature multiplier — SoC-aware,
+     temperature-aware, and stable (not the noisy per-sample (OCV-V)/I); AEKF (adaptive
+     R) is on by default so the filter de-weights voltage on model mismatch; soc_std is
+     exposed for the live "SoC ±%" display."""
 import unittest
 
 from aset_batt.core.state_estimator import StateEstimator
 from aset_batt.core.battery_model import BatteryModel
+from aset_batt.core.characterization import build_ecm_table
 
 
 def _est():
@@ -49,6 +54,36 @@ class TestPlateauInitUncertainty(unittest.TestCase):
         self.assertAlmostEqual(float(e._ekf.P[0, 0]), 200.0, places=3)
         e._reset_to_soc(50.0)                         # firm endpoint anchor (default ~1)
         self.assertAlmostEqual(float(e._ekf.P[0, 0]), 1.0, places=3)
+
+
+class TestLiveRinAccuracy(unittest.TestCase):
+    """Live Rin must be temperature-aware AND SoC-aware, and returned alongside soc_std."""
+
+    def test_temperature_raises_live_rin(self):
+        model = BatteryModel("LiFePO4", series_cells=8)
+        e_cold = StateEstimator(50.0, model); e_cold.set_initial_soc(50.0)
+        e_warm = StateEstimator(50.0, model); e_warm.set_initial_soc(50.0)
+        r_cold = e_cold.update(25.6, 5.0, dt=1.0, temp=-10.0)["rin"]
+        r_warm = e_warm.update(25.6, 5.0, dt=1.0, temp=40.0)["rin"]
+        self.assertGreater(r_cold, r_warm)
+
+    def test_soc_ecm_table_raises_live_rin_toward_empty(self):
+        e = _est()
+        e.set_ecm_table(build_ecm_table([90, 50, 10],
+                                        r0_list=[0.010, 0.012, 0.020],
+                                        r1_list=[0.006, 0.008, 0.016],
+                                        c1_list=[1200, 1000, 600]))
+        r_hi_soc = e.update(13.0, 5.0, dt=1.0, temp=25.0)["rin"]
+        e._reset_to_soc(15.0)
+        r_lo_soc = e.update(11.5, 5.0, dt=1.0, temp=25.0)["rin"]
+        self.assertGreater(r_lo_soc, r_hi_soc)
+
+    def test_soc_std_and_adaptive_r_exposed(self):
+        e = _est()
+        result = e.update(13.0, 5.0, dt=1.0, temp=25.0)
+        self.assertIn("soc_std", result)
+        self.assertGreaterEqual(result["soc_std"], 0.0)
+        self.assertTrue(e._ekf.adaptive_r)          # AEKF on by default
 
 
 if __name__ == "__main__":

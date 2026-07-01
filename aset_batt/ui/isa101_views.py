@@ -4118,7 +4118,12 @@ class BatteryQtWindow(QMainWindow):
             self.metric_labels["Voltage"][0].setText(f'{row["v"]:.3f} {self.metric_labels["Voltage"][1]}')
             self.metric_labels["Current"][0].setText(f'{row["i"]:.3f} {self.metric_labels["Current"][1]}')
             if row.get("soc") == row.get("soc"):  # not NaN
-                self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} {self.metric_labels["SoC"][1]}')
+                _u = self.metric_labels["SoC"][1]
+                _std = row.get("soc_std", getattr(getattr(self, "estimator", None), "soc_std", None))
+                if _std is not None and _std == _std:
+                    self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} ±{min(_std, 99):.0f} {_u}')
+                else:
+                    self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} {_u}')
             self.metric_labels["Temp"][0].setText(f'{row["temp"]:.1f} {self.metric_labels["Temp"][1]}')
         self._temp_gauge.update_temp(
             row["temp"], self.config.system.safety_limits.get("max_temperature", 55) - 10,

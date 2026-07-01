@@ -45,6 +45,7 @@ class StateEstimator:
 
         # --- EKF (2-state, 1-RC) fusion ---
         self.use_ekf = True
+        self.use_adaptive_r = True      # AEKF: de-weight voltage on model mismatch (real data)
         self._ekf = None                # lazily created on first update()
 
         # --- SoC-dependent ECM (R0/R1/C1 vs SoC) ---
@@ -187,7 +188,12 @@ class StateEstimator:
     def _ensure_ekf(self):
         if self._ekf is None:
             r0, r1, c1 = self._ekf_rc_defaults()
-            self._ekf = SoCEKF(self.soc, r0, r1, c1)
+            # adaptive_r ON: the real bench uses a generic OCV table (until per-cell GITT),
+            # a 5 Hz readback and real sensor noise, so the voltage model is imperfect.
+            # AEKF inflates R from the measured innovation variance and de-weights the
+            # voltage when the model disagrees → more accurate/robust live SoC on real
+            # data (floored at the sensor noise so good OCV info is still used).
+            self._ekf = SoCEKF(self.soc, r0, r1, c1, adaptive_r=self.use_adaptive_r)
         return self._ekf
 
     def update_ecm(self, r0: float, r1: float, c1: float) -> None:
@@ -407,6 +413,12 @@ class StateEstimator:
             # live 1σ SoC uncertainty from the filter covariance (large mid-plateau /
             # early, shrinks after an OCV/endpoint anchor) — lets the UI show ±%.
             self.soc_std = float(max(0.0, float(ekf.P[0, 0])) ** 0.5)
+            # Live internal resistance = the IDENTIFIED DC resistance R0+R1 (ohmic +
+            # polarisation, SoC-dependent via the ECM table, and stable) rescaled by the
+            # Arrhenius temperature multiplier — so it is SoC-aware, temperature-aware,
+            # AND stable, instead of the noisy per-sample (OCV−V)/I from estimate_rin.
+            temp_mult = self.battery_model.temp_rin_multiplier(t_use) if self.use_temp else 1.0
+            self.rin = (ekf.R0 + ekf.R1) * temp_mult
             return {
                 "soc": self.soc,
                 "soc_std": self.soc_std,
