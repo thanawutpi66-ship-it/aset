@@ -2289,10 +2289,19 @@ class BatteryQtWindow(QMainWindow):
     @Slot(float, float, float, float, float, float)
     def _slot_display(self, v, i, soc, rin, temp, soh):
         rin_mohm = rin * 1000.0
-        # LIVE metrics (valid every sample): Voltage, SoC, Temp — shown with signed value.
-        for name, val, fmt in [("Voltage", v, "{:.2f}"), ("SoC", soc, "{:.1f}"), ("Temp", temp, "{:.2f}")]:
+        # LIVE metrics (valid every sample): Voltage, Temp.
+        for name, val, fmt in [("Voltage", v, "{:.2f}"), ("Temp", temp, "{:.2f}")]:
             lbl, unit = self.metric_labels[name]
             lbl.setText(f"{fmt.format(val)} {unit}")
+        # SoC: show the EKF's live estimate WITH its 1σ uncertainty (±%), read from the
+        # estimator covariance. Large ± early / on a flat plateau, tightening after an
+        # OCV/endpoint anchor — so the operator knows how much to trust the number.
+        soc_lbl, soc_unit = self.metric_labels["SoC"]
+        soc_std = getattr(getattr(self, "estimator", None), "soc_std", None)
+        if soc_std is not None and soc_std == soc_std:      # not None / NaN
+            soc_lbl.setText(f"{soc:.1f} ±{min(soc_std, 99):.0f} {soc_unit}")
+        else:
+            soc_lbl.setText(f"{soc:.1f} {soc_unit}")
         # Current: always show absolute value; direction shown by badge + color.
         i_lbl, i_unit = self.metric_labels["Current"]
         i_lbl.setText(f"{abs(i):.2f} {i_unit}")
@@ -2312,9 +2321,15 @@ class BatteryQtWindow(QMainWindow):
         # Rin: a DC resistance reading needs current flowing. At rest, (OCV−V)/I is
         # undefined and explodes on the flat LFP plateau → keep "pending" rather than
         # show a wild number. The final analysis fills the proper R0+R1.
+        # The raw per-sample estimate is noisy, so display an EMA (reset at rest) to keep
+        # the live number readable; the final analysis fills the proper R0+R1.
         rin_lbl, rin_unit = self.metric_labels["Rin"]
         if abs(i) >= 0.1:
-            rin_lbl.setText(f"{rin_mohm:.2f} {rin_unit}")
+            prev = getattr(self, "_rin_ema", None)
+            self._rin_ema = rin_mohm if prev is None else 0.7 * prev + 0.3 * rin_mohm
+            rin_lbl.setText(f"{self._rin_ema:.1f} {rin_unit}")
+        else:
+            self._rin_ema = None                            # reset smoothing between loads
         # SoH is intentionally NOT updated here — it is a final-analysis metric,
         # written once by _on_test_finished. (soh arg is kept for signal compatibility.)
 
@@ -4148,7 +4163,12 @@ class BatteryQtWindow(QMainWindow):
             self.metric_labels["Voltage"][0].setText(f'{row["v"]:.3f} {self.metric_labels["Voltage"][1]}')
             self.metric_labels["Current"][0].setText(f'{row["i"]:.3f} {self.metric_labels["Current"][1]}')
             if row.get("soc") == row.get("soc"):  # not NaN
-                self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} {self.metric_labels["SoC"][1]}')
+                _u = self.metric_labels["SoC"][1]
+                _std = row.get("soc_std", getattr(getattr(self, "estimator", None), "soc_std", None))
+                if _std is not None and _std == _std:
+                    self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} ±{min(_std, 99):.0f} {_u}')
+                else:
+                    self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} {_u}')
             self.metric_labels["Temp"][0].setText(f'{row["temp"]:.1f} {self.metric_labels["Temp"][1]}')
         self._temp_gauge.update_temp(
             row["temp"], self.config.system.safety_limits.get("max_temperature", 55) - 10,
