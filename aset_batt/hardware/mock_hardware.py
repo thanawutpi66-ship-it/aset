@@ -36,6 +36,7 @@ class MockHardwareController:
         self._relax_v0 = 0.0        # R1 overpotential at pulse end (decays in rest)
         self.psu_bleed_a: float = 0.0  # mirror HardwareController.psu_bleed_a
         self._psu_output_on: bool = False  # mirror HardwareController._psu_output_on
+        self.ssr_state = None  # mirror HardwareController.ssr_state
 
     # ------------------------------------------------------------------
     # Port enumeration
@@ -59,6 +60,11 @@ class MockHardwareController:
 
     def disconnect_esp32(self):
         self.is_esp_connected = False
+        self.ssr_state = None
+
+    def set_ssr(self, state: bool) -> bool:
+        self.ssr_state = bool(state)
+        return True
 
     # ------------------------------------------------------------------
     # PSU / Load control

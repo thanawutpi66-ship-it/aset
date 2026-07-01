@@ -24,6 +24,11 @@ class HardwareController:
         self.connect_error: str = ""       # ข้อความ error ล่าสุดของ PSU/Load — ว่างเปล่าเมื่อ connect สำเร็จ
         self.esp_connect_error: str = ""   # ข้อความ error ล่าสุดของ ESP32
 
+        # SSR (solid-state relay) safety cutoff on ESP32 GPIO16 — physically gates
+        # power to PSU + load, independent of each instrument's own output relay.
+        self.ssr_state = None              # None=unknown, True=ON, False=OFF
+        self._esp_write_lock = threading.Lock()   # guard writes vs. the read-only monitor thread
+
         # Combined-measurement capability per instrument (None=unknown, True/False=cached
         # after the first probe). MEAS:SCAL:ALL:DC? returns V,I,P from ONE instantaneous
         # measurement → V and I are simultaneous (no intra-sample skew) and it's one
@@ -306,11 +311,34 @@ class HardwareController:
 
     def disconnect_esp32(self):
         self.is_esp_connected = False
+        self.ssr_state = None
         if self.esp_serial:
             try:
                 self.esp_serial.close()
             except Exception:
                 pass
+
+    def set_ssr(self, state: bool) -> bool:
+        """Switch the SSR safety-cutoff relay on ESP32 GPIO16 ON/OFF.
+
+        The SSR physically gates power to the PSU + load, so this is used both
+        for manual control and as a redundant hardware cutoff on E-STOP/safety
+        trip — it fires even if an instrument's own SCPI output relay is stuck.
+        Returns True if the command was sent, False if ESP32 isn't connected.
+        """
+        if not self.is_esp_connected or not self.esp_serial:
+            return False
+        cmd = b"SSR ON\n" if state else b"SSR OFF\n"
+        with self._esp_write_lock:
+            try:
+                self.esp_serial.write(cmd)
+                self.esp_serial.flush()
+            except Exception as exc:
+                logger.error("SSR command failed: %s", exc)
+                return False
+        self.ssr_state = bool(state)
+        logger.info("SSR set to %s", "ON" if state else "OFF")
+        return True
 
     # Ordered list of patterns tried against each serial line.
     # Each pattern must have one capture group returning the numeric temperature.

@@ -86,6 +86,13 @@ class AutoController:
         try:
             self.hw.load_off()
             self.hw.psu_off()
+            # SSR (GPIO16 relay) — redundant hardware cutoff independent of
+            # each instrument's own output relay; fires even if PSU/load is stuck.
+            if hasattr(self.hw, "set_ssr"):
+                try:
+                    self.hw.set_ssr(False)
+                except Exception as e:
+                    logger.error(f"SSR cutoff failed: {e}")
             logger.info("Emergency shutdown completed")
         except Exception as e:
             logger.error(f"Error during emergency shutdown: {e}")
