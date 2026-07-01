@@ -85,8 +85,9 @@ def build_payload(csv_path, max_points, cached_analysis=None):
 
     bat = config_manager.battery
     prod = getattr(bat, "product_name", "") or ""
-    battery_desc = (f"{bat.cells_series}S{bat.cells_parallel}P {bat.battery_type} "
-                    f"{bat.rated_capacity}Ah" + (f" ({prod})" if prod else ""))
+    battery_desc = prod if prod else (
+        f"{bat.cells_series}S{bat.cells_parallel}P {bat.battery_type} {bat.rated_capacity}Ah"
+    )
     return {
         "meta": {
             "battery": battery_desc,
