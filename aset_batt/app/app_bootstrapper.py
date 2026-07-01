@@ -135,21 +135,14 @@ class ApplicationBootstrapper:
         # Local web server removed — cloud dashboard is the primary interface
         self._web_server = None
 
-        # Auto-push ขึ้น cloud dashboard (ถ้าเปิดใน config + มี token)
-        self._cloud_pusher = None
-        if getattr(config.system, "cloud_push_enabled", False):
-            try:
-                from aset_batt.storage.cloud_push import CloudPusher
-                self._cloud_pusher = CloudPusher(
-                    url=config.system.cloud_dashboard_url,
-                    csv_path=config.system.csv_filepath,
-                    interval=getattr(config.system, "cloud_push_interval", 5.0),
-                    analysis_interval=getattr(config.system, "cloud_analysis_interval", 60.0),
-                    data_handler=controller.data,
-                )
-                self._cloud_pusher.start()  # log เองถ้าไม่มี token
-            except Exception as e:
-                logger.warning(f"Cloud auto-push init failed: {e}")
+        # Auto-push ขึ้น cloud dashboard (ถ้าเปิดใน config + มี token) — delegate ไปที่
+        # window._cloud_push_start() (single source of truth) กัน double-push/duplicate
+        # sessions ที่จะเกิดถ้ามีทั้ง bootstrapper และ GUI สร้าง CloudPusher คนละตัว
+        self._window = app_ui
+        try:
+            app_ui._cloud_push_start()
+        except Exception as e:
+            logger.warning(f"Cloud auto-push init failed: {e}")
 
     def create_ui(self, root, window):
         """สร้าง event handler + core components + wire Qt window เข้ากับ controller
@@ -213,9 +206,9 @@ class ApplicationBootstrapper:
         logger.info("Starting application cleanup")
 
         try:
-            if getattr(self, "_cloud_pusher", None):
-                self._cloud_pusher.stop()
-
+            window = getattr(self, "_window", None)
+            if window is not None:
+                window._cloud_push_stop()
 
             # Stop event handler
             if self.event_handler:

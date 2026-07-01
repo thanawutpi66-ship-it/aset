@@ -18,6 +18,7 @@ class BatteryConfig:
     rated_capacity เป็นความจุ "ทั้งแพ็ค" (Ah)
     """
     battery_type: str = "LiPO"  # Changed default to LiPO
+    product_name: str = ""       # ชื่อรุ่น/product (เช่น "YTZ7V") — set เมื่อ user เลือก product
     nominal_voltage: float = 3.7  # per-cell nominal voltage
     rated_capacity: float = 2.0  # pack total capacity (Ah)
     max_voltage: float = 4.2     # per-cell max voltage

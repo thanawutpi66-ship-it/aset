@@ -34,7 +34,11 @@ logger = logging.getLogger(__name__)
 
 
 def _read_labels(labels_path: str) -> List[Tuple[str, str]]:
-    """อ่าน labels file -> list ของ (csv_path_absolute, grade)"""
+    """อ่าน labels file -> list ของ (csv_path_absolute, grade)
+
+    ถ้ามีคอลัมน์ 'test_status' จะข้ามแถวที่ไม่ใช่ 'complete' (เช่น test ที่ถูก
+    หยุดกลางคัน/ตัดไฟฉุกเฉิน) เพื่อกันไม่ให้ label ที่ไม่น่าเชื่อถือหลุดเข้า training set
+    """
     base_dir = os.path.dirname(os.path.abspath(labels_path))
     rows: List[Tuple[str, str]] = []
     with open(labels_path, "r", encoding="utf-8-sig", newline="") as f:
@@ -42,11 +46,17 @@ def _read_labels(labels_path: str) -> List[Tuple[str, str]]:
         if not reader.fieldnames or "csv_path" not in reader.fieldnames \
                 or "grade" not in reader.fieldnames:
             raise ValueError("labels file ต้องมีคอลัมน์ 'csv_path' และ 'grade'")
+        has_status = "test_status" in reader.fieldnames
         for row in reader:
             path = row["csv_path"].strip()
             grade = row["grade"].strip()
             if not path or not grade:
                 continue
+            if has_status:
+                status = (row.get("test_status") or "").strip().lower()
+                if status and status != "complete":
+                    logger.warning("ข้าม %s: test_status=%s (ไม่ใช่ complete)", path, status)
+                    continue
             if not os.path.isabs(path):
                 path = os.path.join(base_dir, path)
             rows.append((path, grade))

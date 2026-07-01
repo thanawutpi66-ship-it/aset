@@ -15,7 +15,7 @@
   },
   "system": {
     "max_points": 100,
-    "simulation_mode": false,
+    "simulation_mode": true,
     "enable_web_server": false,
     "csv_filepath": "battery_data.csv",
     "log_level": "INFO",
