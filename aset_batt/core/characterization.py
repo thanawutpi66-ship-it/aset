@@ -75,6 +75,50 @@ def compute_coulomb_eta(ah_in_by_band, ah_out_by_band):
     return result
 
 
+def build_ecm_table(soc_pct_list, r0_list, r1_list, c1_list):
+    """Build {soc_int: {'r0','r1','c1'}} at 5% SoC steps from HPPC fits at several SoC.
+
+    R0/R1/C1 vary strongly with SoC (they rise sharply toward empty), so feeding the
+    EKF a single fixed fit makes its terminal-voltage prediction drift at the SoC
+    extremes. Run an HPPC pulse at a few SoC points (e.g. 90/70/50/30/10 %), fit each,
+    and pass the parallel lists here; hand the result to StateEstimator.set_ecm_table()
+    so the filter uses SoC-appropriate RC dynamics.
+
+    Args:
+        soc_pct_list: SoC [%] at each HPPC fit (need not be a regular grid)
+        r0_list, r1_list, c1_list: fitted R0 [Ohm], R1 [Ohm], C1 [F] at each SoC
+
+    Returns:
+        dict {soc_int: {'r0': Ohm, 'r1': Ohm, 'c1': F}} at 0, 5, …, 100 %
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        raise RuntimeError("numpy is required for ECM table building")
+
+    n = len(soc_pct_list)
+    if n < 2 or not (len(r0_list) == len(r1_list) == len(c1_list) == n):
+        raise ValueError("build_ecm_table needs >=2 points and equal-length lists")
+
+    soc = np.array(soc_pct_list, dtype=float)
+    order = np.argsort(soc)
+    soc = soc[order]
+    r0 = np.array(r0_list, dtype=float)[order]
+    r1 = np.array(r1_list, dtype=float)[order]
+    c1 = np.array(c1_list, dtype=float)[order]
+
+    target = np.arange(0, 101, 5, dtype=float)
+    r0i = np.interp(target, soc, r0)
+    r1i = np.interp(target, soc, r1)
+    c1i = np.interp(target, soc, c1)
+
+    table = {int(s): {"r0": round(float(a), 6), "r1": round(float(b), 6),
+                      "c1": round(float(c), 2)}
+             for s, a, b, c in zip(target, r0i, r1i, c1i)}
+    logger.info("Built ECM table: %d SoC points from %d HPPC fits", len(table), n)
+    return table
+
+
 def build_ocv_table(soc_pct_list, ocv_per_cell_list):
     """Build a {soc_int: ocv_per_cell} table from GITT rest measurements.
 
