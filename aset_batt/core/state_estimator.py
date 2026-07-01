@@ -46,6 +46,14 @@ class StateEstimator:
         self.use_ekf = True
         self._ekf = None                # lazily created on first update()
 
+        # --- SoC-dependent ECM (R0/R1/C1 vs SoC) ---
+        # R0/R1/C1 change strongly with SoC; a single fixed fit degrades the EKF's
+        # voltage prediction at the extremes. When a table is provided (from an HPPC
+        # sweep via characterization.build_ecm_table) the RC dynamics + R0 used by the
+        # EKF are interpolated at the current SoC each step. None → single fixed fit.
+        self.ecm_table = None
+        self._ecm_grid = None           # cached (soc, r0, r1, c1) numpy arrays
+
         # --- Ablation flags (for replay.py study; all ON = full model) ---
         self.use_ocv = True             # OCV-based correction / EKF measurement update
         self.use_peukert = True         # Peukert discharge correction
@@ -182,9 +190,37 @@ class StateEstimator:
         return self._ekf
 
     def update_ecm(self, r0: float, r1: float, c1: float) -> None:
-        """Feed a fresh HPPC ECM fit into the EKF (R0/R1/C1 in Ohm/Ohm/Farad)."""
-        if self._ekf is not None and r0 > 0 and r1 > 0 and c1 > 0:
+        """Feed a fresh single HPPC ECM fit into the EKF (R0/R1/C1 in Ohm/Ohm/Farad).
+        Ignored while a SoC-dependent ECM table is active (the table takes precedence)."""
+        if self.ecm_table is None and self._ekf is not None and r0 > 0 and r1 > 0 and c1 > 0:
             self._ekf.set_rc(r0, r1, c1)
+
+    def set_ecm_table(self, table) -> None:
+        """Provide R0/R1/C1 vs SoC (from characterization.build_ecm_table) so the EKF
+        uses SoC-appropriate RC dynamics instead of one fixed fit. Pass None/empty to
+        revert to the single-fit behaviour."""
+        if not table:
+            self.ecm_table = None
+            self._ecm_grid = None
+            return
+        import numpy as np
+        socs = sorted(table.keys())
+        self.ecm_table = table
+        self._ecm_grid = (
+            np.asarray(socs, float),
+            np.asarray([table[s]["r0"] for s in socs], float),
+            np.asarray([table[s]["r1"] for s in socs], float),
+            np.asarray([table[s]["c1"] for s in socs], float),
+        )
+        logger.info("ECM table active: %d SoC points (R0/R1/C1 now SoC-dependent)", len(socs))
+
+    def _ecm_at_soc(self, soc: float):
+        """Interpolate (R0, R1, C1) at the given SoC from the active table."""
+        import numpy as np
+        g = self._ecm_grid
+        return (float(np.interp(soc, g[0], g[1])),
+                float(np.interp(soc, g[0], g[2])),
+                float(np.interp(soc, g[0], g[3])))
 
     def set_standby_current(self, bleed_a: float) -> None:
         """Sync PSU bleed current from hardware config.
@@ -334,6 +370,13 @@ class StateEstimator:
         if self.use_ekf:
             ekf = self._ensure_ekf()
             s = self.battery_model.series_cells
+            # SoC-dependent ECM: feed the RC dynamics (and R0 for the update) that match
+            # the current SoC, so voltage prediction stays accurate toward empty.
+            r0_use = self.rin
+            if self.ecm_table is not None:
+                r0s, r1s, c1s = self._ecm_at_soc(ekf.soc)
+                ekf.set_rc(r0s, r1s, c1s)
+                r0_use = r0s
             # ΔSoC from the SAME coulomb increment (η + Peukert + trapezoid + SoH-cap)
             # so Peukert/η actually affect the EKF output, not just the unused soc_cc.
             soc_delta = dah / cap * 100.0 if cap > 0 else 0.0
@@ -344,7 +387,7 @@ class StateEstimator:
                 direction = 0 if abs(cur) < 0.05 else (-1 if cur > 0 else 1)
                 ocv_pack = self.battery_model.get_ocv_from_soc(ekf.soc, t_use, direction)
                 docv = self.battery_model.ocv_slope(ekf.soc, t_use) * s   # V/%SoC pack
-                ekf.update(voltage, cur, ocv_pack, docv, self.rin)
+                ekf.update(voltage, cur, ocv_pack, docv, r0_use)
                 self.soc = max(0.0, min(100.0, ekf.soc))
             self.soc_filtered = self.soc
             return {
