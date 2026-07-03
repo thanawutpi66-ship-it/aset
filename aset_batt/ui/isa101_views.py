@@ -882,8 +882,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         # Mirror workflow phase changes to cloud dashboard
         _IEC   = (["prepare","charge","rest","discharge","analyze"], "IEC 61960", "IEC 61960 Standard")
         _QS    = (["ocv","rest","discharge","analyze"],              "Quick Scan", "Quick Scan")
-        _HPPC  = (["charge","rest","test","analyze"],                "HPPC Sequence", "HPPC Full Sequence")
-        _CYCLE = (["charge","discharge","test","analyze"],           "Cycle Life", "Cycle Life")
+        _HPPC  = (["prepare","charge","rest","test","analyze"],     "HPPC Sequence", "HPPC Full Sequence")
+        _CYCLE = (["prepare","charge","discharge","test","analyze"], "Cycle Life", "Cycle Life")
         self.sig_workflow.connect(
             lambda s, st, _p=_IEC: self._slot_cloud_phase(s, st, *_p))
         self.sig_qs_workflow.connect(
