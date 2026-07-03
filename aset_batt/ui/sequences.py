@@ -599,6 +599,23 @@ class SequencesMixin:
             self.sig_loading.emit(btn, False, "")
         self.sig_alarm.emit("[AUTO] Sequence cancelled — hardware stopped.")
 
+    def _charge_status_text(self, v: float, i: float, elapsed_ch: int, prefix: str = "CHARGE") -> str:
+        """CHARGE-phase status line, e.g. "CHARGE: 13.85V 0.34A (elapsed 12m03s)" — and,
+        once the charger is in its tail-current stage (absorption/CV), append the tail
+        target so the operator can see real progress instead of a screen that looks
+        "stuck": SoC is intentionally capped at 100% the moment the pack is functionally
+        full (see the 100% anchor in state_estimator.py), but the charger keeps running
+        for a while after that to actually finish tapering off — showing "97% ... 99% ...
+        100%" during that tail would mean the number no longer reflects real coulomb
+        counting, so instead the current-vs-target progress goes in the status text."""
+        base = f"{prefix}: {v:.2f}V {i:.3f}A  (elapsed {elapsed_ch//60}m {elapsed_ch%60:02d}s)"
+        ctrl = getattr(self.controller, "_charge_ctrl", None)
+        stage = getattr(ctrl, "stage", None)
+        if stage in ("absorption", "cv"):
+            tail_a = getattr(ctrl.params, "tail_current_a", 0.0)
+            return base + f"  ·  Topping off, waiting for tail ≤{tail_a:.3f}A"
+        return base
+
     def _estimate_charge_s(self, soc_now: float, c_rate: float) -> int:
         """Rough charge-time estimate (s) so the progress bar/ETA can show during CHARGE.
         Ah needed to reach full ÷ bulk current, +50% headroom for the CV/absorption taper."""
@@ -757,9 +774,9 @@ class SequencesMixin:
                     if not getattr(self.controller, "is_charging", False):
                         break
                     try:
-                        v2, _, _ = self.hw.read_vi()
+                        v2, i2, _ = self.hw.read_vi()
                         elapsed_ch = int(time.time() - _ch_t0)
-                        status(f"CHARGE: {v2:.3f} V  (elapsed {elapsed_ch//60}m {elapsed_ch%60:02d}s)")
+                        status(self._charge_status_text(v2, max(0.0, i2), elapsed_ch))
                         # estimated total so the bar/ETA show; clamp so it never reverses past 99%
                         self.sig_phase_progress.emit(elapsed_ch, max(_ch_est, elapsed_ch + 30))
                     except Exception:
@@ -1049,9 +1066,9 @@ class SequencesMixin:
                 if not getattr(self.controller, "is_charging", False):
                     break
                 try:
-                    v_c, _, _ = self.hw.read_vi()
+                    v_c, i_c, _ = self.hw.read_vi()
                     elapsed_ch = int(_t.time() - _ch_t0)
-                    status(f"HPPC CHARGE: {v_c:.3f} V  ({elapsed_ch//60}m {elapsed_ch%60:02d}s)")
+                    status(self._charge_status_text(v_c, max(0.0, i_c), elapsed_ch, prefix="HPPC CHARGE"))
                     self.sig_phase_progress.emit(elapsed_ch, max(_ch_est, elapsed_ch + 30))
                 except Exception:
                     pass
@@ -1272,10 +1289,10 @@ class SequencesMixin:
                     if not getattr(self.controller, "is_charging", False):
                         break
                     try:
-                        v_c, _, _ = self.hw.read_vi()
+                        v_c, i_c, _ = self.hw.read_vi()
                         elapsed_c = int(_t.time() - _ch_t0)
-                        status(f"CYCLE {cyc}/{n_cyc} CHARGE: {v_c:.3f} V  "
-                               f"({elapsed_c//60}m {elapsed_c%60:02d}s)")
+                        status(self._charge_status_text(v_c, max(0.0, i_c), elapsed_c,
+                                                        prefix=f"CYCLE {cyc}/{n_cyc} CHARGE"))
                         self.sig_phase_progress.emit(elapsed_c, max(_ch_est, elapsed_c + 30))
                     except Exception:
                         pass
