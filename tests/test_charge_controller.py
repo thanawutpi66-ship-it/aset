@@ -26,7 +26,7 @@ class TestChargeParams(unittest.TestCase):
         self.assertAlmostEqual(p.bulk_current_a, 0.7, places=3)    # 0.10C × 7Ah
         self.assertAlmostEqual(p.absorption_v, 14.4, places=2)     # 2.40 × 6S
         self.assertAlmostEqual(p.float_v, 13.65, places=2)         # 2.275 × 6S
-        self.assertAlmostEqual(p.tail_current_a, 0.14, places=3)   # 0.02C × 7Ah
+        self.assertAlmostEqual(p.tail_current_a, 0.21, places=3)   # 0.03C × 7Ah
 
     def test_lithium_4s_setpoints(self):
         m = BatteryModel("LiFePO4", 3.2, series_cells=4)
