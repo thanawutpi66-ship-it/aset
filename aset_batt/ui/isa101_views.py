@@ -69,18 +69,9 @@ logger = logging.getLogger(__name__)
 
 
 # ISA-101 palette: neutral gray shell with color reserved for state/alarm only.
-BG = "#b9bdc1"
-PANEL = "#c9cdd1"
-PANEL2 = "#d7dadd"
-FIELD = "#eceef0"
-BORDER = "#8c9296"
-TEXT = "#1d2123"
-MUTED = "#54595d"
-OK = "#2e7d32"
-WARN = "#c98a00"
-CRIT = "#c62828"
-INFO = "#1565c0"
-NEUTRAL = "#6b7075"
+from aset_batt.ui.theme import (
+    BG, PANEL, PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
+)
 
 
 class _FalseEvent:
