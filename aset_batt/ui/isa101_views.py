@@ -3328,7 +3328,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             import matplotlib
             matplotlib.use("Qt5Agg")
             import matplotlib.pyplot as plt
-            from aset_batt.acquisition.analysis import analyze_csv, profile_from_config
+            from aset_batt.acquisition.analysis import analyze_csv_mp, profile_from_config
 
             logs_dir = "sessions"
             if not os.path.isdir(logs_dir):
@@ -3341,7 +3341,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             for fname in files:
                 fpath = os.path.join(logs_dir, fname)
                 try:
-                    res = analyze_csv(fpath, profile)
+                    res = analyze_csv_mp(fpath, profile)
                     import math
                     if not math.isnan(res.get("soh", float("nan"))):
                         from datetime import datetime as _dt
@@ -3492,9 +3492,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         prof = self._acq_profile()
 
         def work():
-            from aset_batt.acquisition.analysis import analyze_csv
+            from aset_batt.acquisition.analysis import analyze_csv_mp
             try:
-                res = analyze_csv(csv_path, prof)
+                res = analyze_csv_mp(csv_path, prof)
             except Exception as e:
                 res = {"error": str(e)}
             self.sig_analysis_done.emit(res)   # → _slot_analysis_done → _on_test_finished

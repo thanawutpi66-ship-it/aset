@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import csv
 import logging
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 
@@ -421,3 +422,29 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
         dt = np.diff(t, prepend=t[0])
         cap = np.cumsum(np.clip(i, 0, None) * dt) / 3600.0
     return analyze_series(t, i, v, temp, cap, profile, is_hppc)
+
+
+_analysis_pool: ProcessPoolExecutor | None = None
+
+
+def _get_analysis_pool() -> ProcessPoolExecutor:
+    """Lazily-started, process-wide worker pool for analyze_csv_mp()."""
+    global _analysis_pool
+    if _analysis_pool is None:
+        _analysis_pool = ProcessPoolExecutor(max_workers=1)
+    return _analysis_pool
+
+
+def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = False) -> dict:
+    """Same result as analyze_csv(), but the ECM curve-fit (scipy.optimize.curve_fit,
+    up to ~10k iterations, run from a background thread after every auto sequence)
+    executes in a separate worker process instead of a thread.
+
+    curve_fit's Python-level callback holds the GIL for the whole fit, so even
+    though the caller is already off the Qt main thread, a plain threading.Thread
+    still starves the UI event loop of the GIL and Windows reports "Not Responding"
+    for the ~5-15s the fit takes. A separate process has its own GIL, so the UI
+    thread keeps pumping events while this call blocks on the subprocess result.
+    """
+    future = _get_analysis_pool().submit(analyze_csv, csv_path, profile, force_hppc)
+    return future.result()
