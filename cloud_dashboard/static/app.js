@@ -441,6 +441,23 @@ function updateTestPanel(meta, summary) {
   if ($('tpChargeDesc') && cc != null)
     $('tpChargeDesc').textContent = cc <= 0.15 ? 'Full 3-stage (Bulk→Absorption→Float)' : 'CC-CV Charge';
 
+  // "What's happening right now" banner — was static placeholder markup
+  // ("Idle" / "Waiting for test start") that nothing ever updated.
+  const actPhaseEl = $('tpActPhase'), actDetailEl = $('tpActDetail');
+  if (actPhaseEl && actDetailEl) {
+    const PHASE_LABELS = ['Prepare', 'Charge', 'Rest', 'Test', 'Analyze'];
+    const DEFAULT_DETAILS = ['OCV calibrate', 'Bulk→Absorption→Float', 'OCV settle', 'Discharge', 'SoH + Grade'];
+    const descEls = [null, $('tpChargeDesc'), $('tpRestDesc'), $('tpTestDesc'), null];
+    if (activeIdx < 0) {
+      actPhaseEl.textContent = 'Idle';
+      actDetailEl.textContent = 'Waiting for test start';
+    } else {
+      actPhaseEl.textContent = PHASE_LABELS[activeIdx];
+      const descEl = descEls[activeIdx];
+      actDetailEl.textContent = (descEl && descEl.textContent) || DEFAULT_DETAILS[activeIdx];
+    }
+  }
+
   const dot = $('tpStatusDot'), txt = $('tpStatusTxt');
   if (dot && txt) {
     const running = activeIdx >= 0 && activeIdx < 4;
