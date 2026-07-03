@@ -169,6 +169,20 @@ b{font-weight:700}
   border-bottom:1px solid var(--border);flex-shrink:0;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
+.tp-eta-row{
+  padding:2px 12px 8px;flex-shrink:0;
+}
+.tp-eta-bar{
+  height:5px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;
+}
+.tp-eta-fill{
+  height:100%;width:0%;background:var(--soc);border-radius:3px;
+  transition:width .4s ease;
+}
+.tp-eta-txt{
+  margin-top:4px;font-size:10px;color:var(--muted);
+  display:flex;justify-content:space-between;
+}
 .tp-steps{
   flex-shrink:0;padding:4px 0;
   border-bottom:1px solid var(--border);

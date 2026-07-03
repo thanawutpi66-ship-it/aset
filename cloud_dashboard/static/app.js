@@ -392,6 +392,24 @@ function updateTestPanel(meta, summary) {
 
   if ($('tpWorkflow')) $('tpWorkflow').textContent = meta.workflow || 'IEC 61960 Standard';
 
+  // ETA / elapsed progress — mirrors the GUI's workflow progress bar
+  const etaRow = $('tpEtaRow');
+  const totalS = num(meta, 'total_s');
+  if (etaRow) {
+    if (totalS == null || totalS <= 0) {
+      etaRow.hidden = true;
+    } else {
+      const elapsedS = clamp(num(meta, 'elapsed_s') ?? 0, 0, totalS);
+      const remS = Math.max(0, totalS - elapsedS);
+      const mmss = (s) => Math.floor(s / 60) + 'm ' + String(Math.floor(s % 60)).padStart(2, '0') + 's';
+      $('tpEtaFill').style.width = Math.round((elapsedS / totalS) * 100) + '%';
+      $('tpEtaTxt').innerHTML =
+        '<span>' + mmss(elapsedS) + ' / ' + mmss(totalS) + '</span>' +
+        '<span>ETA: ' + mmss(remS) + ' remaining</span>';
+      etaRow.hidden = false;
+    }
+  }
+
   const phase = (meta.phase || summary.phase || '').toLowerCase();
   const activeIdx = PHASE_MAP[phase] ?? -1;
 

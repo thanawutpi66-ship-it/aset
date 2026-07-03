@@ -32,14 +32,20 @@ _meta_override: dict = {}
 
 def set_cloud_meta(phase: str | None = None,
                    test_mode: str | None = None,
-                   workflow: str | None = None) -> None:
-    """อัปเดต phase/test_mode ปัจจุบัน — ถูก merge เข้า meta ใน push ถัดไป."""
+                   workflow: str | None = None,
+                   elapsed_s: int | None = None,
+                   total_s: int | None = None) -> None:
+    """อัปเดต phase/test_mode/ETA ปัจจุบัน — ถูก merge เข้า meta ใน push ถัดไป."""
     if phase is not None:
         _meta_override["phase"] = phase
     if test_mode is not None:
         _meta_override["test_mode"] = test_mode
     if workflow is not None:
         _meta_override["workflow"] = workflow
+    if elapsed_s is not None:
+        _meta_override["elapsed_s"] = elapsed_s
+    if total_s is not None:
+        _meta_override["total_s"] = total_s
 
 
 def resolve_token(explicit: str = "") -> str:

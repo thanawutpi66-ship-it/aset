@@ -3096,7 +3096,7 @@ class BatteryQtWindow(QMainWindow):
             if state == "active" and step < len(phases):
                 set_cloud_meta(phase=phases[step], test_mode=test_mode, workflow=workflow)
             elif state in ("done", "skip") and step == len(phases) - 1:
-                set_cloud_meta(phase="complete")
+                set_cloud_meta(phase="complete", total_s=0)
         except Exception:
             pass
 
@@ -3206,6 +3206,11 @@ class BatteryQtWindow(QMainWindow):
 
     @Slot(int, int)
     def _slot_phase_progress(self, elapsed_s: int, total_s: int):
+        try:
+            from aset_batt.storage.cloud_push import set_cloud_meta
+            set_cloud_meta(elapsed_s=elapsed_s, total_s=total_s)
+        except Exception:
+            pass
         if total_s <= 0:
             self.wf_progress.hide(); self.lbl_eta.hide(); return
         self.wf_progress.setRange(0, total_s)
