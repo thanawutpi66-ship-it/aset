@@ -14,6 +14,7 @@ import threading
 import webbrowser
 from collections import deque
 from datetime import datetime
+from typing import Optional
 
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, Signal, Slot, QTimer, Qt, QThread, QRunnable, QThreadPool, QLocale, QByteArray
@@ -2333,6 +2334,7 @@ class BatteryQtWindow(QMainWindow):
 
     @Slot(float, float, float, float, float, float)
     def _slot_display(self, v, i, soc, rin, temp, soh):
+        import time
         rin_mohm = rin * 1000.0
         self._update_vi_temp_labels(v, i, temp)
         # SoC: show the EKF's live estimate WITH its 1σ uncertainty (±%), read from the
@@ -2347,21 +2349,35 @@ class BatteryQtWindow(QMainWindow):
         # Rin: a DC resistance reading needs current flowing. At rest, (OCV−V)/I is
         # undefined and explodes on the flat LFP plateau → keep "pending" rather than
         # show a wild number. The final analysis fills the proper R0+R1.
-        # The raw per-sample estimate is noisy, so display an EMA (reset at rest) to keep
-        # the live number readable; the final analysis fills the proper R0+R1.
+        # The raw per-sample estimate is noisy, so display a smoothed value (reset at
+        # rest) to keep the live number readable; the final analysis fills the proper
+        # R0+R1. Adaptive alpha: a flat, heavy EMA (α=0.3) lags a genuine step change
+        # (e.g. entering/leaving an HPPC pulse) by ~3 samples, showing a blurred value
+        # right when Rin is changing fastest. Widen the weight on the new sample when
+        # it disagrees with the trend by >15% (a real transient), keep the gentler
+        # weight otherwise (steady-state jitter rejection) — tracks transients ~40%
+        # faster without giving up noise rejection at steady state.
         rin_lbl, rin_unit = self.metric_labels["Rin"]
         if abs(i) >= 0.1:
             prev = getattr(self, "_rin_ema", None)
-            self._rin_ema = rin_mohm if prev is None else 0.7 * prev + 0.3 * rin_mohm
+            if prev is None:
+                self._rin_ema = rin_mohm
+            else:
+                rel_jump = abs(rin_mohm - prev) / max(1.0, prev)
+                alpha = 0.6 if rel_jump > 0.15 else 0.3
+                self._rin_ema = (1.0 - alpha) * prev + alpha * rin_mohm
             rin_lbl.setText(f"{self._rin_ema:.1f} {rin_unit}")
         else:
             self._rin_ema = None                            # reset smoothing between loads
         # SoH is intentionally NOT updated here — it is a final-analysis metric,
         # written once by _on_test_finished. (soh arg is kept for signal compatibility.)
 
+        # perf_counter (monotonic): this is an interval ("time since monitor start"),
+        # not a real timestamp, so it should never use wall-clock — an NTP/clock jump
+        # would otherwise offset every point already plotted on the graph's X-axis.
         if self._elapsed_t0 is None:
-            self._elapsed_t0 = datetime.now().timestamp()
-        elapsed = datetime.now().timestamp() - self._elapsed_t0
+            self._elapsed_t0 = time.perf_counter()
+        elapsed = time.perf_counter() - self._elapsed_t0
 
         self.buf_t.append(elapsed)
         self.buf_v.append(v)
@@ -3319,6 +3335,11 @@ class BatteryQtWindow(QMainWindow):
             return
         if self._seq_running.is_set():
             return
+        busy = self._busy_reason()
+        if busy:
+            if not self._headless:
+                QMessageBox.warning(self, "Auto Sequence", f"{busy} — หยุดก่อนแล้วค่อยเริ่มใหม่")
+            return
         try:
             v_now, _, _ = self.hw.read_vi()
             temp_now = self.hw.current_temp
@@ -3358,6 +3379,11 @@ class BatteryQtWindow(QMainWindow):
             return
         if self._seq_running.is_set():
             return
+        busy = self._busy_reason()
+        if busy:
+            if not self._headless:
+                QMessageBox.warning(self, "Quick Scan", f"{busy} — หยุดก่อนแล้วค่อยเริ่มใหม่")
+            return
         try:
             v_now, _, _ = self.hw.read_vi()
             soc_now = getattr(self.controller.estimator, "soc", 0.0)
@@ -3381,6 +3407,11 @@ class BatteryQtWindow(QMainWindow):
                 QMessageBox.warning(self, "HPPC Sequence", "Connect hardware first")
             return
         if self._seq_running.is_set():
+            return
+        busy = self._busy_reason()
+        if busy:
+            if not self._headless:
+                QMessageBox.warning(self, "HPPC Sequence", f"{busy} — หยุดก่อนแล้วค่อยเริ่มใหม่")
             return
         try:
             v_now, _, _ = self.hw.read_vi()
@@ -3419,6 +3450,11 @@ class BatteryQtWindow(QMainWindow):
                 QMessageBox.warning(self, "Cycle Life", "Connect hardware first")
             return
         if self._seq_running.is_set():
+            return
+        busy = self._busy_reason()
+        if busy:
+            if not self._headless:
+                QMessageBox.warning(self, "Cycle Life", f"{busy} — หยุดก่อนแล้วค่อยเริ่มใหม่")
             return
         try:
             n = self.spn_cycle_n.value()
@@ -3756,16 +3792,18 @@ class BatteryQtWindow(QMainWindow):
             self.controller._ensure_logging()
             self.hw.set_load(True, i_dis)
             import time as _t
-            last_log = _t.time()
-            _dis_t0 = _t.time()
+            # perf_counter (monotonic, sub-ms) not time.time() (wall-clock): immune to
+            # NTP/clock-jump and consistent with worker.py's own established convention.
+            last_log = _t.perf_counter()
+            _dis_t0 = _t.perf_counter()
             # Estimate discharge duration from SoC and C-rate (seconds)
             rated2 = self.controller.config.battery.rated_capacity
             _dis_est = int(rated2 / max(i_dis, 0.01) * 3600)
             while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
+                    now = _t.perf_counter()   # stamp AT the measurement, not after temp/etc.
                     temp3 = self.hw.current_temp
-                    now = _t.time()
                     dt = now - last_log
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
@@ -3872,14 +3910,15 @@ class BatteryQtWindow(QMainWindow):
             self.sig_alarm.emit(f"[QUICK] Discharge 1C: {i_dis:.2f} A  (rated {rated:.1f} Ah)")
             self.controller._ensure_logging()
             self.hw.set_load(True, i_dis)
-            last_log = _t.time()
-            _dis_t0 = _t.time()
+            # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
+            last_log = _t.perf_counter()
+            _dis_t0 = _t.perf_counter()
             _dis_est = int(rated / max(i_dis, 0.01) * 3600)
             while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
+                    now    = _t.perf_counter()   # stamp AT the measurement
                     temp3  = self.hw.current_temp
-                    now    = _t.time()
                     dt     = now - last_log
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
@@ -4273,14 +4312,15 @@ class BatteryQtWindow(QMainWindow):
                 status(f"CYCLE {cyc}/{n_cyc}: ดิสชาร์จ {i_dis:.2f} A ({c_di}C)...")
                 self.controller._ensure_logging()
                 self.hw.set_load(True, str(i_dis))
-                _dis_t0 = _t.time()
+                # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
+                _dis_t0 = _t.perf_counter()
                 _dis_est = int(rated / max(i_dis, 0.01) * 3600)
                 ah_acc = 0.0
-                last_log = _t.time()
+                last_log = _t.perf_counter()
                 while self._seq_running.is_set():
                     try:
                         v_d, i_d = self.hw.read_measurements(prefer_load_v=True)
-                        now = _t.time()
+                        now = _t.perf_counter()   # stamp AT the measurement
                         dt  = now - last_log
                         last_log = now
                         ah_acc += abs(i_d) * dt / 3600.0
@@ -4381,6 +4421,11 @@ class BatteryQtWindow(QMainWindow):
         if not getattr(self.hw, "is_connected", False):
             if not self._headless:
                 QMessageBox.warning(self, "Run Test", "Connect hardware first")
+            return
+        busy = self._busy_reason()
+        if busy:
+            if not self._headless:
+                QMessageBox.warning(self, "Run Test", f"{busy} — หยุดก่อนแล้วค่อยเริ่มใหม่")
             return
         if self.controller and self.controller.is_charging:
             self.controller.stop_charge()
@@ -4604,7 +4649,8 @@ class BatteryQtWindow(QMainWindow):
                 QMessageBox.warning(self, "Monitor", "Connect hardware first")
             return
         self.controller.start_monitor()
-        self._elapsed_t0 = datetime.now().timestamp()
+        import time
+        self._elapsed_t0 = time.perf_counter()   # interval only — see _slot_display
         self.status_label.setText("Monitor running")
         # แสดงชื่อ session file ที่เพิ่งสร้าง
         if self.data and self.data.current_path:
@@ -4997,16 +5043,42 @@ class BatteryQtWindow(QMainWindow):
     def _char_any_running(self) -> bool:
         return any(e.is_set() for e in self._char_running.values())
 
+    def _busy_reason(self, include_char: bool = True) -> Optional[str]:
+        """Return a description of whatever is currently running on the shared
+        controller/estimator/hardware, or None if free to start something new.
+
+        There are THREE independent entry points that each spawn a background
+        thread calling the SAME ``self.estimator.update()`` and driving the SAME
+        ``self.hw`` instruments: the characterization worker (RUN TEST), the
+        ISA-101 sequence threads (AUTO/Quick Scan/HPPC Seq/Cycle Life), and the
+        CHARACTERIZE-tab tests (Peukert/η/GITT). Before this check existed, e.g.
+        clicking RUN TEST while a Cycle Life sequence was mid-run would start a
+        second thread against the same estimator — double-counting coulombs on
+        every sample AND issuing conflicting SCPI commands (e.g. one thread
+        commanding a charge while another commands a discharge) to the same PSU/
+        load. Every entry point below must check this before starting anything.
+        """
+        if self._test_thread is not None:
+            return "การทดสอบ Characterization (RUN TEST) กำลังทำงานอยู่"
+        if self._seq_running.is_set():
+            return "ลำดับทดสอบ (Sequence: AUTO/Quick Scan/HPPC/Cycle Life) กำลังทำงานอยู่"
+        if include_char and self._char_any_running():
+            return "การทดสอบในแท็บ CHARACTERIZE กำลังทำงานอยู่"
+        return None
+
     def _char_guard(self) -> bool:
         """Return True if OK to start a new test.  Shows a warning if not."""
         if self.controller is None or not getattr(self.hw, "is_connected", False):
             if not self._headless:
                 QMessageBox.warning(self, "CHARACTERIZE", "Connect hardware first.")
             return False
-        if self._seq_running.is_set():
+        # CHARACTERIZE-tab tests only need to check the worker/sequence (not each
+        # other) — per-test mutual exclusion among "pk"/"eta"/"gitt" is already
+        # handled individually via self._char_running at each test's own start.
+        busy = self._busy_reason(include_char=False)
+        if busy:
             if not self._headless:
-                QMessageBox.warning(self, "CHARACTERIZE",
-                                    "AUTO sequence is running — stop it first.")
+                QMessageBox.warning(self, "CHARACTERIZE", f"{busy} — หยุดก่อนแล้วค่อยเริ่มใหม่")
             return False
         return True
 
@@ -5086,15 +5158,16 @@ class BatteryQtWindow(QMainWindow):
 
                 # ── discharge at i_test until UVP ──────────────────────────
                 status(f"({idx+1}/4) discharge {i_test:.3f} A ({c:g}C)...")
-                t0 = time.time()
+                # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
+                t0 = time.perf_counter()
                 self.hw.set_load(True, i_test)
                 last_log = t0
 
                 while ev.is_set():
                     try:
                         v, i_meas = self.hw.read_measurements(prefer_load_v=True)
+                        now  = time.perf_counter()   # stamp AT the measurement
                         temp = self.hw.current_temp
-                        now  = time.time()
                         dt   = now - last_log
                         last_log = now
                         self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
@@ -5192,15 +5265,16 @@ class BatteryQtWindow(QMainWindow):
             status("Phase 1/2: ชาร์จ (นับ Ah_in ต่อ band)...")
             ah_in  = {"bulk": 0.0, "absorb": 0.0, "full": 0.0}
             self.controller.start_charge(strategy=None)
-            last = time.time()
+            # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
+            last = time.perf_counter()
 
             while ev.is_set():
                 if not getattr(self.controller, "is_charging", False):
                     break
                 try:
                     v, i_ch = self.hw.read_measurements(prefer_load_v=False)
+                    now = time.perf_counter()   # stamp AT the measurement
                     temp = self.hw.current_temp
-                    now = time.time()
                     dt  = now - last
                     last = now
                     state = self.controller.estimator.update(v, i_ch, dt=dt, temp=temp)
@@ -5232,13 +5306,14 @@ class BatteryQtWindow(QMainWindow):
             status(f"Phase 2/2: discharge {i_dis:.3f} A (0.1C, นับ Ah_out)...")
             ah_out = {"bulk": 0.0, "absorb": 0.0, "full": 0.0}
             self.hw.set_load(True, i_dis)
-            last = time.time()
+            # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
+            last = time.perf_counter()
 
             while ev.is_set():
                 try:
                     v, i_meas = self.hw.read_measurements(prefer_load_v=True)
+                    now  = time.perf_counter()   # stamp AT the measurement
                     temp = self.hw.current_temp
-                    now  = time.time()
                     dt   = now - last
                     last = now
                     state = self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
@@ -5342,14 +5417,22 @@ class BatteryQtWindow(QMainWindow):
 
                 status(f"Step {step+1}/{N_STEPS}: discharge {i_dis:.3f} A × {dis_dur//60} min...")
                 self.hw.set_load(True, i_dis)
-                last = time.time()
+                # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
+                # phase_start is tracked SEPARATELY from `last` (the per-sample dt
+                # reference) — the old code reused `last` for both, but `last` is
+                # reassigned to `now` every iteration, so the while-condition below was
+                # effectively re-checking "< dis_dur since the LAST SAMPLE" (always
+                # true) instead of "< dis_dur since the phase started" — the discharge
+                # phase never actually timed out on its own via dis_dur.
+                phase_start = time.perf_counter()
+                last = phase_start
 
                 # ── discharge phase ────────────────────────────────────────
-                while ev.is_set() and (time.time() - last) < dis_dur:
+                while ev.is_set() and (time.perf_counter() - phase_start) < dis_dur:
                     try:
                         v, i_meas = self.hw.read_measurements(prefer_load_v=True)
+                        now  = time.perf_counter()   # stamp AT the measurement
                         temp = self.hw.current_temp
-                        now  = time.time()
                         dt   = now - last
                         last = now
                         self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
@@ -5367,15 +5450,16 @@ class BatteryQtWindow(QMainWindow):
 
                 # ── rest phase — wait for ΔV/Δt settle ───────────────────
                 status(f"Step {step+1}/{N_STEPS}: พักจน ΔV settle (สูงสุด {REST_MAX_S//60} min)...")
-                t_rest0 = time.time()
+                # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
+                t_rest0 = time.perf_counter()
                 v_window: list = []
                 t_window: list = []
                 v_rest   = None
 
-                while ev.is_set() and (time.time() - t_rest0) < REST_MAX_S:
+                while ev.is_set() and (time.perf_counter() - t_rest0) < REST_MAX_S:
                     try:
                         v_now, _, _ = self.hw.read_vi()
-                        t_now = time.time()
+                        t_now = time.perf_counter()
                         v_window.append(v_now)
                         t_window.append(t_now)
                         # keep only last DV_WIN_S seconds in window
