@@ -1866,11 +1866,11 @@ class BatteryQtWindow(QMainWindow):
         metrics valid even without a running test (no SoC/Rin, those need the
         state estimator). Shared by _slot_display (full test telemetry) and
         _slot_live_readback (pre-test Connect readback)."""
-        for name, val, fmt in [("Voltage", v, "{:.2f}"), ("Temp", temp, "{:.2f}")]:
+        for name, val, fmt in [("Voltage", v, "{:.3f}"), ("Temp", temp, "{:.2f}")]:
             lbl, unit = self.metric_labels[name]
             lbl.setText(f"{fmt.format(val)} {unit}")
         i_lbl, i_unit = self.metric_labels["Current"]
-        i_lbl.setText(f"{abs(i):.2f} {i_unit}")
+        i_lbl.setText(f"{abs(i):.3f} {i_unit}")
         _IDLE = self._I_IDLE
         if i < -_IDLE:                              # charging (convention: negative)
             i_lbl.setStyleSheet(f"color:{INFO}; border:0;")
@@ -1944,7 +1944,7 @@ class BatteryQtWindow(QMainWindow):
         self._update_temp_gauge(temp)
         i_dir = "CHG" if i < -self._I_IDLE else "DSG" if i > self._I_IDLE else "REST"
         self.status_label.setText(
-            f"V={v:.2f} V  I={abs(i):.2f} A ({i_dir})  SoC={soc:.1f}%  Rin={rin_mohm:.1f} mΩ  Temp={temp:.1f} °C"
+            f"V={v:.3f} V  I={abs(i):.3f} A ({i_dir})  SoC={soc:.1f}%  Rin={rin_mohm:.1f} mΩ  Temp={temp:.1f} °C"
         )
 
     def _update_temp_gauge(self, temp):
@@ -2287,14 +2287,14 @@ class BatteryQtWindow(QMainWindow):
             c_test = 0.2
         i_test = round(c_test * prod.rated_capacity_ah, 2)
         if len(self._wf_desc_lbls) > 3:
-            self._wf_desc_lbls[3].setText(f"Discharge {c_test:g}C = {i_test:.2f} A")
+            self._wf_desc_lbls[3].setText(f"Discharge {c_test:g}C = {i_test:.3f} A")
         if hasattr(self, "lbl_test_crate_a"):
-            self.lbl_test_crate_a.setText(f"= {i_test:.2f} A")
+            self.lbl_test_crate_a.setText(f"= {i_test:.3f} A")
 
         # อัป Quick Scan DISCHARGE step (index 2) → แสดง A จริงของ 1C
         i_1c = prod.max_cont_discharge_a if prod.max_cont_discharge_a else prod.rated_capacity_ah
         if len(self._qs_desc_lbls) > 2:
-            self._qs_desc_lbls[2].setText(f"1C = {i_1c:.2f} A")
+            self._qs_desc_lbls[2].setText(f"1C = {i_1c:.3f} A")
 
         self._refresh_battery_readout()
         self._log_alarm(f"Selected product: {name} → {prod.chemistry} {prod.cells_series}S")
@@ -2316,10 +2316,10 @@ class BatteryQtWindow(QMainWindow):
             self.config.battery.rated_capacity if self.config else 0.0)
         i_test = round(c_test * cap, 2) if cap else 0.0
         if hasattr(self, "lbl_test_crate_a"):
-            self.lbl_test_crate_a.setText(f"= {i_test:.2f} A" if cap else "— A")
+            self.lbl_test_crate_a.setText(f"= {i_test:.3f} A" if cap else "— A")
         if len(self._wf_desc_lbls) > 3:
             self._wf_desc_lbls[3].setText(
-                f"Discharge {c_test:g}C = {i_test:.2f} A" if cap else f"Discharge {c_test:g}C"
+                f"Discharge {c_test:g}C = {i_test:.3f} A" if cap else f"Discharge {c_test:g}C"
             )
         self._refresh_step_time_estimates()
 
@@ -2333,7 +2333,7 @@ class BatteryQtWindow(QMainWindow):
         prod = battery_profiles.get_product(prod_name)
         cap = prod.rated_capacity_ah if prod else (
             self.config.battery.rated_capacity if self.config else 0.0)
-        self.lbl_seq_crate_a.setText(f"= {c_rate * cap:.2f} A" if cap else "— A")
+        self.lbl_seq_crate_a.setText(f"= {c_rate * cap:.3f} A" if cap else "— A")
         if prod:
             self._update_charge_crate_label(prod, c_rate_override=c_rate)
         self._refresh_step_time_estimates()
@@ -2349,18 +2349,18 @@ class BatteryQtWindow(QMainWindow):
         if cp.strategy == "cc_cv":
             cv_v = cp.cv_voltage_per_cell * s
             lines = [
-                f"① CC: {c_rate:.2g}C = {i_bulk:.2f} A",
+                f"① CC: {c_rate:.2g}C = {i_bulk:.3f} A",
                 f"② CV: {cv_v:.1f} V  (กระแส taper ลง)",
-                f"จบเมื่อ < {cp.tail_current_c_rate:.2g}C = {i_tail:.2f} A",
+                f"จบเมื่อ < {cp.tail_current_c_rate:.2g}C = {i_tail:.3f} A",
             ]
         else:
             abs_v = cp.absorption_voltage_per_cell * s
             flt_v = cp.float_voltage_per_cell * s
             lines = [
-                f"① Bulk CC: {c_rate:.2g}C = {i_bulk:.2f} A",
+                f"① Bulk CC: {c_rate:.2g}C = {i_bulk:.3f} A",
                 f"② Absorption CV: {abs_v:.1f} V  (taper)",
                 f"③ Float: {flt_v:.1f} V  "
-                f"(จบเมื่อ < {cp.tail_current_c_rate:.2g}C = {i_tail:.2f} A)",
+                f"(จบเมื่อ < {cp.tail_current_c_rate:.2g}C = {i_tail:.3f} A)",
             ]
         self.lbl_charge_crate.setText("\n".join(lines))
 
@@ -2926,8 +2926,8 @@ class BatteryQtWindow(QMainWindow):
             crate = self.cb_seq_crate.currentText()
             plan = [
                 f"Battery: {self.controller.config.battery.battery_type}",
-                f"OCV: {v_now:.2f} V  ·  SoC: {soc_now:.0f}%  ·  Temp: {temp_now:.1f} °C",
-                f"Charge: {crate} ({float(crate.rstrip('C'))*rated:.2f} A)  →  "
+                f"OCV: {v_now:.3f} V  ·  SoC: {soc_now:.0f}%  ·  Temp: {temp_now:.1f} °C",
+                f"Charge: {crate} ({float(crate.rstrip('C'))*rated:.3f} A)  →  "
                 f"REST {self.spn_rest_min.value()} min  →  "
                 f"Discharge {self.cb_test_crate.currentText()}",
             ]
@@ -2968,8 +2968,8 @@ class BatteryQtWindow(QMainWindow):
             rated = self.controller.config.battery.rated_capacity
             plan = [
                 f"Battery: {self.controller.config.battery.battery_type}",
-                f"OCV: {v_now:.2f} V  ·  SoC: {soc_now:.0f}%",
-                f"OCV → REST 5 min → Discharge 1C ({rated:.2f} A) → Peukert SoH",
+                f"OCV: {v_now:.3f} V  ·  SoC: {soc_now:.0f}%",
+                f"OCV → REST 5 min → Discharge 1C ({rated:.3f} A) → Peukert SoH",
             ]
         except Exception:
             plan = ["(hardware not ready — values unavailable)"]
@@ -3000,7 +3000,7 @@ class BatteryQtWindow(QMainWindow):
             rated = self.controller.config.battery.rated_capacity
             plan = [
                 f"Battery: {self.controller.config.battery.battery_type}",
-                f"OCV: {v_now:.2f} V  ·  SoC: {soc_now:.0f}%",
+                f"OCV: {v_now:.3f} V  ·  SoC: {soc_now:.0f}%",
                 f"Charge CC-CV → REST 30 min → "
                 f"HPPC {n_cyc} cycles ({pulse:.0f}s pulse / {relax:.0f}s relax) → ECM fit",
             ]
@@ -3317,7 +3317,7 @@ class BatteryQtWindow(QMainWindow):
                     try:
                         v2, _, _ = self.hw.read_vi()
                         elapsed_ch = int(time.time() - _ch_t0)
-                        status(f"CHARGE: {v2:.2f} V  (elapsed {elapsed_ch//60}m {elapsed_ch%60:02d}s)")
+                        status(f"CHARGE: {v2:.3f} V  (elapsed {elapsed_ch//60}m {elapsed_ch%60:02d}s)")
                         # estimated total so the bar/ETA show; clamp so it never reverses past 99%
                         self.sig_phase_progress.emit(elapsed_ch, max(_ch_est, elapsed_ch + 30))
                     except Exception:
@@ -3365,8 +3365,8 @@ class BatteryQtWindow(QMainWindow):
             rated   = self.controller.config.battery.rated_capacity
             i_dis   = round(c_test * rated, 2)
             pack_min = self.controller.config.battery.pack_min_voltage
-            status(f"TEST: discharge {i_dis:.2f} A ({c_test:g}C) จนถึง {pack_min:.1f} V")
-            self.sig_alarm.emit(f"[AUTO] Starting discharge {i_dis:.2f} A")
+            status(f"TEST: discharge {i_dis:.3f} A ({c_test:g}C) จนถึง {pack_min:.1f} V")
+            self.sig_alarm.emit(f"[AUTO] Starting discharge {i_dis:.3f} A")
             self.controller._ensure_logging()
             self.hw.set_load(True, i_dis)
             import time as _t
@@ -3389,7 +3389,7 @@ class BatteryQtWindow(QMainWindow):
                     self.controller._log_sample(v3, i3)
                     self._seq_kick_watchdog()
                     elapsed_d = int(now - _dis_t0)
-                    status(f"TEST: {v3:.2f} V  {i3:.2f} A  SoC {state3['soc']:.0f}%")
+                    status(f"TEST: {v3:.3f} V  {i3:.3f} A  SoC {state3['soc']:.0f}%")
                     self.sig_phase_progress.emit(elapsed_d, _dis_est)
                     if not self._seq_check_otp(temp3):
                         break
@@ -3485,8 +3485,8 @@ class BatteryQtWindow(QMainWindow):
             max_i    = self.controller.config.battery.max_current
             i_dis    = min(round(1.0 * rated, 2), max_i)   # 1C, clamped to rig limit
             pack_min = self.controller.config.battery.pack_min_voltage
-            status(f"QUICK DISCHARGE: {i_dis:.2f} A (1C) → cutoff {pack_min:.1f} V")
-            self.sig_alarm.emit(f"[QUICK] Discharge 1C: {i_dis:.2f} A  (rated {rated:.1f} Ah)")
+            status(f"QUICK DISCHARGE: {i_dis:.3f} A (1C) → cutoff {pack_min:.1f} V")
+            self.sig_alarm.emit(f"[QUICK] Discharge 1C: {i_dis:.3f} A  (rated {rated:.1f} Ah)")
             self.controller._ensure_logging()
             self.hw.set_load(True, i_dis)
             # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
@@ -3505,7 +3505,7 @@ class BatteryQtWindow(QMainWindow):
                     self.controller._log_sample(v3, i3)
                     self._seq_kick_watchdog()
                     elapsed_d = int(now - _dis_t0)
-                    status(f"QUICK: {v3:.2f} V  {i3:.2f} A  SoC {state3['soc']:.0f}%")
+                    status(f"QUICK: {v3:.3f} V  {i3:.3f} A  SoC {state3['soc']:.0f}%")
                     self.sig_phase_progress.emit(elapsed_d, _dis_est)
                     if not self._seq_check_otp(temp3):
                         break
@@ -3609,7 +3609,7 @@ class BatteryQtWindow(QMainWindow):
                 try:
                     v_c, _, _ = self.hw.read_vi()
                     elapsed_ch = int(_t.time() - _ch_t0)
-                    status(f"HPPC CHARGE: {v_c:.2f} V  ({elapsed_ch//60}m {elapsed_ch%60:02d}s)")
+                    status(f"HPPC CHARGE: {v_c:.3f} V  ({elapsed_ch//60}m {elapsed_ch%60:02d}s)")
                     self.sig_phase_progress.emit(elapsed_ch, max(_ch_est, elapsed_ch + 30))
                 except Exception:
                     pass
@@ -3684,7 +3684,7 @@ class BatteryQtWindow(QMainWindow):
                             self._seq_running.clear()
                             self.sig_alarm.emit(
                                 f"[SAFETY] Under-voltage during HPPC rest: "
-                                f"{v_r:.2f}V ≤ {pack_min:.2f}V cutoff — sequence aborted")
+                                f"{v_r:.3f}V ≤ {pack_min:.3f}V cutoff — sequence aborted")
                             break
                         temp_h = self.hw.current_temp
                         if not self._seq_check_otp(temp_h):
@@ -3700,7 +3700,7 @@ class BatteryQtWindow(QMainWindow):
                     break
                 # Pulse leg
                 self.hw.set_load(True, str(i_pulse))
-                status(f"HPPC {cyc}/{n_cyc}: PULSE {pulse_s:.0f}s  {i_pulse:.2f} A")
+                status(f"HPPC {cyc}/{n_cyc}: PULSE {pulse_s:.0f}s  {i_pulse:.3f} A")
                 t_phase = _t.time() + pulse_s
                 while self._seq_running.is_set() and _t.time() < t_phase:
                     try:
@@ -3716,7 +3716,7 @@ class BatteryQtWindow(QMainWindow):
                             self._seq_running.clear()
                             self.sig_alarm.emit(
                                 f"[SAFETY] Under-voltage during HPPC pulse: "
-                                f"{v_p:.2f}V ≤ {hppc_load_floor:.2f}V hardware floor — sequence aborted")
+                                f"{v_p:.3f}V ≤ {hppc_load_floor:.3f}V hardware floor — sequence aborted")
                             break
                         temp_h = self.hw.current_temp
                         if not self._seq_check_otp(temp_h):
@@ -3816,7 +3816,7 @@ class BatteryQtWindow(QMainWindow):
             for cyc in range(1, n_cyc + 1):
                 if not self._seq_running.is_set():
                     break
-                status(f"CYCLE {cyc}/{n_cyc}: ชาร์จ {i_ch:.2f} A ({c_ch}C)...")
+                status(f"CYCLE {cyc}/{n_cyc}: ชาร์จ {i_ch:.3f} A ({c_ch}C)...")
                 # ── step 1: CHARGE
                 self.sig_cycle_wf.emit(1, "active")
                 self.controller.start_charge(strategy=None,
@@ -3830,7 +3830,7 @@ class BatteryQtWindow(QMainWindow):
                     try:
                         v_c, _, _ = self.hw.read_vi()
                         elapsed_c = int(_t.time() - _ch_t0)
-                        status(f"CYCLE {cyc}/{n_cyc} CHARGE: {v_c:.2f} V  "
+                        status(f"CYCLE {cyc}/{n_cyc} CHARGE: {v_c:.3f} V  "
                                f"({elapsed_c//60}m {elapsed_c%60:02d}s)")
                         self.sig_phase_progress.emit(elapsed_c, max(_ch_est, elapsed_c + 30))
                     except Exception:
@@ -3862,7 +3862,7 @@ class BatteryQtWindow(QMainWindow):
 
                 # ── step 3: DISCHARGE (integrate capacity)
                 self.sig_cycle_wf.emit(2, "active")
-                status(f"CYCLE {cyc}/{n_cyc}: ดิสชาร์จ {i_dis:.2f} A ({c_di}C)...")
+                status(f"CYCLE {cyc}/{n_cyc}: ดิสชาร์จ {i_dis:.3f} A ({c_di}C)...")
                 self.controller._ensure_logging()
                 self.hw.set_load(True, str(i_dis))
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
@@ -3884,7 +3884,7 @@ class BatteryQtWindow(QMainWindow):
                         self._seq_kick_watchdog()
                         elapsed_d = int(now - _dis_t0)
                         temp_d = self.hw.current_temp
-                        status(f"CYCLE {cyc}/{n_cyc} DIS: {v_d:.2f} V  "
+                        status(f"CYCLE {cyc}/{n_cyc} DIS: {v_d:.3f} V  "
                                f"{ah_acc:.3f} Ah  SoC ~{max(0, 100-100*ah_acc/rated):.0f}%")
                         self.sig_phase_progress.emit(elapsed_d, _dis_est)
                         if not self._seq_check_otp(temp_d):
@@ -4089,7 +4089,7 @@ class BatteryQtWindow(QMainWindow):
         warns = results.get("quality_warnings", [])
         self.lbl_analytics.setText(
             f"Grade {grade} (conf {conf*100:.0f}%) · SoH {soh_txt}% · "
-            f"DCIR {dcir:.1f}±{dstd:.1f} mΩ · Sag {results.get('voltage_sag_v', 0.0):.2f} V · "
+            f"DCIR {dcir:.1f}±{dstd:.1f} mΩ · Sag {results.get('voltage_sag_v', 0.0):.3f} V · "
             f"CCA~{results.get('cca_est_a', 0.0):.0f} A · Cap {results['capacity_ah']:.3f} Ah")
         # 5 Hz-measurable sorting features (see project pivot): SoH + DCIR + sag + CCA proxy
         if results.get("ecm_identified"):
@@ -4732,7 +4732,7 @@ class BatteryQtWindow(QMainWindow):
                         last_log = now
                         self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
                         elapsed = int(now - t0)
-                        status(f"({idx+1}/4) {c:g}C — {v:.2f} V  {i_meas:.3f} A  "
+                        status(f"({idx+1}/4) {c:g}C — {v:.3f} V  {i_meas:.3f} A  "
                                f"elapsed {elapsed//60}m{elapsed%60:02d}s")
                         if v <= pack_min:
                             break
@@ -4843,7 +4843,7 @@ class BatteryQtWindow(QMainWindow):
                     # i_ch is negative during charging; accumulate absolute Ah
                     dah = abs(i_ch) * dt / 3600.0
                     ah_in[_band(soc_now)] += dah
-                    status(f"Charge: {v:.2f} V  SoC {soc_now:.0f}%  "
+                    status(f"Charge: {v:.3f} V  SoC {soc_now:.0f}%  "
                            f"Ah_in={sum(ah_in.values()):.3f}")
                 except Exception as exc:
                     self.sig_alarm.emit(f"[CHAR/η] charge read error: {exc}")
@@ -4882,7 +4882,7 @@ class BatteryQtWindow(QMainWindow):
                     soc_now = state["soc"]
                     dah = abs(i_meas) * dt / 3600.0
                     ah_out[_band(soc_now)] += dah
-                    status(f"Discharge: {v:.2f} V  SoC {soc_now:.0f}%  "
+                    status(f"Discharge: {v:.3f} V  SoC {soc_now:.0f}%  "
                            f"Ah_out={sum(ah_out.values()):.3f}")
                     if v <= pack_min:
                         break
