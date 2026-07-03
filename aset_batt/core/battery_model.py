@@ -229,7 +229,14 @@ class BatteryModel:
         อยู่แล้วแต่ไม่รู้เรื่องอุณหภูมิ) — ใช้สูตร Arrhenius เดียวกับ _calculate_base_rin"""
         temp = self._clamp_temperature(temp)
         params = self.rin_params
-        ea_k = params.get('arrhenius_ea_k', 0.0)
+        # BUG FIX: this used to look up only 'arrhenius_ea_k', a key no chemistry
+        # profile actually sets (battery_profiles.py sets 'arrhenius_ea_r') — so this
+        # method silently ALWAYS fell back to the linear approximation, while
+        # _calculate_base_rin (which checks both names) correctly used Arrhenius. The
+        # discrepancy was large: at 10°C for lead-acid (Ea/R=4000 K) the linear model
+        # gives ×1.075 vs the correct Arrhenius ×2.04 — nearly 2× off. Check both key
+        # names, same as _calculate_base_rin, so the two stay consistent.
+        ea_k = params.get('arrhenius_ea_r', 0.0) or params.get('arrhenius_ea_k', 0.0)
         if ea_k > 0:
             t_k, t_ref = temp + 273.15, 298.15
             temp_factor = float(np.exp(ea_k * (1.0 / t_k - 1.0 / t_ref))) - 1.0

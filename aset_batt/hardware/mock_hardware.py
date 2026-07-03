@@ -12,6 +12,7 @@ class MockHardwareController:
         self.is_connected = True
         self.is_esp_connected = False
         self.current_temp = 25.0         # °C จำลอง
+        self.last_esp_heartbeat = time.time()   # parity with HardwareController
         self.inst_lock = threading.Lock()  # ต้องมีเหมือน HardwareController
 
         # จำลอง instruments (ไม่ใช้จริง แต่ต้องไม่ให้ AttributeError)
@@ -56,7 +57,16 @@ class MockHardwareController:
 
     def connect_esp32(self, port, callback=None):
         self.is_esp_connected = True
+        self.last_esp_heartbeat = time.time()
         self.set_ssr(False)  # mirror HardwareController.connect_esp32 fail-safe
+
+    def temp_is_stale(self, max_age_s: float = 10.0) -> bool:
+        """Mock parity with HardwareController.temp_is_stale(). Refreshed on every
+        connect and never goes stale on its own in simulation (there is no real serial
+        link to drop) — matches the age check for interface consistency."""
+        if not self.is_esp_connected:
+            return True
+        return (time.time() - self.last_esp_heartbeat) > max_age_s
 
     def disconnect_esp32(self):
         self.set_ssr(False)   # mirror HardwareController.disconnect_esp32 ordering
