@@ -431,6 +431,18 @@ class ZonesMixin:
         hppc_seq_form = QFormLayout()
         hppc_seq_form.setSpacing(4)
         hppc_seq_form.setContentsMargins(0, 0, 0, 0)
+        # Same setting as MANUAL → HPPC tab's "Pulse C-rate" field (ed_hppc_crate) —
+        # kept in sync both ways (see _hppc_page) so users running the AUTO full
+        # sequence don't have to switch tabs just to tune the pulse current before
+        # a run (a too-high default here was tripping the under-voltage floor mid-HPPC).
+        self.ed_hppc_seq_crate = QLineEdit("1.0")
+        self.ed_hppc_seq_crate.setValidator(QDoubleValidator(0.1, 10.0, 2))
+        self.ed_hppc_seq_crate.setToolTip(
+            "Pulse C-rate × rated capacity = pulse current (A)\n"
+            "Clamped to max_discharge_a from the active profile.\n"
+            "Synced with MANUAL → HPPC tab."
+        )
+        hppc_seq_form.addRow("Pulse C-rate:", self.ed_hppc_seq_crate)
         self.spn_hppc_cycles = QSpinBox()
         self.spn_hppc_cycles.setRange(1, 20)
         self.spn_hppc_cycles.setValue(5)
@@ -441,7 +453,7 @@ class ZonesMixin:
         hppc_seq_form.addRow("HPPC cycles:", self.spn_hppc_cycles)
         hppc_seq_lay.addLayout(hppc_seq_form)
 
-        hppc_seq_note = QLabel("Pulse/relax timing from MANUAL → HPPC tab")
+        hppc_seq_note = QLabel("Pulse/relax duration from MANUAL → HPPC tab")
         hppc_seq_note.setStyleSheet(f"color:{MUTED}; font-size:10px;")
         hppc_seq_lay.addWidget(hppc_seq_note)
 
@@ -793,6 +805,11 @@ class ZonesMixin:
             "Clamped to max_discharge_a from the active profile."
         )
         form.addRow("Pulse C-rate:", self.ed_hppc_crate)
+        # Two-way sync with the AUTO tab's HPPC Full Sequence "Pulse C-rate" field —
+        # one logical setting, editable from either tab. setText() is a no-op (and
+        # emits nothing) when the text is already equal, so this can't loop forever.
+        self.ed_hppc_crate.textChanged.connect(self.ed_hppc_seq_crate.setText)
+        self.ed_hppc_seq_crate.textChanged.connect(self.ed_hppc_crate.setText)
 
         self.ed_hppc_pulse = QLineEdit("30")
         self.ed_hppc_pulse.setValidator(QDoubleValidator(1.0, 600.0, 1))
@@ -1202,12 +1219,23 @@ class ZonesMixin:
         lay.setSpacing(0)
         lay.setContentsMargins(0, 0, 0, 0)
 
+        # ── SCADA state ────────────────────────────────────────────────
+        # Set of row indices that have ALARM/WARNING and are not yet ACKed
+        self._unack_rows: set = set()
+        self._flash_state: bool = False   # current flash phase (True=bright, False=dim)
+        # Flash timer — 500 ms tick, SCADA standard blink rate
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setInterval(500)
+        self._flash_timer.timeout.connect(self._alarm_flash_tick)
+        # Row colour bookkeeping {row_index: (bright_bg, dim_bg, fg, evt_fg)}
+        self._alarm_row_colors: dict = {}
+
         # ── Header bar ────────────────────────────────────────────────
         hdr = QFrame()
         hdr.setStyleSheet(f"background:{PANEL}; border-bottom:1px solid #888;")
         hdr_lay = QHBoxLayout(hdr)
         hdr_lay.setContentsMargins(8, 5, 8, 5)
-        lbl_title = QLabel("EVENT / ALARM LOG")
+        lbl_title = QLabel("⚡  SCADA — EVENT / ALARM LOG")
         lbl_title.setStyleSheet(f"font-weight:700; font-size:12px; color:{TEXT}; border:0; background:transparent;")
         hdr_lay.addWidget(lbl_title)
         hdr_lay.addStretch()
@@ -1217,6 +1245,19 @@ class ZonesMixin:
         self._alarm_count_lbl = lbl_count
         hdr_lay.addWidget(lbl_count)
         hdr_lay.addSpacing(12)
+        # ── ACKNOWLEDGE button (SCADA standard) ────────────────────────
+        self._btn_ack = QPushButton("ACKNOWLEDGE")
+        self._btn_ack.setFixedSize(110, 24)
+        self._btn_ack.setEnabled(False)
+        self._btn_ack.setStyleSheet(
+            "QPushButton{background:#5A1A1A;border:1px solid #FF5555;border-radius:3px;"
+            "font-size:10px;font-weight:700;color:#FF5555;}"
+            "QPushButton:hover{background:#7A2A2A;color:#FFaaaa;}"
+            "QPushButton:disabled{background:#2A2A2A;border:1px solid #555;color:#555;}"
+        )
+        self._btn_ack.clicked.connect(self._alarm_acknowledge)
+        hdr_lay.addWidget(self._btn_ack)
+        hdr_lay.addSpacing(8)
         btn_clear = QPushButton("Clear")
         btn_clear.setFixedSize(60, 24)
         btn_clear.setStyleSheet(
@@ -1229,13 +1270,16 @@ class ZonesMixin:
 
         # ── Table ─────────────────────────────────────────────────────
         self.tbl_alarms = QTableWidget()
-        self.tbl_alarms.setColumnCount(4)
-        self.tbl_alarms.setHorizontalHeaderLabels(["DATE/TIME", "POINT NAME", "STATE", "EVENT"])
+        self.tbl_alarms.setColumnCount(5)
+        self.tbl_alarms.setHorizontalHeaderLabels(
+            ["DATE/TIME", "POINT NAME", "STATE", "EVENT", "ACK STATUS"]
+        )
         hh = self.tbl_alarms.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(1, QHeaderView.Stretch)
         hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         hh.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.tbl_alarms.verticalHeader().setVisible(False)
         self.tbl_alarms.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -1264,6 +1308,10 @@ class ZonesMixin:
 
     def _alarm_clear(self):
         self.tbl_alarms.setRowCount(0)
+        self._unack_rows.clear()
+        self._alarm_row_colors.clear()
+        self._flash_timer.stop()
+        self._btn_ack.setEnabled(False)
         self._alarm_count_lbl.setText("0 events")
         self._alarm_statusbar.setText("  LOG CLEARED")
         self._alarm_statusbar.setStyleSheet(
