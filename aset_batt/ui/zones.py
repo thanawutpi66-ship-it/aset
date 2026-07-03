@@ -1319,4 +1319,9 @@ class ZonesMixin:
             " font-family:Consolas,monospace; border-top:1px solid #333;"
         )
 
-
+    # ── Alarm Tab & Alarm Clear ───────────────────────────────────────────────
+    # ⚠  _tab_alarms() and _alarm_clear() are intentionally NOT defined here.
+    #    They live in BatteryQtWindow (isa101_views.py) as the full SCADA
+    #    implementation (flashing rows, ACKNOWLEDGE button, ACK STATUS column).
+    #    Python MRO ensures that version is used; duplicating it here would
+    #    silently override the SCADA features.
