@@ -268,8 +268,16 @@ class AutoController:
             on_progress(_t.time() - t_start, v_final, 0.0, final_status)
         return soc, v_final, final_status
 
+    # Consecutive read failures tolerated before the monitor loop gives up for real.
+    # A single VISA/USB hiccup (timeout, transient bus reset) used to kill the whole
+    # loop on the very first exception — and monitor_running was never reset to False,
+    # so start_monitor()'s "if not running" guard meant the operator could never
+    # restart it either (looked exactly like the program had frozen).
+    _MONITOR_MAX_CONSEC_ERRORS = 5
+
     def _monitor_loop(self):
         """ลูปอ่าน Voltage, Current และอัปเดต SoC/UI"""
+        consec_errors = 0
         while self.monitor_running:
             if self.hw.is_connected:
                 try:
@@ -340,21 +348,44 @@ class AutoController:
                         state['soc'], state['rin'] * 1000,  # แปลงเป็น mOhm
                         self.hw.current_temp
                     )
-                except HardwareError as e:
-                    logger.error(f"Hardware error in monitor loop: {e}")
-                    if self.event_handler:
-                        self.event_handler.post_event(
-                            EventType.SHOW_MESSAGE,
-                            ("Hardware Error", str(e), "error")
-                        )
-                    break
+                    consec_errors = 0   # a clean read resets the retry budget
                 except SafetyError as e:
+                    # A genuine safety trip — never retry this one.
                     logger.error(f"Safety error in monitor loop: {e}")
+                    self._stop_monitor_fatally(f"Safety error: {e}")
                     break
                 except Exception as e:
-                    logger.error(f"Unexpected error in monitor loop: {e}", exc_info=True)
+                    # Catches HardwareError too (ASETError -> Exception); SafetyError
+                    # was already matched and handled by the clause above.
+                    consec_errors += 1
+                    if consec_errors < self._MONITOR_MAX_CONSEC_ERRORS:
+                        # Likely transient (USB glitch, VISA timeout) — retry with a
+                        # short backoff instead of killing live monitoring outright.
+                        logger.warning(
+                            "Monitor loop read error (%d/%d, retrying): %s",
+                            consec_errors, self._MONITOR_MAX_CONSEC_ERRORS, e)
+                        time.sleep(min(2.0, 0.3 * consec_errors))
+                        continue
+                    logger.error(
+                        f"Monitor loop: {consec_errors} consecutive errors, giving up: {e}",
+                        exc_info=True)
+                    self._stop_monitor_fatally(
+                        f"Lost connection to hardware after {consec_errors} "
+                        f"consecutive read errors: {e}")
                     break
             time.sleep(0.1)
+
+    def _stop_monitor_fatally(self, reason: str):
+        """Cleanly end the monitor loop and make it restartable. Without resetting
+        monitor_running here, start_monitor()'s "if not running" guard would silently
+        no-op forever after any unrecoverable error — the operator has no way to
+        recover monitoring short of restarting the whole application."""
+        self.monitor_running = False
+        if self.event_handler:
+            self.event_handler.post_event(
+                EventType.SHOW_MESSAGE,
+                ("Monitor Stopped", reason, "error")
+            )
     # Profile Control
     # ------------------------------------------------------------------
 
