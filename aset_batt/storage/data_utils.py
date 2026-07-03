@@ -108,9 +108,9 @@ def _compute_summary(rows: list) -> dict:
 def _run_analysis(config_manager, csv_path: str) -> dict:
     """Run unified analysis on *csv_path*; returns a result dict."""
     try:
-        from aset_batt.acquisition.analysis import analyze_csv, profile_from_config
+        from aset_batt.acquisition.analysis import analyze_csv_mp, profile_from_config
         profile = profile_from_config(config_manager)
-        result = analyze_csv(csv_path, profile)
+        result = analyze_csv_mp(csv_path, profile)
         # strip large numpy arrays (ica/dtv) — ไม่ต้องการบน cloud
         clean = {k: v for k, v in result.items() if k not in ("ica", "dtv")}
         clean["success"] = True

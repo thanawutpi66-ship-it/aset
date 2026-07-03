@@ -954,10 +954,10 @@ class AutoController:
         ใช้วิธีวิเคราะห์เดียวกับ characterization test และปุ่ม Analyze CSV (วิธีเดียวทั้งระบบ)
         Returns the result dict, or None on failure."""
         try:
-            from aset_batt.acquisition.analysis import analyze_csv, profile_from_config
+            from aset_batt.acquisition.analysis import analyze_csv_mp, profile_from_config
             csv_path = self.data.current_path or self.config.system.csv_filepath
-            res = analyze_csv(csv_path, profile_from_config(self.config),
-                              force_hppc=force_hppc)
+            res = analyze_csv_mp(csv_path, profile_from_config(self.config),
+                                 force_hppc=force_hppc)
         except Exception as e:
             logger.warning("auto-analyze ล้มเหลว: %s", e)
             return None
