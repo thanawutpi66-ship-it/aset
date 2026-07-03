@@ -147,7 +147,7 @@ ASET_BATT/
 | แบต DUT (ทดสอบจริงแล้ว) | **FB FTZ6V** (12V 5.3Ah 90CCA VRLA AGM, Siam Furukawa, Honda) |
 | แบต DUT (ในแผน) | **YTZ7V** (12V, 6.3Ah/20HR, CCA 105A, AGM) · **Little Bee MV20-12** (12V 20Ah SLA) |
 | DC Load | GW Instek **PEL-3111** (1.5–150V, 210A, 1050W, SCPI) |
-| DC Supply | GW Instek **PSW/PSB-1080L** (0–80V, 0–40.5A, source-only) |
+| DC Supply | GW Instek **PSW 80-40.5** (0–80V, 0–40.5A, source-only) |
 | Temp | **MLX90614 / GY-906** (IR, ±0.5°C, I2C) |
 | MCU / Breaker | **ESP32** (temp+UART) · **LUMIRA MCB** (passive overcurrent) |
 
