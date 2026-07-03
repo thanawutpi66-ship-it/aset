@@ -470,6 +470,7 @@ class BatteryQtWindow(QMainWindow):
     sig_char_update     = Signal(str, str)  # (test_id, message) — characterize tab live update
     sig_live_readback   = Signal(float, float, float)  # (v, i, temp) — pre-test live readback
     sig_seq_aborted     = Signal()          # sequence thread ended without completing (error/safety trip)
+    sig_cycle_counter   = Signal(str)       # cycle-life counter label text (cross-thread safe)
 
     def __init__(self, config_manager):
         super().__init__()
@@ -2248,6 +2249,7 @@ class BatteryQtWindow(QMainWindow):
         self.sig_seq_done.connect(self._slot_seq_done)
         self.sig_char_update.connect(self._slot_char_update)
         self.sig_live_readback.connect(self._slot_live_readback)
+        self.sig_cycle_counter.connect(self.lbl_cycle_counter.setText)
         self.sig_seq_aborted.connect(self._set_phase_banner_idle)
 
     def update_display(self, v, i, soc, rin, temp=None, soh=None):
@@ -3335,8 +3337,19 @@ class BatteryQtWindow(QMainWindow):
         if not self._show_pretest_dialog("IEC 61960 AUTO SEQUENCE", plan, eta_min=600):
             return
         self._seq_common_start("btn_auto_seq", "Running…")
+        # Snapshot every widget value on the GUI thread BEFORE spawning the worker —
+        # reading Qt widgets from a background thread races the GUI thread (the operator
+        # could change a dropdown mid-run) and is not thread-safe.
+        opts = {
+            "skip_charge": self.chk_skip_charge.isChecked(),
+            "skip_rest": self.chk_skip_rest.isChecked(),
+            "soc_thresh": self.spn_soc_threshold.value(),
+            "seq_crate": self.cb_seq_crate.currentText(),
+            "rest_min": self.spn_rest_min.value(),
+            "test_crate": self.cb_test_crate.currentText(),
+        }
         import threading
-        threading.Thread(target=self._auto_sequence_thread, daemon=True).start()
+        threading.Thread(target=self._auto_sequence_thread, args=(opts,), daemon=True).start()
 
     def _on_quick_scan(self):
         if self.controller is None or not getattr(self.hw, "is_connected", False):
@@ -3390,8 +3403,15 @@ class BatteryQtWindow(QMainWindow):
         if not self._show_pretest_dialog("HPPC FULL SEQUENCE", plan, eta_min=eta):
             return
         self._seq_common_start("btn_hppc_seq", "Running…")
+        # Snapshot on the GUI thread — see the comment in _on_auto_sequence.
+        opts = {
+            "n_cyc": self.spn_hppc_cycles.value(),
+            "pulse_s": self.ed_hppc_pulse.text(),
+            "relax_s": self.ed_hppc_relax.text(),
+            "crate": self.ed_hppc_crate.text(),
+        }
         import threading
-        threading.Thread(target=self._hppc_seq_thread, daemon=True).start()
+        threading.Thread(target=self._hppc_seq_thread, args=(opts,), daemon=True).start()
 
     def _on_cycle_life(self):
         if self.controller is None or not getattr(self.hw, "is_connected", False):
@@ -3418,8 +3438,15 @@ class BatteryQtWindow(QMainWindow):
         if not self._show_pretest_dialog("CYCLE LIFE TEST", plan, eta_min=eta):
             return
         self._seq_common_start("btn_cycle_life", f"Cycling…")
+        # Snapshot on the GUI thread — see the comment in _on_auto_sequence.
+        opts = {
+            "n_cyc": self.spn_cycle_n.value(),
+            "rest_min": self.spn_cycle_rest.value(),
+            "charge_crate": self.cb_cycle_charge_crate.currentText(),
+            "dis_crate": self.cb_cycle_dis_crate.currentText(),
+        }
         import threading
-        threading.Thread(target=self._cycle_life_thread, daemon=True).start()
+        threading.Thread(target=self._cycle_life_thread, args=(opts,), daemon=True).start()
 
     # ── Safety helpers ───────────────────────────────────────────────────────
     _WATCHDOG_TIMEOUT_S: int = 300   # 5 min without a measurement → abort
@@ -3430,10 +3457,44 @@ class BatteryQtWindow(QMainWindow):
         except Exception:
             return 60.0
 
+    def _uvp_floor(self) -> float:
+        """Hardware under-voltage FLOOR (protects the pack/instruments) — this is the
+        only threshold that may be checked on a voltage reading taken WHILE current is
+        flowing (a pulse or a discharge). It is deliberately lower than
+        ``pack_min_voltage``, which is the steady-state end-of-discharge cutoff: under
+        load, V = OCV − I·R is naturally BELOW OCV — an HPPC pulse sagging under
+        pack_min_voltage is expected physics, not "battery empty". Comparing a loaded
+        reading against pack_min_voltage aborts the whole sequence after only a couple
+        of pulses even on a healthy, well-charged battery. Use pack_min_voltage only
+        against a RESTED (relaxed) reading."""
+        try:
+            return float(self.controller.config.system.safety_limits["min_voltage"])
+        except Exception:
+            return 0.0   # unknown → don't add a spurious cutoff on top of pack_min
+
     def _seq_kick_watchdog(self):
         """Call after every successful measurement read inside a sequence thread."""
         import time as _t
         self._seq_last_meas_time = _t.time()
+
+    def _hw_retry(self, fn, *args, retries: int = 3, delay: float = 0.5, **kwargs):
+        """Call ``fn(*args, **kwargs)``, retrying a transient exception with a short
+        delay. The sequence threads' per-sample loops already tolerate a single failed
+        read (they're inside their own try/except), but the ONE-SHOT hardware reads
+        taken right after a REST phase were not — a single VISA/USB glitch there used
+        to abort the whole multi-hour sequence and lose all its progress. Re-raises the
+        last exception if every attempt fails, so the caller's own error handling
+        (which aborts + reports) still applies."""
+        last_exc = None
+        for attempt in range(max(1, retries)):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:
+                last_exc = exc
+                if attempt < retries - 1:
+                    import time as _time
+                    _time.sleep(delay)
+        raise last_exc
 
     def _seq_check_otp(self, temp: float) -> bool:
         """Returns True if temperature is safe.  Clears _seq_running + alarms if OTP."""
@@ -3578,17 +3639,22 @@ class BatteryQtWindow(QMainWindow):
             self._cycle_time_lbls[3].setText(f"× {n_cyc} = ~{total_h:.1f} h total")
             self._cycle_time_lbls[4].setText("< 1 min")
 
-    def _auto_sequence_thread(self):
-        """Background thread: PREPARE → CHARGE → REST → TEST → ANALYZE."""
+    def _auto_sequence_thread(self, opts: dict):
+        """Background thread: PREPARE → CHARGE → REST → TEST → ANALYZE.
+        ``opts`` is a snapshot of the relevant widget values, taken on the GUI thread
+        by the caller (_on_auto_sequence) before this thread started."""
         import time
 
         def status(msg):
             self.sig_charge_status.emit(msg)
             self.sig_wf_status.emit(msg)
 
-        skip_charge = self.chk_skip_charge.isChecked()
-        skip_rest   = self.chk_skip_rest.isChecked()
-        soc_thresh  = self.spn_soc_threshold.value()
+        skip_charge = opts["skip_charge"]
+        skip_rest   = opts["skip_rest"]
+        soc_thresh  = opts["soc_thresh"]
+        seq_crate   = opts["seq_crate"]
+        rest_min    = opts["rest_min"]
+        test_crate  = opts["test_crate"]
         completed_ok = False
 
         try:
@@ -3622,11 +3688,11 @@ class BatteryQtWindow(QMainWindow):
             else:
                 self.sig_workflow.emit(1, "active")
                 try:
-                    _c_rate_override = float(self.cb_seq_crate.currentText().rstrip("C"))
+                    _c_rate_override = float(seq_crate.rstrip("C"))
                 except (ValueError, AttributeError):
                     _c_rate_override = None
                 status(f"CHARGE: SoC={soc:.0f}% → charging "
-                       f"({self.cb_seq_crate.currentText()})...")
+                       f"({seq_crate})...")
                 self.controller.start_charge(strategy=None,
                                              bulk_c_rate_override=_c_rate_override)
                 _ch_t0 = time.time()
@@ -3656,7 +3722,7 @@ class BatteryQtWindow(QMainWindow):
                 self.sig_workflow.emit(2, "skip")
             else:
                 self.sig_workflow.emit(2, "active")
-                rest_total = self.spn_rest_min.value() * 60
+                rest_total = rest_min * 60
                 t_rest_end = time.time() + rest_total
                 while self._seq_running.is_set():
                     remaining = int(t_rest_end - time.time())
@@ -3669,16 +3735,17 @@ class BatteryQtWindow(QMainWindow):
                     if not self._seq_sleep(10.0):
                         return
                 self.sig_phase_progress.emit(0, 0)
-                # OCV reset after rest
-                soc2 = self.controller.calibrate_from_ocv()
-                v2, _, _ = self.hw.read_vi()
+                # OCV reset after rest — retried: a single VISA hiccup right after a
+                # multi-minute rest must not throw away the whole sequence.
+                soc2 = self._hw_retry(self.controller.calibrate_from_ocv)
+                v2, _, _ = self._hw_retry(self.hw.read_vi)
                 self.sig_alarm.emit(f"[AUTO] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}%")
                 self.sig_workflow.emit(2, "done")
 
             # ── PHASE 3: DISCHARGE TEST (IEC — C-rate จาก cb_test_crate) ───────
             self.sig_workflow.emit(3, "active")
             try:
-                c_test = float(self.cb_test_crate.currentText().rstrip("C"))
+                c_test = float(test_crate.rstrip("C"))
             except (AttributeError, ValueError):
                 c_test = 0.2
             rated   = self.controller.config.battery.rated_capacity
@@ -3790,8 +3857,8 @@ class BatteryQtWindow(QMainWindow):
             self.sig_phase_progress.emit(0, 0)
             if not self._seq_running.is_set():
                 return
-            soc2 = self.controller.calibrate_from_ocv()
-            v2, _, _ = self.hw.read_vi()
+            soc2 = self._hw_retry(self.controller.calibrate_from_ocv)
+            v2, _, _ = self._hw_retry(self.hw.read_vi)
             self.sig_alarm.emit(f"[QUICK] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}%")
             self.sig_qs_workflow.emit(1, "done")
 
@@ -3897,8 +3964,9 @@ class BatteryQtWindow(QMainWindow):
         return "<br>".join(lines)
 
     # ---- HPPC full-sequence thread ----------------------------------------
-    def _hppc_seq_thread(self):
-        """HPPC Full Sequence: CHARGE → REST 30 min → N×HPPC pulse/relax → ECM fit."""
+    def _hppc_seq_thread(self, opts: dict):
+        """HPPC Full Sequence: CHARGE → REST 30 min → N×HPPC pulse/relax → ECM fit.
+        ``opts`` is a widget-value snapshot taken on the GUI thread by the caller."""
         import time as _t
 
         def status(msg):
@@ -3978,23 +4046,30 @@ class BatteryQtWindow(QMainWindow):
             self.sig_phase_progress.emit(0, 0)
             if not self._seq_running.is_set():
                 return
-            soc_h = self.controller.calibrate_from_ocv()
-            v_h, _, _ = self.hw.read_vi()
+            soc_h = self._hw_retry(self.controller.calibrate_from_ocv)
+            v_h, _, _ = self._hw_retry(self.hw.read_vi)
             self.sig_alarm.emit(f"[HPPC SEQ] Post-rest OCV: {v_h:.3f} V → SoC {soc_h:.1f}%")
             self.sig_hppc_seq_wf.emit(2, "done")
 
             # ── PHASE 3: HPPC N cycles ────────────────────────────────────
             self.sig_hppc_seq_wf.emit(3, "active")
-            n_cyc    = self.spn_hppc_cycles.value()
+            n_cyc    = opts["n_cyc"]
             try:
-                pulse_s = max(1.0, float(self.ed_hppc_pulse.text() or "30"))
-                relax_s = max(1.0, float(self.ed_hppc_relax.text() or "30"))
-                crate   = max(0.1, float(self.ed_hppc_crate.text() or "1.0"))
+                pulse_s = max(1.0, float(opts["pulse_s"] or "30"))
+                relax_s = max(1.0, float(opts["relax_s"] or "30"))
+                crate   = max(0.1, float(opts["crate"] or "1.0"))
             except (ValueError, AttributeError):
                 pulse_s, relax_s, crate = 30.0, 30.0, 1.0
             max_dis = self.controller.config.battery.max_current
             i_pulse = min(crate * rated, max_dis)
             pack_min = self.controller.config.battery.pack_min_voltage
+            # Under LOAD (the pulse leg) the voltage sags below OCV by design — abort
+            # only against the hardware safety floor, never the steady-state test
+            # cutoff (see _uvp_floor). Fall back to a small margin under pack_min if
+            # no hardware floor is configured.
+            hppc_load_floor = self._uvp_floor()
+            if hppc_load_floor <= 0 or hppc_load_floor >= pack_min:
+                hppc_load_floor = pack_min * 0.95
             _hppc_total = n_cyc * (relax_s + pulse_s)
             self.controller._ensure_logging()
             self.hw.psu_off()
@@ -4038,15 +4113,18 @@ class BatteryQtWindow(QMainWindow):
                 while self._seq_running.is_set() and _t.time() < t_phase:
                     try:
                         v_p, i_p = self.hw.read_measurements(prefer_load_v=True)
-                        self.controller._log_sample(v_p, -i_p)
+                        # discharge-positive convention (matches AUTO/QUICK SCAN) — do
+                        # NOT negate i_p here, or the CSV's current sign is inverted and
+                        # the 1-RC ECM fit never converges on this sequence's own data.
+                        self.controller._log_sample(v_p, i_p)
                         self._seq_kick_watchdog()
                         elapsed_h = int(_t.time() - _hppc_t0)
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
-                        if v_p <= pack_min:
+                        if v_p <= hppc_load_floor:
                             self._seq_running.clear()
                             self.sig_alarm.emit(
                                 f"[SAFETY] Under-voltage during HPPC pulse: "
-                                f"{v_p:.2f}V ≤ {pack_min:.2f}V cutoff — sequence aborted")
+                                f"{v_p:.2f}V ≤ {hppc_load_floor:.2f}V hardware floor — sequence aborted")
                             break
                         temp_h = self.hw.current_temp
                         if not self._seq_check_otp(temp_h):
@@ -4092,8 +4170,9 @@ class BatteryQtWindow(QMainWindow):
             self.sig_button.emit("btn_seq_cancel", False)
 
     # ---- Cycle Life test thread -------------------------------------------
-    def _cycle_life_thread(self):
-        """Cycle Life: N × (Charge CC-CV → REST → Discharge CC) with capacity fade tracking."""
+    def _cycle_life_thread(self, opts: dict):
+        """Cycle Life: N × (Charge CC-CV → REST → Discharge CC) with capacity fade tracking.
+        ``opts`` is a widget-value snapshot taken on the GUI thread by the caller."""
         import time as _t
 
         def status(msg):
@@ -4102,15 +4181,15 @@ class BatteryQtWindow(QMainWindow):
 
         completed_ok = False
         try:
-            n_cyc     = self.spn_cycle_n.value()
-            rest_s    = self.spn_cycle_rest.value() * 60
+            n_cyc     = opts["n_cyc"]
+            rest_s    = opts["rest_min"] * 60
             rated     = self.controller.config.battery.rated_capacity
             try:
-                c_ch  = float(self.cb_cycle_charge_crate.currentText().rstrip("C"))
+                c_ch  = float(opts["charge_crate"].rstrip("C"))
             except (ValueError, AttributeError):
                 c_ch  = 0.3
             try:
-                c_di  = float(self.cb_cycle_dis_crate.currentText().rstrip("C"))
+                c_di  = float(opts["dis_crate"].rstrip("C"))
             except (ValueError, AttributeError):
                 c_di  = 0.2
             max_current = self.controller.config.battery.max_current
@@ -4171,8 +4250,9 @@ class BatteryQtWindow(QMainWindow):
                     break
                 self.sig_cycle_wf.emit(1, "done")
 
-                # ── step 2: REST
-                self.sig_cycle_wf.emit(2, "active") if cyc == 1 else None
+                # ── step 2: REST (no dedicated LED — _CYCLE_STEPS has no REST entry;
+                # the DISCHARGE LED below only goes "active" once discharge itself starts,
+                # so REST no longer mislabels it early on cycle 1)
                 t_rest_end = _t.time() + rest_s
                 while self._seq_running.is_set():
                     remaining = int(t_rest_end - _t.time())
@@ -4204,7 +4284,10 @@ class BatteryQtWindow(QMainWindow):
                         dt  = now - last_log
                         last_log = now
                         ah_acc += abs(i_d) * dt / 3600.0
-                        self.controller._log_sample(v_d, -i_d)
+                        # discharge-positive convention — do not negate (same fix as
+                        # the HPPC pulse leg; a negated sign here corrupts the CSV that
+                        # a later "Analyze CSV" pass or ECM fit would read back).
+                        self.controller._log_sample(v_d, i_d)
                         self._seq_kick_watchdog()
                         elapsed_d = int(now - _dis_t0)
                         temp_d = self.hw.current_temp
@@ -4226,7 +4309,10 @@ class BatteryQtWindow(QMainWindow):
                     break
                 cap_history.append(ah_acc)
                 fade = 100.0 * ah_acc / rated if rated else 0.0
-                self.lbl_cycle_counter.setText(
+                # Cross-thread safe: this is a background sequence thread — mutating a
+                # Qt widget directly here (the old code did) can crash Qt (access
+                # violation) or corrupt the UI; go through a signal like everything else.
+                self.sig_cycle_counter.emit(
                     f"Cycle {cyc}/{n_cyc}  —  {ah_acc:.3f} Ah  ({fade:.1f}% of rated)"
                 )
                 self.sig_alarm.emit(
