@@ -65,8 +65,25 @@ class StateEstimator:
         # --- Trapezoidal current integration (research: lower drift than rectangular) ---
         self._last_current = None       # previous tared current for trapezoid rule
 
+        # --- Peukert minimum-sustain gate ---
+        # Peukert's law models capacity depletion vs. a SUSTAINED constant-current
+        # discharge rate (it's derived from full discharge curves at different fixed
+        # rates) — applying it to a brief current pulse (an HPPC/DCIR pulse is
+        # typically 10-30 s) is a physics misapplication that over-penalises SoC
+        # during every pulse. Track how long the CURRENT discharge has been
+        # continuous; only engage Peukert once it's been sustained past this
+        # threshold (well beyond a typical pulse, short enough to engage quickly for
+        # a genuine CC discharge test). Resets on any rest or polarity change, so an
+        # HPPC test's repeated pulse/rest cycles never accumulate toward it.
+        self._peukert_sustain_s = 0.0
+        self._peukert_min_sustain_s = 60.0
+
         # OCV correction
-        self.last_ocv_correction_time = time.time()
+        # monotonic (not time.time()): this is a pure elapsed-duration check ("has N
+        # seconds passed"), never a real timestamp — monotonic is immune to NTP/wall-
+        # clock jumps that could otherwise fire the correction early/late or compute a
+        # negative interval.
+        self.last_ocv_correction_time = time.monotonic()
         self.ocv_correction_interval = 300  # วินาที (5 นาที)
         self.last_static_voltage = None
         # standby_current = known idle/rest current offset (discharge-positive convention),
@@ -141,6 +158,11 @@ class StateEstimator:
         usable capacity per actual Ah discharged).
         Low current (I < I_rated): scale < 1 → SoC depletes slower (more
         usable capacity at slow discharge).
+
+        Pure Peukert math + the use_peukert flag only — the "is this discharge
+        sustained long enough to apply Peukert at all" decision (see
+        ``_peukert_sustain_s`` in __init__/update()) is made by the caller, so this
+        method stays directly testable in isolation.
         """
         if not self.use_peukert:
             return dah
@@ -177,11 +199,21 @@ class StateEstimator:
         self.current_offset = float(offset_a)
         self._auto_tare = False
 
+    # Un-calibrated packs (before a real HPPC fit) run noticeably higher than the
+    # idealized per-cell datasheet r0: connector/contact resistance, cabling, and
+    # corrosion aren't in the chemistry model. E.g. a small 5-7 Ah motorcycle AGM's
+    # base_rin computes to ~30 mΩ pack, but such packs commonly measure ~50-80 mΩ in
+    # practice. Applied only to the EKF's transient DEFAULT — never to the chemistry
+    # base_rin used elsewhere (grading baselines, aging references, etc.) — and always
+    # overwritten once update_ecm()/set_ecm_table() supplies a real fit.
+    _EKF_UNCALIBRATED_R0_MARGIN = 1.7
+
     def _ekf_rc_defaults(self):
         """Initial 1-RC parameters for the EKF from the pack model.
-        R0 from base_rin; R1≈0.6·R0, C1 chosen so τ≈30 s (lead-acid diffusion order).
+        R0 from base_rin (with a margin — see _EKF_UNCALIBRATED_R0_MARGIN); R1≈0.6·R0,
+        C1 chosen so τ≈30 s (lead-acid diffusion order).
         Overwritten by a real HPPC ECM fit via update_ecm()."""
-        r0 = max(1e-3, float(self.battery_model.base_rin))
+        r0 = max(1e-3, float(self.battery_model.base_rin) * self._EKF_UNCALIBRATED_R0_MARGIN)
         r1 = 0.6 * r0
         tau = 30.0
         c1 = tau / max(1e-4, r1)
@@ -269,7 +301,7 @@ class StateEstimator:
         self.soc_initial = soc
         self.soc_filtered = soc
         self.ah_accumulated = 0.0
-        self.last_ocv_correction_time = time.time()
+        self.last_ocv_correction_time = time.monotonic()
         self._last_current = None      # avoid a stale trapezoid average after a reset
         if self._ekf is not None:
             self._ekf.set_soc(soc, soc_var)
@@ -319,11 +351,26 @@ class StateEstimator:
         self._last_current = cur
         eta = self._coulomb_eta(self.soc, i_eff)        # 1.0 on discharge
         dah = i_eff * (dt / 3600.0)
+        # Track continuous-discharge duration for the Peukert sustain gate: resets on
+        # rest or a switch to charging, so an HPPC test's pulse/rest cycles never
+        # accumulate toward it — only a genuinely sustained discharge does. Uses the
+        # RAW tared current (``cur``), not the trapezoidal-smoothed ``i_eff`` — i_eff
+        # takes one extra sample to reflect a current drop to zero, which would delay
+        # detecting "rest" by a sample; the OCV rest-check elsewhere in this method
+        # uses the same raw ``cur`` for the same reason.
+        if cur > 0.05:
+            self._peukert_sustain_s += dt
+        else:
+            self._peukert_sustain_s = 0.0
         if i_eff < 0:
             dah *= eta
         else:
-            # Discharging: Peukert correction (lead-acid). Capacity counter (raw) below.
-            dah = self._peukert_dah(i_eff, dah)
+            # Discharging: Peukert correction (lead-acid), gated on sustained-discharge
+            # duration — an HPPC/DCIR pulse (far shorter than _peukert_min_sustain_s)
+            # never engages it, only a genuinely sustained discharge does. Capacity
+            # counter (raw) below.
+            if self._peukert_sustain_s >= self._peukert_min_sustain_s:
+                dah = self._peukert_dah(i_eff, dah)
         # Self-discharge leak (off by default) — acts like a tiny discharge.
         if self.self_discharge_pct_per_day > 0.0:
             dah += (self.self_discharge_pct_per_day / 100.0) * \
@@ -436,7 +483,7 @@ class StateEstimator:
         # ด้วย OCV "เฉพาะตรงที่ OCV เชื่อถือได้" คือบริเวณ knee/ปลาย (slope ชัน) หลัง full
         # charge / full discharge. ตรง plateau ที่ flat (slope ต่ำ) ห้ามแก้ (V คลาดนิด SoC
         # เพี้ยนมาก). ปลายที่ steep → anchor ทันที (ไม่รอ 300s) และ re-anchor coulomb counter.
-        now = time.time()
+        now = time.monotonic()   # duration check only — see the comment in __init__
         if self.use_ocv and abs(cur - self.standby_current) < self.static_current_threshold:
             self._rested_s += dt
             self.last_static_voltage = voltage
