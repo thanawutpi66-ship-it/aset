@@ -13,7 +13,7 @@ def run() -> int:
     try:
         from PySide6.QtWidgets import QApplication
         from aset_batt.app.app_bootstrapper import ApplicationBootstrapper
-        from aset_batt.ui.isa101_views import BatteryQtWindow, QtRootShim
+        from aset_batt.ui import theme
     except ImportError as e:
         print(f"Import error: {e}")
         print("Install dependencies first: pip install -r requirements.txt")
@@ -23,6 +23,11 @@ def run() -> int:
     if not bootstrapper.initialize():
         logger.error("Failed to initialize application")
         return 1
+
+    # Must run before isa101_views is imported: widget stylesheets bake the
+    # palette constants in as literal strings at construction time.
+    theme.set_theme(getattr(bootstrapper.config_manager.system, "ui_theme", "light"))
+    from aset_batt.ui.isa101_views import BatteryQtWindow, QtRootShim
 
     app = QApplication(sys.argv)
     QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))

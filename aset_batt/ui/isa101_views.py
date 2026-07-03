@@ -1770,6 +1770,17 @@ class BatteryQtWindow(QMainWindow):
         cloud_url_row.addWidget(self.ed_cloud_url, 1)
         lay.addLayout(cloud_url_row)
 
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("APPEARANCE"))
+        self.chk_dark_theme = QCheckBox("Dark theme (restart required)")
+        self.chk_dark_theme.setChecked(
+            getattr(self.config.system, "ui_theme", "light") == "dark")
+        self.chk_dark_theme.setToolTip(
+            "สลับโทนสีหน้าจอ — ต้องปิดแล้วเปิดโปรแกรมใหม่ถึงจะมีผล\n"
+            "(สีถูกฝังใน stylesheet ตอนสร้างหน้าจอ เปลี่ยนระหว่างรันไม่ได้)")
+        self.chk_dark_theme.stateChanged.connect(self._on_theme_toggle)
+        lay.addWidget(self.chk_dark_theme)
+
         lay.addStretch(1)
         return w
 
@@ -4588,7 +4599,7 @@ class BatteryQtWindow(QMainWindow):
         self.txt_analytics.setHtml(self._build_results_html(results))
         iv, ic = results["ica"]
         if len(iv):
-            self.plot_ica.clear(); self.plot_ica.plot(iv, ic, pen=pg.mkPen("#1f4e79", width=2))
+            self.plot_ica.clear(); self.plot_ica.plot(iv, ic, pen=pg.mkPen(INFO, width=2))
         wmsg = f" — {len(warns)} quality flag(s), review" if warns else ""
         # echo the headline grade in the RUN zone (full breakdown is in this tab)
         if hasattr(self, "lbl_run_grade"):
@@ -5002,6 +5013,12 @@ class BatteryQtWindow(QMainWindow):
         if getattr(self.config.system, "cloud_push_enabled", False):
             self._cloud_push_stop()
             self._cloud_push_start()
+
+    def _on_theme_toggle(self, state):
+        theme = "dark" if bool(state) else "light"
+        self.config.system.ui_theme = theme
+        self.config.save_config()
+        self._log_alarm(f"[UI] Theme set to {theme} — restart the program to apply")
 
     def _on_open_dashboard(self):
         url = getattr(self.config.system, "cloud_dashboard_url", "").strip()
