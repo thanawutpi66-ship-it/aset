@@ -163,7 +163,12 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self._update_connection_status()
 
     def _build_ui(self):
-        self.setWindowTitle("ASET Battery Tester — ISA-101 Command Center")
+        # Show which palette this process actually baked in — diagnoses stale
+        # code / wrong-CWD launches where config says dark but the UI stays light.
+        from aset_batt.ui import theme
+        _theme_name = "dark" if BG == theme.DARK["BG"] else "light"
+        self.setWindowTitle(
+            f"ASET Battery Tester — ISA-101 Command Center  [{_theme_name}]")
         self.resize(1440, 900)
         _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aset_logo.png")
         if os.path.exists(_icon_path):
