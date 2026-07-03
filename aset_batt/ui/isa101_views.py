@@ -1226,6 +1226,12 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
 
         # Determine if this event needs ACK (ALARM or WARNING only)
         needs_ack = event in ("ALARM", "WARNING")
+        if needs_ack:
+            try:
+                from aset_batt.storage.cloud_push import push_alarm
+                push_alarm(event, point)
+            except Exception:
+                pass
         # For SCADA flash: bright = saturated alert, dim = muted background
         if event == "ALARM":
             bright_bg, dim_bg = "#8B0000", "#3D1A1A"

@@ -24,6 +24,8 @@ let mainCharts = {};
 let icaChart = null;
 let alarmLog = [];
 let selectedSession = null;
+let _lastLabAlarmTs = null;  // null = not yet backfilled (see processLabAlarms)
+let _labAlarmActive = false;  // true while the overlay is up for an unacked lab ALARM
 let _analyzeState = null;  // {idx, queued_at, timer} while re-analysis is in flight
 
 function sohColor(v){ return v >= 85 ? css('--ok') : v >= 70 ? css('--warn') : css('--crit'); }
@@ -352,6 +354,10 @@ function renderPayload(p, received_at) {
   updateMainCharts(ser);
   updateIcaChart(ser.Voltage_V, ser.SoC_pct);
 
+  // Real safety events forwarded from the GUI's alarm log (ALARM/WARNING),
+  // not just this browser's own temperature-threshold guess below.
+  processLabAlarms(p.alarms || []);
+
   // Alarm tracking
   const explicitAlarm = safe === 'ALARM';
   const hot = T != null && T >= TEMP_CRIT;
@@ -360,7 +366,7 @@ function renderPayload(p, received_at) {
     const ts = new Date(received_at * 1000).toLocaleTimeString();
     pushAlarm(ts, msg);
     setSafety(true, msg);
-  } else {
+  } else if (!_labAlarmActive) {
     setSafety(false, '');
   }
 
@@ -469,6 +475,25 @@ function updateTestPanel(meta, summary) {
   }
 }
 
+/* ---- lab-forwarded safety events ------------------------------------------ */
+function processLabAlarms(alarms) {
+  if (!alarms.length) return;
+  const sorted = [...alarms].sort((a, b) => a.ts - b.ts);
+  if (_lastLabAlarmTs === null) {
+    // First payload seen this page load: backfill the log silently (no popup)
+    // so a stale event from before we opened the tab doesn't flash the overlay.
+    for (const a of sorted) pushAlarm(new Date(a.ts * 1000).toLocaleTimeString(), a.message);
+    _lastLabAlarmTs = sorted[sorted.length - 1].ts;
+    return;
+  }
+  for (const a of sorted) {
+    if (a.ts <= _lastLabAlarmTs) continue;
+    pushAlarm(new Date(a.ts * 1000).toLocaleTimeString(), a.message);
+    if (a.severity === 'ALARM') { _labAlarmActive = true; setSafety(true, a.message); }
+    _lastLabAlarmTs = a.ts;
+  }
+}
+
 /* ---- alarm log ----------------------------------------------------------- */
 function pushAlarm(ts, msg) {
   alarmLog.unshift({ ts, msg });
@@ -510,7 +535,7 @@ function setSafety(alarm, msg){
   if (alarm){ if (!isMuted){ ov.style.display = 'flex'; $('overlayMsg').textContent = msg; } }
   else { ov.style.display = 'none'; isMuted = false; }
 }
-function muteAlarm(){ isMuted = true; $('overlay').style.display = 'none'; }
+function muteAlarm(){ isMuted = true; _labAlarmActive = false; $('overlay').style.display = 'none'; }
 window.muteAlarm = muteAlarm;
 window.backToLive = backToLive;
 
