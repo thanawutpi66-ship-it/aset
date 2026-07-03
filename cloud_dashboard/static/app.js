@@ -532,8 +532,34 @@ async function load(){
   }
 }
 
+/* ---- theme toggle ---------------------------------------------------------- */
+function applyThemeIcon() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const btn = $('themeToggle');
+  if (btn) btn.textContent = isLight ? '☀️' : '🌙';
+}
+function toggleTheme() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  if (isLight) {
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.setItem('aset-theme', 'dark');
+  } else {
+    document.documentElement.setAttribute('data-theme', 'light');
+    localStorage.setItem('aset-theme', 'light');
+  }
+  applyThemeIcon();
+  // Chart.js bakes axis/legend colors in at build time — rebuild so they pick up the new theme
+  destroyMainCharts();
+  buildMainCharts();
+  buildIcaChart();
+  if (selectedSession !== null) selectSession(selectedSession);
+  else load();
+}
+
 /* ---- boot ---------------------------------------------------------------- */
 window.addEventListener('DOMContentLoaded', () => {
+  applyThemeIcon();
+  $('themeToggle').addEventListener('click', toggleTheme);
   document.querySelectorAll('.mode-btn').forEach(btn =>
     btn.addEventListener('click', () => setMode(btn.dataset.mode)));
   document.querySelectorAll('.lptab').forEach(btn =>

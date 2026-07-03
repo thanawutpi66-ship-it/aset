@@ -7,9 +7,15 @@
 <title>ASET Cloud Dashboard · Battery Health</title>
 <link rel="icon" type="image/png" href="asetlogo.png"/>
 <link rel="preconnect" href="https://cdn.jsdelivr.net"/>
-<link rel="stylesheet" href="style.css?v=7"/>
+<link rel="stylesheet" href="style.css?v=8"/>
+<script>
+  (function(){
+    var saved = localStorage.getItem('aset-theme');
+    if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+  })();
+</script>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script defer src="app.js?v=7"></script>
+<script defer src="app.js?v=8"></script>
 </head>
 <body>
 
@@ -34,6 +40,7 @@
     <span class="pill" id="battery"><i class="dot"></i>battery: <b>–</b></span>
     <span class="pill">updated <b id="updated">–</b></span>
     <span class="pill" id="livePill"><i class="dot"></i><b id="live">connecting…</b></span>
+    <button class="theme-toggle" id="themeToggle" title="Toggle light/dark theme">🌙</button>
   </div>
 </header>
 
