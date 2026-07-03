@@ -3307,6 +3307,13 @@ class BatteryQtWindow(QMainWindow):
 
     def _seq_common_start(self, btn_key: str, loading_label: str):
         """Shared startup: reset all step leds, buffers, progress, result card."""
+        # The background monitor loop (Start Monitor) also calls estimator.update()
+        # at ~10 Hz. If it's left running while a sequence thread starts feeding the
+        # same estimator directly, every sample gets counted twice — coulomb counting
+        # (and therefore displayed SoC) drifts at roughly double the true rate. Mirror
+        # _on_run_test's guard: a sequence owns the estimator exclusively while it runs.
+        if self.controller and self.controller.monitor_running:
+            self.controller.stop_monitor()
         # capture the test name for the always-visible phase banner
         self._current_test_name = self.cb_workflow_type.currentText().split("(")[0].strip()
         self.lbl_phase_banner.setText(f"▶  {self._current_test_name}  ·  เริ่ม...")
@@ -3322,11 +3329,29 @@ class BatteryQtWindow(QMainWindow):
             buf.clear()
         self._elapsed_t0 = None
         self._seq_last_meas_time = 0.0   # reset watchdog
+        self._seq_temp_stale_warned = False   # one-shot guard, see _seq_check_temp_stale
         self.sig_phase_progress.emit(0, 0)   # hide progress bar
         self.frm_seq_result.hide()
         self._seq_running.set()
         self.btn_seq_cancel.setEnabled(True)
         self.sig_loading.emit(btn_key, True, loading_label)
+
+    def _seq_check_temp_stale(self):
+        """Warn once per sequence run if the ESP32 temperature reading has gone
+        stale (serial glitch / hung sensor). Mirrors AutoController._monitor_loop's
+        warn-only handling: we deliberately don't touch the temperature value itself
+        (no NaN injection) since these sequence loops feed it straight into the EKF
+        and Arrhenius Rin compensation — corrupting it there would poison the whole
+        estimate, which is worse than trusting a slightly-stale-but-sane last value.
+        Not called from AutoController's own monitor loop (it has its own guard) —
+        only from the ISA-101 sequence threads, which had no staleness check at all."""
+        if self._seq_temp_stale_warned:
+            return
+        if getattr(self.hw, "temp_is_stale", None) and self.hw.temp_is_stale():
+            self._seq_temp_stale_warned = True
+            self.sig_alarm.emit(
+                "[WARNING] ESP32 temperature reading is stale — Rin/OCV temperature "
+                "compensation and OTP protection may not reflect the real battery.")
 
     def _on_auto_sequence(self):
         if self.controller is None or not getattr(self.hw, "is_connected", False):
@@ -3804,6 +3829,7 @@ class BatteryQtWindow(QMainWindow):
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
                     now = _t.perf_counter()   # stamp AT the measurement, not after temp/etc.
                     temp3 = self.hw.current_temp
+                    self._seq_check_temp_stale()
                     dt = now - last_log
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
@@ -3919,6 +3945,7 @@ class BatteryQtWindow(QMainWindow):
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
                     now    = _t.perf_counter()   # stamp AT the measurement
                     temp3  = self.hw.current_temp
+                    self._seq_check_temp_stale()
                     dt     = now - last_log
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
@@ -5168,6 +5195,7 @@ class BatteryQtWindow(QMainWindow):
                         v, i_meas = self.hw.read_measurements(prefer_load_v=True)
                         now  = time.perf_counter()   # stamp AT the measurement
                         temp = self.hw.current_temp
+                        self._seq_check_temp_stale()
                         dt   = now - last_log
                         last_log = now
                         self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
@@ -5275,6 +5303,7 @@ class BatteryQtWindow(QMainWindow):
                     v, i_ch = self.hw.read_measurements(prefer_load_v=False)
                     now = time.perf_counter()   # stamp AT the measurement
                     temp = self.hw.current_temp
+                    self._seq_check_temp_stale()
                     dt  = now - last
                     last = now
                     state = self.controller.estimator.update(v, i_ch, dt=dt, temp=temp)
@@ -5314,6 +5343,7 @@ class BatteryQtWindow(QMainWindow):
                     v, i_meas = self.hw.read_measurements(prefer_load_v=True)
                     now  = time.perf_counter()   # stamp AT the measurement
                     temp = self.hw.current_temp
+                    self._seq_check_temp_stale()
                     dt   = now - last
                     last = now
                     state = self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
@@ -5433,6 +5463,7 @@ class BatteryQtWindow(QMainWindow):
                         v, i_meas = self.hw.read_measurements(prefer_load_v=True)
                         now  = time.perf_counter()   # stamp AT the measurement
                         temp = self.hw.current_temp
+                        self._seq_check_temp_stale()
                         dt   = now - last
                         last = now
                         self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
