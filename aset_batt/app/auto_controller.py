@@ -35,6 +35,7 @@ class AutoController:
         # เวลาเริ่มต้นสำหรับคำนวณ elapsed time ใน CSV
         self._start_time = None
         self._last_update_time = None  # ใช้คำนวณ dt จริงต่อรอบ (coulomb counting)
+        self._temp_stale_warned = False  # one-shot guard for the stale-ESP32-temp alarm
 
         # Get event handler from service locator (registered after UI bootstrap)
         self.event_handler = None
@@ -268,9 +269,19 @@ class AutoController:
             on_progress(_t.time() - t_start, v_final, 0.0, final_status)
         return soc, v_final, final_status
 
+    # Consecutive read failures tolerated before the monitor loop gives up for real.
+    # A single VISA/USB hiccup (timeout, transient bus reset) used to kill the whole
+    # loop on the very first exception — and monitor_running was never reset to False,
+    # so start_monitor()'s "if not running" guard meant the operator could never
+    # restart it either (looked exactly like the program had frozen).
+    _MONITOR_MAX_CONSEC_ERRORS = 5
+    _MONITOR_TARGET_PERIOD_S = 0.1   # nominal 10 Hz
+
     def _monitor_loop(self):
         """ลูปอ่าน Voltage, Current และอัปเดต SoC/UI"""
+        consec_errors = 0
         while self.monitor_running:
+            loop_t0 = time.perf_counter()
             if self.hw.is_connected:
                 try:
                     # อ่านค่าจาก Hardware
@@ -285,6 +296,11 @@ class AutoController:
                     #   REST      → OUTPUT OFF, SSR OFF; i_net ≈ 0             (positive)
                     #
                     v, psu_i, load_i = self.hw.read_vi()
+                    # Stamp the timestamp AT the measurement (not after the safety
+                    # checks below) using perf_counter (monotonic, sub-ms) rather than
+                    # time.time() (wall-clock, vulnerable to NTP/clock-jump corrupting
+                    # coulomb counting with a negative or oversized dt).
+                    now = time.perf_counter()
                     if load_i > 0.02:
                         # Discharge via e-load: battery → load (positive by convention).
                         i_net = load_i
@@ -302,6 +318,27 @@ class AutoController:
                     # ChargeController so we don't kill live monitoring on a
                     # low-voltage battery that is being charged.
                     temp = self.hw.current_temp
+                    # current_temp has no timestamp of its own — a serial glitch or a
+                    # hung ESP32 would leave it silently frozen at an old value with
+                    # nothing to distinguish it from a live reading, so the OTP check
+                    # below (and Rin/OCV temperature compensation) would keep trusting
+                    # a stale number. Warn once per stale episode; don't hard-stop the
+                    # test on this alone (a false trip here would be its own hazard).
+                    if getattr(self.hw, "temp_is_stale", None) and self.hw.temp_is_stale():
+                        if not self._temp_stale_warned:
+                            self._temp_stale_warned = True
+                            logger.warning("ESP32 temperature reading is stale — "
+                                          "OTP safety check may be blind to real temperature")
+                            if self.event_handler:
+                                self.event_handler.post_event(
+                                    EventType.SHOW_MESSAGE,
+                                    ("Temperature Sensor",
+                                     "ESP32 temperature reading is stale (no update recently) — "
+                                     "over-temperature protection may not reflect the real battery "
+                                     "temperature until it reconnects.", "warning")
+                                )
+                    else:
+                        self._temp_stale_warned = False
                     limits = self.config.system.safety_limits
                     if temp > limits.get("max_temperature", 60.0):
                         self._trigger_safety(
@@ -313,7 +350,7 @@ class AutoController:
                         break
 
                     # อัปเดต State Estimator ด้วย dt จริงต่อรอบ (ไม่ hardcode 0.1)
-                    now = time.time()
+                    # `now` was already stamped right after read_vi() above.
                     dt = (now - self._last_update_time) if self._last_update_time else 0.1
                     self._last_update_time = now
                     state = self.estimator.update(
@@ -340,21 +377,52 @@ class AutoController:
                         state['soc'], state['rin'] * 1000,  # แปลงเป็น mOhm
                         self.hw.current_temp
                     )
-                except HardwareError as e:
-                    logger.error(f"Hardware error in monitor loop: {e}")
-                    if self.event_handler:
-                        self.event_handler.post_event(
-                            EventType.SHOW_MESSAGE,
-                            ("Hardware Error", str(e), "error")
-                        )
-                    break
+                    consec_errors = 0   # a clean read resets the retry budget
                 except SafetyError as e:
+                    # A genuine safety trip — never retry this one.
                     logger.error(f"Safety error in monitor loop: {e}")
+                    self._stop_monitor_fatally(f"Safety error: {e}")
                     break
                 except Exception as e:
-                    logger.error(f"Unexpected error in monitor loop: {e}", exc_info=True)
+                    # Catches HardwareError too (ASETError -> Exception); SafetyError
+                    # was already matched and handled by the clause above.
+                    consec_errors += 1
+                    if consec_errors < self._MONITOR_MAX_CONSEC_ERRORS:
+                        # Likely transient (USB glitch, VISA timeout) — retry with a
+                        # short backoff instead of killing live monitoring outright.
+                        logger.warning(
+                            "Monitor loop read error (%d/%d, retrying): %s",
+                            consec_errors, self._MONITOR_MAX_CONSEC_ERRORS, e)
+                        time.sleep(min(2.0, 0.3 * consec_errors))
+                        continue
+                    logger.error(
+                        f"Monitor loop: {consec_errors} consecutive errors, giving up: {e}",
+                        exc_info=True)
+                    self._stop_monitor_fatally(
+                        f"Lost connection to hardware after {consec_errors} "
+                        f"consecutive read errors: {e}")
                     break
-            time.sleep(0.1)
+            # Sleep only the time REMAINING to hit the target period. SCPI round-trip
+            # latency (~40-200 ms) already eats into the 100 ms budget; always sleeping
+            # a fixed 0.1 s on top of that (instead of topping up to it) needlessly
+            # halves the achievable sample rate. dt itself is measured correctly
+            # either way (perf_counter deltas around the actual read), so this only
+            # affects throughput/sample density — useful for not under-sampling fast
+            # transients (e.g. an HPPC pulse edge) — not dt correctness.
+            elapsed_this_iter = time.perf_counter() - loop_t0
+            time.sleep(max(0.0, self._MONITOR_TARGET_PERIOD_S - elapsed_this_iter))
+
+    def _stop_monitor_fatally(self, reason: str):
+        """Cleanly end the monitor loop and make it restartable. Without resetting
+        monitor_running here, start_monitor()'s "if not running" guard would silently
+        no-op forever after any unrecoverable error — the operator has no way to
+        recover monitoring short of restarting the whole application."""
+        self.monitor_running = False
+        if self.event_handler:
+            self.event_handler.post_event(
+                EventType.SHOW_MESSAGE,
+                ("Monitor Stopped", reason, "error")
+            )
     # Profile Control
     # ------------------------------------------------------------------
 

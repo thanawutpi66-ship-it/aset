@@ -56,6 +56,7 @@ class SystemConfig:
     cloud_dashboard_url: str = ""
     cloud_push_interval: float = 5.0
     cloud_analysis_interval: float = 60.0
+    ui_theme: str = "light"  # "light" or "dark" — read once at startup, before the GUI is built
     safety_limits: Dict[str, float] = None
 
     def __post_init__(self):

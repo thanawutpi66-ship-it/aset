@@ -384,6 +384,18 @@ class HardwareController:
                 return float(m.group(1))
         return None
 
+    def temp_is_stale(self, max_age_s: float = 10.0) -> bool:
+        """True if no ESP32 temperature line has been successfully parsed in the last
+        ``max_age_s`` seconds. ``current_temp`` has no timestamp of its own — it just
+        holds whatever the last successful parse set it to — so a serial glitch, a
+        full input buffer, or the ESP32 hanging would leave it silently frozen at an
+        old value with nothing distinguishing it from a fresh reading. Callers that
+        make safety decisions from current_temp (OTP cutoff, Rin/OCV temperature
+        compensation) should check this first."""
+        if not self.is_esp_connected:
+            return True
+        return (time.time() - self.last_esp_heartbeat) > max_age_s
+
     def _esp_monitor_loop(self, callback):
         self.last_esp_heartbeat = time.time()
         _unmatched_logged = set()   # avoid log-spamming the same unknown format

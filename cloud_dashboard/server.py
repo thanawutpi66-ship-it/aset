@@ -100,10 +100,25 @@ def _save_sessions() -> None:
         pass
 
 
+def _json_sanitize(obj):
+    """Recursively replace float NaN/Infinity with None.
+    json.dumps emits the literal tokens NaN/Infinity/-Infinity for these by default
+    (valid Python, NOT valid JSON) — browsers' JSON.parse() rejects them outright,
+    which silently breaks every fetch().json() call on the frontend the moment any
+    analysis field (e.g. soh on a partial discharge) is NaN."""
+    if isinstance(obj, float):
+        return None if (obj != obj or obj in (float("inf"), float("-inf"))) else obj
+    if isinstance(obj, dict):
+        return {k: _json_sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_sanitize(v) for v in obj]
+    return obj
+
+
 def _make_handler():
     class Handler(BaseHTTPRequestHandler):
         def _json(self, payload, status=200):
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            body = json.dumps(_json_sanitize(payload), ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
