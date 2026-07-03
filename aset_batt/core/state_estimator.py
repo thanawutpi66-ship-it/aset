@@ -407,11 +407,21 @@ class StateEstimator:
                 # start a fresh full→empty capacity sweep for live SoH
                 self._cap_counting = True
                 self._cap_counter_ah = 0.0
-        # 0% anchor: discharge + V ≤ OCV ที่ 0% ของแพ็ค (+ 1% hysteresis)
+        # 0% anchor: discharge + estimated OCV ≤ OCV ที่ 0% ของแพ็ค (+ 1% hysteresis)
         #            2.50V/cell × 8 = 20.0V สำหรับ LFP 8S
+        # ชดเชย I·R ก่อนเทียบ: ระหว่างมีโหลด V = OCV − I·R ต่ำกว่า OCV จริงตามธรรมชาติ
+        # (ดู _uvp_floor ใน sequences.py) — เทียบ voltage ดิบตรงๆ เคยทำให้ HPPC pulse
+        # 5A บนแบตที่เพิ่งชาร์จเต็มโดน anchor เป็น 0% ทันที (แรงดันยุบจาก I·R ไม่ใช่
+        # เพราะแบตหมด) ใช้ self.rin (ค่าจากรอบก่อนหน้า — ยังไม่ถูกอัปเดตในรอบนี้ ดู
+        # "=== 2." ด้านล่าง) ประมาณ OCV กลับ และจำกัดไว้แค่กระแส ≤ 2C กัน edge case ที่
+        # Rin ใต้โหลดจริงเพี้ยนไปจากค่าตอนพัก
         anchor_v_empty = self.battery_model.get_ocv_from_soc(0.0)
-        if (cur > 0 and voltage <= anchor_v_empty * 1.01 and self.soc > 2.0):
-            logger.info("Endpoint anchor → 0%%: %.3fV (≤%.3f)", voltage, anchor_v_empty)
+        anchor_i_max = self.rated_capacity * 2.0
+        ocv_est = voltage + cur * self.rin if cur > 0 else voltage
+        if (cur > 0 and cur <= anchor_i_max
+                and ocv_est <= anchor_v_empty * 1.01 and self.soc > 2.0):
+            logger.info("Endpoint anchor → 0%%: est.OCV %.3fV (≤%.3f) meas=%.3fV I=%.3fA",
+                        ocv_est, anchor_v_empty, voltage, cur)
             # live SoH from a full→empty sweep (#1): measured capacity ÷ rated.
             # Require a near-full sweep (> 30% rated) so partial discharges don't corrupt SoH.
             if self._cap_counting and self._cap_counter_ah > 0.30 * self.rated_capacity:

@@ -1995,7 +1995,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self.sig_char_update.connect(self._slot_char_update)
         self.sig_live_readback.connect(self._slot_live_readback)
         self.sig_cycle_counter.connect(self.lbl_cycle_counter.setText)
-        self.sig_seq_aborted.connect(self._set_phase_banner_idle)
+        self.sig_seq_aborted.connect(self._on_seq_aborted)
 
     def update_display(self, v, i, soc, rin, temp=None, soh=None):
         if temp is None:

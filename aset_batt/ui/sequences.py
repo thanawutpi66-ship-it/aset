@@ -104,6 +104,23 @@ class SequencesMixin:
             f"background:{PANEL2}; color:{MUTED}; border:1px solid {BORDER}; "
             f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
 
+    def _seq_reset_step_leds(self):
+        """Reset every workflow's step LEDs to idle (start of a new run, or abort)."""
+        for i in range(len(self._WF_STEPS)):       self.sig_workflow.emit(i, "idle")
+        for i in range(len(self._QS_STEPS)):       self.sig_qs_workflow.emit(i, "idle")
+        for i in range(len(self._HPPC_SEQ_STEPS)): self.sig_hppc_seq_wf.emit(i, "idle")
+        for i in range(len(self._CYCLE_STEPS)):    self.sig_cycle_wf.emit(i, "idle")
+
+    def _on_seq_aborted(self):
+        """Slot for sig_seq_aborted — the banner alone used to reset on a safety trip,
+        leaving the step LEDs and the status label under CANCEL stuck on their last
+        in-progress text (e.g. "HPPC 3/5: PULSE 30s"), which looked like a hang even
+        though the thread had already exited. The abort reason itself is pushed to
+        lbl_wf_status right at the trip site (see the "⛔" sig_wf_status.emit calls) —
+        this slot only handles the parts every abort path shares."""
+        self._set_phase_banner_idle()
+        self._seq_reset_step_leds()
+
     def _banner_active(self, led_list, step: int, color: str):
         """Update the always-visible banner to '▶ TEST · PHASE' for the active step."""
         if 0 <= step < len(led_list):
@@ -299,10 +316,7 @@ class SequencesMixin:
         self.lbl_phase_banner.setStyleSheet(
             f"background:{PANEL2}; color:{INFO}; border:1px solid {INFO}; "
             f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
-        for i in range(len(self._WF_STEPS)):       self.sig_workflow.emit(i, "idle")
-        for i in range(len(self._QS_STEPS)):       self.sig_qs_workflow.emit(i, "idle")
-        for i in range(len(self._HPPC_SEQ_STEPS)): self.sig_hppc_seq_wf.emit(i, "idle")
-        for i in range(len(self._CYCLE_STEPS)):    self.sig_cycle_wf.emit(i, "idle")
+        self._seq_reset_step_leds()
         for buf in (self.buf_t, self.buf_v, self.buf_i,
                     self.buf_soc, self.buf_rin, self.buf_temp):
             buf.clear()
@@ -541,8 +555,9 @@ class SequencesMixin:
         limit = self._otp_limit()
         if temp > limit:
             self._seq_running.clear()
-            self.sig_alarm.emit(
-                f"[SAFETY] OTP triggered: {temp:.1f}°C > {limit:.0f}°C — sequence aborted")
+            reason = f"OTP triggered: {temp:.1f}°C > {limit:.0f}°C"
+            self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
+            self.sig_wf_status.emit(f"⛔ {reason}")
             return False
         return True
 
@@ -558,8 +573,9 @@ class SequencesMixin:
             last = getattr(self, "_seq_last_meas_time", 0.0)
             if last and (time.time() - last) > self._WATCHDOG_TIMEOUT_S:
                 self._seq_running.clear()
-                self.sig_alarm.emit(
-                    "[SAFETY] Watchdog: ไม่มีการวัดค่า > 5 นาที — sequence ถูกยกเลิก")
+                reason = "Watchdog: ไม่มีการวัดค่า > 5 นาที"
+                self.sig_alarm.emit(f"[SAFETY] {reason} — sequence ถูกยกเลิก")
+                self.sig_wf_status.emit(f"⛔ {reason}")
                 return False
             time.sleep(min(0.3, left))
         return False
@@ -1108,9 +1124,10 @@ class SequencesMixin:
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                         if v_r <= pack_min:
                             self._seq_running.clear()
-                            self.sig_alarm.emit(
-                                f"[SAFETY] Under-voltage during HPPC rest: "
-                                f"{v_r:.3f}V ≤ {pack_min:.3f}V cutoff — sequence aborted")
+                            reason = (f"Under-voltage during HPPC rest: "
+                                      f"{v_r:.3f}V ≤ {pack_min:.3f}V cutoff")
+                            self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
+                            self.sig_wf_status.emit(f"⛔ {reason}")
                             break
                         temp_h = self.hw.current_temp
                         if not self._seq_check_otp(temp_h):
@@ -1140,9 +1157,10 @@ class SequencesMixin:
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                         if v_p <= hppc_load_floor:
                             self._seq_running.clear()
-                            self.sig_alarm.emit(
-                                f"[SAFETY] Under-voltage during HPPC pulse: "
-                                f"{v_p:.3f}V ≤ {hppc_load_floor:.3f}V hardware floor — sequence aborted")
+                            reason = (f"Under-voltage during HPPC pulse: "
+                                      f"{v_p:.3f}V ≤ {hppc_load_floor:.3f}V hardware floor")
+                            self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
+                            self.sig_wf_status.emit(f"⛔ {reason}")
                             break
                         temp_h = self.hw.current_temp
                         if not self._seq_check_otp(temp_h):
