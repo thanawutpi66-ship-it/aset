@@ -28,9 +28,9 @@ class TestOhmicR0InUpdate(unittest.TestCase):
         e.update_ecm(0.1234, 0.02, 1000.0)           # distinctive OHMIC R0
         captured = {}
         real_update = e._ekf.update
-        def spy(v, cur, ocv, docv, r0):
+        def spy(v, cur, ocv, docv, r0, r_override=None):
             captured["r0"] = r0
-            return real_update(v, cur, ocv, docv, r0)
+            return real_update(v, cur, ocv, docv, r0, r_override=r_override)
         e._ekf.update = spy
         e.update(13.0, 5.0, dt=1.0, temp=25.0)
         # the R0 fed to the measurement update must be the ohmic ekf.R0, and must NOT be

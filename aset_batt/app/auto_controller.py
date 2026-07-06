@@ -375,7 +375,8 @@ class AutoController:
                     self.data.log_row(
                         elapsed, v, i_net,
                         state['soc'], state['rin'] * 1000,  # แปลงเป็น mOhm
-                        self.hw.current_temp
+                        self.hw.current_temp,
+                        rin_calibrated=state.get('rin_calibrated', True),
                     )
                     consec_errors = 0   # a clean read resets the retry budget
                 except SafetyError as e:
@@ -744,7 +745,8 @@ class AutoController:
             state = self.estimator.update(voltage, current, dt=dt, temp=temp)
             self.data.log_row(
                 time.time() - self._start_time, voltage, current,
-                state["soc"], state["rin"] * 1000, temp
+                state["soc"], state["rin"] * 1000, temp,
+                rin_calibrated=state.get("rin_calibrated", True),
             )
 
             # Check end condition (เทียบกับ cutoff ระดับแพ็ค)
@@ -939,12 +941,21 @@ class AutoController:
             self._start_time = time.time()
 
     def _log_sample(self, voltage: float, current: float):
-        """log หนึ่งแถว ใช้ค่า SoC/Rin ล่าสุดจาก estimator (สำหรับ IEC test ที่ไม่ผ่าน monitor loop)"""
+        """log หนึ่งแถว ใช้ค่า SoC/Rin ล่าสุดจาก estimator (สำหรับ IEC test ที่ไม่ผ่าน monitor loop)
+
+        Rin still logs live every sample even before any real HPPC pulse has been fitted
+        (update_ecm()/set_ecm_table()) — the operator wants a continuous real-time trend,
+        not a gap. But until then it's still just _ekf_rc_defaults()'s uncalibrated
+        placeholder guess, not a measurement (an operator comparing it against a bench
+        ACIR/DCIR meter kept mistaking the guess for a reading), so rin_calibrated rides
+        along for the UI to label it "estimated" rather than presenting it as a reading."""
         try:
+            calibrated = getattr(self.estimator, "_ecm_calibrated", True) or not getattr(
+                self.estimator, "use_ekf", True)
             self.data.log_row(
                 time.time() - self._start_time, voltage, current,
                 self.estimator.soc, self.estimator.rin * 1000.0,
-                self.hw.current_temp,
+                self.hw.current_temp, rin_calibrated=calibrated,
             )
         except Exception as e:
             logger.debug("log_sample error: %s", e)

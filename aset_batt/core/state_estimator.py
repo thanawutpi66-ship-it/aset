@@ -55,6 +55,12 @@ class StateEstimator:
         # EKF are interpolated at the current SoC each step. None → single fixed fit.
         self.ecm_table = None
         self._ecm_grid = None           # cached (soc, r0, r1, c1) numpy arrays
+        # Until a real fit lands, self.rin is _ekf_rc_defaults()'s uncalibrated guess
+        # (base_rin with a deliberate safety margin, R0+R1 summed) — plausible enough to
+        # keep the EKF sane, but it isn't a measurement. Operators comparing it against a
+        # bench meter (ACIR) before any HPPC pulse has run kept mistaking a guess for a
+        # reading, so the UI needs to know which one it's currently displaying.
+        self._ecm_calibrated = False
 
         # --- Ablation flags (for replay.py study; all ON = full model) ---
         self.use_ocv = True             # OCV-based correction / EKF measurement update
@@ -78,6 +84,20 @@ class StateEstimator:
         self._peukert_sustain_s = 0.0
         self._peukert_min_sustain_s = 60.0
 
+        # --- Endpoint-anchor sustain gate ---
+        # A real HPPC test caught this failing on real hardware: the 0% anchor's
+        # ocv_est = voltage + cur*self.rin crossed its threshold by 0.0075 V for a
+        # SINGLE sample (one noisy Rin/voltage reading, while self.rin was still an
+        # uncalibrated pre-fit guess — see rin_calibrated), hard-resetting SoC from
+        # 65% to 0% mid-pulse and wrecking the whole test's grade. The condition
+        # itself is fine — the bug was trusting one instantaneous sample. Require it
+        # to hold continuously for _anchor_min_sustain_s before firing, same pattern
+        # as the Peukert sustain gate above; a genuinely full/empty pack stays past
+        # the threshold far longer than one glitchy sample, a marginal fluke doesn't.
+        self._full_anchor_sustain_s = 0.0
+        self._zero_anchor_sustain_s = 0.0
+        self._anchor_min_sustain_s = 3.0
+
         # OCV correction
         # monotonic (not time.time()): this is a pure elapsed-duration check ("has N
         # seconds passed"), never a real timestamp — monotonic is immune to NTP/wall-
@@ -97,6 +117,15 @@ class StateEstimator:
         # Minimum rest time before OCV correction fires (chemistry-dependent).
         # LFP plateau relaxation needs 10-30 min; Li-ion ~2-5 min.
         self._min_rest_s = self._default_min_rest_s()
+
+        # Post-anchor settle window: right after a 100%/0% endpoint anchor, the
+        # terminal voltage is still surface-charge-inflated (charge) or freshly
+        # polarised (discharge) — trusting it immediately can pull the EKF's SoC away
+        # from a genuinely-correct anchor before the transient dissipates. Reuses
+        # _min_rest_s (same "how long until voltage means something again" question
+        # this constant already answers elsewhere) rather than adding a new knob.
+        self._anchor_settle_until = 0.0        # time.monotonic() deadline; 0 = inactive
+        self._anchor_settle_r_mult = 200.0     # measurement-variance inflation factor
 
         # Exponential smoothing
         self.alpha = 0.05
@@ -191,6 +220,24 @@ class StateEstimator:
         """Externally set SoH (e.g. from analysis.py full-discharge capacity)."""
         self.soh = max(0.0, min(120.0, float(soh)))
 
+    def reset_battery_state(self) -> None:
+        """Clear everything this instance has learned about the PREVIOUS physical
+        battery — call when the operator selects a different product/battery, not
+        between cycles of the same multi-cycle test (Cycle Life legitimately wants SoH
+        to evolve across its own cycles; don't call this there).
+
+        Without this, effective_capacity() = rated_capacity * (soh/100) keeps using
+        whatever SoH the last-tested battery happened to end at. A brand-new battery
+        swapped in afterward (soh should read 100%) instead inherits e.g. a prior
+        aged unit's 60% SoH, making the capacity denominator too small — coulomb
+        counting then races to 100% SoC during CC/bulk charge, well before voltage
+        even reaches the absorption/CV ceiling, because every real Ah put in reads as
+        a bigger SoC jump than it should."""
+        self.soh = 100.0
+        self.measured_capacity_ah = 0.0
+        self._cap_counting = False
+        self._cap_counter_ah = 0.0
+
     def set_self_discharge(self, pct_per_day: float) -> None:
         self.self_discharge_pct_per_day = max(0.0, float(pct_per_day))
 
@@ -235,6 +282,7 @@ class StateEstimator:
         Ignored while a SoC-dependent ECM table is active (the table takes precedence)."""
         if self.ecm_table is None and self._ekf is not None and r0 > 0 and r1 > 0 and c1 > 0:
             self._ekf.set_rc(r0, r1, c1)
+            self._ecm_calibrated = True
 
     def set_ecm_table(self, table) -> None:
         """Provide R0/R1/C1 vs SoC (from characterization.build_ecm_table) so the EKF
@@ -253,6 +301,7 @@ class StateEstimator:
             np.asarray([table[s]["r1"] for s in socs], float),
             np.asarray([table[s]["c1"] for s in socs], float),
         )
+        self._ecm_calibrated = True
         logger.info("ECM table active: %d SoC points (R0/R1/C1 now SoC-dependent)", len(socs))
 
     def _ecm_at_soc(self, soc: float):
@@ -294,15 +343,24 @@ class StateEstimator:
         logger.info(f"SoC synced with OCV: {voltage:.3f}V -> {self.soc:.1f}%")
         return self.soc
 
-    def _reset_to_soc(self, soc: float, soc_var: float = 1.0) -> None:
+    def _reset_to_soc(self, soc: float, soc_var: float = 1.0,
+                      start_settle_window: bool = False) -> None:
         """Reset state ทั้งหมดให้ตรงกับ soc. ``soc_var`` = ความไม่แน่นอนของ SoC ที่ตั้งให้
-        EKF: ~1 สำหรับ endpoint anchor (เชื่อได้), ใหญ่สำหรับ OCV init บน plateau."""
+        EKF: ~1 สำหรับ endpoint anchor (เชื่อได้), ใหญ่สำหรับ OCV init บน plateau.
+
+        start_settle_window: True only for the 100%/0% endpoint anchors (fire mid
+        charge/discharge, right where surface charge/polarisation is worst) — NOT for
+        sync_with_ocv()/init_from_voltage(), which already require the caller to have
+        waited out a real rest (calibrate_from_ocv_stable's ΔV/Δt settle) before firing,
+        so there's no fresh transient there to guard against."""
         self.soc = soc
         self.soc_initial = soc
         self.soc_filtered = soc
         self.ah_accumulated = 0.0
         self.last_ocv_correction_time = time.monotonic()
         self._last_current = None      # avoid a stale trapezoid average after a reset
+        if start_settle_window:
+            self._anchor_settle_until = time.monotonic() + self._min_rest_s
         if self._ekf is not None:
             self._ekf.set_soc(soc, soc_var)
 
@@ -398,11 +456,13 @@ class StateEstimator:
             anchor_v_full = full_v_cell * s * 0.986      # 3.65 × 0.986 × 8 = 28.8V (LFP 8S)
             # 1.5× headroom + 0.25 A floor so small C-rate rounding never blocks the anchor.
             anchor_i_tail = max(0.25, self.rated_capacity * cp.tail_current_c_rate * 1.5)
-            if (cur < 0 and voltage >= anchor_v_full
-                    and abs(cur) <= anchor_i_tail and self.soc < 98.0):
+            full_anchor_cond = (cur < 0 and voltage >= anchor_v_full
+                               and abs(cur) <= anchor_i_tail and self.soc < 98.0)
+            self._full_anchor_sustain_s = self._full_anchor_sustain_s + dt if full_anchor_cond else 0.0
+            if full_anchor_cond and self._full_anchor_sustain_s >= self._anchor_min_sustain_s:
                 logger.info("Endpoint anchor → 100%%: %.3fV (≥%.3f) I=%.3fA tail=%.3fA",
                             voltage, anchor_v_full, cur, anchor_i_tail)
-                self._reset_to_soc(100.0)
+                self._reset_to_soc(100.0, start_settle_window=True)
                 soc_cc = 100.0
                 # start a fresh full→empty capacity sweep for live SoH
                 self._cap_counting = True
@@ -418,8 +478,10 @@ class StateEstimator:
         anchor_v_empty = self.battery_model.get_ocv_from_soc(0.0)
         anchor_i_max = self.rated_capacity * 2.0
         ocv_est = voltage + cur * self.rin if cur > 0 else voltage
-        if (cur > 0 and cur <= anchor_i_max
-                and ocv_est <= anchor_v_empty * 1.01 and self.soc > 2.0):
+        zero_anchor_cond = (cur > 0 and cur <= anchor_i_max
+                            and ocv_est <= anchor_v_empty * 1.01 and self.soc > 2.0)
+        self._zero_anchor_sustain_s = self._zero_anchor_sustain_s + dt if zero_anchor_cond else 0.0
+        if zero_anchor_cond and self._zero_anchor_sustain_s >= self._anchor_min_sustain_s:
             logger.info("Endpoint anchor → 0%%: est.OCV %.3fV (≤%.3f) meas=%.3fV I=%.3fA",
                         ocv_est, anchor_v_empty, voltage, cur)
             # live SoH from a full→empty sweep (#1): measured capacity ÷ rated.
@@ -431,7 +493,7 @@ class StateEstimator:
                 logger.info("Live SoH ← full→empty sweep: %.3f Ah / %.3f rated = %.1f%%",
                             self._cap_counter_ah, self.rated_capacity, self.soh)
             self._cap_counting = False
-            self._reset_to_soc(0.0)
+            self._reset_to_soc(0.0, start_settle_window=True)
             soc_cc = 0.0
 
         # === 2. Update Internal Resistance (forward temp + measured_dcir ให้ถูก) ===
@@ -468,7 +530,13 @@ class StateEstimator:
                 direction = 0 if abs(cur) < 0.05 else (-1 if cur > 0 else 1)
                 ocv_pack = self.battery_model.get_ocv_from_soc(ekf.soc, t_use, direction)
                 docv = self.battery_model.ocv_slope(ekf.soc, t_use) * s   # V/%SoC pack
-                ekf.update(voltage, cur, ocv_pack, docv, r0_use)
+                # Still settling from the last 100%/0% anchor (surface charge / fresh
+                # polarisation) — inflate the measurement variance so this update barely
+                # moves SoC, instead of the filter reading the settling transient as a
+                # real SoC error. See _reset_to_soc's start_settle_window.
+                still_settling = time.monotonic() < self._anchor_settle_until
+                r_override = ekf.R * self._anchor_settle_r_mult if still_settling else None
+                ekf.update(voltage, cur, ocv_pack, docv, r0_use, r_override=r_override)
                 self.soc = max(0.0, min(100.0, ekf.soc))
             self.soc_filtered = self.soc
             # live 1σ SoC uncertainty from the filter covariance (large mid-plateau /
@@ -485,6 +553,7 @@ class StateEstimator:
                 "soc_std": self.soc_std,
                 "soh": self.soh,
                 "rin": self.rin,
+                "rin_calibrated": self._ecm_calibrated,
                 "ah_accumulated": self.ah_accumulated,
             }
 
@@ -530,6 +599,8 @@ class StateEstimator:
             "soc": self.soc,
             "soh": self.soh,
             "rin": self.rin,
+            "rin_calibrated": True,   # non-EKF fallback path doesn't use the uncalibrated
+                                      # EKF-default mechanism this flag is about
             "ah_accumulated": self.ah_accumulated
         }
 
@@ -542,6 +613,7 @@ class StateEstimator:
             "soc": self.soc,
             "soh": self.soh,
             "rin": self.rin,
+            "rin_calibrated": self._ecm_calibrated if self.use_ekf else True,
             "ah_accumulated": self.ah_accumulated,
             "coulomb_efficiency": self.coulomb_efficiency
         }

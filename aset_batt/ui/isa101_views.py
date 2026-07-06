@@ -376,9 +376,20 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         cards_row.setSpacing(8)
         self.metric_labels = {}
         for name, unit in [("Voltage", "V"), ("Current", "A"), ("SoC", "%"),
-                           ("Rin", "mΩ"), ("Temp", "°C"), ("SoH", "%")]:
+                           ("Rin", "mΩ"), ("Temp", "°C")]:
             cards_row.addWidget(self._metric_card(name, unit), 1)
         lay.addLayout(cards_row)
+
+        # Analysis Results — separate row, only ever written by a completed test's
+        # final analysis (_on_test_finished). Never overwritten by live telemetry,
+        # so a result on screen can't be mistaken for a live sensor reading.
+        lay.addWidget(self._subheader("ANALYSIS RESULTS  (last completed test)"))
+        analysis_row = QHBoxLayout()
+        analysis_row.setSpacing(8)
+        self.metric_labels_final = {}
+        for name, unit in [("Grade", ""), ("SoH", "%"), ("Rin", "mΩ")]:
+            analysis_row.addWidget(self._metric_card(name, unit, store=self.metric_labels_final), 1)
+        lay.addLayout(analysis_row)
 
         self._temp_gauge = TemperatureGauge()
         lay.addWidget(self._temp_gauge)
@@ -1384,6 +1395,12 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 self.estimator.battery_model = model
                 if hasattr(self.estimator, "rated_capacity"):
                     self.estimator.rated_capacity = b.rated_capacity
+                # A different product selection means a different physical battery —
+                # any SoH this instance measured on whatever was tested before no
+                # longer applies (see reset_battery_state's docstring for the failure
+                # this prevents: coulomb counting racing to 100% during bulk charge).
+                if hasattr(self.estimator, "reset_battery_state"):
+                    self.estimator.reset_battery_state()
             self.iec_standard = IEC61960Standard(b.rated_capacity, b.battery_type, b.pack_nominal_voltage)
             self._populate_profiles()
         except Exception as exc:
@@ -1907,17 +1924,23 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
 
     def _on_test_finished(self, results: dict):
         # SoH is N/A when not measurable (e.g. HPPC pulse test — see analyze_series).
+        # Written to the separate "Analysis Results" row (metric_labels_final), never
+        # the live telemetry row — a final result can't be mistaken for a live reading.
         soh = results["soh"]
         soh_txt = "N/A" if soh != soh else f"{soh:.1f}"   # soh != soh → NaN
-        self.metric_labels["SoH"][0].setText(
-            "N/A" if soh != soh else f'{soh:.1f} {self.metric_labels["SoH"][1]}')
-        self.metric_labels["Rin"][0].setText(f'{results["ri_mohm"]:.1f} {self.metric_labels["Rin"][1]}')
+        self.metric_labels_final["SoH"][0].setText(
+            "N/A" if soh != soh else f'{soh:.1f} {self.metric_labels_final["SoH"][1]}')
+        self.metric_labels_final["Rin"][0].setText(
+            f'{results["ri_mohm"]:.1f} {self.metric_labels_final["Rin"][1]}')
         grade = results["grade"]
         gc = {"A": OK, "B": INFO, "C": WARN, "REJECT": CRIT, "REVIEW": NEUTRAL}.get(grade, NEUTRAL)
         conf = results.get("confidence", 1.0)
         self.lbl_grade.setText(grade if grade == "REVIEW" else f"{grade}")
         self.lbl_grade.setStyleSheet(
             f"background:{gc}; color:white; border:1px solid {BORDER}; border-radius:6px; padding:10px;")
+        grade_lbl, _ = self.metric_labels_final["Grade"]
+        grade_lbl.setText(grade)
+        grade_lbl.setStyleSheet(f"color:{gc}; border:0;")
         dcir = results.get("dcir_mohm", results.get("ri_mohm", 0.0))
         dstd = results.get("dcir_std_mohm", 0.0)
         nstep = results.get("dcir_n_steps", 0)
