@@ -958,9 +958,12 @@ class ZonesMixin:
         lay.setContentsMargins(0, 0, 0, 0)
 
         self._right_tabs = QTabWidget()
+        # Alarm Log first — it's now the primary/default tab (operators should see
+        # live safety events immediately, not the historical Analytics view) —
+        # QTabWidget defaults to whichever tab is added first.
+        self._right_tabs.addTab(self._tab_alarms(), "Alarm Log")
         self._right_tabs.addTab(self._tab_analytics(), "Analytics")
         self._right_tabs.addTab(self._tab_diagnostics(), "Diagnostics (ICA/DTV)")
-        self._right_tabs.addTab(self._tab_alarms(), "Alarm Log")
         lay.addWidget(self._right_tabs, 1)
         return panel
 
@@ -1007,12 +1010,37 @@ class ZonesMixin:
             self._lbl_i_dir.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
             self._lbl_i_dir.setStyleSheet(f"color:{MUTED}; border:0;")
             lay.addWidget(self._lbl_i_dir)
+        # SoC card: same sub-label pattern as Current's CHG/DSG/REST badge — shows
+        # "Topping off ≤X.XXXA" right where the operator is looking at "100%" and
+        # wondering why charging hasn't stopped, instead of only in the separate
+        # workflow status line. Same wording as _charge_status_text's tail message,
+        # just condensed to fit the card. Empty outside the CV/absorption tail.
+        if name == "SoC":
+            self._lbl_soc_note = QLabel("")
+            self._lbl_soc_note.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+            self._lbl_soc_note.setStyleSheet(f"color:{MUTED}; border:0;")
+            lay.addWidget(self._lbl_soc_note)
         return card
 
     def _tab_analytics(self):
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setSpacing(4)
+
+        # Analysis Results — moved here from the center panel so the final-test
+        # numbers (Grade/SoH/Rin) live alongside the rest of the Analytics tab's
+        # session/history tools instead of taking up space in the live-telemetry
+        # column. Only ever written by a completed test's final analysis
+        # (_on_test_finished) — never overwritten by live telemetry, so a result
+        # here can't be mistaken for a live sensor reading.
+        lay.addWidget(self._subheader("ANALYSIS RESULTS  (last completed test)"))
+        analysis_row = QHBoxLayout()
+        analysis_row.setSpacing(8)
+        self.metric_labels_final = {}
+        for name, unit in [("Grade", ""), ("SoH", "%"), ("Rin", "mΩ")]:
+            analysis_row.addWidget(self._metric_card(name, unit, store=self.metric_labels_final), 1)
+        lay.addLayout(analysis_row)
+        lay.addWidget(_hline())
 
         # Session selector อยู่บนสุดของ Analytics
         sess_hdr = QHBoxLayout()

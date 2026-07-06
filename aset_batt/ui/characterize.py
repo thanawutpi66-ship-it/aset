@@ -266,6 +266,14 @@ class CharacterizeMixin:
             if not self._headless:
                 QMessageBox.warning(self, "CHARACTERIZE", f"{busy} — หยุดก่อนแล้วค่อยเริ่มใหม่")
             return False
+        # Same dual-estimator-feed guard as _seq_common_start (sequences.py): the
+        # background monitor loop (Start Monitor) also calls estimator.update() at
+        # ~10 Hz. _busy_reason above only stops a DIFFERENT test type from starting
+        # while one is already running — it never stopped the monitor loop, so a
+        # Peukert/η/GITT test could still double-feed the estimator with it if the
+        # operator left "Start Monitor" running.
+        if self.controller and self.controller.monitor_running:
+            self.controller.stop_monitor()
         return True
 
     def _char_hw_stop(self):

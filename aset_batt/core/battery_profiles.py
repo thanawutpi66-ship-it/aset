@@ -179,13 +179,13 @@ _DEFAULT_CHEMISTRIES: Dict[str, ChemistryProfile] = {
 _FALLBACK_CHEMISTRY = "Li-ion"
 
 _DEFAULT_PRODUCTS: Dict[str, ProductProfile] = {
-    "YTZ6V (12V 5Ah VRLA)": ProductProfile(
-        name="YTZ6V (12V 5Ah VRLA)", chemistry="LeadAcid",
+    "YTZ6V (12V 5.3Ah VRLA)": ProductProfile(
+        name="YTZ6V (12V 5.3Ah VRLA)", chemistry="LeadAcid",
         nominal_voltage_per_cell=2.0, cells_series=6, cells_parallel=1,
-        rated_capacity_ah=5.0, max_voltage_per_cell=2.45, min_voltage_per_cell=1.75,
+        rated_capacity_ah=5.3, max_voltage_per_cell=2.45, min_voltage_per_cell=1.75,
         safety_ovp_pack=15.0, safety_uvp_pack=10.5,
         mass_grams=900.0, cca_a=100.0,
-        notes="Yuasa YTZ6V มอเตอร์ไซค์ lead-acid AGM 12V 5Ah (10HR)",
+        notes="Yuasa YTZ6V มอเตอร์ไซค์ lead-acid AGM 12V 5.3Ah (10HR)",
     ),
     "YTZ7V (12V 7Ah VRLA)": ProductProfile(
         name="YTZ7V (12V 7Ah VRLA)", chemistry="LeadAcid",
