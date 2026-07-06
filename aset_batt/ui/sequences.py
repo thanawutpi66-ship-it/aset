@@ -686,6 +686,27 @@ class SequencesMixin:
         except Exception:
             return fallback_total
 
+    def _estimate_discharge_s(self, i_dis: float) -> int:
+        """Discharge-time ETA (s), SoH- and starting-SoC-aware.
+
+        The old estimate used the full nameplate rated_capacity regardless of how
+        degraded the pack actually is or how much charge it starts with — a
+        real-world example: a battery discharged from 100% shows a much shorter
+        ETA once graded at 60% SoH than one at 100% SoH, because there's simply
+        less real capacity to discharge, but rated_capacity/i_dis alone can't see
+        that. Uses effective_capacity() (rated * SoH/100, same denominator the
+        estimator's own coulomb counting divides by) scaled by the current SoC —
+        so the estimate reflects the Ah actually available to discharge from here,
+        not a fixed nameplate assumption."""
+        try:
+            estimator = self.controller.estimator
+            eff_cap = estimator.effective_capacity()
+            soc_now = max(0.0, min(100.0, estimator.soc))
+            available_ah = eff_cap * (soc_now / 100.0)
+            return max(60, int(available_ah / max(i_dis, 0.01) * 3600))
+        except Exception:
+            return 0
+
     def _refresh_step_time_estimates(self):
         """Recompute the rough "~N min" line shown under every workflow step, across
         all 4 workflow tabs. Called whenever a setting that affects timing changes
@@ -900,9 +921,9 @@ class SequencesMixin:
             # NTP/clock-jump and consistent with worker.py's own established convention.
             last_log = _t.perf_counter()
             _dis_t0 = _t.perf_counter()
-            # Estimate discharge duration from SoC and C-rate (seconds)
-            rated2 = self.controller.config.battery.rated_capacity
-            _dis_est = int(rated2 / max(i_dis, 0.01) * 3600)
+            # Estimate discharge duration from SoC and C-rate (seconds) — SoH- and
+            # starting-SoC-aware, see _estimate_discharge_s.
+            _dis_est = self._estimate_discharge_s(i_dis)
             while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
@@ -1018,7 +1039,7 @@ class SequencesMixin:
             # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
             last_log = _t.perf_counter()
             _dis_t0 = _t.perf_counter()
-            _dis_est = int(rated / max(i_dis, 0.01) * 3600)
+            _dis_est = self._estimate_discharge_s(i_dis)
             while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
@@ -1455,7 +1476,7 @@ class SequencesMixin:
                 self.hw.set_load(True, str(i_dis))
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
                 _dis_t0 = _t.perf_counter()
-                _dis_est = int(rated / max(i_dis, 0.01) * 3600)
+                _dis_est = self._estimate_discharge_s(i_dis)
                 ah_acc = 0.0
                 last_log = _t.perf_counter()
                 while self._seq_running.is_set():
