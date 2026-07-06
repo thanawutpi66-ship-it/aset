@@ -980,7 +980,9 @@ class ZonesMixin:
         lay.addWidget(self.plot_ica, 1)
         return w
 
-    def _metric_card(self, name, unit):
+    def _metric_card(self, name, unit, store=None):
+        if store is None:
+            store = self.metric_labels
         card = QFrame()
         card.setStyleSheet(
             f"QFrame {{ background:{PANEL2}; border:1px solid {BORDER}; border-top:2px solid {INFO}; border-radius:6px; }}"
@@ -990,14 +992,15 @@ class ZonesMixin:
         lay.setSpacing(2)
         t = QLabel(name.upper())
         t.setStyleSheet(f"color:{MUTED}; font-size:10px; font-weight:700; letter-spacing:1px; border:0;")
-        # SoH is a final-analysis metric (not live); Rin is only valid under load.
-        # Both start "pending" so a placeholder number is never mistaken for a reading.
-        val = QLabel("—" if name in ("SoH", "Rin") else f"0.0 {unit}")
+        # SoH/Rin(final)/Grade are only ever set once a test's analysis completes
+        # (never live) — start "pending" so a placeholder number is never mistaken
+        # for a reading. Rin in the live row is only valid under load.
+        val = QLabel("—" if name in ("SoH", "Rin", "Grade") else f"0.0 {unit}")
         val.setFont(QFont("Consolas", 19, QFont.Weight.Bold))
         val.setStyleSheet(f"color:{TEXT}; border:0;")
         lay.addWidget(t)
         lay.addWidget(val)
-        self.metric_labels[name] = (val, unit)
+        store[name] = (val, unit)
         # Current card: add a direction badge below the number (CHG / DSG / REST)
         if name == "Current":
             self._lbl_i_dir = QLabel("—")
