@@ -84,6 +84,20 @@ class StateEstimator:
         self._peukert_sustain_s = 0.0
         self._peukert_min_sustain_s = 60.0
 
+        # --- Endpoint-anchor sustain gate ---
+        # A real HPPC test caught this failing on real hardware: the 0% anchor's
+        # ocv_est = voltage + cur*self.rin crossed its threshold by 0.0075 V for a
+        # SINGLE sample (one noisy Rin/voltage reading, while self.rin was still an
+        # uncalibrated pre-fit guess — see rin_calibrated), hard-resetting SoC from
+        # 65% to 0% mid-pulse and wrecking the whole test's grade. The condition
+        # itself is fine — the bug was trusting one instantaneous sample. Require it
+        # to hold continuously for _anchor_min_sustain_s before firing, same pattern
+        # as the Peukert sustain gate above; a genuinely full/empty pack stays past
+        # the threshold far longer than one glitchy sample, a marginal fluke doesn't.
+        self._full_anchor_sustain_s = 0.0
+        self._zero_anchor_sustain_s = 0.0
+        self._anchor_min_sustain_s = 3.0
+
         # OCV correction
         # monotonic (not time.time()): this is a pure elapsed-duration check ("has N
         # seconds passed"), never a real timestamp — monotonic is immune to NTP/wall-
@@ -442,8 +456,10 @@ class StateEstimator:
             anchor_v_full = full_v_cell * s * 0.986      # 3.65 × 0.986 × 8 = 28.8V (LFP 8S)
             # 1.5× headroom + 0.25 A floor so small C-rate rounding never blocks the anchor.
             anchor_i_tail = max(0.25, self.rated_capacity * cp.tail_current_c_rate * 1.5)
-            if (cur < 0 and voltage >= anchor_v_full
-                    and abs(cur) <= anchor_i_tail and self.soc < 98.0):
+            full_anchor_cond = (cur < 0 and voltage >= anchor_v_full
+                               and abs(cur) <= anchor_i_tail and self.soc < 98.0)
+            self._full_anchor_sustain_s = self._full_anchor_sustain_s + dt if full_anchor_cond else 0.0
+            if full_anchor_cond and self._full_anchor_sustain_s >= self._anchor_min_sustain_s:
                 logger.info("Endpoint anchor → 100%%: %.3fV (≥%.3f) I=%.3fA tail=%.3fA",
                             voltage, anchor_v_full, cur, anchor_i_tail)
                 self._reset_to_soc(100.0, start_settle_window=True)
@@ -462,8 +478,10 @@ class StateEstimator:
         anchor_v_empty = self.battery_model.get_ocv_from_soc(0.0)
         anchor_i_max = self.rated_capacity * 2.0
         ocv_est = voltage + cur * self.rin if cur > 0 else voltage
-        if (cur > 0 and cur <= anchor_i_max
-                and ocv_est <= anchor_v_empty * 1.01 and self.soc > 2.0):
+        zero_anchor_cond = (cur > 0 and cur <= anchor_i_max
+                            and ocv_est <= anchor_v_empty * 1.01 and self.soc > 2.0)
+        self._zero_anchor_sustain_s = self._zero_anchor_sustain_s + dt if zero_anchor_cond else 0.0
+        if zero_anchor_cond and self._zero_anchor_sustain_s >= self._anchor_min_sustain_s:
             logger.info("Endpoint anchor → 0%%: est.OCV %.3fV (≤%.3f) meas=%.3fV I=%.3fA",
                         ocv_est, anchor_v_empty, voltage, cur)
             # live SoH from a full→empty sweep (#1): measured capacity ÷ rated.

@@ -54,9 +54,13 @@ class TestLiveSoH(unittest.TestCase):
         e.set_initial_soc(100.0)
         e._cap_counting = True               # simulate a 100% anchor just fired
         e._cap_counter_ah = 4.0              # ~4.0 Ah delivered over the full sweep
-        # now force the empty anchor by feeding a low voltage at small current
+        # now force the empty anchor by feeding a low voltage at small current —
+        # sustained for a few samples (the anchor now requires _anchor_min_sustain_s
+        # of continuous below-threshold readings, not a single sample, to avoid
+        # firing on one noisy reading — see the real-hardware bug this gates against)
         v_empty = m.get_ocv_from_soc(0.0)
-        e.update(v_empty * 0.99, 0.2, dt=1.0)
+        for _ in range(4):
+            e.update(v_empty * 0.99, 0.2, dt=1.0)
         self.assertGreater(e.soh, 50.0)
         self.assertLess(e.soh, 100.0)
         self.assertAlmostEqual(e.measured_capacity_ah, e.soh / 100.0 * 5.3, delta=0.1)
