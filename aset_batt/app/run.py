@@ -29,6 +29,13 @@ def run() -> int:
     theme.set_theme(getattr(bootstrapper.config_manager.system, "ui_theme", "light"))
     from aset_batt.ui.isa101_views import BatteryQtWindow, QtRootShim
 
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("aset.batterytester.app.1")
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
     QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
     root = QtRootShim()
