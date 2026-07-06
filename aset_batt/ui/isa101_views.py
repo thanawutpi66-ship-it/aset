@@ -1395,6 +1395,12 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 self.estimator.battery_model = model
                 if hasattr(self.estimator, "rated_capacity"):
                     self.estimator.rated_capacity = b.rated_capacity
+                # A different product selection means a different physical battery —
+                # any SoH this instance measured on whatever was tested before no
+                # longer applies (see reset_battery_state's docstring for the failure
+                # this prevents: coulomb counting racing to 100% during bulk charge).
+                if hasattr(self.estimator, "reset_battery_state"):
+                    self.estimator.reset_battery_state()
             self.iec_standard = IEC61960Standard(b.rated_capacity, b.battery_type, b.pack_nominal_voltage)
             self._populate_profiles()
         except Exception as exc:
