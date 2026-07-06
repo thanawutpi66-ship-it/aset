@@ -38,6 +38,13 @@ def run() -> int:
 
     app = QApplication(sys.argv)
     QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
+    
+    import os
+    from PySide6.QtGui import QIcon
+    _icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui", "aset_logo.png")
+    if os.path.exists(_icon_path):
+        app.setWindowIcon(QIcon(_icon_path))
+        
     root = QtRootShim()
     window = BatteryQtWindow(bootstrapper.config_manager)
     try:
