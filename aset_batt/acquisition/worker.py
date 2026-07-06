@@ -218,11 +218,17 @@ class AcquisitionWorker(QObject):
         SoH is a FINAL metric: it is computed by analyze_series from the measured
         discharge capacity ÷ rated — NOT taken from the estimator's running value
         (which is not a per-sample quantity and would otherwise override the real
-        capacity-based SoH with a stale/placeholder number)."""
-        from aset_batt.acquisition.analysis import analyze_series
+        capacity-based SoH with a stale/placeholder number).
+
+        Runs via analyze_series_mp (separate process), not analyze_series directly:
+        this method executes on the worker QThread, which still shares the single
+        process-wide GIL with the Qt main thread — the ECM curve-fit inside holds
+        that GIL for the whole fit (~5-15s), so the UI would report "Not Responding"
+        exactly as it did before analyze_csv's call sites got the same treatment."""
+        from aset_batt.acquisition.analysis import analyze_series_mp
         cur_pos = np.asarray(i_hist, float)   # already discharge-positive
-        return analyze_series(time_hist, cur_pos, v_hist, t_hist, q_hist, p,
-                              is_hppc=(self.cfg.mode == OperationMode.HPPC), soh=None)
+        return analyze_series_mp(time_hist, cur_pos, v_hist, t_hist, q_hist, p,
+                                 is_hppc=(self.cfg.mode == OperationMode.HPPC), soh=None)
 
 
 class ReportTask(QRunnable):

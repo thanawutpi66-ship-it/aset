@@ -448,3 +448,17 @@ def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = Fa
     """
     future = _get_analysis_pool().submit(analyze_csv, csv_path, profile, force_hppc)
     return future.result()
+
+
+def analyze_series_mp(time_s, current_a, voltage_v, temp_c, capacity_series,
+                      profile: BatteryProfile, is_hppc: bool, soh=None) -> dict:
+    """Same result as analyze_series(), but off the calling thread's GIL — see
+    analyze_csv_mp's docstring. AcquisitionWorker.run() (the Characterization /
+    RUN TEST / HPPC-via-RUN-TEST QThread) calls this directly with its in-memory
+    sample arrays instead of round-tripping through a CSV, so it needed its own
+    process-pool twin; routing it through analyze_csv_mp would have meant writing
+    an extra throwaway CSV just to satisfy that wrapper's file-path signature."""
+    future = _get_analysis_pool().submit(
+        analyze_series, time_s, current_a, voltage_v, temp_c, capacity_series,
+        profile, is_hppc, soh)
+    return future.result()
