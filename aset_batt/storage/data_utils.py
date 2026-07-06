@@ -101,6 +101,10 @@ def _compute_summary(rows: list) -> dict:
             "SoC_pct": _f("SoC_pct"),
             "Resistance_mOhm": _f("Resistance_mOhm"),
             "Temperature_C": _f("Temperature_C"),
+            # Missing column (older CSVs predating this field) defaults to calibrated —
+            # they were all logged before the "still just the pre-fit guess" distinction
+            # existed, i.e. real per-sample Rin the whole way through.
+            "Rin_Calibrated": last.get("Rin_Calibrated", "1").strip() != "0",
         },
     }
 
@@ -142,7 +146,8 @@ class DataHandler:
                 self.csv_writer.writerow([
                     "Timestamp", "Elapsed_s",
                     "Voltage_V", "Current_A",
-                    "SoC_pct", "Resistance_mOhm", "Temperature_C"
+                    "SoC_pct", "Resistance_mOhm", "Temperature_C",
+                    "Rin_Calibrated",
                 ])
             self.current_path = filepath
             self.is_recording = True
@@ -160,7 +165,8 @@ class DataHandler:
             self.csv_file = None
 
     def log_row(self, elapsed_s: float, v: float, i_net: float,
-                soc: float, resistance_mohm: float, temp_c: float):
+                soc: float, resistance_mohm: float, temp_c: float,
+                rin_calibrated: bool = True):
         """
         บันทึก 1 แถวข้อมูล
 
@@ -169,8 +175,13 @@ class DataHandler:
             v              : Voltage (V)
             i_net          : Net current (A)
             soc            : State of Charge (%)
-            resistance_mohm: Internal resistance (mΩ)
+            resistance_mohm: Internal resistance (mΩ) — still shown live even before a
+                             real HPPC fit (see rin_calibrated), so the operator keeps
+                             seeing a continuous trend instead of a gap.
             temp_c         : Temperature (°C)
+            rin_calibrated : False = resistance_mohm is still _ekf_rc_defaults()'s
+                             uncalibrated placeholder guess, not a real per-pulse fit —
+                             the UI marks it "estimated" instead of hiding it.
         """
         if self.is_recording and self.csv_writer:
             try:
@@ -181,7 +192,8 @@ class DataHandler:
                     f"{i_net:.4f}",
                     f"{soc:.2f}",
                     f"{resistance_mohm:.2f}",
-                    f"{temp_c:.2f}"
+                    f"{temp_c:.2f}",
+                    "1" if rin_calibrated else "0",
                 ])
                 self.csv_file.flush()
             except Exception as e:
