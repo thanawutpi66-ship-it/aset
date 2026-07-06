@@ -55,6 +55,12 @@ class StateEstimator:
         # EKF are interpolated at the current SoC each step. None → single fixed fit.
         self.ecm_table = None
         self._ecm_grid = None           # cached (soc, r0, r1, c1) numpy arrays
+        # Until a real fit lands, self.rin is _ekf_rc_defaults()'s uncalibrated guess
+        # (base_rin with a deliberate safety margin, R0+R1 summed) — plausible enough to
+        # keep the EKF sane, but it isn't a measurement. Operators comparing it against a
+        # bench meter (ACIR) before any HPPC pulse has run kept mistaking a guess for a
+        # reading, so the UI needs to know which one it's currently displaying.
+        self._ecm_calibrated = False
 
         # --- Ablation flags (for replay.py study; all ON = full model) ---
         self.use_ocv = True             # OCV-based correction / EKF measurement update
@@ -235,6 +241,7 @@ class StateEstimator:
         Ignored while a SoC-dependent ECM table is active (the table takes precedence)."""
         if self.ecm_table is None and self._ekf is not None and r0 > 0 and r1 > 0 and c1 > 0:
             self._ekf.set_rc(r0, r1, c1)
+            self._ecm_calibrated = True
 
     def set_ecm_table(self, table) -> None:
         """Provide R0/R1/C1 vs SoC (from characterization.build_ecm_table) so the EKF
@@ -253,6 +260,7 @@ class StateEstimator:
             np.asarray([table[s]["r1"] for s in socs], float),
             np.asarray([table[s]["c1"] for s in socs], float),
         )
+        self._ecm_calibrated = True
         logger.info("ECM table active: %d SoC points (R0/R1/C1 now SoC-dependent)", len(socs))
 
     def _ecm_at_soc(self, soc: float):
@@ -485,6 +493,7 @@ class StateEstimator:
                 "soc_std": self.soc_std,
                 "soh": self.soh,
                 "rin": self.rin,
+                "rin_calibrated": self._ecm_calibrated,
                 "ah_accumulated": self.ah_accumulated,
             }
 
@@ -530,6 +539,8 @@ class StateEstimator:
             "soc": self.soc,
             "soh": self.soh,
             "rin": self.rin,
+            "rin_calibrated": True,   # non-EKF fallback path doesn't use the uncalibrated
+                                      # EKF-default mechanism this flag is about
             "ah_accumulated": self.ah_accumulated
         }
 
@@ -542,6 +553,7 @@ class StateEstimator:
             "soc": self.soc,
             "soh": self.soh,
             "rin": self.rin,
+            "rin_calibrated": self._ecm_calibrated if self.use_ekf else True,
             "ah_accumulated": self.ah_accumulated,
             "coulomb_efficiency": self.coulomb_efficiency
         }

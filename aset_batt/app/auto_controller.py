@@ -939,11 +939,22 @@ class AutoController:
             self._start_time = time.time()
 
     def _log_sample(self, voltage: float, current: float):
-        """log หนึ่งแถว ใช้ค่า SoC/Rin ล่าสุดจาก estimator (สำหรับ IEC test ที่ไม่ผ่าน monitor loop)"""
+        """log หนึ่งแถว ใช้ค่า SoC/Rin ล่าสุดจาก estimator (สำหรับ IEC test ที่ไม่ผ่าน monitor loop)
+
+        Rin: before any real HPPC pulse has been fitted (update_ecm()/set_ecm_table()),
+        self.estimator.rin is _ekf_rc_defaults()'s uncalibrated placeholder guess — an
+        operator comparing that against a bench ACIR/DCIR meter kept mistaking a guess
+        for a measurement (it's plausible-looking but can be 2-4x off in either
+        direction depending on the pack). Log NaN instead of the placeholder so the
+        cloud dashboard/CSV show "no reading yet" rather than a confident wrong number;
+        it starts reporting the real value the moment a genuine fit lands."""
         try:
+            calibrated = getattr(self.estimator, "_ecm_calibrated", True) or not getattr(
+                self.estimator, "use_ekf", True)
+            rin_mohm = self.estimator.rin * 1000.0 if calibrated else float("nan")
             self.data.log_row(
                 time.time() - self._start_time, voltage, current,
-                self.estimator.soc, self.estimator.rin * 1000.0,
+                self.estimator.soc, rin_mohm,
                 self.hw.current_temp,
             )
         except Exception as e:
