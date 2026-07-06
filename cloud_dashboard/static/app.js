@@ -8,7 +8,7 @@ const f = (x, d = 2) => (x == null || x === '' || isNaN(x)) ? '–' : Number(x).
 const num = (o, ...keys) => { for (const k of keys) { if (o && o[k] != null && !isNaN(o[k])) return Number(o[k]); } return null; };
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
-function fmtR(mOhm){ if (mOhm == null) return '–'; return mOhm >= 1000 ? (mOhm/1000).toFixed(3)+' Ω' : mOhm.toFixed(1)+' mΩ'; }
+function fmtR(mOhm){ if (mOhm == null) return '–'; return mOhm >= 1000 ? (mOhm/1000).toFixed(2)+' Ω' : mOhm.toFixed(2)+' mΩ'; }
 function fmtKB(bytes){ return bytes >= 1024 ? Math.round(bytes/1024)+' KB' : bytes+' B'; }
 function fmtDate(ts){
   const d = new Date(ts * 1000);
@@ -291,20 +291,20 @@ function renderPayload(p, received_at) {
   $('battery').innerHTML = '<i class="dot"></i>battery: <b>' + ((p.meta||{}).battery || '–') + '</b>';
 
   const T = num(L, 'Temperature_C');
-  $('tempTitle').textContent = T != null ? f(T, 1) + ' °C' : '-- °C';
+  $('tempTitle').textContent = T != null ? f(T, 2) + ' °C' : '-- °C';
 
   // Telemetry
   const V = num(L,'Voltage_V'), I = num(L,'Current_A'), soc = num(L,'SoC_pct');
   const soh = num(a,'soh') ?? num(feat,'soh_pct');
-  $('mV').textContent   = V   != null ? f(V,   1) : '0.0';
-  $('mI').textContent   = I   != null ? f(I,   1) : '0.0';
-  $('mSoC').textContent = soc != null ? f(soc, 1) : '0.0';
+  $('mV').textContent   = V   != null ? f(V,   2) : '0.00';
+  $('mI').textContent   = I   != null ? f(I,   2) : '0.00';
+  $('mSoC').textContent = soc != null ? f(soc, 2) : '0.00';
   // Rin_Calibrated=false: still _ekf_rc_defaults()'s uncalibrated placeholder guess
   // (no real HPPC pulse fitted yet), not a bench-comparable measurement — show it live
   // (operators want a continuous trend) but labelled, so it isn't mistaken for a
   // reading the way it was before this field existed.
   $('mR').textContent   = fmtR(num(L,'Resistance_mOhm')) + (L.Rin_Calibrated === false ? ' (est.)' : '');
-  $('mT').textContent   = T   != null ? f(T,   1) : '0.0';
+  $('mT').textContent   = T   != null ? f(T,   2) : '0.00';
   $('mSoH').textContent = soh != null ? Math.round(soh) + '%' : '–';
   const mSoHEl = $('mSoH'); if (mSoHEl && soh != null) mSoHEl.style.color = sohColor(soh);
 
@@ -333,20 +333,20 @@ function renderPayload(p, received_at) {
   const capNorm = num(a,'capacity_norm_ah'), capRaw = num(a,'capacity_ah') ?? num(s,'capacity_ah');
   const capVal  = capNorm ?? capRaw;
   if ($('cap'))     $('cap').textContent     = f(capVal, 2);
-  if ($('ocv'))     $('ocv').textContent     = f(num(a,'ocv_v'), 3);
-  if ($('dcir'))    $('dcir').textContent    = f(num(a,'dcir_mohm','ri_mohm'), 1);
-  if ($('dcirUnc')) $('dcirUnc').textContent = f(num(a,'dcir_unc_mohm'), 1);
+  if ($('ocv'))     $('ocv').textContent     = f(num(a,'ocv_v'), 2);
+  if ($('dcir'))    $('dcir').textContent    = f(num(a,'dcir_mohm','ri_mohm'), 2);
+  if ($('dcirUnc')) $('dcirUnc').textContent = f(num(a,'dcir_unc_mohm'), 2);
   if ($('sumSoH')) {
     $('sumSoH').textContent = soh != null ? Math.round(soh) : 'N/A';
     if (soh != null) $('sumSoH').style.color = sohColor(soh);
   }
 
   // ECM values grid
-  if ($('ecmVoc')) $('ecmVoc').textContent = num(a,'ocv_v') != null ? f(num(a,'ocv_v'),3) + ' V' : '–';
-  if ($('r0'))  $('r0').textContent  = num(a,'r0_mohm') != null ? f(num(a,'r0_mohm'),1) : '–';
-  if ($('r1'))  $('r1').textContent  = num(a,'r1_mohm') != null ? f(num(a,'r1_mohm'),1) : '–';
+  if ($('ecmVoc')) $('ecmVoc').textContent = num(a,'ocv_v') != null ? f(num(a,'ocv_v'),2) + ' V' : '–';
+  if ($('r0'))  $('r0').textContent  = num(a,'r0_mohm') != null ? f(num(a,'r0_mohm'),2) : '–';
+  if ($('r1'))  $('r1').textContent  = num(a,'r1_mohm') != null ? f(num(a,'r1_mohm'),2) : '–';
   if ($('tau')) $('tau').textContent = f(num(a,'tau_s'), 2);
-  if ($('cca')) $('cca').textContent = f(num(a,'cca_est_a'), 0);
+  if ($('cca')) $('cca').textContent = f(num(a,'cca_est_a'), 2);
 
   const safe = s.safety_status || (p.meta||{}).safety_status || 'NORMAL';
 
@@ -365,7 +365,7 @@ function renderPayload(p, received_at) {
   const explicitAlarm = safe === 'ALARM';
   const hot = T != null && T >= TEMP_CRIT;
   if (explicitAlarm || hot) {
-    const msg = 'TEMP: ' + f(T,1) + '°C  GRADE: ' + grade + (explicitAlarm ? '  SAFETY ALARM' : '  OVER-TEMP');
+    const msg = 'TEMP: ' + f(T,2) + '°C  GRADE: ' + grade + (explicitAlarm ? '  SAFETY ALARM' : '  OVER-TEMP');
     const ts = new Date(received_at * 1000).toLocaleTimeString();
     pushAlarm(ts, msg);
     setSafety(true, msg);
@@ -382,7 +382,7 @@ function renderPayload(p, received_at) {
     $('live').textContent    = live ? 'LIVE' : 'idle';
     $('livePill').className  = 'pill ' + (live ? 'live' : 'stale');
     setConnected(live ? 'connected' : 'idle');
-    if (s.row_count != null) $('rowInfo').textContent = s.row_count + ' samples · ' + f(s.energy_wh,1) + ' Wh logged';
+    if (s.row_count != null) $('rowInfo').textContent = s.row_count + ' samples · ' + f(s.energy_wh,2) + ' Wh logged';
   }
 }
 
@@ -460,7 +460,7 @@ function updateTestPanel(meta, summary) {
     const cycLabel = (cycIdx != null && cycTot != null) ? ` ${cycIdx}/${cycTot}` : '';
     if (subPhase === 'pulse') {
       const ip = num(meta, 'pulse_current_a');
-      $('tpTestDesc').textContent = 'Pulse' + cycLabel + (ip != null ? ` · ${f(ip, 3)} A` : '');
+      $('tpTestDesc').textContent = 'Pulse' + cycLabel + (ip != null ? ` · ${f(ip, 2)} A` : '');
     } else if (subPhase === 'relax') {
       $('tpTestDesc').textContent = 'Relax' + cycLabel;
     } else if (dc != null) {
