@@ -380,16 +380,10 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             cards_row.addWidget(self._metric_card(name, unit), 1)
         lay.addLayout(cards_row)
 
-        # Analysis Results — separate row, only ever written by a completed test's
-        # final analysis (_on_test_finished). Never overwritten by live telemetry,
-        # so a result on screen can't be mistaken for a live sensor reading.
-        lay.addWidget(self._subheader("ANALYSIS RESULTS  (last completed test)"))
-        analysis_row = QHBoxLayout()
-        analysis_row.setSpacing(8)
-        self.metric_labels_final = {}
-        for name, unit in [("Grade", ""), ("SoH", "%"), ("Rin", "mΩ")]:
-            analysis_row.addWidget(self._metric_card(name, unit, store=self.metric_labels_final), 1)
-        lay.addLayout(analysis_row)
+        # Analysis Results (Grade/SoH/Rin) now lives in the Analytics tab on the
+        # right (see _tab_analytics) instead of here — keeps the center panel to
+        # live telemetry only, and groups the final-test numbers with the rest of
+        # the Analytics tab's session/history tools instead of duplicating them.
 
         self._temp_gauge = TemperatureGauge()
         lay.addWidget(self._temp_gauge)
