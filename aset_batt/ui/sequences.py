@@ -599,6 +599,23 @@ class SequencesMixin:
             self.sig_loading.emit(btn, False, "")
         self.sig_alarm.emit("[AUTO] Sequence cancelled — hardware stopped.")
 
+    def _charge_status_text(self, v: float, i: float, elapsed_ch: int, prefix: str = "CHARGE") -> str:
+        """CHARGE-phase status line, e.g. "CHARGE: 13.85V 0.34A (elapsed 12m03s)" — and,
+        once the charger is in its tail-current stage (absorption/CV), append the tail
+        target so the operator can see real progress instead of a screen that looks
+        "stuck": SoC is intentionally capped at 100% the moment the pack is functionally
+        full (see the 100% anchor in state_estimator.py), but the charger keeps running
+        for a while after that to actually finish tapering off — showing "97% ... 99% ...
+        100%" during that tail would mean the number no longer reflects real coulomb
+        counting, so instead the current-vs-target progress goes in the status text."""
+        base = f"{prefix}: {v:.2f}V {i:.3f}A  (elapsed {elapsed_ch//60}m {elapsed_ch%60:02d}s)"
+        ctrl = getattr(self.controller, "_charge_ctrl", None)
+        stage = getattr(ctrl, "stage", None)
+        if stage in ("absorption", "cv"):
+            tail_a = getattr(ctrl.params, "tail_current_a", 0.0)
+            return base + f"  ·  Topping off, waiting for tail ≤{tail_a:.3f}A"
+        return base
+
     def _estimate_charge_s(self, soc_now: float, c_rate: float) -> int:
         """Rough charge-time estimate (s) so the progress bar/ETA can show during CHARGE.
         Ah needed to reach full ÷ bulk current, +50% headroom for the CV/absorption taper."""
@@ -757,9 +774,9 @@ class SequencesMixin:
                     if not getattr(self.controller, "is_charging", False):
                         break
                     try:
-                        v2, _, _ = self.hw.read_vi()
+                        v2, i2, _ = self.hw.read_vi()
                         elapsed_ch = int(time.time() - _ch_t0)
-                        status(f"CHARGE: {v2:.3f} V  (elapsed {elapsed_ch//60}m {elapsed_ch%60:02d}s)")
+                        status(self._charge_status_text(v2, max(0.0, i2), elapsed_ch))
                         # estimated total so the bar/ETA show; clamp so it never reverses past 99%
                         self.sig_phase_progress.emit(elapsed_ch, max(_ch_est, elapsed_ch + 30))
                     except Exception:
@@ -1008,6 +1025,7 @@ class SequencesMixin:
             self.sig_wf_status.emit(msg)
 
         completed_ok = False
+        hppc_safety_tripped = False   # UVP/OTP mid-cycle — see PHASE 3 below
         try:
             # ── PHASE 0: PREPARE (OCV calibrate) ──────────────────────────
             self.sig_hppc_seq_wf.emit(0, "active")
@@ -1049,9 +1067,9 @@ class SequencesMixin:
                 if not getattr(self.controller, "is_charging", False):
                     break
                 try:
-                    v_c, _, _ = self.hw.read_vi()
+                    v_c, i_c, _ = self.hw.read_vi()
                     elapsed_ch = int(_t.time() - _ch_t0)
-                    status(f"HPPC CHARGE: {v_c:.3f} V  ({elapsed_ch//60}m {elapsed_ch%60:02d}s)")
+                    status(self._charge_status_text(v_c, max(0.0, i_c), elapsed_ch, prefix="HPPC CHARGE"))
                     self.sig_phase_progress.emit(elapsed_ch, max(_ch_est, elapsed_ch + 30))
                 except Exception:
                     pass
@@ -1124,6 +1142,7 @@ class SequencesMixin:
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                         if v_r <= pack_min:
                             self._seq_running.clear()
+                            hppc_safety_tripped = True
                             reason = (f"Under-voltage during HPPC rest: "
                                       f"{v_r:.3f}V ≤ {pack_min:.3f}V cutoff")
                             self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
@@ -1131,6 +1150,7 @@ class SequencesMixin:
                             break
                         temp_h = self.hw.current_temp
                         if not self._seq_check_otp(temp_h):
+                            hppc_safety_tripped = True
                             break
                     except Exception:
                         pass
@@ -1157,6 +1177,7 @@ class SequencesMixin:
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                         if v_p <= hppc_load_floor:
                             self._seq_running.clear()
+                            hppc_safety_tripped = True
                             reason = (f"Under-voltage during HPPC pulse: "
                                       f"{v_p:.3f}V ≤ {hppc_load_floor:.3f}V hardware floor")
                             self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
@@ -1164,6 +1185,7 @@ class SequencesMixin:
                             break
                         temp_h = self.hw.current_temp
                         if not self._seq_check_otp(temp_h):
+                            hppc_safety_tripped = True
                             break
                     except Exception:
                         pass
@@ -1173,24 +1195,45 @@ class SequencesMixin:
                 if not self._seq_running.is_set():
                     break
             self.sig_phase_progress.emit(0, 0)
-            if not self._seq_running.is_set():
+            # A plain user Cancel should stop with nothing further — but a safety trip
+            # (UVP/OTP) mid-cycle still leaves real pulse data logged in the CSV, and
+            # that's exactly the data a degraded/"bad" battery test needs: tripping the
+            # floor sooner is expected for high-Rin packs, and discarding the analysis
+            # here would mean the worse the battery, the less you learn about it.
+            if not self._seq_running.is_set() and not hppc_safety_tripped:
                 return
             self.sig_hppc_seq_wf.emit(3, "done")
-            self.sig_alarm.emit(f"[HPPC SEQ] {n_cyc} HPPC cycles complete")
+            if hppc_safety_tripped:
+                self.sig_alarm.emit(
+                    f"[HPPC SEQ] Safety trip mid-cycle ({cyc}/{n_cyc}) — analyzing partial data")
+            else:
+                self.sig_alarm.emit(f"[HPPC SEQ] {n_cyc} HPPC cycles complete")
 
             # ── PHASE 4: ANALYZE (ECM fit) ────────────────────────────────
+            # Run even on a safety trip: a high-Rin/degraded pack is exactly the case
+            # that trips UVP/OTP soonest, so skipping analysis here would mean the worse
+            # the battery, the less data you get back — analyze whatever pulses were
+            # logged before the trip instead of discarding them.
             self.sig_hppc_seq_wf.emit(4, "active")
             status("HPPC SEQ ANALYZE: ECM fit R0/R1/C1/τ...")
             res = self.controller._auto_analyze(force_hppc=True)
             self.sig_hppc_seq_wf.emit(4, "done")
             if res:
                 self.sig_seq_result.emit(format_seq_result(res))
-            status("HPPC SEQUENCE เสร็จ — ดูผลที่แท็บ Analytics")
-            self.sig_alarm.emit("[HPPC SEQ] Complete ✓")
             grade_str = res.get("grade", "?") if res else "?"
             ecm_str = res.get("ecm_model", "1RC") if res else "1RC"
-            self.sig_seq_done.emit("HPPC Sequence Complete",
-                                   f"Grade: {grade_str}  ({ecm_str} ECM)\nดูผลที่แท็บ Analytics")
+            if hppc_safety_tripped:
+                status("HPPC SEQUENCE หยุดกลางคัน (Safety) — วิเคราะห์จากข้อมูลบางส่วน ดูผลที่แท็บ Analytics")
+                self.sig_alarm.emit("[HPPC SEQ] Partial (safety trip) — see Analytics")
+                self.sig_seq_done.emit(
+                    "HPPC Sequence Partial (Safety Trip)",
+                    f"Stopped after {cyc}/{n_cyc} cycles\n"
+                    f"Grade: {grade_str}  ({ecm_str} ECM)\nดูผลที่แท็บ Analytics")
+            else:
+                status("HPPC SEQUENCE เสร็จ — ดูผลที่แท็บ Analytics")
+                self.sig_alarm.emit("[HPPC SEQ] Complete ✓")
+                self.sig_seq_done.emit("HPPC Sequence Complete",
+                                       f"Grade: {grade_str}  ({ecm_str} ECM)\nดูผลที่แท็บ Analytics")
             completed_ok = True
 
         except Exception as exc:
@@ -1272,10 +1315,10 @@ class SequencesMixin:
                     if not getattr(self.controller, "is_charging", False):
                         break
                     try:
-                        v_c, _, _ = self.hw.read_vi()
+                        v_c, i_c, _ = self.hw.read_vi()
                         elapsed_c = int(_t.time() - _ch_t0)
-                        status(f"CYCLE {cyc}/{n_cyc} CHARGE: {v_c:.3f} V  "
-                               f"({elapsed_c//60}m {elapsed_c%60:02d}s)")
+                        status(self._charge_status_text(v_c, max(0.0, i_c), elapsed_c,
+                                                        prefix=f"CYCLE {cyc}/{n_cyc} CHARGE"))
                         self.sig_phase_progress.emit(elapsed_c, max(_ch_est, elapsed_c + 30))
                     except Exception:
                         pass

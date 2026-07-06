@@ -141,10 +141,15 @@ _DEFAULT_CHEMISTRIES: Dict[str, ChemistryProfile] = {
         rin={"r0": 0.005, "temp_coeff": 0.005, "soc_coeff": 0.0010,
              "aging_coeff": 0.003, "arrhenius_ea_r": 4000.0},
         # VRLA 3-stage: absorption 2.40V/cell (14.4V@6S), float 2.275V/cell (13.65V@6S)
+        # tail_current_c_rate=0.03 (was 0.02): the exponential CV/absorption tail takes
+        # exponentially longer the closer the threshold is to zero, so 2% made routine
+        # test cycles take hours waiting for the last sliver of current to decay. 3% is
+        # still within the commonly-cited 2-5% C industry range for absorption→float
+        # termination — meaningfully faster without dropping to the aggressive end.
         charge=ChargeProfile(strategy="three_stage", bulk_c_rate=0.10,
                              absorption_voltage_per_cell=2.40,
                              float_voltage_per_cell=2.275,
-                             tail_current_c_rate=0.02, stage_timeout_min=240.0),
+                             tail_current_c_rate=0.03, stage_timeout_min=240.0),
         # Nernst: H₂SO₄ electrolyte OCV rises ~+0.40 mV/°C/cell from 25°C reference
         temp_coeff_mv_per_degc=0.40,
         # Peukert k for VRLA *AGM* ≈ 1.05–1.15 (typ. 1.10); flooded = 1.2–1.6, Victron
