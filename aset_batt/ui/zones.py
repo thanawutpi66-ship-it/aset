@@ -108,7 +108,7 @@ class ZonesMixin:
         actions.addWidget(self.btn_detect, 2)
         actions.addWidget(self.btn_save_default, 1)
         lay.addLayout(actions)
-        btn_edit_profile = _btn("Edit Battery Profile…", bg="#e8f0fe", hover="#c5d8fd")
+        btn_edit_profile = _btn("Edit Battery Profile…", bg=PANEL2, hover=FIELD)
         btn_edit_profile.setToolTip("แก้ไขค่า BatteryConfig ในแอพโดยตรง")
         btn_edit_profile.clicked.connect(self._on_edit_battery_profile)
         lay.addWidget(btn_edit_profile)
@@ -404,7 +404,7 @@ class ZonesMixin:
         qs_lay.addWidget(_step_widget(
             self._QS_STEPS, self._qs_leds, 75, self._qs_desc_lbls, self._qs_time_lbls))
 
-        self.btn_quick_scan = _btn("⚡  QUICK SCAN", bg="#e67e22", fg="white", hover="#c0392b")
+        self.btn_quick_scan = _btn("⚡  QUICK SCAN", bg=INFO, fg="white", hover="#0d4a89")
         self.btn_quick_scan.setToolTip("OCV → Rest 5 min → Discharge 1C → Analyze (~1.5h)")
         self.btn_quick_scan.clicked.connect(self._on_quick_scan)
         self._buttons["btn_quick_scan"] = self.btn_quick_scan
@@ -457,7 +457,7 @@ class ZonesMixin:
         hppc_seq_note.setStyleSheet(f"color:{MUTED}; font-size:10px;")
         hppc_seq_lay.addWidget(hppc_seq_note)
 
-        self.btn_hppc_seq = _btn("▶  HPPC SEQUENCE", bg="#7b2d8b", fg="white", hover="#5c2068")
+        self.btn_hppc_seq = _btn("▶  HPPC SEQUENCE", bg=INFO, fg="white", hover="#0d4a89")
         self.btn_hppc_seq.setToolTip(
             "Charge → Rest 30min → HPPC N cycles → Analyze ECM (R0/R1/C1/τ)")
         self.btn_hppc_seq.clicked.connect(self._on_hppc_sequence)
@@ -520,7 +520,7 @@ class ZonesMixin:
         self.lbl_cycle_counter.setStyleSheet(f"color:{INFO}; font-weight:700; font-size:11px;")
         cycle_lay.addWidget(self.lbl_cycle_counter)
 
-        self.btn_cycle_life = _btn("▶  CYCLE LIFE TEST", bg="#6c3483", fg="white", hover="#4a235a")
+        self.btn_cycle_life = _btn("▶  CYCLE LIFE TEST", bg=INFO, fg="white", hover="#0d4a89")
         self.btn_cycle_life.setToolTip(
             "Automated N×(Charge→Rest→Discharge) — logs capacity fade per cycle")
         self.btn_cycle_life.clicked.connect(self._on_cycle_life)
