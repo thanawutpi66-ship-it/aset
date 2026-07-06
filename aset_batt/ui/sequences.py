@@ -1008,6 +1008,7 @@ class SequencesMixin:
             self.sig_wf_status.emit(msg)
 
         completed_ok = False
+        hppc_safety_tripped = False   # UVP/OTP mid-cycle — see PHASE 3 below
         try:
             # ── PHASE 0: PREPARE (OCV calibrate) ──────────────────────────
             self.sig_hppc_seq_wf.emit(0, "active")
@@ -1124,6 +1125,7 @@ class SequencesMixin:
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                         if v_r <= pack_min:
                             self._seq_running.clear()
+                            hppc_safety_tripped = True
                             reason = (f"Under-voltage during HPPC rest: "
                                       f"{v_r:.3f}V ≤ {pack_min:.3f}V cutoff")
                             self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
@@ -1131,6 +1133,7 @@ class SequencesMixin:
                             break
                         temp_h = self.hw.current_temp
                         if not self._seq_check_otp(temp_h):
+                            hppc_safety_tripped = True
                             break
                     except Exception:
                         pass
@@ -1157,6 +1160,7 @@ class SequencesMixin:
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                         if v_p <= hppc_load_floor:
                             self._seq_running.clear()
+                            hppc_safety_tripped = True
                             reason = (f"Under-voltage during HPPC pulse: "
                                       f"{v_p:.3f}V ≤ {hppc_load_floor:.3f}V hardware floor")
                             self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
@@ -1164,6 +1168,7 @@ class SequencesMixin:
                             break
                         temp_h = self.hw.current_temp
                         if not self._seq_check_otp(temp_h):
+                            hppc_safety_tripped = True
                             break
                     except Exception:
                         pass
@@ -1173,24 +1178,45 @@ class SequencesMixin:
                 if not self._seq_running.is_set():
                     break
             self.sig_phase_progress.emit(0, 0)
-            if not self._seq_running.is_set():
+            # A plain user Cancel should stop with nothing further — but a safety trip
+            # (UVP/OTP) mid-cycle still leaves real pulse data logged in the CSV, and
+            # that's exactly the data a degraded/"bad" battery test needs: tripping the
+            # floor sooner is expected for high-Rin packs, and discarding the analysis
+            # here would mean the worse the battery, the less you learn about it.
+            if not self._seq_running.is_set() and not hppc_safety_tripped:
                 return
             self.sig_hppc_seq_wf.emit(3, "done")
-            self.sig_alarm.emit(f"[HPPC SEQ] {n_cyc} HPPC cycles complete")
+            if hppc_safety_tripped:
+                self.sig_alarm.emit(
+                    f"[HPPC SEQ] Safety trip mid-cycle ({cyc}/{n_cyc}) — analyzing partial data")
+            else:
+                self.sig_alarm.emit(f"[HPPC SEQ] {n_cyc} HPPC cycles complete")
 
             # ── PHASE 4: ANALYZE (ECM fit) ────────────────────────────────
+            # Run even on a safety trip: a high-Rin/degraded pack is exactly the case
+            # that trips UVP/OTP soonest, so skipping analysis here would mean the worse
+            # the battery, the less data you get back — analyze whatever pulses were
+            # logged before the trip instead of discarding them.
             self.sig_hppc_seq_wf.emit(4, "active")
             status("HPPC SEQ ANALYZE: ECM fit R0/R1/C1/τ...")
             res = self.controller._auto_analyze(force_hppc=True)
             self.sig_hppc_seq_wf.emit(4, "done")
             if res:
                 self.sig_seq_result.emit(format_seq_result(res))
-            status("HPPC SEQUENCE เสร็จ — ดูผลที่แท็บ Analytics")
-            self.sig_alarm.emit("[HPPC SEQ] Complete ✓")
             grade_str = res.get("grade", "?") if res else "?"
             ecm_str = res.get("ecm_model", "1RC") if res else "1RC"
-            self.sig_seq_done.emit("HPPC Sequence Complete",
-                                   f"Grade: {grade_str}  ({ecm_str} ECM)\nดูผลที่แท็บ Analytics")
+            if hppc_safety_tripped:
+                status("HPPC SEQUENCE หยุดกลางคัน (Safety) — วิเคราะห์จากข้อมูลบางส่วน ดูผลที่แท็บ Analytics")
+                self.sig_alarm.emit("[HPPC SEQ] Partial (safety trip) — see Analytics")
+                self.sig_seq_done.emit(
+                    "HPPC Sequence Partial (Safety Trip)",
+                    f"Stopped after {cyc}/{n_cyc} cycles\n"
+                    f"Grade: {grade_str}  ({ecm_str} ECM)\nดูผลที่แท็บ Analytics")
+            else:
+                status("HPPC SEQUENCE เสร็จ — ดูผลที่แท็บ Analytics")
+                self.sig_alarm.emit("[HPPC SEQ] Complete ✓")
+                self.sig_seq_done.emit("HPPC Sequence Complete",
+                                       f"Grade: {grade_str}  ({ecm_str} ECM)\nดูผลที่แท็บ Analytics")
             completed_ok = True
 
         except Exception as exc:
