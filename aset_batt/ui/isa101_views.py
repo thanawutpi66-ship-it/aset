@@ -314,13 +314,16 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         tb = self.addToolBar("Main")
         tb.setMovable(False)
 
+        # Auto Seq/Quick Scan deliberately NOT here — they duplicated the AUTO tab's
+        # own buttons exactly (same _on_auto_sequence/_on_quick_scan handlers), which
+        # is the kind of redundant global control ISA-101's HMI guidance argues
+        # against: a persistent toolbar should stick to actions valid in every
+        # context (connect/OCV/monitor), not a workflow-specific action that's
+        # already right there in its own tab. Still reachable from the Run menu.
         tb.addAction("Connect", self._on_connect)
         tb.addAction("Disconnect", self._on_disconnect)
         tb.addSeparator()
         tb.addAction("OCV", self._on_ocv_calibrate)
-        tb.addSeparator()
-        tb.addAction("▶ Auto Seq", self._on_auto_sequence)
-        tb.addAction("⚡ Quick Scan", self._on_quick_scan)
         tb.addSeparator()
         tb.addAction("Start Monitor", self._on_start_monitor)
         tb.addAction("Stop Monitor", lambda: self.controller and self.controller.stop_monitor())
