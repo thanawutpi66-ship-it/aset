@@ -53,8 +53,17 @@ def set_cloud_meta(phase: str | None = None,
                    test_mode: str | None = None,
                    workflow: str | None = None,
                    elapsed_s: int | None = None,
-                   total_s: int | None = None) -> None:
-    """อัปเดต phase/test_mode/ETA ปัจจุบัน — ถูก merge เข้า meta ใน push ถัดไป."""
+                   total_s: int | None = None,
+                   sub_phase: str | None = None,
+                   cycle_index: int | None = None,
+                   cycle_total: int | None = None,
+                   pulse_current_a: float | None = None) -> None:
+    """อัปเดต phase/test_mode/ETA ปัจจุบัน — ถูก merge เข้า meta ใน push ถัดไป.
+
+    sub_phase/cycle_index/cycle_total/pulse_current_a ให้ความละเอียดเพิ่มระดับ
+    pulse-vs-relax ภายในสเต็ป HPPC "test" ก้อนเดียว (ตรงกับ status ที่ GUI
+    แสดงเป๊ะ ๆ) — ส่ง sub_phase="" เพื่อล้างค่าตอนออกจากสเต็ป HPPC cycling.
+    """
     if phase is not None:
         _meta_override["phase"] = phase
     if test_mode is not None:
@@ -65,6 +74,14 @@ def set_cloud_meta(phase: str | None = None,
         _meta_override["elapsed_s"] = elapsed_s
     if total_s is not None:
         _meta_override["total_s"] = total_s
+    if sub_phase is not None:
+        _meta_override["sub_phase"] = sub_phase
+    if cycle_index is not None:
+        _meta_override["cycle_index"] = cycle_index
+    if cycle_total is not None:
+        _meta_override["cycle_total"] = cycle_total
+    if pulse_current_a is not None:
+        _meta_override["pulse_current_a"] = pulse_current_a
 
 
 def resolve_token(explicit: str = "") -> str:

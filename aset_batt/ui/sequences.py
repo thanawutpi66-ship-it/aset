@@ -93,7 +93,7 @@ class SequencesMixin:
             if state == "active" and step < len(phases):
                 set_cloud_meta(phase=phases[step], test_mode=test_mode, workflow=workflow)
             elif state in ("done", "skip") and step == len(phases) - 1:
-                set_cloud_meta(phase="complete", total_s=0)
+                set_cloud_meta(phase="complete", total_s=0, sub_phase="")
         except Exception:
             pass
 
@@ -1132,6 +1132,11 @@ class SequencesMixin:
                     break
                 # Relax (REST) leg
                 status(f"HPPC {cyc}/{n_cyc}: REST {relax_s:.0f}s...")
+                try:
+                    from aset_batt.storage.cloud_push import set_cloud_meta
+                    set_cloud_meta(sub_phase="relax", cycle_index=cyc, cycle_total=n_cyc)
+                except Exception:
+                    pass
                 t_phase = _t.time() + relax_s
                 while self._seq_running.is_set() and _t.time() < t_phase:
                     try:
@@ -1164,6 +1169,12 @@ class SequencesMixin:
                 # Pulse leg
                 self.hw.set_load(True, str(i_pulse))
                 status(f"HPPC {cyc}/{n_cyc}: PULSE {pulse_s:.0f}s  {i_pulse:.3f} A")
+                try:
+                    from aset_batt.storage.cloud_push import set_cloud_meta
+                    set_cloud_meta(sub_phase="pulse", cycle_index=cyc, cycle_total=n_cyc,
+                                   pulse_current_a=i_pulse)
+                except Exception:
+                    pass
                 t_phase = _t.time() + pulse_s
                 while self._seq_running.is_set() and _t.time() < t_phase:
                     try:
@@ -1202,6 +1213,11 @@ class SequencesMixin:
             # here would mean the worse the battery, the less you learn about it.
             if not self._seq_running.is_set() and not hppc_safety_tripped:
                 return
+            try:
+                from aset_batt.storage.cloud_push import set_cloud_meta
+                set_cloud_meta(sub_phase="")  # done with pulse/relax cycling
+            except Exception:
+                pass
             self.sig_hppc_seq_wf.emit(3, "done")
             if hppc_safety_tripped:
                 self.sig_alarm.emit(

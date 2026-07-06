@@ -446,6 +446,28 @@ function updateTestPanel(meta, summary) {
   if ($('tpChargeDesc') && cc != null)
     $('tpChargeDesc').textContent = cc <= 0.15 ? 'Full 3-stage (Bulk→Absorption→Float)' : 'CC-CV Charge';
 
+  // HPPC pulse/relax sub-phase — the 5-step tracker lumps this whole cycling
+  // loop into one "Test" step; override its description with the same
+  // pulse-vs-relax detail (cycle N/M, pulse current) the GUI's own status
+  // line shows, so the two stay in lockstep instead of just saying "Test".
+  const subPhase = (meta.sub_phase || '').toLowerCase();
+  if (phase === 'test' && $('tpTestDesc')) {
+    const cycIdx = num(meta, 'cycle_index'), cycTot = num(meta, 'cycle_total');
+    const cycLabel = (cycIdx != null && cycTot != null) ? ` ${cycIdx}/${cycTot}` : '';
+    if (subPhase === 'pulse') {
+      const ip = num(meta, 'pulse_current_a');
+      $('tpTestDesc').textContent = 'Pulse' + cycLabel + (ip != null ? ` · ${f(ip, 3)} A` : '');
+    } else if (subPhase === 'relax') {
+      $('tpTestDesc').textContent = 'Relax' + cycLabel;
+    } else if (dc != null) {
+      // Not HPPC (or between cycles) — fall back to the plain discharge-rate
+      // description so a leftover "Pulse/Relax N/M" doesn't stick around
+      // after switching away from an HPPC run in the same browser session.
+      const a = nom != null ? ' = ' + f(dc * nom, 2) + ' A' : '';
+      $('tpTestDesc').textContent = 'Discharge ' + dc + 'C' + a;
+    }
+  }
+
   // "What's happening right now" banner — was static placeholder markup
   // ("Idle" / "Waiting for test start") that nothing ever updated.
   const actPhaseEl = $('tpActPhase'), actDetailEl = $('tpActDetail');
