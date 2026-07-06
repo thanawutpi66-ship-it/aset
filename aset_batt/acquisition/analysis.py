@@ -59,6 +59,7 @@ def profile_from_config(config) -> BatteryProfile:
         uvp=float(s.get("min_voltage", b.pack_min_voltage - 1)),
         otp_warn=max(0.0, otp - 10.0), otp_crit=otp, internal_r=float(max(1e-4, rin)),
         peukert_k=peukert,
+        harness_r_ohm=max(0.0, float(getattr(b, "harness_resistance_ohm", 0.0))),
     )
 
 
@@ -320,6 +321,21 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
             [p[0] for p in levels], [p[1] for p in levels])
     else:
         dcir_slope, dcir_slope_r2 = float("nan"), 0.0
+
+    # Harness (test-rig wiring/contact) resistance: purely ohmic and in series with
+    # everything the rig measures, so it inflates every ohmic reading by the same
+    # fixed amount regardless of the pack's real health — a genuinely healthy battery
+    # can otherwise be graded down for the rig's own cabling (see
+    # test_20260706_185655.csv: measured DCIR 77.4 mΩ vs a bench ACIR meter's 12.2 mΩ
+    # at the battery terminals directly). Only ohmic readings (DCIR, R0) are corrected;
+    # R1/C1/τ characterise the cell's own RC relaxation and aren't affected by simple
+    # wiring resistance. Floored so a mis-calibrated harness value can't zero/invert it.
+    harness_r = max(0.0, float(getattr(profile, "harness_r_ohm", 0.0)))
+    if harness_r > 0.0:
+        if measured:
+            dcir = max(1e-4, dcir - harness_r)
+        if dcir_slope == dcir_slope:   # not NaN
+            dcir_slope = max(1e-4, dcir_slope - harness_r)
     sag, cca_est, ocv = _load_metrics(current_a, voltage_v, dcir, profile)
     warnings, temp_drift = _quality_flags(current_a, voltage_v, temp_c, profile,
                                           is_hppc, n_steps, reached_cutoff)
@@ -329,6 +345,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     is_2rc = bool(ecm and "R2_ohm" in ecm)
     if ecm:
         r0, r1 = float(ecm["R0_ohm"]), float(ecm["R1_ohm"])
+        if harness_r > 0.0:
+            r0 = max(1e-4, r0 - harness_r)   # ohmic only — R1/C1/τ are the cell's own RC
         # 2-RC dict uses tau1_s; 1-RC uses tau_s
         c1 = float(ecm["C1_farad"])
         tau = float(ecm.get("tau1_s", ecm.get("tau_s", 0.0)))

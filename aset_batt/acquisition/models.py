@@ -43,6 +43,11 @@ class BatteryProfile:
     # ~1.0–1.05 for lithium (almost rate-independent), ~1.15–1.30 for lead-acid.
     # Used to normalise measured capacity to a reference C-rate before SoH.
     peukert_k: float = 1.10
+    # Test-rig wiring/contact resistance (Ω, pack-level) between the battery terminals
+    # and the e-load/PSU sense point — subtracted from measured DCIR/R0 before grading,
+    # so a genuinely healthy pack isn't downgraded for the rig's own cabling. 0.0 = no
+    # correction (previous behaviour). See BatteryConfig.harness_resistance_ohm.
+    harness_r_ohm: float = 0.0
 
 
 @dataclass

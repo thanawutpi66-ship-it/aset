@@ -1528,6 +1528,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             ("cells_series",   "Cells Series",       int),
             ("cells_parallel", "Cells Parallel",     int),
             ("mass_grams",     "Mass (g)",           float),
+            ("harness_resistance_ohm", "Harness R (Ω, pack, rig cabling)", float),
         ]
         editors: dict[str, QLineEdit] = {}
         for attr, label, _typ in fields:

@@ -29,6 +29,12 @@ class BatteryConfig:
     cells_parallel: int = 1      # จำนวนเซลล์ขนาน
     temperature_compensation: bool = True
     iec61960_compliant: bool = True  # Enable IEC 61960 standard compliance
+    # ความต้านทานสาย+หน้าสัมผัสระหว่างขั้วแบตกับจุดวัดของ e-load/PSU (โอห์ม, ระดับแพ็ค)
+    # หักออกจาก DCIR/R0 ที่วัดได้ก่อนเกรด — ไม่งั้นแบตที่สุขภาพดีจริงจะโดนเกรดต่ำเพราะสายไฟ
+    # ไม่ใช่ตัวแบตเอง วัดได้จากผลต่างระหว่าง ACIR (เครื่องวัดที่ขั้วแบตตรงๆ) กับ DCIR ที่ริกวัดได้
+    # (ดู test_20260706_185655.csv: DCIR วัดได้ 77.4 mΩ vs ACIR จริง 12.2 mΩ → harness ~65 mΩ)
+    # ค่า default 0.0 = ไม่หัก (พฤติกรรมเดิม) — ตั้งเฉพาะเมื่อคาลิเบรตกับริกจริงแล้ว
+    harness_resistance_ohm: float = 0.0
 
     @property
     def pack_nominal_voltage(self) -> float:
