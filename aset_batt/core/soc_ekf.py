@@ -91,16 +91,28 @@ class SoCEKF:
         self.P = F @ self.P @ F.T + Q
 
     def update(self, v_meas: float, current: float, ocv_pack: float,
-               docv_dsoc_pack: float, r0: float) -> None:
+               docv_dsoc_pack: float, r0: float, r_override: float | None = None) -> None:
+        """r_override: use this measurement variance for THIS call only, instead of
+        self.R, and skip the adaptive-R EWMA update entirely. For the post-anchor
+        settle window (surface charge/polarization hasn't dissipated yet, so the
+        terminal voltage is known to be temporarily untrustworthy as an OCV proxy) —
+        an artificially huge value here shrinks the Kalman gain toward zero without
+        polluting the EWMA's normal noise estimate with a deliberately-huge residual,
+        which would otherwise make the filter distrust genuine measurements for a
+        while after the settle window ends too."""
         soc, vrc = self.x
         v_pred = ocv_pack - current * max(1e-4, r0) - vrc
         H = np.array([float(docv_dsoc_pack), -1.0])
         innov = float(v_meas) - v_pred
-        if self.adaptive_r:
-            # EWMA of innovation² → R ≈ innovation variance (floored at sensor noise)
-            self._innov_var = 0.95 * self._innov_var + 0.05 * innov * innov
-            self.R = max(self._r_min, self._innov_var)
-        S = float(H @ self.P @ H.T + self.R)
+        if r_override is not None:
+            r = max(1e-4, float(r_override))
+        else:
+            if self.adaptive_r:
+                # EWMA of innovation² → R ≈ innovation variance (floored at sensor noise)
+                self._innov_var = 0.95 * self._innov_var + 0.05 * innov * innov
+                self.R = max(self._r_min, self._innov_var)
+            r = self.R
+        S = float(H @ self.P @ H.T + r)
         if S <= 0:
             return
         K = (self.P @ H) / S                         # 2-vector gain
