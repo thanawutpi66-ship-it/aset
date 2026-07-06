@@ -102,10 +102,24 @@ def resolve_token(explicit: str = "") -> str:
     return ""
 
 
+_GRAPH_WINDOW_S = 1800  # most recent window shown on the web graph (whole CSV still used for summary/analysis)
+
+
 def _downsample(rows, max_points):
-    """ลดจำนวนจุดของ series ให้ไม่เกิน max_points (stride sampling)"""
+    """ลดจำนวนจุดของ series ให้ไม่เกิน max_points (stride sampling)
+
+    ตัดให้เหลือแค่ _GRAPH_WINDOW_S วินาทีล่าสุดก่อน — ถ้าไม่ตัด เทสที่รันมาหลาย
+    ชั่วโมงจะทำให้ stride ถี่จนพัลส์ HPPC สั้น ๆ (10-60s) หายไปในการบีบอัด
+    ทั้ง ๆ ที่ผู้ใช้อยากเห็นข้อมูลล่าสุดชัด ๆ มากกว่าเห็นทั้งเทสแบบเบลอ
+    """
     keys = ["Elapsed_s"] + _CHANNELS
     series = _extract_series(rows, keys=keys)
+    elapsed = series.get("Elapsed_s", [])
+    if elapsed:
+        cutoff = elapsed[-1] - _GRAPH_WINDOW_S
+        start = next((i for i, e in enumerate(elapsed) if e >= cutoff), 0)
+        if start:
+            series = {k: v[start:] for k, v in series.items()}
     n = len(series.get("Elapsed_s", []))
     if n <= max_points:
         return series
