@@ -617,8 +617,14 @@ class SequencesMixin:
         return base
 
     def _estimate_charge_s(self, soc_now: float, c_rate: float) -> int:
-        """Rough charge-time estimate (s) so the progress bar/ETA can show during CHARGE.
-        Ah needed to reach full ÷ bulk current, +50% headroom for the CV/absorption taper."""
+        """Rough charge-time estimate (s) so the progress bar/ETA can show at CHARGE
+        start, before any real tail-current data exists yet. Ah needed to reach full ÷
+        bulk current, +50% headroom for the CV/absorption taper — a static guess, since
+        the real CV/absorption duration depends on the pack's actual RC time constant
+        (varies with SoC/temperature/health), not a fixed fraction of bulk time. Once the
+        charger is actually in its tail-watching stage, _project_tail_eta() below
+        supersedes this with a live fit of the real decay — this is only the fallback
+        for the bulk phase and the first few tail samples before that fit is reliable."""
         try:
             rated = self.config.battery.rated_capacity
             ah_needed = max(0.0, (100.0 - soc_now) / 100.0) * rated
@@ -627,6 +633,46 @@ class SequencesMixin:
             return max(60, int(t_bulk * 1.5))
         except Exception:
             return 0
+
+    def _project_tail_eta(self, t_hist: list, i_hist: list, tail_a: float,
+                          elapsed_ch: int, fallback_total: int) -> int:
+        """Adaptive ETA for the CV/absorption tail: fit the REAL exponential current
+        decay (log(I) is linear in t for an RC tail) from recent samples and extrapolate
+        when it crosses tail_a, instead of trusting _estimate_charge_s's fixed 50%
+        headroom guess — that guess is the same regardless of whether this particular
+        pack's polarization settles in 10 minutes or 2 hours, so it was often badly
+        wrong in exactly the phase that used to make CHARGE feel "stuck" (see the
+        tail-current status feature added earlier this session)."""
+        if len(t_hist) < 5:
+            return fallback_total
+        try:
+            import numpy as np
+            t = np.asarray(t_hist[-40:], dtype=float)   # recent window only — a fit
+            i = np.asarray(i_hist[-40:], dtype=float)    # anchored on stale early
+            i = np.clip(i, 1e-4, None)                   # samples reacts slowly to
+            if i[-1] <= tail_a:                          # a real change in decay rate
+                return elapsed_ch
+            log_i = np.log(i)
+            slope, intercept = np.polyfit(t, log_i, 1)
+            if slope >= -1e-6:            # not actually decaying (noise/plateau) — the
+                return fallback_total      # fit isn't trustworthy, keep the static guess
+            # R² of the fit — rejects a "slope" that's really just noise around a flat
+            # signal (a small random dip can still produce a nominally-negative slope;
+            # requiring the line to actually explain the variance catches that case).
+            pred = slope * t + intercept
+            ss_res = float(np.sum((log_i - pred) ** 2))
+            ss_tot = float(np.sum((log_i - log_i.mean()) ** 2))
+            r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+            if r2 < 0.5:
+                return fallback_total
+            t_tail = (np.log(tail_a) - intercept) / slope
+            if not np.isfinite(t_tail) or t_tail <= elapsed_ch:
+                return fallback_total
+            # Clamp so one noisy sample can't make the bar's ETA jump wildly —
+            # cap the projection at 3x the original static estimate.
+            return int(min(t_tail, fallback_total * 3.0))
+        except Exception:
+            return fallback_total
 
     def _refresh_step_time_estimates(self):
         """Recompute the rough "~N min" line shown under every workflow step, across
@@ -770,13 +816,22 @@ class SequencesMixin:
                                              bulk_c_rate_override=_c_rate_override)
                 _ch_t0 = time.time()
                 _ch_est = self._estimate_charge_s(soc, _c_rate_override or 0.1)
+                _tail_t_hist, _tail_i_hist = [], []
                 while self._seq_running.is_set():
                     if not getattr(self.controller, "is_charging", False):
                         break
                     try:
                         v2, i2, _ = self.hw.read_vi()
+                        i2 = max(0.0, i2)
                         elapsed_ch = int(time.time() - _ch_t0)
-                        status(self._charge_status_text(v2, max(0.0, i2), elapsed_ch))
+                        status(self._charge_status_text(v2, i2, elapsed_ch))
+                        ctrl = getattr(self.controller, "_charge_ctrl", None)
+                        if getattr(ctrl, "stage", None) in ("absorption", "cv"):
+                            _tail_t_hist.append(elapsed_ch)
+                            _tail_i_hist.append(i2)
+                            _ch_est = self._project_tail_eta(
+                                _tail_t_hist, _tail_i_hist, ctrl.params.tail_current_a,
+                                elapsed_ch, _ch_est)
                         # estimated total so the bar/ETA show; clamp so it never reverses past 99%
                         self.sig_phase_progress.emit(elapsed_ch, max(_ch_est, elapsed_ch + 30))
                     except Exception:
@@ -1063,13 +1118,22 @@ class SequencesMixin:
             _cp = battery_profiles.get_chemistry(
                 self.controller.config.battery.battery_type).charge
             _ch_est = self._estimate_charge_s(_soc0, _cp.bulk_c_rate or 0.1)
+            _tail_t_hist, _tail_i_hist = [], []
             while self._seq_running.is_set():
                 if not getattr(self.controller, "is_charging", False):
                     break
                 try:
                     v_c, i_c, _ = self.hw.read_vi()
+                    i_c = max(0.0, i_c)
                     elapsed_ch = int(_t.time() - _ch_t0)
-                    status(self._charge_status_text(v_c, max(0.0, i_c), elapsed_ch, prefix="HPPC CHARGE"))
+                    status(self._charge_status_text(v_c, i_c, elapsed_ch, prefix="HPPC CHARGE"))
+                    ctrl = getattr(self.controller, "_charge_ctrl", None)
+                    if getattr(ctrl, "stage", None) in ("absorption", "cv"):
+                        _tail_t_hist.append(elapsed_ch)
+                        _tail_i_hist.append(i_c)
+                        _ch_est = self._project_tail_eta(
+                            _tail_t_hist, _tail_i_hist, ctrl.params.tail_current_a,
+                            elapsed_ch, _ch_est)
                     self.sig_phase_progress.emit(elapsed_ch, max(_ch_est, elapsed_ch + 30))
                 except Exception:
                     pass
@@ -1311,14 +1375,23 @@ class SequencesMixin:
                 _ch_t0 = _t.time()
                 _soc0 = getattr(self.controller.estimator, "soc", 50.0)
                 _ch_est = self._estimate_charge_s(_soc0, c_ch or 0.1)
+                _tail_t_hist, _tail_i_hist = [], []
                 while self._seq_running.is_set():
                     if not getattr(self.controller, "is_charging", False):
                         break
                     try:
                         v_c, i_c, _ = self.hw.read_vi()
+                        i_c = max(0.0, i_c)
                         elapsed_c = int(_t.time() - _ch_t0)
-                        status(self._charge_status_text(v_c, max(0.0, i_c), elapsed_c,
+                        status(self._charge_status_text(v_c, i_c, elapsed_c,
                                                         prefix=f"CYCLE {cyc}/{n_cyc} CHARGE"))
+                        ctrl = getattr(self.controller, "_charge_ctrl", None)
+                        if getattr(ctrl, "stage", None) in ("absorption", "cv"):
+                            _tail_t_hist.append(elapsed_c)
+                            _tail_i_hist.append(i_c)
+                            _ch_est = self._project_tail_eta(
+                                _tail_t_hist, _tail_i_hist, ctrl.params.tail_current_a,
+                                elapsed_c, _ch_est)
                         self.sig_phase_progress.emit(elapsed_c, max(_ch_est, elapsed_c + 30))
                     except Exception:
                         pass
