@@ -348,6 +348,26 @@ class SequencesMixin:
                 "[WARNING] ESP32 temperature reading is stale — Rin/OCV temperature "
                 "compensation and OTP protection may not reflect the real battery.")
 
+    def _seq_stop_monitor_after_charge(self):
+        """Re-stop the background monitor once a sequence's CHARGE phase finishes.
+
+        _seq_common_start() stops the monitor at sequence start, but
+        AutoController.start_charge() unconditionally restarts it
+        (``if not self.monitor_running: self.start_monitor()``) — it's the only
+        live-telemetry feed for a CHARGE run outside of a sequence, so it can't
+        just be removed there. Inside a sequence, though, REST/PULSE/DISCHARGE
+        phases feed the estimator directly themselves, so a monitor left running
+        after CHARGE double-feeds coulomb counting for the rest of the run.
+
+        Confirmed on a real ~3.75h HPPC test: ~5-10% of CSV rows shared an
+        identical (rounded) timestamp with the next row while reporting a
+        DIFFERENT SoC — proof of two independent estimator.update() calls
+        landing back-to-back, all the way from early CHARGE through the actual
+        HPPC pulses. This is what was making the live SoC/Rin swing around
+        during pulses without a real cause."""
+        if self.controller and self.controller.monitor_running:
+            self.controller.stop_monitor()
+
     def _on_auto_sequence(self):
         if self.controller is None or not getattr(self.hw, "is_connected", False):
             if not self._headless:
@@ -855,6 +875,7 @@ class SequencesMixin:
                 self.sig_phase_progress.emit(0, 0)
                 self.sig_workflow.emit(1, "done")
                 self.sig_alarm.emit("[AUTO] Charge complete")
+                self._seq_stop_monitor_after_charge()
 
             # ── PHASE 2: REST ─────────────────────────────────────────────
             if skip_rest:
@@ -1156,6 +1177,7 @@ class SequencesMixin:
                 return
             self.sig_hppc_seq_wf.emit(1, "done")
             self.sig_alarm.emit("[HPPC SEQ] Charge complete")
+            self._seq_stop_monitor_after_charge()
 
             # ── PHASE 2: REST 30 min ─────────────────────────────────────
             self.sig_hppc_seq_wf.emit(2, "active")
@@ -1429,6 +1451,7 @@ class SequencesMixin:
                 if not self._seq_running.is_set():
                     break
                 self.sig_cycle_wf.emit(1, "done")
+                self._seq_stop_monitor_after_charge()
 
                 # ── step 2: REST (no dedicated LED — _CYCLE_STEPS has no REST entry;
                 # the DISCHARGE LED below only goes "active" once discharge itself starts,
