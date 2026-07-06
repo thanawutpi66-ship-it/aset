@@ -960,7 +960,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         metrics valid even without a running test (no SoC/Rin, those need the
         state estimator). Shared by _slot_display (full test telemetry) and
         _slot_live_readback (pre-test Connect readback)."""
-        for name, val, fmt in [("Voltage", v, "{:.3f}"), ("Temp", temp, "{:.2f}")]:
+        for name, val, fmt in [("Voltage", v, "{:.2f}"), ("Temp", temp, "{:.2f}")]:
             lbl, unit = self.metric_labels[name]
             lbl.setText(f"{fmt.format(val)} {unit}")
         i_lbl, i_unit = self.metric_labels["Current"]
@@ -1865,7 +1865,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self.buf_i.append(row["i"]); self.buf_temp.append(row["temp"])
         v_lbl = self.metric_labels.get("Voltage")
         if v_lbl:
-            self.metric_labels["Voltage"][0].setText(f'{row["v"]:.3f} {self.metric_labels["Voltage"][1]}')
+            self.metric_labels["Voltage"][0].setText(f'{row["v"]:.2f} {self.metric_labels["Voltage"][1]}')
             self.metric_labels["Current"][0].setText(f'{row["i"]:.3f} {self.metric_labels["Current"][1]}')
             if row.get("soc") == row.get("soc"):  # not NaN
                 _u = self.metric_labels["SoC"][1]
