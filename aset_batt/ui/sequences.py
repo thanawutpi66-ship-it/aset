@@ -323,6 +323,8 @@ class SequencesMixin:
         self._elapsed_t0 = None
         self._seq_last_meas_time = 0.0   # reset watchdog
         self._seq_temp_stale_warned = False   # one-shot guard, see _seq_check_temp_stale
+        if hasattr(self, "_lbl_soc_note"):
+            self._lbl_soc_note.setText("")   # clear any stale "Topping off" from a previous run
         self.sig_phase_progress.emit(0, 0)   # hide progress bar
         self.frm_seq_result.hide()
         self._seq_running.set()
@@ -607,13 +609,23 @@ class SequencesMixin:
         full (see the 100% anchor in state_estimator.py), but the charger keeps running
         for a while after that to actually finish tapering off — showing "97% ... 99% ...
         100%" during that tail would mean the number no longer reflects real coulomb
-        counting, so instead the current-vs-target progress goes in the status text."""
+        counting, so instead the current-vs-target progress goes in the status text.
+
+        Also mirrors the same "Topping off ≤X.XXXA" wording onto the SoC card's own
+        sub-label (self._lbl_soc_note) — the workflow status line carrying this same
+        message lives elsewhere on screen, away from the "100%" the operator is
+        actually staring at wondering why charging hasn't stopped."""
         base = f"{prefix}: {v:.2f}V {i:.3f}A  (elapsed {elapsed_ch//60}m {elapsed_ch%60:02d}s)"
         ctrl = getattr(self.controller, "_charge_ctrl", None)
         stage = getattr(ctrl, "stage", None)
+        note_lbl = getattr(self, "_lbl_soc_note", None)
         if stage in ("absorption", "cv"):
             tail_a = getattr(ctrl.params, "tail_current_a", 0.0)
+            if note_lbl is not None:
+                note_lbl.setText(f"Topping off ≤{tail_a:.3f}A")
             return base + f"  ·  Topping off, waiting for tail ≤{tail_a:.3f}A"
+        if note_lbl is not None:
+            note_lbl.setText("")
         return base
 
     def _estimate_charge_s(self, soc_now: float, c_rate: float) -> int:
