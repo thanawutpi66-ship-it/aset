@@ -34,11 +34,11 @@
       "safety_ovp_pack": 15.0, "safety_uvp_pack": 10.0, "mass_grams": 2400.0, "cca_a": 130.0,
       "notes": "RB Battery YTZ7V มอเตอร์ไซค์ lead-acid AGM"
     },
-    "YTZ6V (12V 5Ah VRLA)": {
+    "YTZ6V (12V 5.3Ah VRLA)": {
       "chemistry": "LeadAcid", "nominal_voltage_per_cell": 2.0, "cells_series": 6, "cells_parallel": 1,
-      "rated_capacity_ah": 5.0, "max_voltage_per_cell": 2.45, "min_voltage_per_cell": 1.75,
+      "rated_capacity_ah": 5.3, "max_voltage_per_cell": 2.45, "min_voltage_per_cell": 1.75,
       "safety_ovp_pack": 15.0, "safety_uvp_pack": 10.0, "mass_grams": 1900.0, "cca_a": 95.0,
-      "notes": "YTZ6V มอเตอร์ไซค์ lead-acid AGM 12V 5Ah; charge 3-stage absorption 14.4V/float 13.65V; mass+CCA ประมาณการ โปรดยืนยันกับฉลากจริง"
+      "notes": "YTZ6V มอเตอร์ไซค์ lead-acid AGM 12V 5.3Ah; charge 3-stage absorption 14.4V/float 13.65V; mass+CCA ประมาณการ โปรดยืนยันกับฉลากจริง"
     },
     "FB FTZ6V (12V 5.3Ah VRLA AGM)": {
       "chemistry": "LeadAcid", "nominal_voltage_per_cell": 2.0, "cells_series": 6, "cells_parallel": 1,
