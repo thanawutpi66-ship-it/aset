@@ -1235,7 +1235,7 @@ class ZonesMixin:
         hdr.setStyleSheet(f"background:{PANEL}; border-bottom:1px solid #888;")
         hdr_lay = QHBoxLayout(hdr)
         hdr_lay.setContentsMargins(8, 5, 8, 5)
-        lbl_title = QLabel("⚡  SCADA — EVENT / ALARM LOG")
+        lbl_title = QLabel("⚡  EVENT / ALARM LOG")
         lbl_title.setStyleSheet(f"font-weight:700; font-size:12px; color:{TEXT}; border:0; background:transparent;")
         hdr_lay.addWidget(lbl_title)
         hdr_lay.addStretch()
