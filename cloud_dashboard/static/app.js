@@ -299,7 +299,11 @@ function renderPayload(p, received_at) {
   $('mV').textContent   = V   != null ? f(V,   1) : '0.0';
   $('mI').textContent   = I   != null ? f(I,   1) : '0.0';
   $('mSoC').textContent = soc != null ? f(soc, 1) : '0.0';
-  $('mR').textContent   = fmtR(num(L,'Resistance_mOhm'));
+  // Rin_Calibrated=false: still _ekf_rc_defaults()'s uncalibrated placeholder guess
+  // (no real HPPC pulse fitted yet), not a bench-comparable measurement — show it live
+  // (operators want a continuous trend) but labelled, so it isn't mistaken for a
+  // reading the way it was before this field existed.
+  $('mR').textContent   = fmtR(num(L,'Resistance_mOhm')) + (L.Rin_Calibrated === false ? ' (est.)' : '');
   $('mT').textContent   = T   != null ? f(T,   1) : '0.0';
   $('mSoH').textContent = soh != null ? Math.round(soh) + '%' : '–';
   const mSoHEl = $('mSoH'); if (mSoHEl && soh != null) mSoHEl.style.color = sohColor(soh);

@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "cloud-dashboard",
-      "runtimeExecutable": "C:/Users/theer/AppData/Local/Python/bin/python.exe",
+      "runtimeExecutable": "python",
       "runtimeArgs": ["cloud_dashboard/server.py"],
       "port": 8001,
       "autoPort": false
