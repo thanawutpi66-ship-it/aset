@@ -38,7 +38,7 @@ function mkScale(pos, color, label, drawGrid) {
   return {
     type: 'linear', position: pos,
     ticks: { color, font: { size: 10 } },
-    grid: { color: drawGrid ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,0)' },
+    grid: { color: drawGrid ? css('--border') : 'rgba(0,0,0,0)' },
     border: { color, width: pos === 'right' ? 2 : 1 },
     title: { display: true, text: label, color, font: { size: 10 } },
   };
@@ -50,7 +50,7 @@ function baseOpts(extraScales) {
     scales: {
       x: {
         ticks: { color: css('--faint'), font: { size: 10 }, maxTicksLimit: 8 },
-        grid: { color: 'rgba(255,255,255,.04)' },
+        grid: { color: css('--border') },
         title: { display: true, text: 'Elapsed (s)', color: css('--muted'), font: { size: 10 } },
       },
       ...extraScales,
@@ -150,8 +150,8 @@ function buildIcaChart() {
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       scales: {
-        x: { type: 'linear', title: { display: true, text: 'Voltage (V)', color: css('--muted'), font: { size: 9 } }, ticks: { color: css('--faint'), font: { size: 9 }, maxTicksLimit: 6 }, grid: { color: 'rgba(255,255,255,.04)' } },
-        y: { title: { display: true, text: 'dQ/dV', color: css('--muted'), font: { size: 9 } }, ticks: { color: css('--faint'), font: { size: 9 } }, grid: { color: 'rgba(255,255,255,.05)' } },
+        x: { type: 'linear', title: { display: true, text: 'Voltage (V)', color: css('--muted'), font: { size: 9 } }, ticks: { color: css('--faint'), font: { size: 9 }, maxTicksLimit: 6 }, grid: { color: css('--border') } },
+        y: { title: { display: true, text: 'dQ/dV', color: css('--muted'), font: { size: 9 } }, ticks: { color: css('--faint'), font: { size: 9 } }, grid: { color: css('--border') } },
       },
       plugins: { legend: { display: false }, tooltip: { backgroundColor: '#0b1220' } },
     },
