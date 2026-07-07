@@ -9,6 +9,36 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# PEL-3111 static-mode range ceilings (Programming Manual, Mode Subsystem).
+_PEL3111_CRANGE_MAX = {"LOW": 2.1, "MIDDle": 21.0, "HIGH": 210.0}
+_PEL3111_VRANGE_MAX = {"LOW": 15.0, "HIGH": 150.0}
+
+
+def recommend_pel3111_ranges(max_current_a: float, pack_max_voltage_v: float,
+                              margin: float = 0.75) -> tuple:
+    """Pick the narrowest PEL-3111 CRANge/VRANge that still leaves headroom
+    above the values actually used by this battery/config, so a real transient
+    never lands right at (or over) the range ceiling.
+
+    `margin` (default 0.75) means: only pick a narrower range if the value is
+    at most 75% of that range's ceiling — i.e. keep >=25% headroom. This is
+    intentionally conservative — e.g. a 12V lead-acid pack (pack_max ~14.7V) is
+    too close to the 15V LOW-voltage-range ceiling (only ~2% headroom) and will
+    correctly fall back to HIGH, forgoing the accuracy win rather than risk an
+    out-of-range clip mid-test. Only packs comfortably below a range ceiling
+    get the tighter range.
+    """
+    if max_current_a <= margin * _PEL3111_CRANGE_MAX["LOW"]:
+        i_range = "LOW"
+    elif max_current_a <= margin * _PEL3111_CRANGE_MAX["MIDDle"]:
+        i_range = "MIDDle"
+    else:
+        i_range = "HIGH"
+
+    v_range = "LOW" if pack_max_voltage_v <= margin * _PEL3111_VRANGE_MAX["LOW"] else "HIGH"
+    return i_range, v_range
+
+
 class HardwareController:
     def __init__(self):
         self.rm = pyvisa.ResourceManager()
@@ -126,9 +156,12 @@ class HardwareController:
             pass
         self._psu_output_on = False
 
-        # NOTE: calibrate_psu_zero() is NOT called automatically here because when a
-        # battery is connected the PSU already reads real battery current, not an
-        # offset. Call it manually only when the output terminals are open-circuit.
+        # NOTE: calibrate_psu_zero() is NOT called here because at this point the
+        # SSR state is unknown — if it was left ON from a previous session, the
+        # PSU is still electrically joined to the battery and "calibrating" would
+        # just capture real battery current as if it were offset. It is called
+        # instead from connect_esp32(), right after set_ssr(False) forces the SSR
+        # open (PSU genuinely isolated from the battery loop at that point).
 
     def set_psu(self, state, voltage_val="0", current_val="1.0"):
         """Manual PSU control (CV with a CC current limit).
@@ -175,6 +208,22 @@ class HardwareController:
                 self.load_inst.write(f":CURR {abs(target)}")
             except Exception as e:
                 logger.error(f"set_load_raw error: {e}")
+
+    def set_load_range(self, current_range: str, voltage_range: str) -> None:
+        """Set the PEL-3111 static-mode current/voltage range (CC/CR/CV/CP share
+        the same range setting). Accuracy is specified as %-of-full-scale-of-
+        range, so a narrower range tightens the error term substantially (e.g.
+        MIDDle vs HIGH current range is a 10x tighter current-accuracy floor).
+        Non-fatal: connect must never fail just because this SCPI write did."""
+        if self.load_inst is None:
+            return
+        with self.inst_lock:
+            try:
+                self.load_inst.write(f":CRANge {current_range}")
+                self.load_inst.write(f":VRANge {voltage_range}")
+                logger.info("Load range set: CRANge=%s VRANge=%s", current_range, voltage_range)
+            except Exception as e:
+                logger.warning("set_load_range failed (non-fatal): %s", e)
 
     def load_on(self):
         with self.inst_lock:
@@ -312,6 +361,15 @@ class HardwareController:
         # already fail-safes to OFF on its own boot, but the ESP32 may still be
         # powered (not rebooted) with a stale ON state from before.
         self.set_ssr(False)
+
+        # SSR is now confirmed open → PSU is truly isolated from the battery, so
+        # any current the PSU reports is pure offset (the ~0.6A PSW bleeder
+        # quirk), not battery current. Safe point to auto-calibrate it out.
+        if getattr(self, "psu_inst", None) is not None:
+            try:
+                self.calibrate_psu_zero()
+            except Exception as e:
+                logger.warning("calibrate_psu_zero() failed on connect: %s", e)
 
     def disconnect_esp32(self):
         # Force the relay OFF *before* marking disconnected/closing the serial port —

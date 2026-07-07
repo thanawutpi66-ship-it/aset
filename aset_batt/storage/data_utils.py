@@ -128,13 +128,22 @@ class DataHandler:
         self.csv_file = None
         self.csv_writer = None
         self.current_path: str = ""   # path ของ session ปัจจุบัน
+        self._last_flush = 0.0        # perf_counter of the last disk flush — see log_row
 
     @staticmethod
-    def make_session_path(sessions_dir: str = "sessions") -> str:
-        """สร้าง path สำหรับ session ใหม่ เช่น sessions/test_20260625_143022.csv"""
+    def make_session_path(sessions_dir: str = "sessions", label: str = "") -> str:
+        """สร้าง path สำหรับ session ใหม่.
+
+        ไม่มี label → sessions/test_20260625_143022.csv (เหมือนเดิม)
+        มี label  → sessions/test_HPPC_20260625_143022.csv (บอกชนิดเทสต์ในชื่อไฟล์)
+
+        label ถูก sanitize เหลือ [A-Za-z0-9] เท่านั้น เพื่อไม่ให้กระทบการ parse
+        timestamp (\\d{8}_\\d{6}) ใน _format_session_time/_detect_session_type."""
         os.makedirs(sessions_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return os.path.join(sessions_dir, f"test_{ts}.csv")
+        safe = "".join(c for c in (label or "") if c.isalnum())
+        prefix = f"test_{safe}_" if safe else "test_"
+        return os.path.join(sessions_dir, f"{prefix}{ts}.csv")
 
     def start_logging(self, filepath: str):
         """เริ่มบันทึก CSV — คืน (True, "") หรือ (False, error_message)"""
@@ -195,7 +204,17 @@ class DataHandler:
                     f"{temp_c:.2f}",
                     "1" if rin_calibrated else "0",
                 ])
-                self.csv_file.flush()
+                # flush() forces a real disk write (or, on this repo's OneDrive-synced
+                # project folder, a sync-agent wakeup) every call — at the monitor
+                # loop's ~10 Hz during CHARGE that's 10 forced writes/sec, a plausible
+                # source of periodic stutters. Throttled to ~1/s: worst case loses <1s
+                # of rows on a hard crash, which cloud push (5s interval, see
+                # cloud_push_interval) already tolerates just as well.
+                import time
+                now = time.perf_counter()
+                if now - self._last_flush >= 1.0:
+                    self._last_flush = now
+                    self.csv_file.flush()
             except Exception as e:
                 logger.error(f"CSV write error: {e}")
 

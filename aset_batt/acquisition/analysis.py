@@ -49,6 +49,22 @@ def profile_from_config(config) -> BatteryProfile:
     # Peukert exponent by chemistry: lead-acid capacity is markedly rate-dependent,
     # lithium almost not.
     peukert = 1.20 if "lead" in (b.battery_type or "").lower() else 1.05
+
+    # A characterised specimen's R0/R1 (see aset_batt.core.battery_profiles.
+    # save_measured_params) overrides the chemistry-generic base_rin/60-40 split for
+    # this specific product — the chemistry-level r0 has no capacity/CCA scaling, so a
+    # small pack can measure well above it even when genuinely healthy.
+    r0_fraction = 0.0
+    try:
+        from aset_batt.core import battery_profiles
+        mp = battery_profiles.get_measured_params(b.product_name)
+        internal_r_ohm = mp.get("internal_r_ohm")
+        if internal_r_ohm and float(internal_r_ohm) > 0:
+            rin = float(internal_r_ohm)
+            r0_fraction = float(mp.get("r0_fraction", 0.0))
+    except Exception:
+        pass
+
     return BatteryProfile(
         name=b.battery_type, chemistry=b.battery_type,
         nominal_v=b.pack_nominal_voltage, series=b.cells_series,
@@ -58,7 +74,8 @@ def profile_from_config(config) -> BatteryProfile:
         ovp=float(s.get("max_voltage", b.pack_max_voltage + 1)),
         uvp=float(s.get("min_voltage", b.pack_min_voltage - 1)),
         otp_warn=max(0.0, otp - 10.0), otp_crit=otp, internal_r=float(max(1e-4, rin)),
-        peukert_k=peukert,
+        peukert_k=peukert, r0_fraction=r0_fraction,
+        harness_r_ohm=max(0.0, float(getattr(b, "harness_resistance_ohm", 0.0))),
     )
 
 
@@ -67,7 +84,27 @@ def profile_from_config(config) -> BatteryProfile:
 # above ambient and self-heats during a test).
 _DCIR_TEMP_COEFF = 0.004     # per °C
 _T_REF = 25.0                # °C
-_I_STANDBY = 0.6             # A — PSU quiescent draw even when OUTP OFF
+# Rest/standby current baseline. Was 0.6 A to compensate for PSU quiescent bleed
+# before the SSR (ESP32 GPIO16) fully disconnected the load — now 0.0 A, matching
+# StateEstimator.standby_current (aset_batt/core/state_estimator.py). Left at 0.6
+# here (this module's only, separate from the live estimator) meant the ±0.15 A
+# rest-detection band coincided with a LeadAcid bulk-charge current (~0.1C ≈ 0.5 A
+# for a 5.3 Ah pack), so bulk-charge samples were misread as "rest" and their
+# elevated (absorption-stage) voltage leaked into the ECM fit's OCV anchor.
+_I_STANDBY = 0.0             # A
+
+# DCIR reads R = ΔV/ΔI at the FIRST sample after a current edge, assuming that sample
+# lands at the rig's steady ~200 ms readback. If the interval to that sample is much
+# longer (USB hiccup, SCPI stall, OS jitter), the voltage has already relaxed into the
+# RC region and R would include R1 (polarisation), not just R0 (ohmic) — inflating DCIR.
+# Steps whose post-edge dt exceeds this are dropped and flagged rather than trusted.
+_DCIR_MAX_STEP_DT = 0.5      # s
+
+# SoH = measured discharge Ah ÷ rated ASSUMES the discharge began from a full pack.
+# Below this starting SoC the capacity removed only spans SoC_start→0, so a healthy
+# pack reads a proportionally LOW SoH (a 50 %-charged healthy pack → SoH ≈ 50 %).
+# reached_cutoff can't catch it (it guards the END), so a known-partial start is flagged.
+_SOH_MIN_START_SOC = 95.0    # %
 
 
 def _reject_outliers_mad(x, n_sigma=3.0):
@@ -120,7 +157,7 @@ def _vi_levels(current_a, voltage_v):
     ia = np.asarray(current_a, float)
     va = np.asarray(voltage_v, float)
     pts = []
-    rest = np.abs(ia - _I_STANDBY) < 0.15      # "rest" = PSU standby only (0.6A)
+    rest = np.abs(ia - _I_STANDBY) < 0.15      # "rest" = |I| ≈ 0 (SSR fully disconnects load)
     if rest.any():
         pts.append((_I_STANDBY, float(np.median(va[rest]))))
     loaded = np.abs(ia - _I_STANDBY) >= 0.2    # load on top of standby
@@ -133,7 +170,7 @@ def _vi_levels(current_a, voltage_v):
     return pts
 
 
-def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile):
+def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=None):
     """Repeatable single-step DCIR aggregated over EVERY current step in the record.
 
     At the rig's ~5 Hz SCPI readback the instantaneous ohmic step cannot be resolved
@@ -144,20 +181,34 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile):
     spread — so an HPPC record's many pulses, or repeated load on/off edges, give a
     repeatable DCIR with a measurable uncertainty instead of a single noisy number.
 
-    Returns ``(dcir_ohm_25C, std_ohm, n_steps, measured)``. ``measured`` is False (and
-    DCIR falls back to the profile baseline) when no clear current step is present.
+    ``time_s`` (optional, elapsed seconds per sample): when supplied, a step whose
+    post-edge sample arrives more than ``_DCIR_MAX_STEP_DT`` after the edge is dropped
+    (its voltage has relaxed past ohmic) and counted, so a latency-corrupted reading
+    can't inflate DCIR — the caller surfaces the drop count as a quality warning.
+
+    Returns ``(dcir_ohm_25C, std_ohm, n_steps, measured, n_stale)``. ``measured`` is
+    False (and DCIR falls back to the profile baseline) when no clear step qualifies;
+    ``n_stale`` is how many otherwise-valid steps were dropped for sampling latency.
     """
     ia = np.asarray(current_a, float)
     va = np.asarray(voltage_v, float)
     tc = np.asarray(temp_c, float)
+    ta = np.asarray(time_s, float) if time_s is not None else None
     if ia.size < 4:
-        return profile.internal_r, 0.0, 0, False
+        return profile.internal_r, 0.0, 0, False, 0
     di = np.diff(ia)
     thr = max(1e-3, 0.20 * float(np.max(np.abs(ia))))     # a real load edge, not jitter
     vals = []
+    n_stale = 0
     k = 0
     while k < di.size:
         if abs(di[k]) > thr:
+            # dt-gate: the post-edge sample must land soon after the edge, or it has
+            # relaxed into the RC region and R would carry R1, not just the ohmic R0.
+            if ta is not None and (k + 1) < ta.size and (ta[k + 1] - ta[k]) > _DCIR_MAX_STEP_DT:
+                n_stale += 1
+                k += 2
+                continue
             v_before = float(np.median(va[max(0, k - 2):k + 1]))   # rested/level baseline
             v_after = float(va[k + 1])                             # first post-edge sample
             r = abs((v_after - v_before) / di[k])
@@ -167,9 +218,9 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile):
         else:
             k += 1
     if not vals:
-        return profile.internal_r, 0.0, 0, False
+        return profile.internal_r, 0.0, 0, False, n_stale
     arr = _reject_outliers_mad(np.asarray(vals, float))   # drop disagreeing pulses
-    return float(np.median(arr)), float(np.std(arr)), int(arr.size), True
+    return float(np.median(arr)), float(np.std(arr)), int(arr.size), True, n_stale
 
 
 def _load_metrics(current_a, voltage_v, dcir_ohm, profile: BatteryProfile):
@@ -249,8 +300,11 @@ def identify_ecm_fit(time_s, current_a, voltage_v, voc):
     a hardware fast-capture would be needed.)
 
     After the 1-RC fit a 2-RC fit is attempted; it is used only when it is meaningfully
-    better (R²(2RC) > R²(1RC) + 0.015 AND R²(2RC) > 0.92). Returns the fit dict
-    (either 1-RC or 2-RC), or None if both fail or quality is too low to trust.
+    better (R²(2RC) > R²(1RC) + 0.015 AND R²(2RC) > 0.92).
+
+    Returns ``(fit_dict, "")`` on success (1-RC or 2-RC dict), or ``(None, reason)`` when
+    the fit is skipped/rejected — the caller surfaces ``reason`` as a quality warning so
+    a blank R1/C1 on the ECM circuit isn't an unexplained dead end.
     """
     try:
         from aset_batt.core.parameter_id import BatteryParameterIdentifier
@@ -258,11 +312,12 @@ def identify_ecm_fit(time_s, current_a, voltage_v, voc):
         res = identifier.fit_model(time_s, current_a, voltage_v, voc)
     except Exception as e:
         logger.info("1-RC ECM fit skipped (%s) — using single-step DCIR", e)
-        return None
-    if res.get("r_squared", 0.0) < _ECM_MIN_R2 or res.get("R0_ohm", 0.0) <= 0:
-        logger.info("1-RC ECM fit rejected (R²=%.3f) — using single-step DCIR",
-                    res.get("r_squared", 0.0))
-        return None
+        return None, str(e)
+    r2 = res.get("r_squared", 0.0)
+    if r2 < _ECM_MIN_R2 or res.get("R0_ohm", 0.0) <= 0:
+        logger.info("1-RC ECM fit rejected (R²=%.3f) — using single-step DCIR", r2)
+        return None, (f"fit quality too low (R²={r2:.2f} < {_ECM_MIN_R2:.2f}) — "
+                      f"pulse noisy or too short for the RC tail")
     # Attempt 2-RC upgrade; reuse same identifier instance (same smoothing/thresholds).
     try:
         res_2rc = identifier.fit_model_2rc(time_s, current_a, voltage_v, voc,
@@ -271,11 +326,12 @@ def identify_ecm_fit(time_s, current_a, voltage_v, voc):
             res = res_2rc
     except Exception:
         pass
-    return res
+    return res, ""
 
 
 def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
-                   profile: BatteryProfile, is_hppc: bool, soh=None) -> dict:
+                   profile: BatteryProfile, is_hppc: bool, soh=None,
+                   soc_start=None) -> dict:
     """Run the unified analysis on raw series → the standard results dict.
 
     ``current_a`` discharge-positive; ``capacity_series`` is the per-sample cumulative
@@ -311,7 +367,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     if not np.isnan(soh):
         soh = float(min(120.0, max(0.0, soh)))
 
-    dcir, dcir_std, n_steps, measured = identify_dcir(current_a, voltage_v, temp_c, profile)
+    dcir, dcir_std, n_steps, measured, n_stale = identify_dcir(
+        current_a, voltage_v, temp_c, profile, time_s=time_s)
     # Multi-current DCIR: when the record spans ≥2 distinct current levels, the slope of
     # V vs I gives an OCV-cancelling DCIR (more robust than a single step).
     levels = _vi_levels(current_a, voltage_v)
@@ -320,15 +377,55 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
             [p[0] for p in levels], [p[1] for p in levels])
     else:
         dcir_slope, dcir_slope_r2 = float("nan"), 0.0
+
+    # Harness (test-rig wiring/contact) resistance: purely ohmic and in series with
+    # everything the rig measures, so it inflates every ohmic reading by the same
+    # fixed amount regardless of the pack's real health. Only ohmic readings (DCIR,
+    # dcir_slope, ECM R0 below) are corrected; R1/C1/τ characterise the cell's own RC
+    # relaxation and aren't affected by simple wiring resistance.
+    harness_r = max(0.0, float(getattr(profile, "harness_r_ohm", 0.0)))
+    if harness_r > 0.0:
+        if measured:
+            dcir = max(1e-4, dcir - harness_r)
+        if dcir_slope == dcir_slope:   # not NaN
+            dcir_slope = max(1e-4, dcir_slope - harness_r)
+
     sag, cca_est, ocv = _load_metrics(current_a, voltage_v, dcir, profile)
     warnings, temp_drift = _quality_flags(current_a, voltage_v, temp_c, profile,
                                           is_hppc, n_steps, reached_cutoff)
+    # A latency-corrupted step reads too high (relaxed past ohmic) — those were dropped
+    # in identify_dcir; flag it so the operator knows the rig's sampling stalled and the
+    # DCIR rests on fewer (or, if all were stale, zero → baseline) steps than it looks.
+    if n_stale > 0:
+        warnings = warnings + [
+            f"{n_stale} DCIR step(s) dropped — sampling latency >{_DCIR_MAX_STEP_DT:.1f}s "
+            f"(USB/SCPI stall); R0 would read inflated"]
+    # SoH under-statement guard: an SoH was computed (full discharge to cut-off) but the
+    # pack didn't START near-full, so the Ah removed under-counts true capacity and the
+    # SoH/grade read low even for a healthy cell. reached_cutoff guards only the END;
+    # this flags the START. (Warning only — the number isn't corrected, since that would
+    # amplify OCV→SoC error; charge fully for an accurate capacity test.) Lowers
+    # confidence automatically via the warning count fed to _confidence below.
+    if (not is_hppc) and reached_cutoff and not np.isnan(soh) \
+            and soc_start is not None and soc_start == soc_start \
+            and soc_start < _SOH_MIN_START_SOC:
+        warnings = warnings + [
+            f"discharge started at {soc_start:.0f}% SoC (not full) — SoH is under-stated; "
+            f"charge fully before a capacity test"]
 
     # 1-RC / 2-RC ECM for HPPC (reported ALONGSIDE the DCIR, not instead of it).
-    ecm = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc else None
+    ecm, ecm_reason = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc \
+        else (None, "")
+    # HPPC but no ECM → R1/C1 come out blank on the circuit with no reason shown. Surface
+    # WHY (no clear pulse edge / pulse too short / poor fit) so a blank isn't a silent
+    # dead end — the operator can lengthen the pulse or check the load edge and re-run.
+    if is_hppc and ecm is None and ecm_reason:
+        warnings = warnings + [f"ECM R1/C1 not identified — {ecm_reason}; showing DCIR/R0 only"]
     is_2rc = bool(ecm and "R2_ohm" in ecm)
     if ecm:
         r0, r1 = float(ecm["R0_ohm"]), float(ecm["R1_ohm"])
+        if harness_r > 0.0:
+            r0 = max(1e-4, r0 - harness_r)   # ohmic only — R1/C1/τ are the cell's own RC
         # 2-RC dict uses tau1_s; 1-RC uses tau_s
         c1 = float(ecm["C1_farad"])
         tau = float(ecm.get("tau1_s", ecm.get("tau_s", 0.0)))
@@ -395,7 +492,8 @@ def _read_csv(path):
 
         c_t, c_v, c_i = col("Elapsed_s"), col("Voltage_V"), col("Current_A")
         c_temp, c_cap, c_mode = col("Temperature_C"), col("Capacity_Ah"), col("Mode")
-        T, V, I, TEMP, CAP, modes = [], [], [], [], [], []
+        c_soc = col("SoC_pct")
+        T, V, I, TEMP, CAP, SOC, modes = [], [], [], [], [], [], []
         for r in reader:
             def num(c, default=float("nan")):
                 try:
@@ -403,10 +501,10 @@ def _read_csv(path):
                 except (ValueError, TypeError, KeyError):
                     return default
             T.append(num(c_t)); V.append(num(c_v)); I.append(num(c_i))
-            TEMP.append(num(c_temp, 25.0)); CAP.append(num(c_cap))
+            TEMP.append(num(c_temp, 25.0)); CAP.append(num(c_cap)); SOC.append(num(c_soc))
             modes.append(r[c_mode] if c_mode else "")
     return (np.asarray(T, float), np.asarray(V, float), np.asarray(I, float),
-            np.asarray(TEMP, float), np.asarray(CAP, float), modes)
+            np.asarray(TEMP, float), np.asarray(CAP, float), np.asarray(SOC, float), modes)
 
 
 def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False) -> dict:
@@ -414,14 +512,17 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
     the ``Mode`` column; capacity is integrated from current if not logged."""
     if not csv_path or not os.path.exists(csv_path):
         raise FileNotFoundError(csv_path or "(no CSV)")
-    t, v, i, temp, cap, modes = _read_csv(csv_path)
+    t, v, i, temp, cap, soc, modes = _read_csv(csv_path)
     if t.size < 2:
         raise ValueError("CSV has too few samples to analyse.")
     is_hppc = force_hppc or any("hppc" in (m or "").lower() for m in modes)
     if np.all(np.isnan(cap)):                       # no capacity column → integrate
         dt = np.diff(t, prepend=t[0])
         cap = np.cumsum(np.clip(i, 0, None) * dt) / 3600.0
-    return analyze_series(t, i, v, temp, cap, profile, is_hppc)
+    # Starting SoC = the peak logged SoC (start of a discharge) — used to flag an SoH
+    # that's under-stated because the pack wasn't full when the capacity test began.
+    soc_start = float(np.nanmax(soc)) if soc.size and not np.all(np.isnan(soc)) else None
+    return analyze_series(t, i, v, temp, cap, profile, is_hppc, soc_start=soc_start)
 
 
 _analysis_pool: ProcessPoolExecutor | None = None
@@ -433,6 +534,23 @@ def _get_analysis_pool() -> ProcessPoolExecutor:
     if _analysis_pool is None:
         _analysis_pool = ProcessPoolExecutor(max_workers=1)
     return _analysis_pool
+
+
+def shutdown_analysis_pool():
+    """Tear down the analysis worker pool, cancelling any queued fits.
+
+    Called from the GUI's closeEvent. Without this, a long scipy curve_fit still
+    running when the user quits keeps the child process (and its CPU) alive, and the
+    interpreter blocks on atexit joining it — the app appears to hang after close.
+    cancel_futures drops anything still queued; the one in-flight fit can't be killed
+    mid-C-call but is short, and wait=False means we don't block the UI teardown on it."""
+    global _analysis_pool
+    if _analysis_pool is not None:
+        try:
+            _analysis_pool.shutdown(wait=False, cancel_futures=True)
+        except TypeError:                       # cancel_futures added in Python 3.9
+            _analysis_pool.shutdown(wait=False)
+        _analysis_pool = None
 
 
 def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = False) -> dict:
@@ -451,7 +569,8 @@ def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = Fa
 
 
 def analyze_series_mp(time_s, current_a, voltage_v, temp_c, capacity_series,
-                      profile: BatteryProfile, is_hppc: bool, soh=None) -> dict:
+                      profile: BatteryProfile, is_hppc: bool, soh=None,
+                      soc_start=None) -> dict:
     """Same result as analyze_series(), but off the calling thread's GIL — see
     analyze_csv_mp's docstring. AcquisitionWorker.run() (the Characterization /
     RUN TEST / HPPC-via-RUN-TEST QThread) calls this directly with its in-memory
@@ -460,5 +579,5 @@ def analyze_series_mp(time_s, current_a, voltage_v, temp_c, capacity_series,
     an extra throwaway CSV just to satisfy that wrapper's file-path signature."""
     future = _get_analysis_pool().submit(
         analyze_series, time_s, current_a, voltage_v, temp_c, capacity_series,
-        profile, is_hppc, soh)
+        profile, is_hppc, soh, soc_start)
     return future.result()

@@ -29,6 +29,12 @@ class BatteryConfig:
     cells_parallel: int = 1      # จำนวนเซลล์ขนาน
     temperature_compensation: bool = True
     iec61960_compliant: bool = True  # Enable IEC 61960 standard compliance
+    # Test-rig cabling/contact resistance (Ω, pack-level) — purely ohmic, in series
+    # with everything the rig measures, so it inflates DCIR/R0 by this fixed amount
+    # regardless of the battery's real health. 0.0 = uncalibrated (no correction).
+    # Calibrate once via a reference resistor, known short-circuit, or an external
+    # ACIR/impedance meter at the battery terminals.
+    harness_resistance_ohm: float = 0.0
 
     @property
     def pack_nominal_voltage(self) -> float:

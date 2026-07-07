@@ -36,8 +36,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -48,7 +46,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QDoubleSpinBox,
     QProgressBar,
     QSpinBox,
     QSizePolicy,
@@ -71,7 +68,7 @@ from aset_batt.ui.theme import (
     BG, PANEL, PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
 )
 from aset_batt.ui.widgets import (
-    _btn, _hline, QtRootShim, DigitalReadout, TemperatureGauge,
+    _btn, _hline, QtRootShim, TemperatureGauge,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
     _PdfNotifier, _PdfTask,
 )
@@ -316,10 +313,16 @@ class CharacterizeMixin:
         ev = self._char_running["pk"]
 
         def status(msg):
+            # sig_char_update alone drives this test's own status label (see
+            # _slot_char_update) — status() fires every ~5s for hours, so it must
+            # NOT also go to sig_alarm (unlike sequences.py's lighter sig_wf_status),
+            # or the alarm table grows by thousands of rows over one test and gets
+            # progressively slower to touch. Milestones get their own explicit
+            # sig_alarm.emit() calls below instead.
             self.sig_char_update.emit("pk", msg)
-            self.sig_alarm.emit(f"[CHAR/Peukert] {msg}")
 
         try:
+            self.controller._ensure_logging(label="Peukert")
             rated    = self.controller.config.battery.rated_capacity
             pack_min = self.controller.config.battery.pack_min_voltage
             c_rates  = [0.1, 0.2, 0.5, 1.0]
@@ -333,6 +336,7 @@ class CharacterizeMixin:
 
                 i_test = round(c * rated, 3)
                 status(f"({idx+1}/4) ชาร์จก่อน discharge {c:g}C ({i_test:.3f} A)...")
+                self.sig_alarm.emit(f"[CHAR/Peukert] ({idx+1}/4) เริ่มชาร์จก่อน discharge {c:g}C")
 
                 # ── charge to full ─────────────────────────────────────────
                 self.controller.start_charge(strategy=None)
@@ -344,6 +348,13 @@ class CharacterizeMixin:
 
                 if not ev.is_set():
                     return
+                # start_charge() restarts the shared monitor loop (it was stopped
+                # once by _char_guard() before this whole test began) — stop it
+                # again now, or it keeps calling estimator.update() concurrently
+                # with this test's own discharge loop below and double-counts
+                # every sample (same guard as sequences.py's _auto_sequence_thread).
+                if self.controller.monitor_running:
+                    self.controller.stop_monitor()
 
                 # ── rest 5 min ─────────────────────────────────────────────
                 status(f"({idx+1}/4) พักหลังชาร์จ 5 นาที...")
@@ -352,6 +363,7 @@ class CharacterizeMixin:
 
                 # ── discharge at i_test until UVP ──────────────────────────
                 status(f"({idx+1}/4) discharge {i_test:.3f} A ({c:g}C)...")
+                self.sig_alarm.emit(f"[CHAR/Peukert] ({idx+1}/4) เริ่ม discharge {i_test:.3f} A ({c:g}C)")
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
                 t0 = time.perf_counter()
                 self.hw.set_load(True, i_test)
@@ -366,6 +378,11 @@ class CharacterizeMixin:
                         dt   = now - last_log
                         last_log = now
                         self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
+                        # monitor loop is stopped for this test (see above) — feed
+                        # the live graph + CSV/cloud directly, same as sequences.py.
+                        self.controller._log_sample(v, i_meas)
+                        self.update_display(v, i_meas, self.controller.estimator.soc,
+                                            self.controller.estimator.rin, temp)
                         elapsed = int(now - t0)
                         status(f"({idx+1}/4) {c:g}C — {v:.3f} V  {i_meas:.3f} A  "
                                f"elapsed {elapsed//60}m{elapsed%60:02d}s")
@@ -385,6 +402,7 @@ class CharacterizeMixin:
                 currents.append(i_test)
                 durations.append(elapsed_s)
                 status(f"({idx+1}/4) {c:g}C → {elapsed_s:.0f} s ✓")
+                self.sig_alarm.emit(f"[CHAR/Peukert] ({idx+1}/4) {c:g}C discharge เสร็จ → {elapsed_s:.0f}s")
 
                 # brief rest between rates
                 if idx < len(c_rates) - 1:
@@ -401,8 +419,10 @@ class CharacterizeMixin:
                     "data": list(zip(currents, durations)),
                 }
                 status(f"✓ k = {k:.3f}  R² = {r2:.4f}")
+                self.sig_alarm.emit(f"[CHAR/Peukert] เสร็จสิ้น: k={k:.3f}  R²={r2:.4f}")
             else:
                 status("⚠ ได้ข้อมูลไม่พอ fit — ต้องการ ≥ 2 discharge runs")
+                self.sig_alarm.emit("[CHAR/Peukert] ⚠ ข้อมูลไม่พอ fit")
 
         except Exception as exc:
             self.sig_char_update.emit("pk", f"✗ Error: {exc}")
@@ -438,8 +458,10 @@ class CharacterizeMixin:
         ev = self._char_running["eta"]
 
         def status(msg):
+            # see the same comment in _char_peukert_thread — no sig_alarm here,
+            # this fires every ~5s for hours (both the charge- and discharge-
+            # tracking loops). Milestones get their own explicit emit() below.
             self.sig_char_update.emit("eta", msg)
-            self.sig_alarm.emit(f"[CHAR/η] {msg}")
 
         # SoC band boundaries (%) — must match _coulomb_eta in state_estimator
         BULK_MAX = 75.0
@@ -453,13 +475,22 @@ class CharacterizeMixin:
             return "full"
 
         try:
+            self.controller._ensure_logging(label="CoulombEta")
             rated    = self.controller.config.battery.rated_capacity
             pack_min = self.controller.config.battery.pack_min_voltage
 
             # ── Phase 1: Charge to full; track Ah_in per SoC band ─────────
             status("Phase 1/2: ชาร์จ (นับ Ah_in ต่อ band)...")
+            self.sig_alarm.emit("[CHAR/η] เริ่ม Phase 1/2: ชาร์จ")
             ah_in  = {"bulk": 0.0, "absorb": 0.0, "full": 0.0}
             self.controller.start_charge(strategy=None)
+            # This loop tracks Ah_in per SoC band itself (needs its own fine-grained
+            # estimator.update() calls), which would double-count against the shared
+            # monitor loop that start_charge() just restarted — stop it immediately
+            # (same guard as _char_peukert_thread, just earlier since this loop reads
+            # hardware through the CHARGE phase too, not only after).
+            if self.controller.monitor_running:
+                self.controller.stop_monitor()
             # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
             last = time.perf_counter()
 
@@ -478,6 +509,8 @@ class CharacterizeMixin:
                     # i_ch is negative during charging; accumulate absolute Ah
                     dah = abs(i_ch) * dt / 3600.0
                     ah_in[_band(soc_now)] += dah
+                    self.controller._log_sample(v, i_ch)
+                    self.update_display(v, i_ch, soc_now, state["rin"], temp, state.get("soh"))
                     status(f"Charge: {v:.3f} V  SoC {soc_now:.0f}%  "
                            f"Ah_in={sum(ah_in.values()):.3f}")
                 except Exception as exc:
@@ -491,6 +524,7 @@ class CharacterizeMixin:
 
             # ── rest 30 min ───────────────────────────────────────────────
             status("Phase 1/2 done. พักหลังชาร์จ 30 นาที...")
+            self.sig_alarm.emit(f"[CHAR/η] Phase 1/2 เสร็จ — Ah_in={sum(ah_in.values()):.3f}")
             if not self._char_sleep(ev, 1800):
                 return
 
@@ -500,6 +534,7 @@ class CharacterizeMixin:
             # ── Phase 2: Discharge at 0.1C; track Ah_out per SoC band ─────
             i_dis = round(0.1 * rated, 3)
             status(f"Phase 2/2: discharge {i_dis:.3f} A (0.1C, นับ Ah_out)...")
+            self.sig_alarm.emit(f"[CHAR/η] เริ่ม Phase 2/2: discharge {i_dis:.3f} A")
             ah_out = {"bulk": 0.0, "absorb": 0.0, "full": 0.0}
             self.hw.set_load(True, i_dis)
             # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
@@ -517,6 +552,8 @@ class CharacterizeMixin:
                     soc_now = state["soc"]
                     dah = abs(i_meas) * dt / 3600.0
                     ah_out[_band(soc_now)] += dah
+                    self.controller._log_sample(v, i_meas)
+                    self.update_display(v, i_meas, soc_now, state["rin"], temp, state.get("soh"))
                     status(f"Discharge: {v:.3f} V  SoC {soc_now:.0f}%  "
                            f"Ah_out={sum(ah_out.values()):.3f}")
                     if v <= pack_min:
@@ -547,6 +584,7 @@ class CharacterizeMixin:
             a = eta.get("absorb") or 0
             f = eta.get("full")   or 0
             status(f"✓ η bulk={b:.3f}  absorb={a:.3f}  full={f:.3f}")
+            self.sig_alarm.emit(f"[CHAR/η] เสร็จสิ้น: bulk={b:.3f} absorb={a:.3f} full={f:.3f}")
 
         except Exception as exc:
             self.sig_char_update.emit("eta", f"✗ Error: {exc}")
@@ -583,10 +621,12 @@ class CharacterizeMixin:
         ev = self._char_running["gitt"]
 
         def status(msg):
+            # see the same comment in _char_peukert_thread — the rest-phase loop
+            # alone can tick every 15s for up to 60 min, across 20 steps.
             self.sig_char_update.emit("gitt", msg)
-            self.sig_alarm.emit(f"[CHAR/GITT] {msg}")
 
         try:
+            self.controller._ensure_logging(label="GITT")
             rated    = self.controller.config.battery.rated_capacity
             pack_min = self.controller.config.battery.pack_min_voltage
             cells    = self.controller.config.battery.cells_series
@@ -605,6 +645,7 @@ class CharacterizeMixin:
             # OCV anchor before starting
             soc_start = self.controller.calibrate_from_ocv()
             status(f"GITT: OCV anchor SoC={soc_start:.0f}%  ·  {N_STEPS} จุดจะทดสอบ")
+            self.sig_alarm.emit(f"[CHAR/GITT] เริ่มทดสอบ — OCV anchor SoC={soc_start:.0f}%")
             if not ev.is_set():
                 return
 
@@ -613,6 +654,7 @@ class CharacterizeMixin:
                     return
 
                 status(f"Step {step+1}/{N_STEPS}: discharge {i_dis:.3f} A × {dis_dur//60} min...")
+                self.sig_alarm.emit(f"[CHAR/GITT] Step {step+1}/{N_STEPS}: เริ่ม discharge")
                 self.hw.set_load(True, i_dis)
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
                 # phase_start is tracked SEPARATELY from `last` (the per-sample dt
@@ -633,7 +675,12 @@ class CharacterizeMixin:
                         self._seq_check_temp_stale()
                         dt   = now - last
                         last = now
-                        self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
+                        state = self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
+                        # GITT never calls start_charge() so there's no monitor-loop
+                        # safety net feeding CSV/cloud or the live graph — do it directly,
+                        # same as the other CHARACTERIZE tests.
+                        self.controller._log_sample(v, i_meas)
+                        self.update_display(v, i_meas, state["soc"], state["rin"], temp, state.get("soh"))
                         if v <= pack_min:
                             status(f"Step {step+1}: UVP reached — หยุด")
                             break
@@ -648,6 +695,7 @@ class CharacterizeMixin:
 
                 # ── rest phase — wait for ΔV/Δt settle ───────────────────
                 status(f"Step {step+1}/{N_STEPS}: พักจน ΔV settle (สูงสุด {REST_MAX_S//60} min)...")
+                self.sig_alarm.emit(f"[CHAR/GITT] Step {step+1}/{N_STEPS}: discharge เสร็จ, เริ่มพัก settle")
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
                 t_rest0 = time.perf_counter()
                 v_window: list = []
@@ -658,6 +706,9 @@ class CharacterizeMixin:
                     try:
                         v_now, _, _ = self.hw.read_vi()
                         t_now = time.perf_counter()
+                        self.controller._log_sample(v_now, 0.0)
+                        self.update_display(v_now, 0.0, self.controller.estimator.soc,
+                                            self.controller.estimator.rin)
                         v_window.append(v_now)
                         t_window.append(t_now)
                         # keep only last DV_WIN_S seconds in window
@@ -709,8 +760,10 @@ class CharacterizeMixin:
                     "n_points": len(soc_points),
                 }
                 status(f"✓ OCV table สร้างแล้ว ({len(soc_points)} จุด วัดจริง)")
+                self.sig_alarm.emit(f"[CHAR/GITT] เสร็จสิ้น: OCV table {len(soc_points)} จุด")
             else:
                 status(f"⚠ ได้ข้อมูล {len(soc_points)} จุด — ต้องการ ≥ 3 จุด")
+                self.sig_alarm.emit(f"[CHAR/GITT] ⚠ ข้อมูลไม่พอ ({len(soc_points)} จุด)")
 
         except Exception as exc:
             self.sig_char_update.emit("gitt", f"✗ Error: {exc}")

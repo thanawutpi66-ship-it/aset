@@ -34,6 +34,16 @@ class BatteryProfile:
     otp_warn: float      # over-temperature warning
     otp_crit: float      # over-temperature critical (triggers E-Stop)
     internal_r: float = 0.03
+    # Per-product override of the R0/R1 split used by grade_from_ecm (see Analytics.
+    # R0_FRACTION/R1_FRACTION). 0.0 = not calibrated for this product → fall back to the
+    # chemistry-agnostic 0.6/0.4 default. Set via a product's measured_params
+    # (battery_profiles.json) once a confirmed-good specimen has been characterised.
+    r0_fraction: float = 0.0
+    # Test-rig cabling/contact resistance (Ω, pack-level), subtracted from the
+    # measured DCIR/dcir_slope/ECM-R0 before grading — see BatteryConfig
+    # .harness_resistance_ohm. R1/C1/τ are NOT touched: wiring resistance is a simple
+    # series resistor, not the cell's own charge-transfer/polarization dynamics.
+    harness_r_ohm: float = 0.0
     # HPPC timing — pulse should be ≳ 3·τ and the relaxation long enough to capture
     # the full RC tail, so R1/C1 are not truncated/under-resolved by a short pulse.
     hppc_pulse_duration: float = 30.0       # seconds of constant-current load

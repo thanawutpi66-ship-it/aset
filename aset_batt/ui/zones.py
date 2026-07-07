@@ -36,8 +36,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -48,7 +46,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QDoubleSpinBox,
     QProgressBar,
     QSpinBox,
     QSizePolicy,
@@ -71,7 +68,7 @@ from aset_batt.ui.theme import (
     BG, PANEL, PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
 )
 from aset_batt.ui.widgets import (
-    _btn, _hline, QtRootShim, DigitalReadout, TemperatureGauge,
+    _btn, _hline, QtRootShim, TemperatureGauge,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
     _PdfNotifier, _PdfTask,
 )
@@ -155,8 +152,10 @@ class ZonesMixin:
         lay.addWidget(btn_refresh)
 
         # SSR safety-cutoff relay (ESP32 GPIO16) — physically gates power to
-        # PSU + load. Fully automatic: ON the instant charging starts (any test
-        # mode), OFF the instant it stops — no manual control, status only.
+        # PSU + load. Normally automatic: ON the instant charging starts (any
+        # test mode), OFF the instant it stops. Manual ON/OFF below is for
+        # diagnostics/recovery (e.g. verifying the relay itself, or an extra
+        # cutoff without a full Disconnect) — it does not start/stop a test.
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("SSR POWER RELAY (GPIO16)"))
         ssr_row = QHBoxLayout()
@@ -170,9 +169,21 @@ class ZonesMixin:
         ssr_row.addWidget(self.lbl_ssr_state)
         ssr_row.addStretch(1)
         lay.addLayout(ssr_row)
+        ssr_btn_row = QHBoxLayout()
+        self.btn_ssr_on = _btn("Manual ON", bg=OK, fg="white", hover="#266a2a")
+        self.btn_ssr_off = _btn("Manual OFF", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_ssr_on.clicked.connect(self._on_ssr_manual_on)
+        self.btn_ssr_off.clicked.connect(self._on_ssr_manual_off)
+        self.btn_ssr_on.setEnabled(False)
+        self.btn_ssr_off.setEnabled(False)
+        ssr_btn_row.addWidget(self.btn_ssr_on)
+        ssr_btn_row.addWidget(self.btn_ssr_off)
+        lay.addLayout(ssr_btn_row)
         lbl_ssr_hint = QLabel(
-            "ⓘ ตัดไฟ PSU/Load ทางกายภาพผ่าน SSR ที่ ESP32 GPIO16 — ทำงานอัตโนมัติ: "
-            "ON ทันทีที่เริ่มชาร์จ (ทุกโหมดเทสต์), OFF ทันทีที่หยุดชาร์จ/E-STOP")
+            "ⓘ ตัดไฟ PSU/Load ทางกายภาพผ่าน SSR ที่ ESP32 GPIO16 — ปกติทำงานอัตโนมัติ: "
+            "ON ทันทีที่เริ่มชาร์จ (ทุกโหมดเทสต์), OFF ทันทีที่หยุดชาร์จ/E-STOP\n"
+            "ปุ่ม Manual ด้านบนไว้สั่งตรงสำหรับ diagnostic/recovery เท่านั้น "
+            "(ต้องต่อ ESP32 ก่อนถึงจะกดได้) — ไม่ได้ไปเริ่ม/หยุดการทดสอบ")
         lbl_ssr_hint.setStyleSheet(f"color:{MUTED}; font-size:10px;")
         lbl_ssr_hint.setWordWrap(True)
         lay.addWidget(lbl_ssr_hint)
@@ -818,9 +829,24 @@ class ZonesMixin:
         )
         form.addRow("Pulse (s):", self.ed_hppc_pulse)
 
-        self.ed_hppc_relax = QLineEdit("30")
+        # Lead-acid needs much longer than 30 s to stop climbing after a discharge
+        # pulse ends — real rig data: terminal voltage still rising ~10-20 mV per
+        # few seconds at t=30 s post-pulse (0.30 V total climb in 30 s, nowhere near
+        # flat). A too-short relax window measures R0/R1 against a "rest" voltage
+        # that's still mid-recovery, biasing every pulse but the first (which usually
+        # gets a long pre-test rest instead). 180 s doesn't fully settle it either
+        # (that took ~27 min after charge) but meaningfully reduces the bias; raise
+        # further (up to 600 s) if precision matters more than test duration.
+        is_lead_acid = "lead" in (self.config.battery.battery_type or "").lower()
+        default_relax = "180" if is_lead_acid else "30"
+        self.ed_hppc_relax = QLineEdit(default_relax)
         self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))
-        self.ed_hppc_relax.setToolTip("Rest/relaxation duration (s) between pulses")
+        self.ed_hppc_relax.setToolTip(
+            "Rest/relaxation duration (s) between pulses\n"
+            "Lead-acid relaxes slowly after a pulse (still ~10-20 mV/few-s climbing "
+            "at 30 s on real data) — 180 s default reduces R0/R1 bias on pulses "
+            "after the first; lithium settles fast, 30 s is fine."
+        )
         form.addRow("Relax (s):", self.ed_hppc_relax)
 
         lay.addLayout(form)
@@ -1121,13 +1147,14 @@ class ZonesMixin:
         return w
 
     def _build_ecm_svg(self, r0=None, r1=None, c1=None, ocv=None, tau=None) -> str:
-        """วงจรสมมูลแบตเตอรี่ (Thévenin 1-RC) ตามรูปตำรา:
+        """วงจรสมมูลแบตเตอรี่ (Thévenin 1-RC) — ใช้ชื่อ R0/R1/C1 ให้ตรงกับตารางผล
+        Analysis (เดิมใช้ R_I/R_d/C_d ตามตำรา ทำให้สับสนว่าเป็นคนละค่า):
 
-            V_oc ── R_I ──┬── R_d ──┬── + (V_t)
-                          └── C_d ──┘
+            V_oc ── R0 ──┬── R1 ──┬── + (V_t)
+                         └── C1 ──┘
 
         ค่าที่เป็น None จะแสดงเป็นตัวแปร (สัญลักษณ์เปล่า) — ใช้กับการทดสอบที่
-        ไม่ใช่ HPPC ซึ่งระบุ R_d/C_d ไม่ได้.
+        ไม่ใช่ HPPC ซึ่งระบุ R1/C1 ไม่ได้.
         """
         W, H = 560, 240
         ink    = "#1a1a1a"     # เส้น/สัญลักษณ์
@@ -1193,14 +1220,14 @@ class ZonesMixin:
             wire(bat_x, y_main, 150, y_main),
             resistor(150, 215, y_main),
             wire(215, y_main, nA, y_main),
-            sym(182, y_main - 18, "R", "I"),
+            sym(182, y_main - 18, "R", "0"),
             val(182, y_main + 26, ri_txt),
 
             # ── กิ่งล่าง: R_d (อยู่บนเส้นหลัก) ──
             wire(nA, y_main, 272, y_main),
             resistor(272, 337, y_main),
             wire(337, y_main, nB, y_main),
-            sym(304, y_main + 28, "R", "d"),
+            sym(304, y_main + 28, "R", "1"),
             val(304, y_main + 43, rd_txt),
 
             # ── กิ่งบน: C_d (กิ่งขนานยกขึ้น) ──
@@ -1209,7 +1236,7 @@ class ZonesMixin:
             capacitor(304, y_cap),
             wire(312, y_cap, nB, y_cap),
             wire(nB, y_cap, nB, y_main),
-            sym(304, y_cap - 16, "C", "d"),
+            sym(304, y_cap - 16, "C", "1"),
             val(304, y_cap + 30, cd_txt),
 
             # ── ออกขั้ว + และสายกลับขั้ว − ──
@@ -1232,13 +1259,13 @@ class ZonesMixin:
         if r1 is None:
             parts.append(
                 f'<text x="{W//2}" y="{H-10}" text-anchor="middle" font-family="Segoe UI" '
-                f'font-size="10" fill="{muted}">Non-HPPC test — Rd, Cd shown as symbols '
+                f'font-size="10" fill="{muted}">Non-HPPC test — R1, C1 shown as symbols '
                 f'(not identifiable without pulses)</text>'
             )
         elif tau is not None:
             parts.append(
                 f'<text x="{W//2}" y="{H-10}" text-anchor="middle" font-family="Consolas, monospace" '
-                f'font-size="10" fill="{muted}">1-RC Thévenin model · τ = Rd·Cd = {tau:.1f} s</text>'
+                f'font-size="10" fill="{muted}">1-RC Thévenin model · τ = R1·C1 = {tau:.1f} s</text>'
             )
 
         parts.append("</svg>")

@@ -41,8 +41,37 @@ from aset_batt.ui.isa101_views import BatteryQtWindow
 app = QApplication([]); w = BatteryQtWindow(ConfigManager()); w.close(); print('OK')"
 ```
 
+เช็คโค้ดตาย (unused class/function ที่ไม่มีที่ไหนเรียกเลย — รวม `tests/`/`scripts/` ด้วย ไม่งั้น
+false-positive กับอะไรที่ใช้แค่ใน test):
+
+```bash
+.venv/Scripts/python.exe -m vulture aset_batt/ tests/ scripts/ --min-confidence 80
+```
+
+ยืนยันด้วยมือก่อนลบเสมอ (`grep -rn "ชื่อนั้น" --include="*.py" .`) — vulture มี false-positive จริง
+(Qt framework override เช่น `closeEvent`, dataclass field ที่เข้าถึงผ่าน `getattr`)
+
+**เขียนเทสแบบรัน thread จริง ไม่ใช่แค่ unit function** — บั๊กใหญ่ๆ ที่เจอ (estimator ถูกนับซ้ำ,
+กราฟไม่อัปเดตระหว่าง sequence, CHARACTERIZE แครชตั้งแต่ sample แรก) ล้วนอยู่ใน "การเดินสาย" ของ
+thread/signal จริง — เทส pure-function ผ่านหมดแต่ตัวแอปยังพังอยู่ ดู
+`tests/test_graph_feed_during_sequences.py` เป็นตัวอย่าง pattern: เรียก thread target ตรงๆ
+(ไม่ผ่าน `threading.Thread(...).start()`) พร้อม mock `_seq_sleep`/`_char_sleep` ให้ออกจาก loop
+เร็วๆ แล้วเช็คว่า buffer/CSV ได้ค่าจริง
+
+**ไฟล์ใหม่ที่ mirror ไฟล์เดิม (เช่น `characterize.py` ตาม pattern ของ `sequences.py`) ต้อง grep
+เทียบ safety/state-guard ที่มีอยู่แล้วก่อน commit** — อย่าพึ่งความจำหรือ "โค้ดดูคล้ายกันก็คงพอ":
+
+```bash
+grep -n "_ensure_logging\|stop_monitor\|_log_sample\|update_display\|_seq_check_temp_stale" aset_batt/ui/sequences.py aset_batt/ui/characterize.py
+```
+
+ถ้าไฟล์ใหม่ไม่มี pattern ที่ไฟล์ต้นแบบมี (เช่น "หยุด monitor loop ก่อน feed estimator เอง") ให้ถามว่า
+ทำไมถึงต่างกัน ก่อนจะสมมติว่าโอเค — เคสจริงที่เจอ (ก.ค. 2026): characterize.py ก็อปโครงสร้างจาก
+sequences.py มาแต่ไม่ได้เอา guard พวกนี้มาด้วย ทำให้ estimator ถูกนับซ้ำ + กราฟไม่อัปเดต + แครชเงียบ
+มาหลายเดือนโดยไม่มีใครรู้ (ดู `tests/test_graph_feed_during_sequences.py`)
+
 ## Cloud dashboard
 
 - push เข้า `main` → GitHub Actions build เฉพาะโฟลเดอร์ `cloud_dashboard/` แล้ว deploy ขึ้น Azure App Service อัตโนมัติ (~5 นาที) — ห้ามแก้ workflow ให้ build จาก root เพราะ requirements.txt ที่ root เป็นของ GUI
 - เครื่องแล็บ push ข้อมูลขึ้นเว็บผ่าน `CloudPusher` (`aset_batt/storage/cloud_push.py`) — token อยู่ใน `cloud_token.txt` / env `INGEST_TOKEN` (gitignored, ต้องตรงกับที่ตั้งบน Azure)
-- `aset_batt/services/cloud_push.py` (`CloudPushService`) เป็นของเก่าที่เลิกใช้แล้ว — อย่าเอากลับมาใช้
+- `aset_batt/services/cloud_push.py` (`CloudPushService`, ของเก่าที่เลิกใช้แล้ว ไม่มีที่ไหน import เลย) ถูกลบออกแล้ว (ก.ค. 2026 dead-code cleanup) — ถ้าจะทำ cloud push ให้ใช้ `CloudPusher` ด้านบนเท่านั้น อย่าสร้างคลาสใหม่ซ้ำ

@@ -89,6 +89,12 @@ class ProductProfile:
     peukert_k: float = 0.0
     peukert_hr: float = 0.0
     notes: str = ""
+    # Characterisation results persisted by save_measured_params() (peukert_k,
+    # internal_r_ohm, r0_fraction, ocv_curve_measured, ...). Read back via
+    # get_measured_params(); not consumed here (dataclass just needs to accept the key
+    # so a product that HAS measured_params doesn't fail ProductProfile(**d) and
+    # silently fall back to the built-in default, losing its other JSON overrides).
+    measured_params: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

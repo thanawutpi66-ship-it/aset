@@ -1,12 +1,10 @@
 """Instrument backends behind the acquisition worker.
 
-All three implement the same interface and are called ONLY from the worker thread
-(serialized by the worker's I/O mutex):
+Called ONLY from the worker thread (serialized by the worker's I/O mutex):
 
   * ``HardwareBackend``  — drives the project's real HAL (``HardwareController`` /
     ``MockHardwareController``): SCPI to PSU + e-load, MLX90614 temp via ESP32.
     Use it with ``MockHardwareController`` for no-hardware development.
-  * ``VisaSerialBackend`` — direct PyVISA/pyserial reference (placeholders).
 
 Sign convention returned by ``step``: charge current positive, discharge negative.
 """
@@ -104,67 +102,3 @@ class HardwareBackend(InstrumentBackend):
 
     def disconnect(self):
         pass
-
-
-class VisaSerialBackend(InstrumentBackend):
-    """Direct PyVISA/pyserial reference backend (SCPI placeholders). Prefer
-    ``HardwareBackend`` in the integrated app, which reuses the project HAL."""
-
-    def __init__(self, psu_addr: str, load_addr: str, esp_port: str):
-        self.psu_addr, self.load_addr, self.esp_port = psu_addr, load_addr, esp_port
-        self.psu = self.load = self.ser = None
-        self._cfg: Optional[TestConfig] = None
-
-    def connect(self):
-        import pyvisa, serial
-        rm = pyvisa.ResourceManager()
-        self.psu = rm.open_resource(self.psu_addr)
-        self.load = rm.open_resource(self.load_addr)
-        self.ser = serial.Serial(self.esp_port, 115200, timeout=0.2)
-        self.psu.write("*RST"); self.load.write("*RST")
-
-    def start_mode(self, cfg: TestConfig):
-        self._cfg = cfg
-        p = cfg.profile
-        if cfg.mode == OperationMode.CC_CV_CHARGE:
-            self.load.write(":INP OFF")
-            self.psu.write(f":VOLT {p.max_charge_v}")
-            self.psu.write(f":CURR {p.max_charge_a}")
-            self.psu.write(":OUTP ON")
-        elif cfg.mode == OperationMode.CC_DISCHARGE:
-            self.psu.write(":OUTP OFF")
-            self.load.write(":MODE CC")
-            self.load.write(f":CURR {p.max_discharge_a}")
-            self.load.write(":INP ON")
-        else:
-            self.psu.write(":OUTP OFF"); self.load.write(":INP OFF")
-
-    def step(self, dt, elapsed):
-        v = float(self.psu.query("MEAS:VOLT?"))
-        i_src = float(self.psu.query("MEAS:CURR?"))
-        i_load = float(self.load.query("MEAS:CURR?"))
-        return v, (i_src - i_load)
-
-    def read_temperature(self):
-        try:
-            line = self.ser.readline().decode(errors="ignore")
-            if "=" in line:
-                return float(line.split("=")[1].split("*")[0])
-        except Exception:
-            pass
-        return float("nan")
-
-    def emergency_zero(self):
-        for inst, cmd in ((self.psu, ":OUTP OFF"), (self.load, ":INP OFF")):
-            try:
-                inst.write(":VOLT 0"); inst.write(":CURR 0"); inst.write(cmd)
-            except Exception:
-                pass
-
-    def safe_shutdown(self):
-        self.emergency_zero()
-
-    def disconnect(self):
-        for h in (self.psu, self.load, self.ser):
-            try: h.close()
-            except Exception: pass

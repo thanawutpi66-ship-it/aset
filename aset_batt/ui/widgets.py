@@ -82,31 +82,6 @@ class QtRootShim(QObject):
         QApplication.quit()
 
 
-class DigitalReadout(QFrame):
-    def __init__(self, label: str, unit: str):
-        super().__init__()
-        self.unit = unit
-        self.setStyleSheet(
-            f"QFrame {{ background:{PANEL2}; border:1px solid {BORDER}; border-radius:4px; }}"
-        )
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 6, 10, 8)
-        lay.setSpacing(1)
-        cap = QLabel(label.upper())
-        cap.setStyleSheet(
-            f"color:{MUTED}; font-size:10px; font-weight:700; letter-spacing:1px; border:0;"
-        )
-        self.value = QLabel(f"-- {unit}")
-        self.value.setFont(QFont("Consolas", 20, QFont.Weight.Bold))
-        self.value.setStyleSheet(f"color:{TEXT}; border:0;")
-        lay.addWidget(cap)
-        lay.addWidget(self.value)
-
-    def set_value(self, value: float, fmt: str = "{:.3f}", alarm: bool = False):
-        self.value.setText(f"{fmt.format(value)} {self.unit}")
-        self.value.setStyleSheet(f"color:{CRIT if alarm else TEXT}; border:0;")
-
-
 class TemperatureGauge(QFrame):
     def __init__(self):
         super().__init__()
@@ -274,6 +249,13 @@ class TrendContainer(QWidget):
         super().__init__()
         self._zoom_active = False
         self._last_t: list = []
+        # Cache the latest series so a mode we switch INTO can be back-filled
+        # immediately — otherwise the two hidden trend widgets never receive data
+        # (update() only feeds the visible one) and show blank until the next tick,
+        # which never comes after a test finishes.
+        self._last_v: list = []
+        self._last_i: list = []
+        self._last_temp: list = []
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -320,6 +302,11 @@ class TrendContainer(QWidget):
 
     def _on_mode_changed(self, idx: int):
         self._stack.setCurrentIndex(idx)
+        # Back-fill the newly-visible trend from cache so it isn't blank (it was
+        # never fed while hidden, and after a test ends no further ticks arrive).
+        if self._last_t:
+            [self._combined, self._split2, self._split3][idx].update(
+                self._last_t, self._last_v, self._last_i, self._last_temp)
         self._apply_zoom()
 
     def _all_plots(self):
@@ -357,6 +344,7 @@ class TrendContainer(QWidget):
 
     def update(self, t, v, i, temp):
         self._last_t = t
+        self._last_v, self._last_i, self._last_temp = v, i, temp
         idx = self._stack.currentIndex()
         [self._combined, self._split2, self._split3][idx].update(t, v, i, temp)
         if self._zoom_active:
