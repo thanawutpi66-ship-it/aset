@@ -130,11 +130,19 @@ class DataHandler:
         self.current_path: str = ""   # path ของ session ปัจจุบัน
 
     @staticmethod
-    def make_session_path(sessions_dir: str = "sessions") -> str:
-        """สร้าง path สำหรับ session ใหม่ เช่น sessions/test_20260625_143022.csv"""
+    def make_session_path(sessions_dir: str = "sessions", label: str = "") -> str:
+        """สร้าง path สำหรับ session ใหม่.
+
+        ไม่มี label → sessions/test_20260625_143022.csv (เหมือนเดิม)
+        มี label  → sessions/test_HPPC_20260625_143022.csv (บอกชนิดเทสต์ในชื่อไฟล์)
+
+        label ถูก sanitize เหลือ [A-Za-z0-9] เท่านั้น เพื่อไม่ให้กระทบการ parse
+        timestamp (\\d{8}_\\d{6}) ใน _format_session_time/_detect_session_type."""
         os.makedirs(sessions_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return os.path.join(sessions_dir, f"test_{ts}.csv")
+        safe = "".join(c for c in (label or "") if c.isalnum())
+        prefix = f"test_{safe}_" if safe else "test_"
+        return os.path.join(sessions_dir, f"{prefix}{ts}.csv")
 
     def start_logging(self, filepath: str):
         """เริ่มบันทึก CSV — คืน (True, "") หรือ (False, error_message)"""

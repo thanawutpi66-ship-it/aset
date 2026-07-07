@@ -893,7 +893,7 @@ class SequencesMixin:
             pack_min = self.controller.config.battery.pack_min_voltage
             status(f"TEST: discharge {i_dis:.3f} A ({c_test:g}C) จนถึง {pack_min:.1f} V")
             self.sig_alarm.emit(f"[AUTO] Starting discharge {i_dis:.3f} A")
-            self.controller._ensure_logging()
+            self.controller._ensure_logging(label="IEC")
             self.hw.set_load(True, i_dis)
             import time as _t
             # perf_counter (monotonic, sub-ms) not time.time() (wall-clock): immune to
@@ -1013,7 +1013,7 @@ class SequencesMixin:
             pack_min = self.controller.config.battery.pack_min_voltage
             status(f"QUICK DISCHARGE: {i_dis:.3f} A (1C) → cutoff {pack_min:.1f} V")
             self.sig_alarm.emit(f"[QUICK] Discharge 1C: {i_dis:.3f} A  (rated {rated:.1f} Ah)")
-            self.controller._ensure_logging()
+            self.controller._ensure_logging(label="QuickScan")
             self.hw.set_load(True, i_dis)
             # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
             last_log = _t.perf_counter()
@@ -1199,7 +1199,7 @@ class SequencesMixin:
             if hppc_load_floor <= 0 or hppc_load_floor >= pack_min:
                 hppc_load_floor = pack_min * 0.95
             _hppc_total = n_cyc * (relax_s + pulse_s)
-            self.controller._ensure_logging()
+            self.controller._ensure_logging(label="HPPC")
             self.hw.psu_off()
             self.hw.load_off()
             _hppc_t0 = _t.time()
@@ -1451,7 +1451,7 @@ class SequencesMixin:
                 # ── step 3: DISCHARGE (integrate capacity)
                 self.sig_cycle_wf.emit(2, "active")
                 status(f"CYCLE {cyc}/{n_cyc}: ดิสชาร์จ {i_dis:.3f} A ({c_di}C)...")
-                self.controller._ensure_logging()
+                self.controller._ensure_logging(label="CycleLife")
                 self.hw.set_load(True, str(i_dis))
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
                 _dis_t0 = _t.perf_counter()

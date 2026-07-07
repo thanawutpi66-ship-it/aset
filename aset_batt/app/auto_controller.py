@@ -932,11 +932,13 @@ class AutoController:
     # ------------------------------------------------------------------
     # Logging / auto-analysis helpers
     # ------------------------------------------------------------------
-    def _ensure_logging(self):
-        """เปิด CSV logging + ตั้งเวลาเริ่ม ถ้ายังไม่ได้เปิด (ให้ IEC test โผล่บน dashboard)"""
+    def _ensure_logging(self, label: str = ""):
+        """เปิด CSV logging + ตั้งเวลาเริ่ม ถ้ายังไม่ได้เปิด (ให้ IEC test โผล่บน dashboard)
+
+        label (เช่น "HPPC", "QuickScan") ถูกฝังในชื่อไฟล์ session เพื่อบอกชนิดเทสต์."""
         if not self.data.is_recording:
             from aset_batt.storage.data_utils import DataHandler
-            self.data.start_logging(DataHandler.make_session_path())
+            self.data.start_logging(DataHandler.make_session_path(label=label))
         if self._start_time is None:
             self._start_time = time.time()
 
