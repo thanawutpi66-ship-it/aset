@@ -1373,7 +1373,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         try:
             from aset_batt.core.battery_model import BatteryModel
 
-            model = BatteryModel(b.battery_type, b.nominal_voltage, b.cells_series, b.cells_parallel)
+            model = BatteryModel(b.battery_type, b.nominal_voltage, b.cells_series, b.cells_parallel,
+                                 product_name=b.product_name)
             # Per-product Peukert override (e.g. 20HR standby vs 10HR motorcycle).
             # Copy the shared chemistry instance so we never mutate the registry cache.
             ov_k  = getattr(prod, "peukert_k", 0.0)
@@ -1708,6 +1709,14 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             return
         try:
             self.hw.set_load(on, str(float(self.ed_load_a.text())) if on else "0")
+            try:
+                from aset_batt.storage.cloud_push import set_cloud_meta
+                if on:
+                    set_cloud_meta(phase="discharge", test_mode="MANUAL", workflow="Manual — Direct Load", total_s=0)
+                else:
+                    set_cloud_meta(phase="", test_mode="", workflow="")
+            except Exception:
+                pass
         except ValueError:
             if not self._headless:
                 QMessageBox.warning(self, "Load", "Invalid current")
@@ -1724,11 +1733,22 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         ok = self.controller.start_charge(strategy=strategy)
         mode = self.cb_charge_mode.currentText()
         self._log_alarm(f"Charge started ({mode})." if ok else "Charge start failed.")
+        if ok:
+            try:
+                from aset_batt.storage.cloud_push import set_cloud_meta
+                set_cloud_meta(phase="charge", test_mode="MANUAL", workflow=f"Manual — {mode}", total_s=0)
+            except Exception:
+                pass
 
     def _on_stop_charge(self):
         if self.controller:
             self.controller.stop_charge()
             self._log_alarm("Charge stopped.")
+            try:
+                from aset_batt.storage.cloud_push import set_cloud_meta
+                set_cloud_meta(phase="", test_mode="", workflow="")
+            except Exception:
+                pass
 
     def _on_ocv_calibrate(self):
         """ปิด PSU+Load แล้วรอให้แรงดันนิ่ง (ΔV/Δt criterion) ก่อนคำนวณ SoC"""

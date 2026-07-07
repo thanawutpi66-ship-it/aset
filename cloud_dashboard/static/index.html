@@ -7,7 +7,7 @@
 <title>ASET Cloud Dashboard · Battery Health</title>
 <link rel="icon" type="image/png" href="asetlogo.png"/>
 <link rel="preconnect" href="https://cdn.jsdelivr.net"/>
-<link rel="stylesheet" href="style.css?v=8"/>
+<link rel="stylesheet" href="style.css?v=9"/>
 <script>
   (function(){
     var saved = localStorage.getItem('aset-theme');
@@ -15,7 +15,7 @@
   })();
 </script>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script defer src="app.js?v=8"></script>
+<script defer src="app.js?v=9"></script>
 </head>
 <body>
 
@@ -98,6 +98,11 @@
         <button class="mode-btn" data-mode="split2">Split 2</button>
         <button class="mode-btn" data-mode="split3">Split 3</button>
       </div>
+      <div class="mode-opts">
+        <span class="mode-label">Window:</span>
+        <button class="mode-btn active" data-window="recent">Last 30 min</button>
+        <button class="mode-btn" data-window="full">Full test</button>
+      </div>
     </div>
 
     <!-- main layout: chart + right panel -->
@@ -178,13 +183,13 @@
       <div class="right-panel">
 
         <div class="lp-tabs">
-          <button class="lptab active" data-lptab="analytics">Analytics</button>
+          <button class="lptab active" data-lptab="alarms">Alarm Log</button>
+          <button class="lptab" data-lptab="analytics">Analytics</button>
           <button class="lptab" data-lptab="diagnostics">Diagnostics (ICA/DTV)</button>
-          <button class="lptab" data-lptab="alarms">Alarm Log</button>
         </div>
 
         <!-- Analytics tab -->
-        <div class="lptab-content" id="lptab-analytics">
+        <div class="lptab-content" id="lptab-analytics" hidden>
           <button class="ecm-toggle" id="ecmToggle">▶ Show Equivalent Circuit</button>
           <div class="ecm-content" id="ecmContent" hidden>
             <!-- Randles ECM — dark theme, Cd parallel branch above Rd -->
@@ -290,7 +295,7 @@
         </div>
 
         <!-- Alarm Log tab -->
-        <div class="lptab-content" id="lptab-alarms" hidden>
+        <div class="lptab-content" id="lptab-alarms">
           <div class="alarm-list" id="alarmList">
             <div class="alarm-empty">No alarms recorded.</div>
           </div>

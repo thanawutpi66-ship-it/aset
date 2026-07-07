@@ -20,6 +20,9 @@ function fmtDate(ts){
 const TEMP_CRIT = 55;
 let isMuted = false;
 let graphMode = 'combined';
+let graphWindow = 'recent';  // 'recent' (last 30 min, clear detail) or 'full' (whole test)
+let lastSeriesRecent = {};
+let lastSeriesFull = {};
 let mainCharts = {};
 let icaChart = null;
 let alarmLog = [];
@@ -285,8 +288,11 @@ function backToLive() {
 
 /* ---- render payload (used by both live poll and session select) ----------- */
 function renderPayload(p, received_at) {
-  const s = p.summary || {}, a = p.analysis || {}, ser = p.series || {},
+  const s = p.summary || {}, a = p.analysis || {},
         L = s.latest || {}, feat = a.features || {};
+  lastSeriesRecent = p.series || {};
+  lastSeriesFull = p.series_full || p.series || {};
+  const ser = graphWindow === 'full' ? lastSeriesFull : lastSeriesRecent;
 
   $('battery').innerHTML = '<i class="dot"></i>battery: <b>' + ((p.meta||{}).battery || '–') + '</b>';
 
@@ -355,7 +361,7 @@ function renderPayload(p, received_at) {
 
   // Charts
   updateMainCharts(ser);
-  updateIcaChart(ser.Voltage_V, ser.SoC_pct);
+  updateIcaChart(lastSeriesFull.Voltage_V, lastSeriesFull.SoC_pct);
 
   // Real safety events forwarded from the GUI's alarm log (ALARM/WARNING),
   // not just this browser's own temperature-threshold guess below.
@@ -539,8 +545,15 @@ function renderAlarmLog() {
 /* ---- graph mode ---------------------------------------------------------- */
 function setMode(mode) {
   graphMode = mode;
-  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  document.querySelectorAll('.mode-btn[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   buildMainCharts();
+}
+
+/* ---- graph window (recent 30 min vs whole test) --------------------------- */
+function setGraphWindow(win) {
+  graphWindow = win;
+  document.querySelectorAll('.mode-btn[data-window]').forEach(b => b.classList.toggle('active', b.dataset.window === win));
+  updateMainCharts(win === 'full' ? lastSeriesFull : lastSeriesRecent);
 }
 
 /* ---- left panel tab switching -------------------------------------------- */
@@ -630,8 +643,10 @@ function toggleTheme() {
 window.addEventListener('DOMContentLoaded', () => {
   applyThemeIcon();
   $('themeToggle').addEventListener('click', toggleTheme);
-  document.querySelectorAll('.mode-btn').forEach(btn =>
+  document.querySelectorAll('.mode-btn[data-mode]').forEach(btn =>
     btn.addEventListener('click', () => setMode(btn.dataset.mode)));
+  document.querySelectorAll('.mode-btn[data-window]').forEach(btn =>
+    btn.addEventListener('click', () => setGraphWindow(btn.dataset.window)));
   document.querySelectorAll('.lptab').forEach(btn =>
     btn.addEventListener('click', () => switchLpTab(btn.dataset.lptab)));
   $('ecmToggle').addEventListener('click', toggleEcm);
