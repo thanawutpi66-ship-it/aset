@@ -9,13 +9,19 @@ Two paths:
     ``perf_counter`` clock (sub-µs), so capacity is accurate regardless of the ~5 Hz
     readback. This is the recommended path.
 
-  * ``run_native_batt_test()`` — **OPTIONAL**: lets the *instrument* run its built-in
-    BATT Test Automation + Datalog (it discharges and logs Ah/Wh into its own memory,
-    then you read it back — no PC-side timing at all). The exact remote SCPI for that
-    function is **NOT in the panel user manual** and must be confirmed in the PEL-3111
-    *programming* manual; the strings below are best-effort (the PEL-3000 is documented
-    as Kikusui PLZ-4W command-compatible) and are marked VERIFY. The method probes them
-    and falls back to ``run_pc_discharge`` if the instrument rejects them.
+  * ``run_native_batt_test()`` — **DISABLED (always falls back to run_pc_discharge)**:
+    the instrument's built-in BATT Test Automation + Datalog would let it discharge and
+    log Ah/Wh into its own memory with no PC-side timing at all — but per the real
+    PEL-3000H Programming Manual, there is **no SCPI command that returns the
+    accumulated Ah/Wh** from a finished BATT test (``:BATT:RESult?`` only returns the
+    *instantaneous* current/voltage at query time, not accumulated capacity/energy).
+    Starting the native test would therefore discharge the real battery with no way to
+    retrieve a usable result afterwards — worse than never engaging it at all. The
+    ``NATIVE_BATT_SCPI`` strings below are corrected against the manual (an earlier
+    version had 5 of 8 wrong — see ``docs/rig_investigation_findings.md``) so they're
+    ready to use once accumulated-Ah/Wh retrieval is solved (most likely via
+    downloading the instrument's datalog file, a separate feature), but
+    ``native_supported()`` is hardcoded to return ``False`` until then.
 
 Standalone: ``pyvisa`` is imported lazily so importing this module never needs hardware.
 Run it from ``scripts/pel_capacity_test.py``.
@@ -72,20 +78,23 @@ class DischargeResult:
 
 
 # ---------------------------------------------------------------------------
-# Native BATT-test SCPI — VERIFY against the PEL-3111 programming manual.
-# These let the load run + log the discharge itself. If any is rejected, the driver
-# falls back to the PC-side path. Edit here once you confirm the real commands.
+# Native BATT-test SCPI — verified against PEL-3000H_ProgrammingManual_EN_20190401.pdf
+# ("BATTery Subsystem Commands"). ``fetch_ah``/``fetch_wh`` are intentionally left
+# unset — no such command exists (see module docstring) — native_supported() is
+# hardcoded False so this dict is not reachable from run_native_batt_test() yet.
 # ---------------------------------------------------------------------------
 NATIVE_BATT_SCPI = {
-    "select_mode": ":BATT:MODE CC",         # VERIFY: discharge mode (CC/CR/CP)
-    "set_current": ":BATT:CURR {a}",        # VERIFY: discharge current
-    "stop_volt":   ":BATT:STOP:VOLT {v}",   # VERIFY: stop voltage
-    "datalog_int": ":BATT:DLOG:TIM {s}",    # VERIFY: datalog interval (s)
-    "start":       ":BATT:STAR ON",         # VERIFY: start the BATT test
-    "running?":    ":BATT:STAT?",           # VERIFY: 1 while running
-    "fetch_ah":    ":BATT:FETC:AH?",        # VERIFY: logged amp-hours
-    "fetch_wh":    ":BATT:FETC:WH?",        # VERIFY: logged watt-hours
-    "abort":       ":BATT:STAR OFF",        # VERIFY: stop the BATT test
+    "select_mode": ":BATTery:MODE CC",         # discharge mode (CC/CR/CP)
+    "set_current": ":BATTery:VALue {a}",       # discharge current — NOT ":BATT:CURR"
+    "stop_volt":   ":BATTery:STOP:VOLTage {v}",
+    "datalog_int": ":BATTery:DATalog:TIMer {s}",   # NOT ":BATT:DLOG:TIM"
+    "enable":      ":BATTery:STATe ON",        # arms BATT mode — does not start it
+    "run":         ":BATT:RUN",                # separate command actually starts it
+    "running?":    ":BATT:CHANnel:STATus?",    # numeric 0/1 (":BATTery:STATe?" instead
+                                                # returns a string like "ON,RUN"/"OFF")
+    "fetch_ah":    None,                       # NOT AVAILABLE — no accumulated-Ah query
+    "fetch_wh":    None,                       # NOT AVAILABLE — no accumulated-Wh query
+    "abort":       ":BATTery:STATe OFF",       # NOT ":BATT:STAR OFF"
 }
 
 
@@ -157,13 +166,13 @@ class PelBattTest:
 
     # -- optional path: instrument-native BATT test + datalog --------------
     def native_supported(self) -> bool:
-        """Probe whether the native BATT-test SCPI is accepted (best-effort)."""
-        try:
-            self.load.query(NATIVE_BATT_SCPI["running?"])
-            return True
-        except Exception as e:
-            logger.info("native BATT test not available (%s) — use run_pc_discharge", e)
-            return False
+        """Always False — see module docstring: the instrument has no verified SCPI
+        to retrieve accumulated Ah/Wh after a native BATT test, so starting one would
+        discharge the real battery with no way to get a usable result back. Kept as a
+        method (rather than deleting the native path) so run_native_batt_test() still
+        has one single gate to flip once Ah/Wh retrieval (e.g. datalog-file download)
+        is implemented."""
+        return False
 
     def run_native_batt_test(self, current_a: float, stop_voltage: float,
                              datalog_interval_s: float = 1.0,
@@ -171,8 +180,8 @@ class PelBattTest:
                              max_seconds: float = 8 * 3600) -> Optional[DischargeResult]:
         """Run the load's built-in BATT Test + Datalog, then read back Ah/Wh.
 
-        Returns a DischargeResult on success, or None if the instrument doesn't accept
-        the (VERIFY-marked) commands — caller should then use ``run_pc_discharge``."""
+        Currently always returns None (native_supported() is hardcoded False) —
+        caller should then use ``run_pc_discharge``. See module docstring."""
         if not self.native_supported():
             return None
         s = NATIVE_BATT_SCPI
@@ -181,7 +190,8 @@ class PelBattTest:
             self._w(s["set_current"].format(a=current_a))
             self._w(s["stop_volt"].format(v=stop_voltage))
             self._w(s["datalog_int"].format(s=datalog_interval_s))
-            self._w(s["start"])
+            self._w(s["enable"])
+            self._w(s["run"])
             t0 = time.perf_counter()
             while time.perf_counter() - t0 < max_seconds:
                 if self._qf(s["running?"]) < 0.5:
@@ -189,8 +199,8 @@ class PelBattTest:
                 time.sleep(poll_s)
             else:
                 self._w(s["abort"])
-            ah = self._qf(s["fetch_ah"])
-            wh = self._qf(s["fetch_wh"])
+            ah = self._qf(s["fetch_ah"]) if s["fetch_ah"] else float("nan")
+            wh = self._qf(s["fetch_wh"]) if s["fetch_wh"] else float("nan")
             if ah != ah:
                 logger.warning("native datalog returned no Ah — fall back to PC path")
                 return None

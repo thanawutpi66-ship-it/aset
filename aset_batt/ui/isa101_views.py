@@ -1591,6 +1591,16 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             return
         try:
             self.hw.connect_instruments(psu, load)
+            if hasattr(self.hw, "set_load_range"):
+                try:
+                    from aset_batt.hardware.hardware_driver import recommend_pel3111_ranges
+                    i_range, v_range = recommend_pel3111_ranges(
+                        self.config.battery.max_current,
+                        self.config.battery.pack_max_voltage,
+                    )
+                    self.hw.set_load_range(i_range, v_range)
+                except Exception as range_exc:
+                    self._log_alarm(f"Load range auto-set skipped (non-fatal): {range_exc}")
             if esp:
                 baud = getattr(self.config.hardware, "serial_baudrate", 9600)
                 try:
