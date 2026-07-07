@@ -49,6 +49,22 @@ def profile_from_config(config) -> BatteryProfile:
     # Peukert exponent by chemistry: lead-acid capacity is markedly rate-dependent,
     # lithium almost not.
     peukert = 1.20 if "lead" in (b.battery_type or "").lower() else 1.05
+
+    # A characterised specimen's R0/R1 (see aset_batt.core.battery_profiles.
+    # save_measured_params) overrides the chemistry-generic base_rin/60-40 split for
+    # this specific product — the chemistry-level r0 has no capacity/CCA scaling, so a
+    # small pack can measure well above it even when genuinely healthy.
+    r0_fraction = 0.0
+    try:
+        from aset_batt.core import battery_profiles
+        mp = battery_profiles.get_measured_params(b.product_name)
+        internal_r_ohm = mp.get("internal_r_ohm")
+        if internal_r_ohm and float(internal_r_ohm) > 0:
+            rin = float(internal_r_ohm)
+            r0_fraction = float(mp.get("r0_fraction", 0.0))
+    except Exception:
+        pass
+
     return BatteryProfile(
         name=b.battery_type, chemistry=b.battery_type,
         nominal_v=b.pack_nominal_voltage, series=b.cells_series,
@@ -58,7 +74,8 @@ def profile_from_config(config) -> BatteryProfile:
         ovp=float(s.get("max_voltage", b.pack_max_voltage + 1)),
         uvp=float(s.get("min_voltage", b.pack_min_voltage - 1)),
         otp_warn=max(0.0, otp - 10.0), otp_crit=otp, internal_r=float(max(1e-4, rin)),
-        peukert_k=peukert,
+        peukert_k=peukert, r0_fraction=r0_fraction,
+        harness_r_ohm=max(0.0, float(getattr(b, "harness_resistance_ohm", 0.0))),
     )
 
 
@@ -67,7 +84,14 @@ def profile_from_config(config) -> BatteryProfile:
 # above ambient and self-heats during a test).
 _DCIR_TEMP_COEFF = 0.004     # per °C
 _T_REF = 25.0                # °C
-_I_STANDBY = 0.6             # A — PSU quiescent draw even when OUTP OFF
+# Rest/standby current baseline. Was 0.6 A to compensate for PSU quiescent bleed
+# before the SSR (ESP32 GPIO16) fully disconnected the load — now 0.0 A, matching
+# StateEstimator.standby_current (aset_batt/core/state_estimator.py). Left at 0.6
+# here (this module's only, separate from the live estimator) meant the ±0.15 A
+# rest-detection band coincided with a LeadAcid bulk-charge current (~0.1C ≈ 0.5 A
+# for a 5.3 Ah pack), so bulk-charge samples were misread as "rest" and their
+# elevated (absorption-stage) voltage leaked into the ECM fit's OCV anchor.
+_I_STANDBY = 0.0             # A
 
 
 def _reject_outliers_mad(x, n_sigma=3.0):
@@ -320,6 +344,19 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
             [p[0] for p in levels], [p[1] for p in levels])
     else:
         dcir_slope, dcir_slope_r2 = float("nan"), 0.0
+
+    # Harness (test-rig wiring/contact) resistance: purely ohmic and in series with
+    # everything the rig measures, so it inflates every ohmic reading by the same
+    # fixed amount regardless of the pack's real health. Only ohmic readings (DCIR,
+    # dcir_slope, ECM R0 below) are corrected; R1/C1/τ characterise the cell's own RC
+    # relaxation and aren't affected by simple wiring resistance.
+    harness_r = max(0.0, float(getattr(profile, "harness_r_ohm", 0.0)))
+    if harness_r > 0.0:
+        if measured:
+            dcir = max(1e-4, dcir - harness_r)
+        if dcir_slope == dcir_slope:   # not NaN
+            dcir_slope = max(1e-4, dcir_slope - harness_r)
+
     sag, cca_est, ocv = _load_metrics(current_a, voltage_v, dcir, profile)
     warnings, temp_drift = _quality_flags(current_a, voltage_v, temp_c, profile,
                                           is_hppc, n_steps, reached_cutoff)
@@ -329,6 +366,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     is_2rc = bool(ecm and "R2_ohm" in ecm)
     if ecm:
         r0, r1 = float(ecm["R0_ohm"]), float(ecm["R1_ohm"])
+        if harness_r > 0.0:
+            r0 = max(1e-4, r0 - harness_r)   # ohmic only — R1/C1/τ are the cell's own RC
         # 2-RC dict uses tau1_s; 1-RC uses tau_s
         c1 = float(ecm["C1_farad"])
         tau = float(ecm.get("tau1_s", ecm.get("tau_s", 0.0)))

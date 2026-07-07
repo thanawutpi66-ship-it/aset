@@ -818,9 +818,24 @@ class ZonesMixin:
         )
         form.addRow("Pulse (s):", self.ed_hppc_pulse)
 
-        self.ed_hppc_relax = QLineEdit("30")
+        # Lead-acid needs much longer than 30 s to stop climbing after a discharge
+        # pulse ends — real rig data: terminal voltage still rising ~10-20 mV per
+        # few seconds at t=30 s post-pulse (0.30 V total climb in 30 s, nowhere near
+        # flat). A too-short relax window measures R0/R1 against a "rest" voltage
+        # that's still mid-recovery, biasing every pulse but the first (which usually
+        # gets a long pre-test rest instead). 180 s doesn't fully settle it either
+        # (that took ~27 min after charge) but meaningfully reduces the bias; raise
+        # further (up to 600 s) if precision matters more than test duration.
+        is_lead_acid = "lead" in (self.config.battery.battery_type or "").lower()
+        default_relax = "180" if is_lead_acid else "30"
+        self.ed_hppc_relax = QLineEdit(default_relax)
         self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))
-        self.ed_hppc_relax.setToolTip("Rest/relaxation duration (s) between pulses")
+        self.ed_hppc_relax.setToolTip(
+            "Rest/relaxation duration (s) between pulses\n"
+            "Lead-acid relaxes slowly after a pulse (still ~10-20 mV/few-s climbing "
+            "at 30 s on real data) — 180 s default reduces R0/R1 bias on pulses "
+            "after the first; lithium settles fast, 30 s is fine."
+        )
         form.addRow("Relax (s):", self.ed_hppc_relax)
 
         lay.addLayout(form)

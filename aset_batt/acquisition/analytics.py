@@ -142,8 +142,12 @@ class Analytics:
         case the cell is graded on resistance growth alone rather than fabricating a
         capacity-based SoH gate.
         """
-        r0_base = max(1e-9, Analytics.R0_FRACTION * p.internal_r)
-        r1_base = max(1e-9, Analytics.R1_FRACTION * p.internal_r)
+        # A product-specific split (from a characterised specimen) overrides the
+        # chemistry-agnostic 60/40 default — see BatteryProfile.r0_fraction.
+        r0_frac = p.r0_fraction if getattr(p, "r0_fraction", 0.0) > 0.0 else Analytics.R0_FRACTION
+        r1_frac = (1.0 - p.r0_fraction) if getattr(p, "r0_fraction", 0.0) > 0.0 else Analytics.R1_FRACTION
+        r0_base = max(1e-9, r0_frac * p.internal_r)
+        r1_base = max(1e-9, r1_frac * p.internal_r)
         r0_ratio = r0_ohm / r0_base
         r1_ratio = r1_ohm / r1_base
         soh_unknown = soh is None or np.isnan(soh)
