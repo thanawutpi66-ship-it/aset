@@ -93,6 +93,19 @@ _T_REF = 25.0                # °C
 # elevated (absorption-stage) voltage leaked into the ECM fit's OCV anchor.
 _I_STANDBY = 0.0             # A
 
+# DCIR reads R = ΔV/ΔI at the FIRST sample after a current edge, assuming that sample
+# lands at the rig's steady ~200 ms readback. If the interval to that sample is much
+# longer (USB hiccup, SCPI stall, OS jitter), the voltage has already relaxed into the
+# RC region and R would include R1 (polarisation), not just R0 (ohmic) — inflating DCIR.
+# Steps whose post-edge dt exceeds this are dropped and flagged rather than trusted.
+_DCIR_MAX_STEP_DT = 0.5      # s
+
+# SoH = measured discharge Ah ÷ rated ASSUMES the discharge began from a full pack.
+# Below this starting SoC the capacity removed only spans SoC_start→0, so a healthy
+# pack reads a proportionally LOW SoH (a 50 %-charged healthy pack → SoH ≈ 50 %).
+# reached_cutoff can't catch it (it guards the END), so a known-partial start is flagged.
+_SOH_MIN_START_SOC = 95.0    # %
+
 
 def _reject_outliers_mad(x, n_sigma=3.0):
     """Drop values that disagree with the median by >n_sigma robust deviations (MAD).
@@ -144,7 +157,7 @@ def _vi_levels(current_a, voltage_v):
     ia = np.asarray(current_a, float)
     va = np.asarray(voltage_v, float)
     pts = []
-    rest = np.abs(ia - _I_STANDBY) < 0.15      # "rest" = PSU standby only (0.6A)
+    rest = np.abs(ia - _I_STANDBY) < 0.15      # "rest" = |I| ≈ 0 (SSR fully disconnects load)
     if rest.any():
         pts.append((_I_STANDBY, float(np.median(va[rest]))))
     loaded = np.abs(ia - _I_STANDBY) >= 0.2    # load on top of standby
@@ -157,7 +170,7 @@ def _vi_levels(current_a, voltage_v):
     return pts
 
 
-def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile):
+def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=None):
     """Repeatable single-step DCIR aggregated over EVERY current step in the record.
 
     At the rig's ~5 Hz SCPI readback the instantaneous ohmic step cannot be resolved
@@ -168,20 +181,34 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile):
     spread — so an HPPC record's many pulses, or repeated load on/off edges, give a
     repeatable DCIR with a measurable uncertainty instead of a single noisy number.
 
-    Returns ``(dcir_ohm_25C, std_ohm, n_steps, measured)``. ``measured`` is False (and
-    DCIR falls back to the profile baseline) when no clear current step is present.
+    ``time_s`` (optional, elapsed seconds per sample): when supplied, a step whose
+    post-edge sample arrives more than ``_DCIR_MAX_STEP_DT`` after the edge is dropped
+    (its voltage has relaxed past ohmic) and counted, so a latency-corrupted reading
+    can't inflate DCIR — the caller surfaces the drop count as a quality warning.
+
+    Returns ``(dcir_ohm_25C, std_ohm, n_steps, measured, n_stale)``. ``measured`` is
+    False (and DCIR falls back to the profile baseline) when no clear step qualifies;
+    ``n_stale`` is how many otherwise-valid steps were dropped for sampling latency.
     """
     ia = np.asarray(current_a, float)
     va = np.asarray(voltage_v, float)
     tc = np.asarray(temp_c, float)
+    ta = np.asarray(time_s, float) if time_s is not None else None
     if ia.size < 4:
-        return profile.internal_r, 0.0, 0, False
+        return profile.internal_r, 0.0, 0, False, 0
     di = np.diff(ia)
     thr = max(1e-3, 0.20 * float(np.max(np.abs(ia))))     # a real load edge, not jitter
     vals = []
+    n_stale = 0
     k = 0
     while k < di.size:
         if abs(di[k]) > thr:
+            # dt-gate: the post-edge sample must land soon after the edge, or it has
+            # relaxed into the RC region and R would carry R1, not just the ohmic R0.
+            if ta is not None and (k + 1) < ta.size and (ta[k + 1] - ta[k]) > _DCIR_MAX_STEP_DT:
+                n_stale += 1
+                k += 2
+                continue
             v_before = float(np.median(va[max(0, k - 2):k + 1]))   # rested/level baseline
             v_after = float(va[k + 1])                             # first post-edge sample
             r = abs((v_after - v_before) / di[k])
@@ -191,9 +218,9 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile):
         else:
             k += 1
     if not vals:
-        return profile.internal_r, 0.0, 0, False
+        return profile.internal_r, 0.0, 0, False, n_stale
     arr = _reject_outliers_mad(np.asarray(vals, float))   # drop disagreeing pulses
-    return float(np.median(arr)), float(np.std(arr)), int(arr.size), True
+    return float(np.median(arr)), float(np.std(arr)), int(arr.size), True, n_stale
 
 
 def _load_metrics(current_a, voltage_v, dcir_ohm, profile: BatteryProfile):
@@ -299,7 +326,8 @@ def identify_ecm_fit(time_s, current_a, voltage_v, voc):
 
 
 def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
-                   profile: BatteryProfile, is_hppc: bool, soh=None) -> dict:
+                   profile: BatteryProfile, is_hppc: bool, soh=None,
+                   soc_start=None) -> dict:
     """Run the unified analysis on raw series → the standard results dict.
 
     ``current_a`` discharge-positive; ``capacity_series`` is the per-sample cumulative
@@ -335,7 +363,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     if not np.isnan(soh):
         soh = float(min(120.0, max(0.0, soh)))
 
-    dcir, dcir_std, n_steps, measured = identify_dcir(current_a, voltage_v, temp_c, profile)
+    dcir, dcir_std, n_steps, measured, n_stale = identify_dcir(
+        current_a, voltage_v, temp_c, profile, time_s=time_s)
     # Multi-current DCIR: when the record spans ≥2 distinct current levels, the slope of
     # V vs I gives an OCV-cancelling DCIR (more robust than a single step).
     levels = _vi_levels(current_a, voltage_v)
@@ -360,6 +389,25 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     sag, cca_est, ocv = _load_metrics(current_a, voltage_v, dcir, profile)
     warnings, temp_drift = _quality_flags(current_a, voltage_v, temp_c, profile,
                                           is_hppc, n_steps, reached_cutoff)
+    # A latency-corrupted step reads too high (relaxed past ohmic) — those were dropped
+    # in identify_dcir; flag it so the operator knows the rig's sampling stalled and the
+    # DCIR rests on fewer (or, if all were stale, zero → baseline) steps than it looks.
+    if n_stale > 0:
+        warnings = warnings + [
+            f"{n_stale} DCIR step(s) dropped — sampling latency >{_DCIR_MAX_STEP_DT:.1f}s "
+            f"(USB/SCPI stall); R0 would read inflated"]
+    # SoH under-statement guard: an SoH was computed (full discharge to cut-off) but the
+    # pack didn't START near-full, so the Ah removed under-counts true capacity and the
+    # SoH/grade read low even for a healthy cell. reached_cutoff guards only the END;
+    # this flags the START. (Warning only — the number isn't corrected, since that would
+    # amplify OCV→SoC error; charge fully for an accurate capacity test.) Lowers
+    # confidence automatically via the warning count fed to _confidence below.
+    if (not is_hppc) and reached_cutoff and not np.isnan(soh) \
+            and soc_start is not None and soc_start == soc_start \
+            and soc_start < _SOH_MIN_START_SOC:
+        warnings = warnings + [
+            f"discharge started at {soc_start:.0f}% SoC (not full) — SoH is under-stated; "
+            f"charge fully before a capacity test"]
 
     # 1-RC / 2-RC ECM for HPPC (reported ALONGSIDE the DCIR, not instead of it).
     ecm = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc else None
@@ -434,7 +482,8 @@ def _read_csv(path):
 
         c_t, c_v, c_i = col("Elapsed_s"), col("Voltage_V"), col("Current_A")
         c_temp, c_cap, c_mode = col("Temperature_C"), col("Capacity_Ah"), col("Mode")
-        T, V, I, TEMP, CAP, modes = [], [], [], [], [], []
+        c_soc = col("SoC_pct")
+        T, V, I, TEMP, CAP, SOC, modes = [], [], [], [], [], [], []
         for r in reader:
             def num(c, default=float("nan")):
                 try:
@@ -442,10 +491,10 @@ def _read_csv(path):
                 except (ValueError, TypeError, KeyError):
                     return default
             T.append(num(c_t)); V.append(num(c_v)); I.append(num(c_i))
-            TEMP.append(num(c_temp, 25.0)); CAP.append(num(c_cap))
+            TEMP.append(num(c_temp, 25.0)); CAP.append(num(c_cap)); SOC.append(num(c_soc))
             modes.append(r[c_mode] if c_mode else "")
     return (np.asarray(T, float), np.asarray(V, float), np.asarray(I, float),
-            np.asarray(TEMP, float), np.asarray(CAP, float), modes)
+            np.asarray(TEMP, float), np.asarray(CAP, float), np.asarray(SOC, float), modes)
 
 
 def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False) -> dict:
@@ -453,14 +502,17 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
     the ``Mode`` column; capacity is integrated from current if not logged."""
     if not csv_path or not os.path.exists(csv_path):
         raise FileNotFoundError(csv_path or "(no CSV)")
-    t, v, i, temp, cap, modes = _read_csv(csv_path)
+    t, v, i, temp, cap, soc, modes = _read_csv(csv_path)
     if t.size < 2:
         raise ValueError("CSV has too few samples to analyse.")
     is_hppc = force_hppc or any("hppc" in (m or "").lower() for m in modes)
     if np.all(np.isnan(cap)):                       # no capacity column → integrate
         dt = np.diff(t, prepend=t[0])
         cap = np.cumsum(np.clip(i, 0, None) * dt) / 3600.0
-    return analyze_series(t, i, v, temp, cap, profile, is_hppc)
+    # Starting SoC = the peak logged SoC (start of a discharge) — used to flag an SoH
+    # that's under-stated because the pack wasn't full when the capacity test began.
+    soc_start = float(np.nanmax(soc)) if soc.size and not np.all(np.isnan(soc)) else None
+    return analyze_series(t, i, v, temp, cap, profile, is_hppc, soc_start=soc_start)
 
 
 _analysis_pool: ProcessPoolExecutor | None = None
@@ -472,6 +524,23 @@ def _get_analysis_pool() -> ProcessPoolExecutor:
     if _analysis_pool is None:
         _analysis_pool = ProcessPoolExecutor(max_workers=1)
     return _analysis_pool
+
+
+def shutdown_analysis_pool():
+    """Tear down the analysis worker pool, cancelling any queued fits.
+
+    Called from the GUI's closeEvent. Without this, a long scipy curve_fit still
+    running when the user quits keeps the child process (and its CPU) alive, and the
+    interpreter blocks on atexit joining it — the app appears to hang after close.
+    cancel_futures drops anything still queued; the one in-flight fit can't be killed
+    mid-C-call but is short, and wait=False means we don't block the UI teardown on it."""
+    global _analysis_pool
+    if _analysis_pool is not None:
+        try:
+            _analysis_pool.shutdown(wait=False, cancel_futures=True)
+        except TypeError:                       # cancel_futures added in Python 3.9
+            _analysis_pool.shutdown(wait=False)
+        _analysis_pool = None
 
 
 def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = False) -> dict:
@@ -490,7 +559,8 @@ def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = Fa
 
 
 def analyze_series_mp(time_s, current_a, voltage_v, temp_c, capacity_series,
-                      profile: BatteryProfile, is_hppc: bool, soh=None) -> dict:
+                      profile: BatteryProfile, is_hppc: bool, soh=None,
+                      soc_start=None) -> dict:
     """Same result as analyze_series(), but off the calling thread's GIL — see
     analyze_csv_mp's docstring. AcquisitionWorker.run() (the Characterization /
     RUN TEST / HPPC-via-RUN-TEST QThread) calls this directly with its in-memory
@@ -499,5 +569,5 @@ def analyze_series_mp(time_s, current_a, voltage_v, temp_c, capacity_series,
     an extra throwaway CSV just to satisfy that wrapper's file-path signature."""
     future = _get_analysis_pool().submit(
         analyze_series, time_s, current_a, voltage_v, temp_c, capacity_series,
-        profile, is_hppc, soh)
+        profile, is_hppc, soh, soc_start)
     return future.result()

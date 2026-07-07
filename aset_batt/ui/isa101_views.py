@@ -1969,7 +1969,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 f"QPushButton:hover{{border-color:#aaa;}}"
             )
         else:
-            # ไม่ใช่ HPPC — แสดงวงจรเดียวกัน แต่ R_d/C_d เป็นตัวแปร (ไม่มีค่า)
+            # ไม่ใช่ HPPC — แสดงวงจรเดียวกัน แต่ R1/C1 เป็นตัวแปร (ไม่มีค่า)
             svg = self._build_ecm_svg(
                 r0=results.get('dcir_mohm', results.get('ri_mohm', 0.0)),
                 ocv=results.get('ocv_v', 0.0),
@@ -2079,9 +2079,19 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         "charge": "Charge",
     }
 
+    # ป้าย label ในชื่อไฟล์ (จาก _ensure_logging) → ชื่อที่อ่านง่ายในรายการ session
+    _FILENAME_LABEL_MAP = {
+        "iec": "IEC 61960", "quickscan": "Quick Scan",
+        "hppc": "HPPC", "cyclelife": "Cycle Life",
+    }
+
     def _detect_session_type(self, fpath: str) -> str:
-        """อ่านคอลัมน์ Mode ของ CSV เพื่อบอกชนิดการทดสอบ.
+        """บอกชนิดการทดสอบ. ถ้าชื่อไฟล์ฝัง label ไว้ (test_HPPC_...) ใช้อันนั้นเลย
+        (แม่นสุด แยก Quick Scan/IEC ได้) — ไม่งั้น fallback อ่านคอลัมน์ Mode ของ CSV.
         ไฟล์จาก START DATA LOGGING ไม่มีคอลัมน์ Mode → 'Data Log'."""
+        flabel = self._label_from_filename(os.path.basename(fpath))
+        if flabel:
+            return self._FILENAME_LABEL_MAP.get(flabel.lower(), flabel)
         try:
             with open(fpath, "r", encoding="utf-8-sig", newline="") as f:
                 reader = csv.reader(f)
@@ -2109,13 +2119,23 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
 
     @staticmethod
     def _format_session_time(fname: str) -> str:
-        """แปลง test_YYYYMMDD_HHMMSS.csv → '28 Jun 2026  18:47'."""
-        try:
-            stem = fname[len("test_"):-len(".csv")]
-            dt = datetime.strptime(stem, "%Y%m%d_%H%M%S")
-            return dt.strftime("%d %b %Y  %H:%M")
-        except ValueError:
-            return fname
+        """แปลง timestamp ในชื่อไฟล์ → '28 Jun 2026  18:47'.
+
+        รองรับทั้ง test_YYYYMMDD_HHMMSS.csv (เดิม) และ
+        test_LABEL_YYYYMMDD_HHMMSS.csv (ใหม่ — มีชนิดเทสต์นำหน้า timestamp)."""
+        m = re.search(r"(\d{8}_\d{6})", fname)
+        if m:
+            try:
+                return datetime.strptime(m.group(1), "%Y%m%d_%H%M%S").strftime("%d %b %Y  %H:%M")
+            except ValueError:
+                pass
+        return fname
+
+    @staticmethod
+    def _label_from_filename(fname: str) -> str:
+        """ดึงชนิดเทสต์จากชื่อไฟล์ test_LABEL_YYYYMMDD_HHMMSS.csv → 'LABEL' (ถ้ามี)."""
+        m = re.match(r"test_(.+?)_\d{8}_\d{6}\.csv$", fname)
+        return m.group(1) if m else ""
 
     # ── Session metadata (rename / tag) ──────────────────────────────────
     _SESSION_META_FILE = os.path.join("sessions", ".session_meta.json")
@@ -2198,7 +2218,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             entry   = meta.get(fname, {})
             label_s = f"  [{entry['label']}]" if entry.get("label") else ""
             tag_s   = f"  #{entry['tag']}" if entry.get("tag") else ""
-            label   = f"{seq}.  {ttype:<10}{when}   ·  {size_txt}{label_s}{tag_s}"
+            label   = f"{seq}.  {ttype:<12}{when}   ·  {size_txt}{label_s}{tag_s}"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, fpath)
             item.setToolTip(f"{fname}\nType: {ttype}\n{when}  ·  {size_txt}"
@@ -2444,13 +2464,24 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         dlg.exec()
 
     # ---- CHARACTERIZE handlers/threads: see aset_batt/ui/characterize.py --
+    def _shutdown_services(self):
+        """Tear down the controller + the analysis worker pool on quit. The pool must
+        be shut down or a running curve_fit keeps a child process (and CPU) alive and
+        the interpreter hangs on atexit joining it."""
+        try:
+            if self.controller:
+                self.controller.shutdown()
+        except Exception as exc:
+            logger.error("shutdown on close: %s", exc)
+        try:
+            from aset_batt.acquisition.analysis import shutdown_analysis_pool
+            shutdown_analysis_pool()
+        except Exception as exc:
+            logger.error("analysis pool shutdown on close: %s", exc)
+
     def closeEvent(self, event):
         if self._headless:
-            try:
-                if self.controller:
-                    self.controller.shutdown()
-            except Exception as exc:
-                logger.error("shutdown on close: %s", exc)
+            self._shutdown_services()
             event.accept()
             return
         reply = QMessageBox.question(
@@ -2460,11 +2491,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            try:
-                if self.controller:
-                    self.controller.shutdown()
-            except Exception as exc:
-                logger.error("shutdown on close: %s", exc)
+            self._shutdown_services()
             event.accept()
         else:
             event.ignore()
