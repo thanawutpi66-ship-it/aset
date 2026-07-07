@@ -1136,13 +1136,14 @@ class ZonesMixin:
         return w
 
     def _build_ecm_svg(self, r0=None, r1=None, c1=None, ocv=None, tau=None) -> str:
-        """วงจรสมมูลแบตเตอรี่ (Thévenin 1-RC) ตามรูปตำรา:
+        """วงจรสมมูลแบตเตอรี่ (Thévenin 1-RC) — ใช้ชื่อ R0/R1/C1 ให้ตรงกับตารางผล
+        Analysis (เดิมใช้ R_I/R_d/C_d ตามตำรา ทำให้สับสนว่าเป็นคนละค่า):
 
-            V_oc ── R_I ──┬── R_d ──┬── + (V_t)
-                          └── C_d ──┘
+            V_oc ── R0 ──┬── R1 ──┬── + (V_t)
+                         └── C1 ──┘
 
         ค่าที่เป็น None จะแสดงเป็นตัวแปร (สัญลักษณ์เปล่า) — ใช้กับการทดสอบที่
-        ไม่ใช่ HPPC ซึ่งระบุ R_d/C_d ไม่ได้.
+        ไม่ใช่ HPPC ซึ่งระบุ R1/C1 ไม่ได้.
         """
         W, H = 560, 240
         ink    = "#1a1a1a"     # เส้น/สัญลักษณ์
@@ -1208,14 +1209,14 @@ class ZonesMixin:
             wire(bat_x, y_main, 150, y_main),
             resistor(150, 215, y_main),
             wire(215, y_main, nA, y_main),
-            sym(182, y_main - 18, "R", "I"),
+            sym(182, y_main - 18, "R", "0"),
             val(182, y_main + 26, ri_txt),
 
             # ── กิ่งล่าง: R_d (อยู่บนเส้นหลัก) ──
             wire(nA, y_main, 272, y_main),
             resistor(272, 337, y_main),
             wire(337, y_main, nB, y_main),
-            sym(304, y_main + 28, "R", "d"),
+            sym(304, y_main + 28, "R", "1"),
             val(304, y_main + 43, rd_txt),
 
             # ── กิ่งบน: C_d (กิ่งขนานยกขึ้น) ──
@@ -1224,7 +1225,7 @@ class ZonesMixin:
             capacitor(304, y_cap),
             wire(312, y_cap, nB, y_cap),
             wire(nB, y_cap, nB, y_main),
-            sym(304, y_cap - 16, "C", "d"),
+            sym(304, y_cap - 16, "C", "1"),
             val(304, y_cap + 30, cd_txt),
 
             # ── ออกขั้ว + และสายกลับขั้ว − ──
@@ -1247,13 +1248,13 @@ class ZonesMixin:
         if r1 is None:
             parts.append(
                 f'<text x="{W//2}" y="{H-10}" text-anchor="middle" font-family="Segoe UI" '
-                f'font-size="10" fill="{muted}">Non-HPPC test — Rd, Cd shown as symbols '
+                f'font-size="10" fill="{muted}">Non-HPPC test — R1, C1 shown as symbols '
                 f'(not identifiable without pulses)</text>'
             )
         elif tau is not None:
             parts.append(
                 f'<text x="{W//2}" y="{H-10}" text-anchor="middle" font-family="Consolas, monospace" '
-                f'font-size="10" fill="{muted}">1-RC Thévenin model · τ = Rd·Cd = {tau:.1f} s</text>'
+                f'font-size="10" fill="{muted}">1-RC Thévenin model · τ = R1·C1 = {tau:.1f} s</text>'
             )
 
         parts.append("</svg>")
