@@ -102,6 +102,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
     sig_live_readback   = Signal(float, float, float)  # (v, i, temp) — pre-test live readback
     sig_seq_aborted     = Signal()          # sequence thread ended without completing (error/safety trip)
     sig_cycle_counter   = Signal(str)       # cycle-life counter label text (cross-thread safe)
+    sig_update_available = Signal(int, str)  # (behind_count, latest_commit_subject)
+    sig_update_done      = Signal(bool, str)  # (ok, message) — result of applying an update
 
     def __init__(self, config_manager):
         super().__init__()
@@ -155,6 +157,87 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self._tick = QTimer(self)
         self._tick.timeout.connect(self._on_heartbeat_tick)
         self._tick.start(1000)
+
+        self._updating = False
+        self._start_update_check()
+
+    # ── In-app updater (git fast-forward) ────────────────────────────────
+    def _start_update_check(self):
+        """Background check: is origin/<branch> ahead of us? Fires sig_update_available.
+        Silent on any failure (no git / offline / not a repo) — the banner just stays
+        hidden. Runs once at startup, off the UI thread."""
+        if self._headless:
+            return
+
+        def work():
+            try:
+                from aset_batt.services.updater import repo_root, check_for_updates
+                info = check_for_updates(repo_root())
+                if info and info.get("behind", 0) > 0:
+                    self.sig_update_available.emit(int(info["behind"]),
+                                                   info.get("subject", ""))
+            except Exception as exc:
+                logger.debug("update check failed: %s", exc)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _slot_update_available(self, behind, subject):
+        if not hasattr(self, "btn_update"):
+            return
+        self.btn_update.setText(f"⭯ Update available ({behind})")
+        self.btn_update.setToolTip(
+            f"{behind} update(s) on GitHub — click to pull the latest & restart\n"
+            f"Latest: {subject}")
+        self.btn_update.setEnabled(True)
+        self.btn_update.setVisible(True)
+
+    def _on_update_clicked(self):
+        if self._updating or self._headless:
+            return
+        if self._seq_running.is_set():
+            QMessageBox.warning(self, "Update",
+                                "หยุดการทดสอบที่กำลังรันก่อนอัปเดต")
+            return
+        reply = QMessageBox.question(
+            self, "อัปเดตโปรแกรม",
+            "ดึงอัปเดตล่าสุดจาก GitHub?\n\nจะดึงเฉพาะเมื่อ fast-forward ได้ "
+            "(ไม่ทับไฟล์ที่แก้ค้าง) — หลังอัปเดตต้องปิดแล้วเปิดโปรแกรมใหม่",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._updating = True
+        self.btn_update.setEnabled(False)
+        self.btn_update.setText("⭯ Updating…")
+
+        def work():
+            try:
+                from aset_batt.services.updater import repo_root, apply_update
+                ok, msg = apply_update(repo_root())
+            except Exception as exc:
+                ok, msg = False, str(exc)
+            self.sig_update_done.emit(bool(ok), str(msg))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _slot_update_done(self, ok, msg):
+        # State first, dialog second — the dialog is guarded so a headless run
+        # (no one to click OK) doesn't block on a modal, matching the rest of the UI.
+        self._updating = False
+        if ok:
+            self.btn_update.setVisible(False)
+            if not self._headless:
+                QMessageBox.information(
+                    self, "อัปเดตสำเร็จ",
+                    "อัปเดตเรียบร้อย ✓\n\nปิดแล้วเปิดโปรแกรมใหม่ (main.py) "
+                    "เพื่อใช้เวอร์ชันล่าสุด")
+        else:
+            self.btn_update.setEnabled(True)
+            self.btn_update.setText("⭯ Update available")
+            if not self._headless:
+                QMessageBox.warning(
+                    self, "อัปเดตไม่สำเร็จ",
+                    f"ดึงอัปเดตไม่ได้:\n{msg}\n\nอาจมีไฟล์แก้ค้าง/commit ในเครื่องที่ชนกัน "
+                    "— ติดต่อผู้พัฒนา หรืออัปเดตผ่าน git ในเทอร์มินัลเอง")
 
     def bind_controller(self, controller):
         self.controller = controller
@@ -366,6 +449,16 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self.status_label = QLabel("Ready — connect hardware to begin")
         self.status_label.setStyleSheet(f"color:{MUTED};")
         sb.addWidget(self.status_label, 1)
+        # Update banner — hidden until a git check finds origin ahead of us.
+        self.btn_update = QPushButton("⭯ Update available")
+        self.btn_update.setVisible(False)
+        self.btn_update.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_update.setStyleSheet(
+            f"QPushButton{{background:{INFO}; color:white; border:0; border-radius:3px; "
+            f"padding:2px 10px; font-weight:700;}} QPushButton:hover{{background:#1565c0;}} "
+            f"QPushButton:disabled{{background:{MUTED};}}")
+        self.btn_update.clicked.connect(self._on_update_clicked)
+        sb.addPermanentWidget(self.btn_update)
         self.conn_led = QLabel("●")
         self.conn_led.setStyleSheet(f"color:{NEUTRAL}; font-size:14px; padding:0 4px;")
         sb.addPermanentWidget(self.conn_led)
@@ -559,6 +652,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self.sig_live_readback.connect(self._slot_live_readback)
         self.sig_cycle_counter.connect(self.lbl_cycle_counter.setText)
         self.sig_seq_aborted.connect(self._on_seq_aborted)
+        self.sig_update_available.connect(self._slot_update_available)
+        self.sig_update_done.connect(self._slot_update_done)
 
     def update_display(self, v, i, soc, rin, temp=None, soh=None):
         if temp is None:

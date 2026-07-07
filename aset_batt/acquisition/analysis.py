@@ -300,8 +300,11 @@ def identify_ecm_fit(time_s, current_a, voltage_v, voc):
     a hardware fast-capture would be needed.)
 
     After the 1-RC fit a 2-RC fit is attempted; it is used only when it is meaningfully
-    better (R²(2RC) > R²(1RC) + 0.015 AND R²(2RC) > 0.92). Returns the fit dict
-    (either 1-RC or 2-RC), or None if both fail or quality is too low to trust.
+    better (R²(2RC) > R²(1RC) + 0.015 AND R²(2RC) > 0.92).
+
+    Returns ``(fit_dict, "")`` on success (1-RC or 2-RC dict), or ``(None, reason)`` when
+    the fit is skipped/rejected — the caller surfaces ``reason`` as a quality warning so
+    a blank R1/C1 on the ECM circuit isn't an unexplained dead end.
     """
     try:
         from aset_batt.core.parameter_id import BatteryParameterIdentifier
@@ -309,11 +312,12 @@ def identify_ecm_fit(time_s, current_a, voltage_v, voc):
         res = identifier.fit_model(time_s, current_a, voltage_v, voc)
     except Exception as e:
         logger.info("1-RC ECM fit skipped (%s) — using single-step DCIR", e)
-        return None
-    if res.get("r_squared", 0.0) < _ECM_MIN_R2 or res.get("R0_ohm", 0.0) <= 0:
-        logger.info("1-RC ECM fit rejected (R²=%.3f) — using single-step DCIR",
-                    res.get("r_squared", 0.0))
-        return None
+        return None, str(e)
+    r2 = res.get("r_squared", 0.0)
+    if r2 < _ECM_MIN_R2 or res.get("R0_ohm", 0.0) <= 0:
+        logger.info("1-RC ECM fit rejected (R²=%.3f) — using single-step DCIR", r2)
+        return None, (f"fit quality too low (R²={r2:.2f} < {_ECM_MIN_R2:.2f}) — "
+                      f"pulse noisy or too short for the RC tail")
     # Attempt 2-RC upgrade; reuse same identifier instance (same smoothing/thresholds).
     try:
         res_2rc = identifier.fit_model_2rc(time_s, current_a, voltage_v, voc,
@@ -322,7 +326,7 @@ def identify_ecm_fit(time_s, current_a, voltage_v, voc):
             res = res_2rc
     except Exception:
         pass
-    return res
+    return res, ""
 
 
 def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
@@ -410,7 +414,13 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
             f"charge fully before a capacity test"]
 
     # 1-RC / 2-RC ECM for HPPC (reported ALONGSIDE the DCIR, not instead of it).
-    ecm = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc else None
+    ecm, ecm_reason = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc \
+        else (None, "")
+    # HPPC but no ECM → R1/C1 come out blank on the circuit with no reason shown. Surface
+    # WHY (no clear pulse edge / pulse too short / poor fit) so a blank isn't a silent
+    # dead end — the operator can lengthen the pulse or check the load edge and re-run.
+    if is_hppc and ecm is None and ecm_reason:
+        warnings = warnings + [f"ECM R1/C1 not identified — {ecm_reason}; showing DCIR/R0 only"]
     is_2rc = bool(ecm and "R2_ohm" in ecm)
     if ecm:
         r0, r1 = float(ecm["R0_ohm"]), float(ecm["R1_ohm"])
