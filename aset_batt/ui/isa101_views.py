@@ -34,8 +34,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -46,7 +44,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QDoubleSpinBox,
     QProgressBar,
     QSpinBox,
     QSizePolicy,
@@ -73,7 +70,7 @@ from aset_batt.ui.theme import (
 )
 
 from aset_batt.ui.widgets import (
-    _btn, _hline, QtRootShim, DigitalReadout, TemperatureGauge,
+    _btn, _hline, QtRootShim, TemperatureGauge,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
     _PdfNotifier, _PdfTask,
 )
@@ -124,12 +121,22 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             self.config.battery.pack_nominal_voltage,
         )
 
-        self.buf_t = deque()
-        self.buf_v = deque()
-        self.buf_i = deque()
-        self.buf_soc = deque()
-        self.buf_rin = deque()
-        self.buf_temp = deque()
+        # maxlen bounds both memory AND the cost of the list(deque) conversion done
+        # on every redraw (see _slot_display) — without it, a multi-hour charge at
+        # the monitor loop's ~10 Hz target grows this unbounded, and pyqtgraph
+        # setData() + the list() conversion both cost O(n): the GUI gets steadily
+        # more sluggish over the session and can appear to hang late in a long test.
+        # 20,000 samples ≈ last ~33 min at 10 Hz (typical during CHARGE) or ~5.5 h at
+        # 1 Hz (typical during DISCHARGE/HPPC) — a rolling window, same idea as the
+        # cloud dashboard already using "last 30 min" instead of the whole session.
+        _TREND_MAXLEN = 20000
+        self.buf_t = deque(maxlen=_TREND_MAXLEN)
+        self.buf_v = deque(maxlen=_TREND_MAXLEN)
+        self.buf_i = deque(maxlen=_TREND_MAXLEN)
+        self.buf_soc = deque(maxlen=_TREND_MAXLEN)
+        self.buf_rin = deque(maxlen=_TREND_MAXLEN)
+        self.buf_temp = deque(maxlen=_TREND_MAXLEN)
+        self._last_trend_redraw = 0.0   # perf_counter of the last graph repaint — see _slot_display
         self._elapsed_t0 = None
         self._sample_index = 0
         self._buttons = {}
@@ -454,358 +461,6 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         cb.setToolTip(cb.currentText())
         cb.currentTextChanged.connect(cb.setToolTip)
 
-    def _estop_bar(self):
-        self.btn_estop = QPushButton("⛔  EMERGENCY STOP")
-        self.btn_estop.setStyleSheet(
-            f"QPushButton {{ background:{CRIT}; color:white; border:none; border-radius:8px; padding:16px; font-size:16px; font-weight:800; }}"
-            f"QPushButton:hover {{ background:#9b2020; }}"
-        )
-        self.btn_estop.setCursor(Qt.PointingHandCursor)
-        self.btn_estop.clicked.connect(self._on_estop)
-        return self.btn_estop
-
-    # ---- Zone builders (SETUP/workflow/RUN): see aset_batt/ui/zones.py -----
-    # ---- CHARACTERIZE zone builder: see aset_batt/ui/characterize.py -------
-        lay.setContentsMargins(0, 0, 0, 0)
-
-        # Battery selection
-        lay.addWidget(self._subheader("BATTERY"))
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Battery:"))
-        self.cb_product = QComboBox()
-        self.cb_product.addItems(battery_profiles.list_products())
-        self.cb_product.currentTextChanged.connect(self._on_product_changed)
-        self._combo_shrink(self.cb_product, 8)
-        row.addWidget(self.cb_product, 1)
-        lay.addLayout(row)
-        self.lbl_battery_readout = QLabel("—")
-        self.lbl_battery_readout.setStyleSheet(f"color:{MUTED};")
-        lay.addWidget(self.lbl_battery_readout)
-        actions = QHBoxLayout()
-        self.btn_detect = _btn("Detect Chemistry", bg="#e0e2e4", hover="#d4d7da")
-        self.btn_detect.clicked.connect(self._on_detect_chemistry)
-        self.btn_save_default = _btn("Save as Default", bg="#d0d4d7", hover="#c2c6ca")
-        self.btn_save_default.clicked.connect(self._on_save_default)
-        actions.addWidget(self.btn_detect, 2)
-        actions.addWidget(self.btn_save_default, 1)
-        lay.addLayout(actions)
-        btn_edit_profile = _btn("Edit Battery Profile…", bg="#e8f0fe", hover="#c5d8fd")
-        btn_edit_profile.setToolTip("แก้ไขค่า BatteryConfig ในแอพโดยตรง")
-        btn_edit_profile.clicked.connect(self._on_edit_battery_profile)
-        lay.addWidget(btn_edit_profile)
-
-        # Connections — each port row has a status LED (● gray=idle, ✓ green=ok, ✗ red=fail)
-        lay.addWidget(_hline())
-        lay.addWidget(self._subheader("CONNECTIONS"))
-        self.cb_psu = QComboBox()
-        self.cb_load = QComboBox()
-        self.cb_esp = QComboBox()
-
-        def _led():
-            lbl = QLabel("●")
-            lbl.setStyleSheet(f"color:{NEUTRAL}; font-size:15px; min-width:18px;")
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            return lbl
-
-        self.led_psu  = _led()
-        self.led_load = _led()
-        self.led_esp  = _led()
-
-        for label_text, cb, led in [
-            ("PSU (VISA):", self.cb_psu, self.led_psu),
-            ("Load (VISA):", self.cb_load, self.led_load),
-            ("ESP32 (COM):", self.cb_esp, self.led_esp),
-        ]:
-            row = QHBoxLayout()
-            lbl = QLabel(label_text)
-            lbl.setMinimumWidth(78)
-            row.addWidget(lbl)
-            row.addWidget(cb, 1)
-            row.addWidget(led)
-            lay.addLayout(row)
-        row = QHBoxLayout()
-        self.btn_connect = _btn("Connect", bg=OK, fg="white", hover="#266a2a")
-        self.btn_disconnect = _btn("Disconnect", bg=CRIT, fg="white", hover="#9b2020")
-        self.btn_connect.clicked.connect(self._on_connect)
-        self.btn_disconnect.clicked.connect(self._on_disconnect)
-        row.addWidget(self.btn_connect)
-        row.addWidget(self.btn_disconnect)
-        lay.addLayout(row)
-        btn_refresh = _btn("Refresh Ports", bg="#d0d4d7", hover="#c2c6ca")
-        btn_refresh.clicked.connect(self._refresh_ports)
-        lay.addWidget(btn_refresh)
-
-        # SSR safety-cutoff relay (ESP32 GPIO16) — physically gates power to
-        # PSU + load. Fully automatic: ON the instant charging starts (any test
-        # mode), OFF the instant it stops — no manual control, status only.
-        lay.addWidget(_hline())
-        lay.addWidget(self._subheader("SSR POWER RELAY (GPIO16)"))
-        ssr_row = QHBoxLayout()
-        lbl_ssr = QLabel("Relay:")
-        lbl_ssr.setMinimumWidth(78)
-        ssr_row.addWidget(lbl_ssr)
-        self.led_ssr = _led()
-        ssr_row.addWidget(self.led_ssr)
-        self.lbl_ssr_state = QLabel("—")
-        self.lbl_ssr_state.setStyleSheet(f"color:{MUTED}; font-weight:600;")
-        ssr_row.addWidget(self.lbl_ssr_state)
-        ssr_row.addStretch(1)
-        lay.addLayout(ssr_row)
-        lbl_ssr_hint = QLabel(
-            "ⓘ ตัดไฟ PSU/Load ทางกายภาพผ่าน SSR ที่ ESP32 GPIO16 — ทำงานอัตโนมัติ: "
-            "ON ทันทีที่เริ่มชาร์จ (ทุกโหมดเทสต์), OFF ทันทีที่หยุดชาร์จ/E-STOP")
-        lbl_ssr_hint.setStyleSheet(f"color:{MUTED}; font-size:10px;")
-        lbl_ssr_hint.setWordWrap(True)
-        lay.addWidget(lbl_ssr_hint)
-
-        return w
-
-    # ---- WORKFLOW GUIDE (5-step sequence with auto-run) ----------------------
-    _WF_STEPS = [
-        ("1", "PREPARE",  "OCV calibrate"),
-        ("2", "CHARGE",   "Full 3-stage"),
-        ("3", "REST",     "30 min rest"),
-        ("4", "TEST",     "Discharge 0.2C"),
-        ("5", "ANALYZE",  "SoH + Grade"),
-    ]
-    _QS_STEPS = [
-        ("1", "PREPARE",   "OCV calibrate"),
-        ("2", "REST",      "5 min settle"),
-        ("3", "DISCHARGE", "1C rapid test"),
-        ("4", "ANALYZE",   "Peukert SoH"),
-    ]
-    _HPPC_SEQ_STEPS = [
-        ("1", "PREPARE", "OCV calibrate"),
-        ("2", "CHARGE",  "CC-CV to 100%"),
-        ("3", "REST",    "OCV settle"),
-        ("4", "HPPC",    "Pulse/relax cycles"),
-        ("5", "ANALYZE", "R0/R1/C1/τ ECM"),
-    ]
-    _CYCLE_STEPS = [
-        ("1", "PREPARE",   "OCV calibrate"),
-        ("2", "CHARGE",    "CC-CV"),
-        ("3", "DISCHARGE", "CC to cutoff"),
-        ("4", "REPEAT",    "N cycles"),
-        ("5", "ANALYZE",   "Capacity fade"),
-    ]
-
-    # ---- ZONE: TEST MODE — CHARACTERIZE tab (parameter identification) ------
-    def _zone_characterize(self):
-        """Three independent parameter-ID experiments: Peukert k, Coulomb η, OCV–SoC."""
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(6, 6, 6, 6)
-        lay.setSpacing(6)
-
-        lay.addWidget(self._subheader("CHARACTERIZE — Parameter Identification"))
-
-        note = QLabel(
-            "ทดสอบแต่ละรายการแยกอิสระ · ผลจะเก็บในหน่วยความจำจนกว่ากด SAVE TO PROFILE\n"
-            "แต่ละการทดสอบต้องใช้เวลาหลายชั่วโมง — เชื่อมต่อฮาร์ดแวร์ก่อนเริ่ม"
-        )
-        note.setWordWrap(True)
-        note.setStyleSheet(f"color:{MUTED}; font-size:10px;")
-        lay.addWidget(note)
-
-        # ── Card 1 · Peukert k ────────────────────────────────────────────
-        lay.addWidget(_hline())
-        lay.addWidget(self._subheader("① Peukert  k  — multi-rate discharge"))
-
-        self.lbl_char_pk = QLabel(
-            "4 discharge runs (0.1C · 0.2C · 0.5C · 1C) → log-log fit → k\n"
-            "ใช้เวลา: ~8–12 ชั่วโมง (ชาร์จ + discharge × 4)")
-        self.lbl_char_pk.setWordWrap(True)
-        self.lbl_char_pk.setStyleSheet(f"color:{MUTED}; font-size:10px;")
-        lay.addWidget(self.lbl_char_pk)
-
-        self.lbl_char_pk_status = QLabel("● ยังไม่ได้ทดสอบ")
-        self.lbl_char_pk_status.setStyleSheet(f"color:{MUTED}; font-size:11px; font-weight:600;")
-        lay.addWidget(self.lbl_char_pk_status)
-
-        row_pk = QHBoxLayout()
-        self.btn_char_pk_start  = _btn("START Peukert", bg=OK, fg="white", hover="#266a2a")
-        self.btn_char_pk_cancel = _btn("CANCEL", bg=CRIT, fg="white", hover="#9b2020")
-        self.btn_char_pk_cancel.setEnabled(False)
-        self.btn_char_pk_start.clicked.connect(self._on_char_pk_start)
-        self.btn_char_pk_cancel.clicked.connect(self._on_char_pk_cancel)
-        row_pk.addWidget(self.btn_char_pk_start)
-        row_pk.addWidget(self.btn_char_pk_cancel)
-        lay.addLayout(row_pk)
-
-        # ── Card 2 · Coulomb η ────────────────────────────────────────────
-        lay.addWidget(_hline())
-        lay.addWidget(self._subheader("② Coulomb  η  — charge/discharge cycle"))
-
-        self.lbl_char_eta = QLabel(
-            "Discharge → full charge (count Ah_in/band) → discharge 0.1C (count Ah_out)\n"
-            "ใช้เวลา: ~6–8 ชั่วโมง (ชาร์จ + discharge 0.1C)")
-        self.lbl_char_eta.setWordWrap(True)
-        self.lbl_char_eta.setStyleSheet(f"color:{MUTED}; font-size:10px;")
-        lay.addWidget(self.lbl_char_eta)
-
-        self.lbl_char_eta_status = QLabel("● ยังไม่ได้ทดสอบ")
-        self.lbl_char_eta_status.setStyleSheet(f"color:{MUTED}; font-size:11px; font-weight:600;")
-        lay.addWidget(self.lbl_char_eta_status)
-
-        row_eta = QHBoxLayout()
-        self.btn_char_eta_start  = _btn("START η", bg=OK, fg="white", hover="#266a2a")
-        self.btn_char_eta_cancel = _btn("CANCEL", bg=CRIT, fg="white", hover="#9b2020")
-        self.btn_char_eta_cancel.setEnabled(False)
-        self.btn_char_eta_start.clicked.connect(self._on_char_eta_start)
-        self.btn_char_eta_cancel.clicked.connect(self._on_char_eta_cancel)
-        row_eta.addWidget(self.btn_char_eta_start)
-        row_eta.addWidget(self.btn_char_eta_cancel)
-        lay.addLayout(row_eta)
-
-        # ── Card 3 · OCV–SoC GITT ────────────────────────────────────────
-        lay.addWidget(_hline())
-        lay.addWidget(self._subheader("③ OCV–SoC Table  (GITT, ~22h)"))
-
-        self.lbl_char_gitt = QLabel(
-            "Discharge 5% SoC × 20 → rest จน ΔV/Δt < 2 mV/60s → V_rest = OCV\n"
-            "ใช้เวลา: ~22 ชั่วโมง (discharge 36 min + rest ≥30 min × 20 จุด)")
-        self.lbl_char_gitt.setWordWrap(True)
-        self.lbl_char_gitt.setStyleSheet(f"color:{MUTED}; font-size:10px;")
-        lay.addWidget(self.lbl_char_gitt)
-
-        self.lbl_char_gitt_status = QLabel("● ยังไม่ได้ทดสอบ")
-        self.lbl_char_gitt_status.setStyleSheet(f"color:{MUTED}; font-size:11px; font-weight:600;")
-        lay.addWidget(self.lbl_char_gitt_status)
-
-        self.pgb_char_gitt = QProgressBar()
-        self.pgb_char_gitt.setRange(0, 20)
-        self.pgb_char_gitt.setValue(0)
-        self.pgb_char_gitt.setFormat("0 / 20 จุด")
-        self.pgb_char_gitt.setTextVisible(True)
-        lay.addWidget(self.pgb_char_gitt)
-
-        row_gitt = QHBoxLayout()
-        self.btn_char_gitt_start  = _btn("START GITT", bg=OK, fg="white", hover="#266a2a")
-        self.btn_char_gitt_cancel = _btn("CANCEL", bg=CRIT, fg="white", hover="#9b2020")
-        self.btn_char_gitt_cancel.setEnabled(False)
-        self.btn_char_gitt_start.clicked.connect(self._on_char_gitt_start)
-        self.btn_char_gitt_cancel.clicked.connect(self._on_char_gitt_cancel)
-        row_gitt.addWidget(self.btn_char_gitt_start)
-        row_gitt.addWidget(self.btn_char_gitt_cancel)
-        lay.addLayout(row_gitt)
-
-        # ── Profile Parameters panel ──────────────────────────────────────
-        lay.addWidget(_hline())
-        lay.addWidget(self._subheader("PROFILE PARAMETERS (current + measured)"))
-
-        self.txt_char_params = QTextEdit()
-        self.txt_char_params.setReadOnly(True)
-        self.txt_char_params.setFont(QFont("Segoe UI", 10))
-        self.txt_char_params.setFixedHeight(130)
-        lay.addWidget(self.txt_char_params)
-
-        self.btn_char_save = _btn("SAVE TO PROFILE", bg=INFO, fg="white", hover="#0d4a89")
-        self.btn_char_save.setEnabled(False)
-        self.btn_char_save.setToolTip(
-            "เขียนค่าที่วัดได้ลง battery_profiles.json ของ profile ที่เลือกอยู่")
-        self.btn_char_save.clicked.connect(self._on_char_save)
-        lay.addWidget(self.btn_char_save)
-
-        lay.addStretch(1)
-        return w
-
-    def _build_results_html(self, results: dict) -> str:
-        """Rich HTML table for the analytics results pane."""
-        grade = results["grade"]
-        gc = {"A": OK, "B": INFO, "C": WARN, "REJECT": CRIT, "REVIEW": NEUTRAL}.get(grade, NEUTRAL)
-        soh = results["soh"]
-        soh_txt = "N/A" if soh != soh else f"{soh:.1f}"
-        conf = results.get("confidence", 1.0)
-        dcir = results.get("dcir_mohm", results.get("ri_mohm", 0.0))
-        dstd = results.get("dcir_std_mohm", 0.0)
-        nstep = results.get("dcir_n_steps", 0)
-        ocv = results.get("ocv_v", 0.0)
-        cap_ah = results["capacity_ah"]
-        cap_norm = results.get("capacity_norm_ah")
-        warns = results.get("quality_warnings", [])
-
-        def hdr(text):
-            return (
-                f'<tr><td colspan="2" style="background:{PANEL2};padding:5px 8px;'
-                f'font-weight:bold;color:{TEXT};font-size:11px;'
-                f'border-top:2px solid {BORDER};border-bottom:1px solid {BORDER}">'
-                f'{text}</td></tr>'
-            )
-
-        def row(label, value, unit="", sub=""):
-            sub_html = (
-                f'<br><span style="font-size:9px;color:{MUTED}">{sub}</span>'
-            ) if sub else ""
-            return (
-                f'<tr>'
-                f'<td style="padding:4px 8px 4px 14px;color:{MUTED};font-size:11px;vertical-align:top">'
-                f'{label}</td>'
-                f'<td style="padding:4px 8px;color:{INFO};font-family:Consolas,monospace;'
-                f'font-size:12px;font-weight:bold;vertical-align:top">'
-                f'{value}'
-                f'<span style="color:{MUTED};font-size:10px;font-weight:normal"> {unit}</span>'
-                f'{sub_html}</td>'
-                f'</tr>'
-            )
-
-        parts = [
-            '<table width="100%" cellspacing="0" cellpadding="0" '
-            'style="border-collapse:collapse;font-family:Segoe UI,Arial,sans-serif;">'
-        ]
-
-        # ── Summary ──
-        parts.append(hdr("Summary"))
-        parts.append(row(
-            "Grade",
-            f'<span style="color:{gc};font-size:14px">{grade}</span>',
-            f'conf {conf * 100:.0f}%'
-        ))
-        parts.append(row("State of Health", soh_txt, "%"))
-        cap_sub = ""
-        if cap_norm and abs(cap_norm - cap_ah) > 1e-4:
-            k = results.get("peukert_k", 1.1)
-            i_avg = results.get("mean_discharge_a", 0)
-            cap_sub = f"rate-norm. {cap_norm:.3f} Ah @ k={k:.2f}, Ī={i_avg:.1f} A"
-        parts.append(row("Capacity", f"{cap_ah:.3f}", "Ah", cap_sub))
-        parts.append(row("Rested OCV", f"{ocv:.3f}", "V"))
-
-        # ── DCIR ──
-        parts.append(hdr("Resistance &amp; Cranking  (DCIR @ ~250 ms, norm. 25 °C)"))
-        meas_hint = "" if results.get("dcir_measured", True) else "no current step → profile baseline"
-        step_sub = f"n={nstep} step{'s' if nstep != 1 else ''}" + (
-            f"  {meas_hint}" if meas_hint else ""
-        )
-        parts.append(row("DCIR", f"{dcir:.2f} ± {dstd:.2f}", "mΩ", step_sub))
-        parts.append(row("Voltage sag (load)", f"{results.get('voltage_sag_v', 0.0):.3f}", "V"))
-        parts.append(row("CCA proxy", f"{results.get('cca_est_a', 0.0):.0f}", "A",
-                         "(OCV − cutoff) / DCIR"))
-        slope = results.get("dcir_slope_mohm")
-        if slope is not None and slope == slope and results.get("dcir_slope_r2", 0) >= 0.9:
-            parts.append(row("DCIR (V–I slope)", f"{slope:.2f}", "mΩ",
-                             f"R² {results['dcir_slope_r2']:.3f}, OCV-cancelled"))
-
-        # ── ECM (HPPC only) ──
-        if results.get("ecm_identified"):
-            r2 = results.get("ecm_r2", 0.0)
-            parts.append(hdr(f"1-RC Thévenin ECM  (HPPC, R² {r2:.3f})"))
-            parts.append(row("R₀  (ohmic, t=0 extrap.)", f"{results['r0_mohm']:.2f}", "mΩ"))
-            parts.append(row("R₁  (polarisation)", f"{results['r1_mohm']:.2f}", "mΩ"))
-            parts.append(row("C₁", f"{results['c1_farad']:.0f}", "F"))
-            parts.append(row("τ  (R₁·C₁)", f"{results['tau_s']:.1f}", "s"))
-            parts.append(row("Total (R₀+R₁)", f"{results['ri_mohm']:.2f}", "mΩ"))
-
-        # ── Quality flags ──
-        if warns:
-            parts.append(hdr("⚠ Data Quality Flags"))
-            for w in warns:
-                parts.append(
-                    f'<tr><td colspan="2" style="padding:3px 14px;color:{CRIT};font-size:11px">'
-                    f'• {w}</td></tr>'
-                )
-
-        parts.append('</table>')
-        return "".join(parts)
-
     # ── SCADA: flash tick ─────────────────────────────────────────────
     def _alarm_flash_tick(self):
         """Toggle bright/dim colours on every unACKed alarm row at 500 ms."""
@@ -1038,7 +693,15 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self.buf_rin.append(rin_mohm)
         self.buf_temp.append(temp)
         self._sample_index += 1
-        self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
+        # Redraw the graph at most ~5 Hz. The monitor loop feeds this at up to 10 Hz
+        # during CHARGE — repainting pyqtgraph curves (and converting the deques to
+        # lists) on every single sample is wasted work no one can see, and its cost
+        # grows with buffer length, so throttling here is what actually keeps the UI
+        # responsive over a multi-hour test rather than progressively laggier.
+        _now_redraw = time.perf_counter()
+        if _now_redraw - self._last_trend_redraw >= 0.2:
+            self._last_trend_redraw = _now_redraw
+            self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
 
         self._update_temp_gauge(temp)
         i_dir = "CHG" if i < -self._I_IDLE else "DSG" if i > self._I_IDLE else "REST"
@@ -1129,8 +792,12 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         _set_led(self.led_psu,  connected, conn_err, "PSU connected",   conn_err,  "PSU: not connected")
         _set_led(self.led_load, connected, conn_err, "Load connected",  conn_err,  "Load: not connected")
         _set_led(self.led_esp,  esp_ok,    esp_err,  "ESP32 connected", esp_err,   "ESP32: not connected")
-        # SSR relay LED — fully automatic (follows charge state), status-only.
+        # SSR relay LED — normally automatic (follows charge state); manual
+        # ON/OFF buttons only enabled while ESP32 is actually connected.
         # Green=ON (charging), red=OFF (not charging / cut), gray=unknown.
+        if hasattr(self, "btn_ssr_on"):
+            self.btn_ssr_on.setEnabled(esp_ok)
+            self.btn_ssr_off.setEnabled(esp_ok)
         if hasattr(self, "led_ssr"):
             ssr_state = getattr(self.hw, "ssr_state", None)
             if not esp_ok or ssr_state is None:
@@ -1642,6 +1309,46 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             if not self._headless:
                 QMessageBox.critical(self, "Disconnect Error", str(exc))
 
+    def _on_ssr_manual_on(self):
+        """Manual SSR override for diagnostics/recovery — normally the relay is
+        driven automatically by set_psu()/charge state. This only closes the
+        physical relay; it does NOT start a test or turn the PSU output on by
+        itself, but if the PSU output was already left ON, current will start
+        flowing the instant this closes — hence the confirmation."""
+        if not getattr(self.hw, "is_esp_connected", False):
+            return
+        if not self._headless:
+            reply = QMessageBox.warning(
+                self, "Manual SSR ON",
+                "สั่งปิดวงจร SSR ตรงๆ (ไม่ผ่านการควบคุมอัตโนมัติ)\n\n"
+                "ใช้สำหรับ diagnostic/recovery เท่านั้น — ถ้า PSU output ยังเปิดค้างอยู่ "
+                "กระแสจะไหลทันทีที่กดยืนยัน\n\nยืนยันจะสั่ง SSR ON ตรงๆ หรือไม่?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            self.hw.set_ssr(True)
+            self._log_alarm("SSR manual ON (operator override)")
+        except Exception as exc:
+            if not self._headless:
+                QMessageBox.critical(self, "SSR Error", str(exc))
+        self._update_connection_status()
+
+    def _on_ssr_manual_off(self):
+        """Manual SSR cutoff — always safe (cuts power), no confirmation needed,
+        same immediacy as E-STOP."""
+        if not getattr(self.hw, "is_esp_connected", False):
+            return
+        try:
+            self.hw.set_ssr(False)
+            self._log_alarm("SSR manual OFF (operator override)")
+        except Exception as exc:
+            if not self._headless:
+                QMessageBox.critical(self, "SSR Error", str(exc))
+        self._update_connection_status()
+
     # ── Cloud push helpers ────────────────────────────────────────────────
     _cloud_svc = None
 
@@ -1899,7 +1606,12 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self._temp_gauge.update_temp(
             row["temp"], self.config.system.safety_limits.get("max_temperature", 55) - 10,
             self.config.system.safety_limits.get("max_temperature", 55))
-        self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
+        # Throttled the same way as _slot_display — see its comment.
+        import time as _time
+        _now_redraw = _time.perf_counter()
+        if _now_redraw - self._last_trend_redraw >= 0.2:
+            self._last_trend_redraw = _now_redraw
+            self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
 
     def _on_hppc_telemetry(self, row: dict):
         """Update the HPPC phase indicator (REST / PULSE / cycle count) from elapsed time."""
@@ -1927,6 +1639,11 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             pass
 
     def _on_test_finished(self, results: dict):
+        # Final unthrottled redraw — _slot_display's redraw is rate-limited to ~5 Hz
+        # (see its own comment), so the very last sample or two collected right before
+        # the test ended could still be sitting un-painted when this fires.
+        if self.buf_t:
+            self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
         # SoH is N/A when not measurable (e.g. HPPC pulse test — see analyze_series).
         # Written to the separate "Analysis Results" row (metric_labels_final), never
         # the live telemetry row — a final result can't be mistaken for a live reading.

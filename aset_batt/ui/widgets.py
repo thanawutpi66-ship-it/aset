@@ -82,31 +82,6 @@ class QtRootShim(QObject):
         QApplication.quit()
 
 
-class DigitalReadout(QFrame):
-    def __init__(self, label: str, unit: str):
-        super().__init__()
-        self.unit = unit
-        self.setStyleSheet(
-            f"QFrame {{ background:{PANEL2}; border:1px solid {BORDER}; border-radius:4px; }}"
-        )
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 6, 10, 8)
-        lay.setSpacing(1)
-        cap = QLabel(label.upper())
-        cap.setStyleSheet(
-            f"color:{MUTED}; font-size:10px; font-weight:700; letter-spacing:1px; border:0;"
-        )
-        self.value = QLabel(f"-- {unit}")
-        self.value.setFont(QFont("Consolas", 20, QFont.Weight.Bold))
-        self.value.setStyleSheet(f"color:{TEXT}; border:0;")
-        lay.addWidget(cap)
-        lay.addWidget(self.value)
-
-    def set_value(self, value: float, fmt: str = "{:.3f}", alarm: bool = False):
-        self.value.setText(f"{fmt.format(value)} {self.unit}")
-        self.value.setStyleSheet(f"color:{CRIT if alarm else TEXT}; border:0;")
-
-
 class TemperatureGauge(QFrame):
     def __init__(self):
         super().__init__()

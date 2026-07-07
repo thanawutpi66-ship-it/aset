@@ -1,4 +1,4 @@
-"""Background acquisition worker (QThread) + PDF report task (QThreadPool).
+"""Background acquisition worker (QThread).
 
 The worker owns ALL instrument I/O and high-rate CSV logging so the UI never
 blocks. Two mutexes: ``_io`` serializes instrument access; ``_ctrl`` guards the
@@ -20,7 +20,7 @@ from datetime import datetime
 
 import numpy as np
 
-from PySide6.QtCore import QObject, Signal, QThread, QMutex, QMutexLocker, QRunnable
+from PySide6.QtCore import QObject, Signal, QThread, QMutex, QMutexLocker
 
 from aset_batt.acquisition.models import BatteryProfile, TestConfig, OperationMode
 
@@ -229,62 +229,3 @@ class AcquisitionWorker(QObject):
         cur_pos = np.asarray(i_hist, float)   # already discharge-positive
         return analyze_series_mp(time_hist, cur_pos, v_hist, t_hist, q_hist, p,
                                  is_hppc=(self.cfg.mode == OperationMode.HPPC), soh=None)
-
-
-class ReportTask(QRunnable):
-    """Render the PDF report off the UI thread."""
-
-    def __init__(self, path, profile, results, csv_path, done_cb):
-        super().__init__()
-        self.path, self.profile, self.results = path, profile, results
-        self.csv_path, self.done_cb = csv_path, done_cb
-
-    def run(self):
-        try:
-            self._build()
-            self.done_cb(True, self.path)
-        except Exception as e:
-            logger.exception("report failed")
-            self.done_cb(False, str(e))
-
-    def _build(self):
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import mm
-        from reportlab.lib import colors
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-        from reportlab.lib.styles import getSampleStyleSheet
-        styles = getSampleStyleSheet()
-        doc = SimpleDocTemplate(self.path, pagesize=A4, topMargin=18 * mm)
-        r, p = self.results, self.profile
-        story = [
-            Paragraph("Battery Test &amp; Sorting Report", styles["Title"]),
-            Paragraph(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), styles["Normal"]),
-            Spacer(1, 8 * mm),
-        ]
-        soh_txt = "N/A" if r["soh"] != r["soh"] else f"{r['soh']:.1f} %"   # NaN → N/A
-        dcir = r.get("dcir_mohm", r.get("ri_mohm", 0.0))
-        dstd = r.get("dcir_std_mohm", 0.0)
-        nstep = r.get("dcir_n_steps", 0)
-        rows = [["Profile", p.name], ["Chemistry", p.chemistry],
-                ["Final capacity", f"{r['capacity_ah']:.3f} Ah"],
-                ["State of Health", soh_txt],
-                ["DCIR (@~250 ms, 25 °C)", f"{dcir:.2f} ± {dstd:.2f} mΩ  (n={nstep})"],
-                ["Voltage sag / CCA proxy",
-                 f"{r.get('voltage_sag_v', 0.0):.3f} V  /  {r.get('cca_est_a', 0.0):.0f} A"]]
-        if r.get("ecm_identified"):
-            rows.append(["1-RC ECM (R² %.3f)" % r.get("ecm_r2", 0.0),
-                         f"R0 {r['r0_mohm']:.2f} · R1 {r['r1_mohm']:.2f} mΩ · "
-                         f"C1 {r['c1_farad']:.0f} F · τ {r['tau_s']:.1f} s"])
-        rows.append(["Sorting grade",
-                     f"{r['grade']}  (confidence {r.get('confidence', 1.0) * 100:.0f} %)"])
-        tbl = Table(rows, colWidths=[60 * mm, 100 * mm])
-        tbl.setStyle(TableStyle([
-            ("FONTSIZE", (0, 0), (-1, -1), 10),
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("LINEBELOW", (0, 0), (-1, -1), 0.3, colors.lightgrey),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
-        story += [tbl, Spacer(1, 6 * mm)]
-        for msg in r.get("quality_warnings", []):
-            story.append(Paragraph(f"⚠ {msg}", styles["Normal"]))
-        story.append(Paragraph(f"Raw telemetry: {os.path.basename(self.csv_path)}", styles["Normal"]))
-        doc.build(story)
