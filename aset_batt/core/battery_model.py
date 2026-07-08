@@ -301,6 +301,28 @@ class BatteryModel:
         self.aging_factor = soh / 100.0
         return max(0.0, min(100.0, soh))
 
+    def set_aging_from_soh(self, soh: Optional[float]) -> None:
+        """Wire a capacity-based SoH (aset_batt.core.state_estimator's live ``soh`` —
+        itself sourced from acquisition.analysis's full-discharge measurement, or a
+        prior test in the same session/state) into the aging factor that
+        ``_calculate_base_rin`` blends into the Rin baseline — so a pack's OWN
+        measured health, not just its chemistry, shapes what "healthy" DCIR/R0 mean
+        for grading (Phase D3: was previously always exactly 1.0 in production, since
+        nothing called this or ``update_aging_factor``/``get_soh_from_capacity``).
+
+        ``soh=None`` (or NaN — e.g. a quick HPPC-only test with no full discharge
+        yet in this session) resets aging_factor to 1.0: a safe "assume new/unknown"
+        default rather than carrying over a stale value that could belong to a
+        previously-tested, different physical battery.
+        """
+        if soh is None or soh != soh:   # None or NaN
+            self.aging_factor = 1.0
+            return
+        # Same floor as update_aging_factor(): never assume more than 50% extra
+        # resistance from aging alone. Capped at 1.0 — a SoH reading above 100% (measurement
+        # noise/calibration) should not further REDUCE the baseline below chemistry-generic.
+        self.aging_factor = max(0.5, min(1.0, float(soh) / 100.0))
+
     def calculate_iec61960_capacity(self, voltage_data: List[float], current_data: List[float],
                                    time_data: List[float], discharge_rate: float) -> Dict[str, float]:
         """
@@ -324,10 +346,16 @@ class BatteryModel:
             energy_wh += avg_current * segment_voltage * dt_hours
             avg_voltage += segment_voltage
 
-        avg_voltage /= len(voltage_data)
+        # Empty arrays reach here on an abort before the first sample (e.g. the
+        # operator stops a profile test immediately) — guard both divisions the
+        # same way actual_time_hours already does below, instead of letting a
+        # ZeroDivisionError crash the abort-results step.
+        avg_voltage = avg_voltage / len(voltage_data) if voltage_data else 0.0
 
         # IEC 61960 compliance check
-        expected_time_hours = self.iec_data['rated_capacity_ah'] / discharge_rate
+        expected_time_hours = (
+            self.iec_data['rated_capacity_ah'] / discharge_rate if discharge_rate else 0.0
+        )
         actual_time_hours = time_data[-1] / 3600.0 if time_data else 0
 
         return {

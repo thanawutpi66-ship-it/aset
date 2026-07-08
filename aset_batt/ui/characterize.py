@@ -36,8 +36,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -48,7 +46,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QDoubleSpinBox,
     QProgressBar,
     QSpinBox,
     QSizePolicy,
@@ -71,7 +68,7 @@ from aset_batt.ui.theme import (
     BG, PANEL, PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
 )
 from aset_batt.ui.widgets import (
-    _btn, _hline, QtRootShim, DigitalReadout, TemperatureGauge,
+    _btn, _hline, QtRootShim, TemperatureGauge,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
     _PdfNotifier, _PdfTask,
 )
@@ -186,6 +183,32 @@ class CharacterizeMixin:
         row_gitt.addWidget(self.btn_char_gitt_start)
         row_gitt.addWidget(self.btn_char_gitt_cancel)
         lay.addLayout(row_gitt)
+
+        # ── Card 4 · CCA proxy ──────────────────────────────────────────
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("④ CCA Proxy  — cranking-current sag check"))
+
+        self.lbl_char_cca = QLabel(
+            "ชาร์จเต็ม → พัก 5 นาที → pulse ที่กระแส CCA ของ product 30 วิ → เช็ค V ไม่ตก\n"
+            "ต่ำกว่า 1.2V/cell — ⚠ ไม่ใช่ CCA มาตรฐาน (ไม่มีคุม 0°C, กระแสอาจถูก clamp ตาม "
+            "max_current ของ rig) ใช้เป็นตัวเทียบสุขภาพแบตเทียบกับตัวเองเท่านั้น")
+        self.lbl_char_cca.setWordWrap(True)
+        self.lbl_char_cca.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        lay.addWidget(self.lbl_char_cca)
+
+        self.lbl_char_cca_status = QLabel("● ยังไม่ได้ทดสอบ")
+        self.lbl_char_cca_status.setStyleSheet(f"color:{MUTED}; font-size:11px; font-weight:600;")
+        lay.addWidget(self.lbl_char_cca_status)
+
+        row_cca = QHBoxLayout()
+        self.btn_char_cca_start  = _btn("START CCA", bg=OK, fg="white", hover="#266a2a")
+        self.btn_char_cca_cancel = _btn("CANCEL", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_char_cca_cancel.setEnabled(False)
+        self.btn_char_cca_start.clicked.connect(self._on_char_cca_start)
+        self.btn_char_cca_cancel.clicked.connect(self._on_char_cca_cancel)
+        row_cca.addWidget(self.btn_char_cca_start)
+        row_cca.addWidget(self.btn_char_cca_cancel)
+        lay.addLayout(row_cca)
 
         # ── Profile Parameters panel ──────────────────────────────────────
         lay.addWidget(_hline())
@@ -316,10 +339,16 @@ class CharacterizeMixin:
         ev = self._char_running["pk"]
 
         def status(msg):
+            # sig_char_update alone drives this test's own status label (see
+            # _slot_char_update) — status() fires every ~5s for hours, so it must
+            # NOT also go to sig_alarm (unlike sequences.py's lighter sig_wf_status),
+            # or the alarm table grows by thousands of rows over one test and gets
+            # progressively slower to touch. Milestones get their own explicit
+            # sig_alarm.emit() calls below instead.
             self.sig_char_update.emit("pk", msg)
-            self.sig_alarm.emit(f"[CHAR/Peukert] {msg}")
 
         try:
+            self.controller._ensure_logging(label="Peukert")
             rated    = self.controller.config.battery.rated_capacity
             pack_min = self.controller.config.battery.pack_min_voltage
             c_rates  = [0.1, 0.2, 0.5, 1.0]
@@ -333,6 +362,7 @@ class CharacterizeMixin:
 
                 i_test = round(c * rated, 3)
                 status(f"({idx+1}/4) ชาร์จก่อน discharge {c:g}C ({i_test:.3f} A)...")
+                self.sig_alarm.emit(f"[CHAR/Peukert] ({idx+1}/4) เริ่มชาร์จก่อน discharge {c:g}C")
 
                 # ── charge to full ─────────────────────────────────────────
                 self.controller.start_charge(strategy=None)
@@ -344,6 +374,13 @@ class CharacterizeMixin:
 
                 if not ev.is_set():
                     return
+                # start_charge() restarts the shared monitor loop (it was stopped
+                # once by _char_guard() before this whole test began) — stop it
+                # again now, or it keeps calling estimator.update() concurrently
+                # with this test's own discharge loop below and double-counts
+                # every sample (same guard as sequences.py's _auto_sequence_thread).
+                if self.controller.monitor_running:
+                    self.controller.stop_monitor()
 
                 # ── rest 5 min ─────────────────────────────────────────────
                 status(f"({idx+1}/4) พักหลังชาร์จ 5 นาที...")
@@ -352,6 +389,7 @@ class CharacterizeMixin:
 
                 # ── discharge at i_test until UVP ──────────────────────────
                 status(f"({idx+1}/4) discharge {i_test:.3f} A ({c:g}C)...")
+                self.sig_alarm.emit(f"[CHAR/Peukert] ({idx+1}/4) เริ่ม discharge {i_test:.3f} A ({c:g}C)")
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
                 t0 = time.perf_counter()
                 self.hw.set_load(True, i_test)
@@ -366,6 +404,11 @@ class CharacterizeMixin:
                         dt   = now - last_log
                         last_log = now
                         self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
+                        # monitor loop is stopped for this test (see above) — feed
+                        # the live graph + CSV/cloud directly, same as sequences.py.
+                        self.controller._log_sample(v, i_meas)
+                        self.update_display(v, i_meas, self.controller.estimator.soc,
+                                            self.controller.estimator.rin, temp)
                         elapsed = int(now - t0)
                         status(f"({idx+1}/4) {c:g}C — {v:.3f} V  {i_meas:.3f} A  "
                                f"elapsed {elapsed//60}m{elapsed%60:02d}s")
@@ -385,6 +428,7 @@ class CharacterizeMixin:
                 currents.append(i_test)
                 durations.append(elapsed_s)
                 status(f"({idx+1}/4) {c:g}C → {elapsed_s:.0f} s ✓")
+                self.sig_alarm.emit(f"[CHAR/Peukert] ({idx+1}/4) {c:g}C discharge เสร็จ → {elapsed_s:.0f}s")
 
                 # brief rest between rates
                 if idx < len(c_rates) - 1:
@@ -401,8 +445,10 @@ class CharacterizeMixin:
                     "data": list(zip(currents, durations)),
                 }
                 status(f"✓ k = {k:.3f}  R² = {r2:.4f}")
+                self.sig_alarm.emit(f"[CHAR/Peukert] เสร็จสิ้น: k={k:.3f}  R²={r2:.4f}")
             else:
                 status("⚠ ได้ข้อมูลไม่พอ fit — ต้องการ ≥ 2 discharge runs")
+                self.sig_alarm.emit("[CHAR/Peukert] ⚠ ข้อมูลไม่พอ fit")
 
         except Exception as exc:
             self.sig_char_update.emit("pk", f"✗ Error: {exc}")
@@ -438,8 +484,10 @@ class CharacterizeMixin:
         ev = self._char_running["eta"]
 
         def status(msg):
+            # see the same comment in _char_peukert_thread — no sig_alarm here,
+            # this fires every ~5s for hours (both the charge- and discharge-
+            # tracking loops). Milestones get their own explicit emit() below.
             self.sig_char_update.emit("eta", msg)
-            self.sig_alarm.emit(f"[CHAR/η] {msg}")
 
         # SoC band boundaries (%) — must match _coulomb_eta in state_estimator
         BULK_MAX = 75.0
@@ -453,13 +501,22 @@ class CharacterizeMixin:
             return "full"
 
         try:
+            self.controller._ensure_logging(label="CoulombEta")
             rated    = self.controller.config.battery.rated_capacity
             pack_min = self.controller.config.battery.pack_min_voltage
 
             # ── Phase 1: Charge to full; track Ah_in per SoC band ─────────
             status("Phase 1/2: ชาร์จ (นับ Ah_in ต่อ band)...")
+            self.sig_alarm.emit("[CHAR/η] เริ่ม Phase 1/2: ชาร์จ")
             ah_in  = {"bulk": 0.0, "absorb": 0.0, "full": 0.0}
             self.controller.start_charge(strategy=None)
+            # This loop tracks Ah_in per SoC band itself (needs its own fine-grained
+            # estimator.update() calls), which would double-count against the shared
+            # monitor loop that start_charge() just restarted — stop it immediately
+            # (same guard as _char_peukert_thread, just earlier since this loop reads
+            # hardware through the CHARGE phase too, not only after).
+            if self.controller.monitor_running:
+                self.controller.stop_monitor()
             # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
             last = time.perf_counter()
 
@@ -478,6 +535,8 @@ class CharacterizeMixin:
                     # i_ch is negative during charging; accumulate absolute Ah
                     dah = abs(i_ch) * dt / 3600.0
                     ah_in[_band(soc_now)] += dah
+                    self.controller._log_sample(v, i_ch)
+                    self.update_display(v, i_ch, soc_now, state["rin"], temp, state.get("soh"))
                     status(f"Charge: {v:.3f} V  SoC {soc_now:.0f}%  "
                            f"Ah_in={sum(ah_in.values()):.3f}")
                 except Exception as exc:
@@ -491,6 +550,7 @@ class CharacterizeMixin:
 
             # ── rest 30 min ───────────────────────────────────────────────
             status("Phase 1/2 done. พักหลังชาร์จ 30 นาที...")
+            self.sig_alarm.emit(f"[CHAR/η] Phase 1/2 เสร็จ — Ah_in={sum(ah_in.values()):.3f}")
             if not self._char_sleep(ev, 1800):
                 return
 
@@ -500,6 +560,7 @@ class CharacterizeMixin:
             # ── Phase 2: Discharge at 0.1C; track Ah_out per SoC band ─────
             i_dis = round(0.1 * rated, 3)
             status(f"Phase 2/2: discharge {i_dis:.3f} A (0.1C, นับ Ah_out)...")
+            self.sig_alarm.emit(f"[CHAR/η] เริ่ม Phase 2/2: discharge {i_dis:.3f} A")
             ah_out = {"bulk": 0.0, "absorb": 0.0, "full": 0.0}
             self.hw.set_load(True, i_dis)
             # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
@@ -517,6 +578,8 @@ class CharacterizeMixin:
                     soc_now = state["soc"]
                     dah = abs(i_meas) * dt / 3600.0
                     ah_out[_band(soc_now)] += dah
+                    self.controller._log_sample(v, i_meas)
+                    self.update_display(v, i_meas, soc_now, state["rin"], temp, state.get("soh"))
                     status(f"Discharge: {v:.3f} V  SoC {soc_now:.0f}%  "
                            f"Ah_out={sum(ah_out.values()):.3f}")
                     if v <= pack_min:
@@ -547,6 +610,7 @@ class CharacterizeMixin:
             a = eta.get("absorb") or 0
             f = eta.get("full")   or 0
             status(f"✓ η bulk={b:.3f}  absorb={a:.3f}  full={f:.3f}")
+            self.sig_alarm.emit(f"[CHAR/η] เสร็จสิ้น: bulk={b:.3f} absorb={a:.3f} full={f:.3f}")
 
         except Exception as exc:
             self.sig_char_update.emit("eta", f"✗ Error: {exc}")
@@ -583,10 +647,12 @@ class CharacterizeMixin:
         ev = self._char_running["gitt"]
 
         def status(msg):
+            # see the same comment in _char_peukert_thread — the rest-phase loop
+            # alone can tick every 15s for up to 60 min, across 20 steps.
             self.sig_char_update.emit("gitt", msg)
-            self.sig_alarm.emit(f"[CHAR/GITT] {msg}")
 
         try:
+            self.controller._ensure_logging(label="GITT")
             rated    = self.controller.config.battery.rated_capacity
             pack_min = self.controller.config.battery.pack_min_voltage
             cells    = self.controller.config.battery.cells_series
@@ -605,6 +671,7 @@ class CharacterizeMixin:
             # OCV anchor before starting
             soc_start = self.controller.calibrate_from_ocv()
             status(f"GITT: OCV anchor SoC={soc_start:.0f}%  ·  {N_STEPS} จุดจะทดสอบ")
+            self.sig_alarm.emit(f"[CHAR/GITT] เริ่มทดสอบ — OCV anchor SoC={soc_start:.0f}%")
             if not ev.is_set():
                 return
 
@@ -613,6 +680,7 @@ class CharacterizeMixin:
                     return
 
                 status(f"Step {step+1}/{N_STEPS}: discharge {i_dis:.3f} A × {dis_dur//60} min...")
+                self.sig_alarm.emit(f"[CHAR/GITT] Step {step+1}/{N_STEPS}: เริ่ม discharge")
                 self.hw.set_load(True, i_dis)
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
                 # phase_start is tracked SEPARATELY from `last` (the per-sample dt
@@ -633,7 +701,12 @@ class CharacterizeMixin:
                         self._seq_check_temp_stale()
                         dt   = now - last
                         last = now
-                        self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
+                        state = self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
+                        # GITT never calls start_charge() so there's no monitor-loop
+                        # safety net feeding CSV/cloud or the live graph — do it directly,
+                        # same as the other CHARACTERIZE tests.
+                        self.controller._log_sample(v, i_meas)
+                        self.update_display(v, i_meas, state["soc"], state["rin"], temp, state.get("soh"))
                         if v <= pack_min:
                             status(f"Step {step+1}: UVP reached — หยุด")
                             break
@@ -648,6 +721,7 @@ class CharacterizeMixin:
 
                 # ── rest phase — wait for ΔV/Δt settle ───────────────────
                 status(f"Step {step+1}/{N_STEPS}: พักจน ΔV settle (สูงสุด {REST_MAX_S//60} min)...")
+                self.sig_alarm.emit(f"[CHAR/GITT] Step {step+1}/{N_STEPS}: discharge เสร็จ, เริ่มพัก settle")
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
                 t_rest0 = time.perf_counter()
                 v_window: list = []
@@ -658,6 +732,9 @@ class CharacterizeMixin:
                     try:
                         v_now, _, _ = self.hw.read_vi()
                         t_now = time.perf_counter()
+                        self.controller._log_sample(v_now, 0.0)
+                        self.update_display(v_now, 0.0, self.controller.estimator.soc,
+                                            self.controller.estimator.rin)
                         v_window.append(v_now)
                         t_window.append(t_now)
                         # keep only last DV_WIN_S seconds in window
@@ -709,8 +786,10 @@ class CharacterizeMixin:
                     "n_points": len(soc_points),
                 }
                 status(f"✓ OCV table สร้างแล้ว ({len(soc_points)} จุด วัดจริง)")
+                self.sig_alarm.emit(f"[CHAR/GITT] เสร็จสิ้น: OCV table {len(soc_points)} จุด")
             else:
                 status(f"⚠ ได้ข้อมูล {len(soc_points)} จุด — ต้องการ ≥ 3 จุด")
+                self.sig_alarm.emit(f"[CHAR/GITT] ⚠ ข้อมูลไม่พอ ({len(soc_points)} จุด)")
 
         except Exception as exc:
             self.sig_char_update.emit("gitt", f"✗ Error: {exc}")
@@ -718,6 +797,136 @@ class CharacterizeMixin:
         finally:
             ev.clear()
             self.sig_char_update.emit("gitt", "__DONE__")
+
+    # ── CCA proxy ────────────────────────────────────────────────────────────
+
+    def _on_char_cca_start(self):
+        if not self._char_guard():
+            return
+        if self._char_running.get("cca", _FalseEvent()).is_set():
+            return
+        prod = battery_profiles.get_product(self.cb_product.currentText())
+        cca_a = getattr(prod, "cca_a", 0.0) if prod else 0.0
+        if cca_a <= 0:
+            if not self._headless:
+                QMessageBox.warning(
+                    self, "CCA Proxy",
+                    "Product นี้ไม่มีค่า cca_a (0 = ไม่ใช่แบต starter หรือยังไม่ได้กรอกสเปก)")
+            return
+        ev = threading.Event()
+        ev.set()
+        self._char_running["cca"] = ev
+        self.btn_char_cca_start.setEnabled(False)
+        self.btn_char_cca_cancel.setEnabled(True)
+        self.sig_char_update.emit("cca", "● กำลังทดสอบ CCA proxy...")
+        import threading as _th
+        _th.Thread(target=self._char_cca_thread, daemon=True).start()
+
+    def _on_char_cca_cancel(self):
+        if "cca" in self._char_running:
+            self._char_running["cca"].clear()
+        self._char_hw_stop()
+
+    def _char_cca_thread(self):
+        """Background: charge full -> rest 5min -> single CCA-rated pulse (30s) ->
+        pass/fail against a 1.2V/cell floor (SAE-style, generalised from the
+        7.2V/6-cell 12V-battery convention). NOT a certified CCA test — no 0°C
+        temperature control, and current is clamped to this rig's configured
+        max_current (real CCA current, e.g. 95A, far exceeds what this rig's
+        wiring/breaker is rated for on small AGM packs) — see the on-screen note
+        and docs/rig_status_action_items.md. Comparative health-check only."""
+        import time
+        ev = self._char_running["cca"]
+
+        def status(msg):
+            # see the comment in _char_peukert_thread — no sig_alarm here, this
+            # can tick every few seconds; milestones get their own explicit emit().
+            self.sig_char_update.emit("cca", msg)
+
+        try:
+            self.controller._ensure_logging(label="CCA")
+            prod = battery_profiles.get_product(self.cb_product.currentText())
+            cca_a = getattr(prod, "cca_a", 0.0) if prod else 0.0
+            max_i = self.controller.config.battery.max_current
+            i_test = min(cca_a, max_i)
+            clamped = i_test < cca_a
+            cells = self.controller.config.battery.cells_series
+            v_floor = 1.2 * cells
+            pack_min = self.controller.config.battery.pack_min_voltage
+            note = " (clamped to rig max_current — NOT true CCA current)" if clamped else ""
+
+            status(f"CCA proxy: ชาร์จเต็มก่อน (rated CCA={cca_a:.0f}A, ทดสอบจริงที่ {i_test:.3f}A{note})...")
+            self.sig_alarm.emit(f"[CHAR/CCA] เริ่มทดสอบ — I={i_test:.3f}A{note}")
+            self.controller.start_charge(strategy=None)
+            while ev.is_set():
+                if not getattr(self.controller, "is_charging", False):
+                    break
+                if not self._char_sleep(ev, 30.0):
+                    return
+            if not ev.is_set():
+                return
+            # see the comment in _char_peukert_thread — start_charge() restarted
+            # the shared monitor loop; stop it again before this test's own pulse
+            # loop starts double-feeding the estimator.
+            if self.controller.monitor_running:
+                self.controller.stop_monitor()
+
+            status("CCA proxy: พักหลังชาร์จ 5 นาที...")
+            if not self._char_sleep(ev, 300):
+                return
+
+            status(f"CCA proxy: pulse {i_test:.3f}A x 30s{note}...")
+            t0 = time.perf_counter()
+            self.hw.set_load(True, i_test)
+            v_min = None
+            last = t0
+            while ev.is_set() and (time.perf_counter() - t0) < 30.0:
+                try:
+                    v, i_meas = self.hw.read_measurements(prefer_load_v=True)
+                    now = time.perf_counter()
+                    temp = self.hw.current_temp
+                    self._seq_check_temp_stale()
+                    dt = now - last
+                    last = now
+                    state = self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
+                    self.controller._log_sample(v, i_meas)
+                    self.update_display(v, i_meas, state["soc"], state["rin"], temp)
+                    v_min = v if v_min is None else min(v_min, v)
+                    elapsed = int(now - t0)
+                    status(f"CCA pulse {elapsed}s/30s  {v:.3f}V (min so far {v_min:.3f}V)")
+                    if v <= pack_min:
+                        status(f"UVP reached ({v:.3f}V <= {pack_min:.3f}V) — หยุด")
+                        break
+                except Exception as exc:
+                    self.sig_alarm.emit(f"[CHAR/CCA] read error: {exc}")
+                    break
+                if not self._char_sleep(ev, 0.2):
+                    break
+            self.hw.set_load(False)
+            if not ev.is_set():
+                return
+
+            passed = (v_min is not None) and (v_min >= v_floor)
+            self._char_results["cca"] = {
+                "cca_current_a": i_test, "cca_rated_a": cca_a, "cca_clamped": clamped,
+                "cca_v_min": v_min, "cca_v_floor": v_floor, "cca_pass": passed,
+            }
+            if v_min is None:
+                status("✗ CCA proxy: ไม่มีข้อมูลวัดได้")
+                self.sig_alarm.emit("[CHAR/CCA] ✗ ไม่มีข้อมูลวัดได้")
+            else:
+                verdict = "PASS" if passed else "FAIL"
+                mark = "✓" if passed else "✗"
+                status(f"{mark} CCA proxy {verdict}: V_min={v_min:.3f}V (floor {v_floor:.2f}V){note}")
+                self.sig_alarm.emit(f"[CHAR/CCA] เสร็จสิ้น: {verdict} V_min={v_min:.3f}V "
+                                    f"floor={v_floor:.2f}V{note}")
+
+        except Exception as exc:
+            self.sig_char_update.emit("cca", f"✗ Error: {exc}")
+            logger.exception("CCA thread error")
+        finally:
+            ev.clear()
+            self.sig_char_update.emit("cca", "__DONE__")
 
     # ── slot & helpers ─────────────────────────────────────────────────────────
 
@@ -734,6 +943,9 @@ class CharacterizeMixin:
             elif test_id == "gitt":
                 self.btn_char_gitt_start.setEnabled(True)
                 self.btn_char_gitt_cancel.setEnabled(False)
+            elif test_id == "cca":
+                self.btn_char_cca_start.setEnabled(True)
+                self.btn_char_cca_cancel.setEnabled(False)
             self._refresh_char_params()
             # enable save if at least one result exists
             if self._char_results:
@@ -754,6 +966,8 @@ class CharacterizeMixin:
             lbl = self.lbl_char_eta_status
         elif test_id == "gitt":
             lbl = self.lbl_char_gitt_status
+        elif test_id == "cca":
+            lbl = self.lbl_char_cca_status
 
         if lbl is not None:
             lbl.setText(msg)

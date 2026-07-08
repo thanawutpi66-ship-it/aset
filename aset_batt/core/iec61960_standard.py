@@ -172,7 +172,10 @@ class IEC61960Standard:
         return {
             "capacity_ah": capacity_ah,
             "energy_wh": energy_wh,
-            "average_voltage": sum(voltage_data) / len(voltage_data),
+            # Empty on an abort before the first sample — guard the same way
+            # discharge_time_hours already does below, instead of a
+            # ZeroDivisionError crashing the abort-results step.
+            "average_voltage": sum(voltage_data) / len(voltage_data) if voltage_data else 0.0,
             "discharge_time_hours": time_data[-1] / 3600.0 if time_data else 0
         }
 

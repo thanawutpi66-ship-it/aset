@@ -148,7 +148,7 @@ b{font-weight:700}
 
 /* ---- mode bar ------------------------------------------------------------ */
 .mode-bar{
-  display:flex;align-items:center;gap:10px;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
   padding:6px 16px;
   background:var(--panel2);
   border:1px solid var(--border);

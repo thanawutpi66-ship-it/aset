@@ -37,8 +37,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -49,7 +47,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QDoubleSpinBox,
     QProgressBar,
     QSpinBox,
     QSizePolicy,
@@ -72,7 +69,7 @@ from aset_batt.ui.theme import (
     BG, PANEL, PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
 )
 from aset_batt.ui.widgets import (
-    _btn, _hline, QtRootShim, DigitalReadout, TemperatureGauge,
+    _btn, _hline, QtRootShim, TemperatureGauge,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
     _PdfNotifier, _PdfTask,
 )
@@ -339,8 +336,11 @@ class SequencesMixin:
         and Arrhenius Rin compensation — corrupting it there would poison the whole
         estimate, which is worse than trusting a slightly-stale-but-sane last value.
         Not called from AutoController's own monitor loop (it has its own guard) —
-        only from the ISA-101 sequence threads, which had no staleness check at all."""
-        if self._seq_temp_stale_warned:
+        only from the ISA-101 sequence threads, which had no staleness check at all.
+        Also called from CHARACTERIZE's Peukert/eta/GITT threads (characterize.py),
+        which never run _seq_common_start() — so this can't assume that ran first;
+        getattr() with a default avoids an AttributeError crashing their first sample."""
+        if getattr(self, "_seq_temp_stale_warned", False):
             return
         if getattr(self.hw, "temp_is_stale", None) and self.hw.temp_is_stale():
             self._seq_temp_stale_warned = True
@@ -793,6 +793,12 @@ class SequencesMixin:
             self.sig_workflow.emit(0, "active")
             self.hw.psu_off()
             self.hw.load_off()
+            # Log PREPARE's rest from the start — otherwise CSV recording only truly
+            # begins once start_charge() implicitly opens a session (via
+            # start_monitor()) at PHASE 1, so the CSV never contains a genuine rest
+            # window and _quality_flags always flags "no clear rest before load" even
+            # though a real rest DID happen, just off-CSV.
+            self.controller._ensure_logging(label="IEC")
             # Use ΔV/Δt criterion (Fick diffusion settling) instead of a fixed sleep.
             # calibrate_from_ocv_stable() enforces the chemistry-specific minimum rest
             # (Lead-Acid: 300 s min, ΔV < 10 mV over 60 s window) and then syncs
@@ -800,6 +806,9 @@ class SequencesMixin:
             def _ocv_progress(elapsed, v, dv_mv, st):
                 dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
                 status(f"PREPARE: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+                self.controller._log_sample(v, 0.0)
+                self.update_display(v, 0.0, self.controller.estimator.soc,
+                                    self.controller.estimator.rin)
 
             soc, v, result = self.controller.calibrate_from_ocv_stable(
                 on_progress=_ocv_progress,
@@ -852,6 +861,13 @@ class SequencesMixin:
                         break
                 if not self._seq_running.is_set():
                     return
+                # start_charge() restarts the shared monitor loop (see its own
+                # "if not monitor_running" guard) — stop it again now that charge
+                # is done, or it keeps calling estimator.update() concurrently
+                # with this sequence's own REST/DISCHARGE loops below and
+                # double-counts every sample (see _seq_common_start's comment).
+                if self.controller.monitor_running:
+                    self.controller.stop_monitor()
                 self.sig_phase_progress.emit(0, 0)
                 self.sig_workflow.emit(1, "done")
                 self.sig_alarm.emit("[AUTO] Charge complete")
@@ -913,6 +929,11 @@ class SequencesMixin:
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
                     self.controller._log_sample(v3, i3)
+                    # _log_sample feeds CSV/cloud only — the sequence intentionally
+                    # stopped the shared monitor loop in _seq_common_start() (to avoid
+                    # double-counting the estimator), so nothing else feeds the live
+                    # graph during this loop unless we do it here too.
+                    self.update_display(v3, i3, state3["soc"], state3["rin"], temp3, state3.get("soh"))
                     self._seq_kick_watchdog()
                     elapsed_d = int(now - _dis_t0)
                     status(f"TEST: {v3:.3f} V  {i3:.3f} A  SoC {state3['soc']:.0f}%")
@@ -975,6 +996,11 @@ class SequencesMixin:
             status("QUICK: ปิดอุปกรณ์, อ่าน OCV...")
             self.hw.psu_off()
             self.hw.load_off()
+            # See the comment in _auto_sequence_thread — log from PREPARE so the CSV
+            # actually contains a genuine rest window (otherwise the file only starts
+            # once start_charge()/start_monitor() implicitly opens one, and
+            # _quality_flags always flags "no clear rest before load").
+            self.controller._ensure_logging(label="QuickScan")
             if not self._seq_sleep(5.0):
                 return
 
@@ -995,6 +1021,13 @@ class SequencesMixin:
                 mins, secs = divmod(remaining, 60)
                 status(f"QUICK REST: เหลือ {mins}:{secs:02d}")
                 self.sig_phase_progress.emit(elapsed_r, _rest_total)
+                try:
+                    v_r, _, _ = self.hw.read_vi()
+                    self.controller._log_sample(v_r, 0.0)
+                    self.update_display(v_r, 0.0, self.controller.estimator.soc,
+                                        self.controller.estimator.rin)
+                except Exception:
+                    pass
                 if not self._seq_sleep(10.0):
                     break
             self.sig_phase_progress.emit(0, 0)
@@ -1029,6 +1062,10 @@ class SequencesMixin:
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
                     self.controller._log_sample(v3, i3)
+                    # see the same comment in _auto_sequence_thread — the shared monitor
+                    # loop is stopped for the duration of this sequence, so the live
+                    # graph needs its own feed here too, not just CSV/cloud.
+                    self.update_display(v3, i3, state3["soc"], state3["rin"], temp3, state3.get("soh"))
                     self._seq_kick_watchdog()
                     elapsed_d = int(now - _dis_t0)
                     status(f"QUICK: {v3:.3f} V  {i3:.3f} A  SoC {state3['soc']:.0f}%")
@@ -1104,10 +1141,16 @@ class SequencesMixin:
             # still polarized, which would just relock onto a different wrong SoC.
             self.hw.psu_off()
             self.hw.load_off()
+            # See the same comment in _auto_sequence_thread — log PREPARE's rest from
+            # the start so the CSV actually contains a genuine rest window.
+            self.controller._ensure_logging(label="HPPC")
 
             def _ocv_progress(elapsed, v, dv_mv, st):
                 dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
                 status(f"HPPC SEQ: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+                self.controller._log_sample(v, 0.0)
+                self.update_display(v, 0.0, self.controller.estimator.soc,
+                                    self.controller.estimator.rin)
 
             soc0_ocv, v0_ocv, ocv_result = self.controller.calibrate_from_ocv_stable(
                 on_progress=_ocv_progress,
@@ -1151,6 +1194,8 @@ class SequencesMixin:
                     pass
                 if not self._seq_sleep(30.0):
                     break
+            if self.controller.monitor_running:   # see the same comment in _auto_sequence_thread
+                self.controller.stop_monitor()
             self.sig_phase_progress.emit(0, 0)
             if not self._seq_running.is_set():
                 return
@@ -1215,9 +1260,15 @@ class SequencesMixin:
                     pass
                 t_phase = _t.time() + relax_s
                 while self._seq_running.is_set() and _t.time() < t_phase:
+                    _iter_t0 = _t.perf_counter()
                     try:
                         v_r, _, _ = self.hw.read_vi()
                         self.controller._log_sample(v_r, 0.0)
+                        # HPPC doesn't call estimator.update() per-sample (R0/R1/C1/τ are
+                        # fit from the whole pulse/relax record afterwards), so reuse its
+                        # last cached soc/rin here — same values _log_sample already used.
+                        self.update_display(v_r, 0.0, self.controller.estimator.soc,
+                                            self.controller.estimator.rin)
                         self._seq_kick_watchdog()
                         elapsed_h = int(_t.time() - _hppc_t0)
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
@@ -1238,7 +1289,17 @@ class SequencesMixin:
                     # _seq_sleep (not a bare sleep) so the 5-min "no measurement"
                     # watchdog actually gets checked — a hung hw.read_vi() call used
                     # to freeze this whole loop forever with no way out.
-                    if not self._seq_sleep(1.0):
+                    #
+                    # Paced to a ~5 Hz target (0.2 s period), same technique as
+                    # AutoController._monitor_loop: sleep only the time REMAINING
+                    # after the SCPI round-trip, not a flat 1 s on top of it — this
+                    # was 1 Hz before, well under the 5 Hz identify_ecm_fit()'s own
+                    # docstring assumes ("30s pulse at 5Hz gives ~150 points... R1/C1
+                    # are well-resolved at 5Hz") for a good R1/C1 fit. Real achieved
+                    # rate will land somewhat under 5 Hz once USB/SCPI latency (~40-
+                    # 200 ms) is accounted for — still a large improvement over 1 Hz.
+                    _elapsed_iter = _t.perf_counter() - _iter_t0
+                    if not self._seq_sleep(max(0.0, 0.2 - _elapsed_iter)):
                         break
                 if not self._seq_running.is_set():
                     break
@@ -1253,12 +1314,15 @@ class SequencesMixin:
                     pass
                 t_phase = _t.time() + pulse_s
                 while self._seq_running.is_set() and _t.time() < t_phase:
+                    _iter_t0 = _t.perf_counter()
                     try:
                         v_p, i_p = self.hw.read_measurements(prefer_load_v=True)
                         # discharge-positive convention (matches AUTO/QUICK SCAN) — do
                         # NOT negate i_p here, or the CSV's current sign is inverted and
                         # the 1-RC ECM fit never converges on this sequence's own data.
                         self.controller._log_sample(v_p, i_p)
+                        self.update_display(v_p, i_p, self.controller.estimator.soc,
+                                            self.controller.estimator.rin)
                         self._seq_kick_watchdog()
                         elapsed_h = int(_t.time() - _hppc_t0)
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
@@ -1276,7 +1340,12 @@ class SequencesMixin:
                             break
                     except Exception:
                         pass
-                    if not self._seq_sleep(1.0):
+                    # Same ~5 Hz pacing as the relax leg above — see its comment.
+                    # Extra important here: R0's t=0 extrapolation depends on having
+                    # enough points densely sampled right at the pulse edge, which
+                    # 1 Hz could barely resolve at all.
+                    _elapsed_iter = _t.perf_counter() - _iter_t0
+                    if not self._seq_sleep(max(0.0, 0.2 - _elapsed_iter)):
                         break
                 self.hw.load_off()
                 if not self._seq_running.is_set():
@@ -1376,10 +1445,16 @@ class SequencesMixin:
             self.sig_cycle_wf.emit(0, "active")
             self.hw.psu_off()
             self.hw.load_off()
+            # See the same comment in _auto_sequence_thread — log PREPARE's rest from
+            # the start so the CSV actually contains a genuine rest window.
+            self.controller._ensure_logging(label="CycleLife")
 
             def _ocv_progress(elapsed, v, dv_mv, st):
                 dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
                 status(f"CYCLE PREPARE: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+                self.controller._log_sample(v, 0.0)
+                self.update_display(v, 0.0, self.controller.estimator.soc,
+                                    self.controller.estimator.rin)
 
             soc0_ocv, v0_ocv, ocv_result = self.controller.calibrate_from_ocv_stable(
                 on_progress=_ocv_progress,
@@ -1425,6 +1500,8 @@ class SequencesMixin:
                         pass
                     if not self._seq_sleep(30.0):
                         break
+                if self.controller.monitor_running:   # see the same comment in _auto_sequence_thread
+                    self.controller.stop_monitor()
                 self.sig_phase_progress.emit(0, 0)
                 if not self._seq_running.is_set():
                     break
@@ -1469,6 +1546,10 @@ class SequencesMixin:
                         # the HPPC pulse leg; a negated sign here corrupts the CSV that
                         # a later "Analyze CSV" pass or ECM fit would read back).
                         self.controller._log_sample(v_d, i_d)
+                        # Cycle Life doesn't call estimator.update() per-sample either (ah_acc
+                        # above is its own rough capacity-fade tracker) — reuse cached soc/rin.
+                        self.update_display(v_d, i_d, self.controller.estimator.soc,
+                                            self.controller.estimator.rin)
                         self._seq_kick_watchdog()
                         elapsed_d = int(now - _dis_t0)
                         temp_d = self.hw.current_temp

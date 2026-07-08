@@ -225,6 +225,231 @@ class HardwareController:
             except Exception as e:
                 logger.warning("set_load_range failed (non-fatal): %s", e)
 
+    def _check_scpi_error(self, inst, label: str) -> str:
+        """Query SYSTem:ERRor? once (verified syntax, both instruments — returns
+        "<code>,\"<message>\"", code 0 = clean). A malformed/out-of-range SCPI write
+        is otherwise silently dropped by the instrument with no exception on the
+        PyVISA side — this is the only way to actually notice. Never raises."""
+        if inst is None:
+            return ""
+        try:
+            resp = inst.query("SYST:ERR?").strip()
+            if resp.startswith("0,") or resp.startswith("+0,"):
+                return ""
+            logger.warning("%s SYST:ERR? -> %s", label, resp)
+            return resp
+        except Exception as e:
+            return f"({label} error-queue check itself failed: {e})"
+
+    def set_load_protection(self, ocp_a: float = None, uvp_v: float = None,
+                            ovp_v: float = None) -> str:
+        """Set PEL-3111 hardware trip points — verified syntax:
+        [:CONFigure]:OCP {<NRf>|LIMit|LOFF}, [:CONFigure]:UVP/OVP {<NRf>}.
+        A backstop independent of the PC's own software safety_limits checks: this
+        trips at the *instrument* even if the PC hangs/crashes. OCP mode is forced
+        to LOFF (shut the load off) rather than LIMit (clamp and keep going) — a
+        clamp would silently keep discharging past the requested current instead
+        of stopping. Returns the SCPI error-queue message if the instrument
+        rejected anything, else "". Never raises — a rejected/skipped protection
+        write must not block Connect."""
+        if self.load_inst is None:
+            return ""
+        with self.inst_lock:
+            try:
+                if ocp_a is not None:
+                    self.load_inst.write(":CONFigure:OCP LOFF")
+                    self.load_inst.write(f":CONFigure:OCP {ocp_a}")
+                if uvp_v is not None:
+                    self.load_inst.write(f":CONFigure:UVP {uvp_v}")
+                if ovp_v is not None:
+                    self.load_inst.write(f":CONFigure:OVP {ovp_v}")
+                logger.info("Load protection set: OCP=%s UVP=%s OVP=%s", ocp_a, uvp_v, ovp_v)
+            except Exception as e:
+                logger.warning("set_load_protection failed (non-fatal): %s", e)
+                return str(e)
+            return self._check_scpi_error(self.load_inst, "Load")
+
+    def set_psu_protection(self, ocp_a: float = None, ovp_v: float = None) -> str:
+        """Set PSW hardware OCP/OVP trip points — verified syntax:
+        [SOURce:]CURRent:PROTection[:LEVel] {<NRf>}, :STATe {ON|OFF},
+        [SOURce:]VOLTage:PROTection[:LEVel] {<NRf>}. Same backstop rationale as
+        set_load_protection(). Returns the SCPI error-queue message, else ""."""
+        if self.psu_inst is None:
+            return ""
+        with self.inst_lock:
+            try:
+                if ocp_a is not None:
+                    self.psu_inst.write(f":CURR:PROT:LEV {ocp_a}")
+                    self.psu_inst.write(":CURR:PROT:STAT ON")
+                if ovp_v is not None:
+                    self.psu_inst.write(f":VOLT:PROT:LEV {ovp_v}")
+                logger.info("PSU protection set: OCP=%s OVP=%s", ocp_a, ovp_v)
+            except Exception as e:
+                logger.warning("set_psu_protection failed (non-fatal): %s", e)
+                return str(e)
+            return self._check_scpi_error(self.psu_inst, "PSU")
+
+    def get_psu_protection_tripped(self) -> bool:
+        """OUTPut:PROTection:TRIPped? — True if OVP/OCP/OTP has tripped on the PSU.
+        Query it when a PSU command starts failing/timing out, to surface *why*
+        instead of a generic connection-lost message."""
+        if self.psu_inst is None:
+            return False
+        with self.inst_lock:
+            try:
+                return self.psu_inst.query("OUTP:PROT:TRIP?").strip().lstrip("+") == "1"
+            except Exception:
+                return False
+
+    def clear_psu_protection(self) -> bool:
+        """OUTPut:PROTection:CLEar — clears an OVP/OCP/OTP trip (not AC-fail, which
+        the manual says cannot be cleared remotely). Deliberately a separate,
+        explicitly-called method rather than something auto-retried on failure —
+        a trip means something real happened; clearing it should be an operator
+        decision, not silently automated."""
+        if self.psu_inst is None:
+            return False
+        with self.inst_lock:
+            try:
+                self.psu_inst.write("OUTP:PROT:CLE")
+                return True
+            except Exception as e:
+                logger.warning("clear_psu_protection failed: %s", e)
+                return False
+
+    def harden_instrument_config(self) -> None:
+        """One-time defensive config applied on every connect:
+        - PSU: disable auto-power-on-at-boot (SYSTem:CONFigure:OUTPut:PON) so a
+          mains blip can't make it silently start outputting again on its own —
+          verified: "only applied after the unit has been reset", so this is a
+          no-op until the next power cycle, but harmless/cheap to send regardless.
+        - Both: lock the front panel (SYSTem:KLOCk / :UTILity:REMote) so an
+          operator can't hand-turn a knob mid-test and desync the instrument's
+          real state from what the software believes it commanded — that class of
+          bug produces no error, just silently wrong data. Released again by
+          release_instrument_config() on disconnect.
+        - Load: enable Short Safety (:CONFigure:SHORt:SAFety) — verified wording:
+          "requires the load to already be turned on before it can be shorted" —
+          and enable the load's own onboard alarm speaker (:UTILity:ALARm).
+        - PSU: reset resistance emulation to 0.000Ω (:RES) — if a previous session
+          left it dialed in for self_calibration_test.py and the operator now
+          connects a real battery, an unexpected non-zero source resistance would
+          silently corrupt every CV reading. Also sets measurement averaging to
+          LOW (SENSe:AVERage:COUNt) — PSU-only, see set_psu_averaging()'s docstring
+          for why this must never apply to the Load.
+        Every write is independently non-fatal — connect must never fail because
+        of this."""
+        if self.psu_inst is not None:
+            with self.inst_lock:
+                for cmd in ("SYST:CONF:OUTP:PON OFF", "SYST:KLOC ON",
+                            ":RES 0.000", "SENS:AVER:COUN LOW"):
+                    try:
+                        self.psu_inst.write(cmd)
+                    except Exception as e:
+                        logger.warning("PSU harden (%s) failed (non-fatal): %s", cmd, e)
+        if self.load_inst is not None:
+            with self.inst_lock:
+                # :CONFigure:SHORt:SAFety ON — "requires the load to already be
+                # turned on before it can be shorted" (verified manual wording) —
+                # stops the short-circuit test function from engaging by accident.
+                for cmd in (":UTIL:REM ON", ":CONFigure:SHORt:SAFety ON", ":UTIL:ALAR ON"):
+                    try:
+                        self.load_inst.write(cmd)
+                    except Exception as e:
+                        logger.warning("Load harden (%s) failed (non-fatal): %s", cmd, e)
+
+    def release_instrument_config(self) -> None:
+        """Undo harden_instrument_config()'s front-panel lock on disconnect, so the
+        operator gets manual front-panel control back once the PC releases the
+        instruments. Independently non-fatal."""
+        if self.psu_inst is not None:
+            with self.inst_lock:
+                try:
+                    self.psu_inst.write("SYST:KLOC OFF")
+                except Exception as e:
+                    logger.warning("PSU panel unlock failed (non-fatal): %s", e)
+        if self.load_inst is not None:
+            with self.inst_lock:
+                try:
+                    self.load_inst.write(":UTIL:REM OFF")
+                except Exception as e:
+                    logger.warning("Load panel unlock failed (non-fatal): %s", e)
+
+    def get_instrument_info(self) -> dict:
+        """Query model/serial/firmware for traceability (which exact unit/firmware
+        ran a given session — useful if behavior ever differs across units or a
+        firmware update). Verified syntax:
+        PEL :UTILity:SYSTem? -> "MODEL,SERIAL,VERSION"
+        PSW SYSTem:INFormation? -> IEEE-488.2 block data (starts with '#3212...'),
+        so the PSW value is the raw response string, not parsed into fields."""
+        info = {"psu": "", "load": ""}
+        with self.inst_lock:
+            if self.psu_inst is not None:
+                try:
+                    info["psu"] = self.psu_inst.query("SYST:INF?").strip()
+                except Exception as e:
+                    info["psu"] = f"(query failed: {e})"
+            if self.load_inst is not None:
+                try:
+                    info["load"] = self.load_inst.query(":UTIL:SYST?").strip()
+                except Exception as e:
+                    info["load"] = f"(query failed: {e})"
+        return info
+
+    def beep(self, seconds: float = 1.0) -> None:
+        """Audible alert on the PSU (SYSTem:BEEPer[:IMMediate] {<NR1>}, 0-3600s —
+        verified syntax). PEL has no equivalent single "beep now" trigger (its
+        :UTILity:ALARm only enables/disables the onboard alarm sounds, set once in
+        harden_instrument_config()). Non-fatal — a failed beep must never break
+        whatever alarm flow called it."""
+        if self.psu_inst is None:
+            return
+        with self.inst_lock:
+            try:
+                self.psu_inst.write(f"SYST:BEEP {seconds}")
+            except Exception as e:
+                logger.warning("beep() failed (non-fatal): %s", e)
+
+    def set_psu_resistance_emulation(self, ohms: float) -> str:
+        """Make the PSW's CV output sag under load as V = V_set - I*ohms, i.e.
+        emulate a "battery" with a precisely known internal resistance — verified
+        syntax: [SOURce:]RESistance[:LEVel][:IMMediate][:AMPLitude] {<NRf>}, range
+        0.000-1.975Ω on the PSW 80-40.5. This is a *modifier* on the CV output, not
+        a separate mode (OUTPut:MODE only selects CV/CC response-speed variants) —
+        setting 0.000 restores an ideal low-impedance source.
+
+        Intended use: a self-calibration check — dial in a known ohms value, pulse
+        it with the e-Load, and run the SAME analyze_series()/identify_ecm_fit()
+        pipeline used on real batteries; the measured R0/DCIR should land on the
+        known value, which validates harness correction + sense wiring + the ECM
+        fit against ground truth without needing an external bench ACIR meter.
+        See scripts/self_calibration_test.py. Returns the SCPI error-queue message
+        on rejection (e.g. out of range), else ""."""
+        if self.psu_inst is None:
+            return ""
+        with self.inst_lock:
+            try:
+                self.psu_inst.write(f":RES {ohms}")
+            except Exception as e:
+                logger.warning("set_psu_resistance_emulation failed (non-fatal): %s", e)
+                return str(e)
+            return self._check_scpi_error(self.psu_inst, "PSU")
+
+    def set_psu_averaging(self, level: str = "LOW") -> None:
+        """PSU measurement smoothing — verified syntax: SENSe:AVERage:COUNt
+        {LOW|MIDDle|HIGH}. Deliberately PSU-only: the PSU is only the active
+        source during CHARGE (steady-state, not transient-critical), whereas the
+        Load drives HPPC pulses where extra smoothing would blur exactly the fast
+        edge R0's t=0 extrapolation depends on — so this is never applied to the
+        Load. Non-fatal."""
+        if self.psu_inst is None:
+            return
+        with self.inst_lock:
+            try:
+                self.psu_inst.write(f"SENS:AVER:COUN {level}")
+            except Exception as e:
+                logger.warning("set_psu_averaging failed (non-fatal): %s", e)
+
     def load_on(self):
         with self.inst_lock:
             try:

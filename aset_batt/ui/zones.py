@@ -36,8 +36,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -48,7 +46,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QDoubleSpinBox,
     QProgressBar,
     QSpinBox,
     QSizePolicy,
@@ -71,7 +68,7 @@ from aset_batt.ui.theme import (
     BG, PANEL, PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
 )
 from aset_batt.ui.widgets import (
-    _btn, _hline, QtRootShim, DigitalReadout, TemperatureGauge,
+    _btn, _hline, QtRootShim, TemperatureGauge,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
     _PdfNotifier, _PdfTask,
 )
@@ -155,8 +152,10 @@ class ZonesMixin:
         lay.addWidget(btn_refresh)
 
         # SSR safety-cutoff relay (ESP32 GPIO16) — physically gates power to
-        # PSU + load. Fully automatic: ON the instant charging starts (any test
-        # mode), OFF the instant it stops — no manual control, status only.
+        # PSU + load. Normally automatic: ON the instant charging starts (any
+        # test mode), OFF the instant it stops. Manual ON/OFF below is for
+        # diagnostics/recovery (e.g. verifying the relay itself, or an extra
+        # cutoff without a full Disconnect) — it does not start/stop a test.
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("SSR POWER RELAY (GPIO16)"))
         ssr_row = QHBoxLayout()
@@ -170,9 +169,21 @@ class ZonesMixin:
         ssr_row.addWidget(self.lbl_ssr_state)
         ssr_row.addStretch(1)
         lay.addLayout(ssr_row)
+        ssr_btn_row = QHBoxLayout()
+        self.btn_ssr_on = _btn("Manual ON", bg=OK, fg="white", hover="#266a2a")
+        self.btn_ssr_off = _btn("Manual OFF", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_ssr_on.clicked.connect(self._on_ssr_manual_on)
+        self.btn_ssr_off.clicked.connect(self._on_ssr_manual_off)
+        self.btn_ssr_on.setEnabled(False)
+        self.btn_ssr_off.setEnabled(False)
+        ssr_btn_row.addWidget(self.btn_ssr_on)
+        ssr_btn_row.addWidget(self.btn_ssr_off)
+        lay.addLayout(ssr_btn_row)
         lbl_ssr_hint = QLabel(
-            "ⓘ ตัดไฟ PSU/Load ทางกายภาพผ่าน SSR ที่ ESP32 GPIO16 — ทำงานอัตโนมัติ: "
-            "ON ทันทีที่เริ่มชาร์จ (ทุกโหมดเทสต์), OFF ทันทีที่หยุดชาร์จ/E-STOP")
+            "ⓘ ตัดไฟ PSU/Load ทางกายภาพผ่าน SSR ที่ ESP32 GPIO16 — ปกติทำงานอัตโนมัติ: "
+            "ON ทันทีที่เริ่มชาร์จ (ทุกโหมดเทสต์), OFF ทันทีที่หยุดชาร์จ/E-STOP\n"
+            "ปุ่ม Manual ด้านบนไว้สั่งตรงสำหรับ diagnostic/recovery เท่านั้น "
+            "(ต้องต่อ ESP32 ก่อนถึงจะกดได้) — ไม่ได้ไปเริ่ม/หยุดการทดสอบ")
         lbl_ssr_hint.setStyleSheet(f"color:{MUTED}; font-size:10px;")
         lbl_ssr_hint.setWordWrap(True)
         lay.addWidget(lbl_ssr_hint)
@@ -716,6 +727,23 @@ class ZonesMixin:
         load_row.addWidget(load_on)
         load_row.addWidget(load_off)
         lay.addLayout(load_row)
+
+        # Hardware OVP/OCP/OTP protection is set automatically on every Connect
+        # (see _on_connect) — a trip means something real happened, so clearing it
+        # is a deliberate operator action here, never auto-retried by software.
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("PSU PROTECTION"))
+        prot_row = QHBoxLayout()
+        self.lbl_psu_trip = QLabel("Trip: —")
+        self.lbl_psu_trip.setStyleSheet(f"color:{MUTED};")
+        prot_row.addWidget(self.lbl_psu_trip, 1)
+        self.btn_check_trip = _btn("Check", bg="#d0d4d7", hover="#c2c6ca")
+        self.btn_clear_trip = _btn("Clear Trip", bg=WARN, fg="white", hover="#a06800")
+        self.btn_check_trip.clicked.connect(self._on_check_psu_trip)
+        self.btn_clear_trip.clicked.connect(self._on_clear_psu_trip)
+        prot_row.addWidget(self.btn_check_trip)
+        prot_row.addWidget(self.btn_clear_trip)
+        lay.addLayout(prot_row)
 
         note = QLabel("⚠  ใช้เฉพาะทดสอบฮาร์ดแวร์  —  ไม่มี SoC หรือ safety interlock")
         note.setStyleSheet(f"color:{WARN}; font-size:10px;")

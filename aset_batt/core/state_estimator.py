@@ -219,6 +219,9 @@ class StateEstimator:
     def set_soh(self, soh: float) -> None:
         """Externally set SoH (e.g. from analysis.py full-discharge capacity)."""
         self.soh = max(0.0, min(120.0, float(soh)))
+        # D3: keep the Rin baseline's aging term in sync with the live measured SoH —
+        # see BatteryModel.set_aging_from_soh.
+        self.battery_model.set_aging_from_soh(self.soh)
 
     def reset_battery_state(self) -> None:
         """Clear everything this instance has learned about the PREVIOUS physical
@@ -234,6 +237,7 @@ class StateEstimator:
         even reaches the absorption/CV ceiling, because every real Ah put in reads as
         a bigger SoC jump than it should."""
         self.soh = 100.0
+        self.battery_model.set_aging_from_soh(None)  # D3: also un-age the Rin baseline
         self.measured_capacity_ah = 0.0
         self._cap_counting = False
         self._cap_counter_ah = 0.0
@@ -490,6 +494,7 @@ class StateEstimator:
                 self.measured_capacity_ah = self._cap_counter_ah
                 self.soh = max(0.0, min(120.0,
                                         self._cap_counter_ah / self.rated_capacity * 100.0))
+                self.battery_model.set_aging_from_soh(self.soh)  # D3: sync Rin aging term
                 logger.info("Live SoH ← full→empty sweep: %.3f Ah / %.3f rated = %.1f%%",
                             self._cap_counter_ah, self.rated_capacity, self.soh)
             self._cap_counting = False

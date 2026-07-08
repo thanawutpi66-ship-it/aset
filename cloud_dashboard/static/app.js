@@ -10,6 +10,14 @@ const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 function fmtR(mOhm){ if (mOhm == null) return '–'; return mOhm >= 1000 ? (mOhm/1000).toFixed(2)+' Ω' : mOhm.toFixed(2)+' mΩ'; }
 function fmtKB(bytes){ return bytes >= 1024 ? Math.round(bytes/1024)+' KB' : bytes+' B'; }
+// Escapes text pulled from an ingest payload (meta.battery, alarm ts/msg) before
+// it's interpolated into an innerHTML string — those fields come from whoever
+// holds the ingest token, not from this page, so they're untrusted input.
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
 function fmtDate(ts){
   const d = new Date(ts * 1000);
   const day = d.getDate(), mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
@@ -20,6 +28,9 @@ function fmtDate(ts){
 const TEMP_CRIT = 55;
 let isMuted = false;
 let graphMode = 'combined';
+let graphWindow = 'recent';  // 'recent' (last 30 min, clear detail) or 'full' (whole test)
+let lastSeriesRecent = {};
+let lastSeriesFull = {};
 let mainCharts = {};
 let icaChart = null;
 let alarmLog = [];
@@ -285,10 +296,13 @@ function backToLive() {
 
 /* ---- render payload (used by both live poll and session select) ----------- */
 function renderPayload(p, received_at) {
-  const s = p.summary || {}, a = p.analysis || {}, ser = p.series || {},
+  const s = p.summary || {}, a = p.analysis || {},
         L = s.latest || {}, feat = a.features || {};
+  lastSeriesRecent = p.series || {};
+  lastSeriesFull = p.series_full || p.series || {};
+  const ser = graphWindow === 'full' ? lastSeriesFull : lastSeriesRecent;
 
-  $('battery').innerHTML = '<i class="dot"></i>battery: <b>' + ((p.meta||{}).battery || '–') + '</b>';
+  $('battery').innerHTML = '<i class="dot"></i>battery: <b>' + escapeHtml((p.meta||{}).battery || '–') + '</b>';
 
   const T = num(L, 'Temperature_C');
   $('tempTitle').textContent = T != null ? f(T, 2) + ' °C' : '-- °C';
@@ -355,7 +369,7 @@ function renderPayload(p, received_at) {
 
   // Charts
   updateMainCharts(ser);
-  updateIcaChart(ser.Voltage_V, ser.SoC_pct);
+  updateIcaChart(lastSeriesFull.Voltage_V, lastSeriesFull.SoC_pct);
 
   // Real safety events forwarded from the GUI's alarm log (ALARM/WARNING),
   // not just this browser's own temperature-threshold guess below.
@@ -531,16 +545,36 @@ function pushAlarm(ts, msg) {
 function renderAlarmLog() {
   const list = $('alarmList');
   if (!alarmLog.length) { list.innerHTML = '<div class="alarm-empty">No alarms recorded.</div>'; return; }
-  list.innerHTML = alarmLog.map(a =>
-    `<div class="alarm-item"><span class="alarm-ts">${a.ts}</span><span class="alarm-msg">${a.msg}</span></div>`
-  ).join('');
+  // Built via DOM nodes + textContent (not innerHTML string-templating) — a.ts/
+  // a.msg come from the ingest payload's alarms[], which is untrusted input.
+  list.innerHTML = '';
+  for (const a of alarmLog) {
+    const item = document.createElement('div');
+    item.className = 'alarm-item';
+    const tsSpan = document.createElement('span');
+    tsSpan.className = 'alarm-ts';
+    tsSpan.textContent = a.ts;
+    const msgSpan = document.createElement('span');
+    msgSpan.className = 'alarm-msg';
+    msgSpan.textContent = a.msg;
+    item.appendChild(tsSpan);
+    item.appendChild(msgSpan);
+    list.appendChild(item);
+  }
 }
 
 /* ---- graph mode ---------------------------------------------------------- */
 function setMode(mode) {
   graphMode = mode;
-  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  document.querySelectorAll('.mode-btn[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   buildMainCharts();
+}
+
+/* ---- graph window (recent 30 min vs whole test) --------------------------- */
+function setGraphWindow(win) {
+  graphWindow = win;
+  document.querySelectorAll('.mode-btn[data-window]').forEach(b => b.classList.toggle('active', b.dataset.window === win));
+  updateMainCharts(win === 'full' ? lastSeriesFull : lastSeriesRecent);
 }
 
 /* ---- left panel tab switching -------------------------------------------- */
@@ -630,8 +664,10 @@ function toggleTheme() {
 window.addEventListener('DOMContentLoaded', () => {
   applyThemeIcon();
   $('themeToggle').addEventListener('click', toggleTheme);
-  document.querySelectorAll('.mode-btn').forEach(btn =>
+  document.querySelectorAll('.mode-btn[data-mode]').forEach(btn =>
     btn.addEventListener('click', () => setMode(btn.dataset.mode)));
+  document.querySelectorAll('.mode-btn[data-window]').forEach(btn =>
+    btn.addEventListener('click', () => setGraphWindow(btn.dataset.window)));
   document.querySelectorAll('.lptab').forEach(btn =>
     btn.addEventListener('click', () => switchLpTab(btn.dataset.lptab)));
   $('ecmToggle').addEventListener('click', toggleEcm);

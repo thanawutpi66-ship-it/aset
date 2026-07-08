@@ -128,6 +128,7 @@ class DataHandler:
         self.csv_file = None
         self.csv_writer = None
         self.current_path: str = ""   # path ของ session ปัจจุบัน
+        self._last_flush = 0.0        # perf_counter of the last disk flush — see log_row
 
     @staticmethod
     def make_session_path(sessions_dir: str = "sessions", label: str = "") -> str:
@@ -203,7 +204,17 @@ class DataHandler:
                     f"{temp_c:.2f}",
                     "1" if rin_calibrated else "0",
                 ])
-                self.csv_file.flush()
+                # flush() forces a real disk write (or, on this repo's OneDrive-synced
+                # project folder, a sync-agent wakeup) every call — at the monitor
+                # loop's ~10 Hz during CHARGE that's 10 forced writes/sec, a plausible
+                # source of periodic stutters. Throttled to ~1/s: worst case loses <1s
+                # of rows on a hard crash, which cloud push (5s interval, see
+                # cloud_push_interval) already tolerates just as well.
+                import time
+                now = time.perf_counter()
+                if now - self._last_flush >= 1.0:
+                    self._last_flush = now
+                    self.csv_file.flush()
             except Exception as e:
                 logger.error(f"CSV write error: {e}")
 
