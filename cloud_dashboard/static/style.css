@@ -405,11 +405,22 @@ b{font-weight:700}
 .alarm-list{padding:8px;display:flex;flex-direction:column;gap:5px;flex:1}
 .alarm-empty{padding:10px 6px;font-size:11px;color:var(--faint);font-style:italic}
 .alarm-item{
-  background:rgba(244,63,94,.08);border:1px solid rgba(244,63,94,.2);
+  /* default = INFO/OFF (muted gray) — every GUI log line is forwarded now,
+     not just ALARM/WARNING, so severity needs its own color instead of
+     rendering everything as a red alarm. */
+  background:rgba(148,163,184,.06);border:1px solid rgba(148,163,184,.18);
   border-radius:6px;padding:6px 8px;font-size:10.5px;
 }
+.alarm-item[data-severity="ALARM"]{background:rgba(244,63,94,.08);border-color:rgba(244,63,94,.2)}
+.alarm-item[data-severity="WARNING"]{background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.2)}
+.alarm-item[data-severity="NORMAL"]{background:rgba(52,211,153,.08);border-color:rgba(52,211,153,.2)}
+.alarm-item[data-severity="ON"]{background:rgba(56,189,248,.08);border-color:rgba(56,189,248,.2)}
 .alarm-ts{display:block;color:var(--faint);font-size:9.5px;margin-bottom:2px}
-.alarm-msg{color:var(--crit);word-break:break-word}
+.alarm-msg{color:var(--muted);word-break:break-word}
+.alarm-item[data-severity="ALARM"] .alarm-msg{color:var(--crit)}
+.alarm-item[data-severity="WARNING"] .alarm-msg{color:var(--warn)}
+.alarm-item[data-severity="NORMAL"] .alarm-msg{color:var(--ok)}
+.alarm-item[data-severity="ON"] .alarm-msg{color:var(--soc)}
 
 /* left panel footer */
 .lp-footer{

@@ -381,7 +381,7 @@ function renderPayload(p, received_at) {
   if (explicitAlarm || hot) {
     const msg = 'TEMP: ' + f(T,2) + '°C  GRADE: ' + grade + (explicitAlarm ? '  SAFETY ALARM' : '  OVER-TEMP');
     const ts = new Date(received_at * 1000).toLocaleTimeString();
-    pushAlarm(ts, msg);
+    pushAlarm(ts, msg, 'ALARM');
     setSafety(true, msg);
   } else {
     setSafety(false, '');
@@ -514,7 +514,12 @@ function updateTestPanel(meta, summary) {
   }
 }
 
-/* ---- lab-forwarded safety events ------------------------------------------ */
+/* ---- lab-forwarded events -------------------------------------------------- */
+// Severities the GUI's _log_alarm() classifies into (isa101_views.py) — every
+// line is forwarded now, not just ALARM/WARNING, so the log is colored per
+// severity instead of rendering everything as a red alarm.
+const _NEEDS_TAB_SWITCH = new Set(['ALARM', 'WARNING']);
+
 function processLabAlarms(alarms) {
   if (!alarms.length) return;
   const sorted = [...alarms].sort((a, b) => a.ts - b.ts);
@@ -522,23 +527,25 @@ function processLabAlarms(alarms) {
     // First payload seen this page load: backfill the log silently (no tab
     // switch) so a stale event from before we opened the tab doesn't yank
     // the user away from whatever they're looking at.
-    for (const a of sorted) pushAlarm(new Date(a.ts * 1000).toLocaleTimeString(), a.message);
+    for (const a of sorted) pushAlarm(new Date(a.ts * 1000).toLocaleTimeString(), a.message, a.severity);
     _lastLabAlarmTs = sorted[sorted.length - 1].ts;
     return;
   }
-  let sawNew = false;
+  let sawNewAlarm = false;
   for (const a of sorted) {
     if (a.ts <= _lastLabAlarmTs) continue;
-    pushAlarm(new Date(a.ts * 1000).toLocaleTimeString(), a.message);
-    sawNew = true;
+    pushAlarm(new Date(a.ts * 1000).toLocaleTimeString(), a.message, a.severity);
+    if (_NEEDS_TAB_SWITCH.has(a.severity)) sawNewAlarm = true;
     _lastLabAlarmTs = a.ts;
   }
-  if (sawNew) switchLpTab('alarms');
+  // Only yank the user to the Alarm Log tab for genuine ALARM/WARNING events —
+  // routine activity (Connected, Charge started, ...) logs silently.
+  if (sawNewAlarm) switchLpTab('alarms');
 }
 
 /* ---- alarm log ----------------------------------------------------------- */
-function pushAlarm(ts, msg) {
-  alarmLog.unshift({ ts, msg });
+function pushAlarm(ts, msg, severity) {
+  alarmLog.unshift({ ts, msg, severity: severity || 'ALARM' });
   if (alarmLog.length > 50) alarmLog.pop();
   renderAlarmLog();
 }
@@ -551,6 +558,7 @@ function renderAlarmLog() {
   for (const a of alarmLog) {
     const item = document.createElement('div');
     item.className = 'alarm-item';
+    item.dataset.severity = a.severity || 'INFO';
     const tsSpan = document.createElement('span');
     tsSpan.className = 'alarm-ts';
     tsSpan.textContent = a.ts;
