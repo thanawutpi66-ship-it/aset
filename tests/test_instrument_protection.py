@@ -76,6 +76,19 @@ class TestSetPsuProtection(unittest.TestCase):
         hw.psu_inst.write.assert_any_call(":CURR:PROT:STAT ON")
         hw.psu_inst.write.assert_any_call(":VOLT:PROT:LEV 16.0")
 
+    def test_clamps_ocp_to_psu_rated_max(self):
+        # A battery's discharge-side max_current * 1.25 margin (computed for the
+        # Load) can exceed the PSW80-40.5's own 40.5 A rated output — must be
+        # clamped down, or the write triggers -222 "Data out of range" every
+        # single connect (real bug seen in the field, 2026-07-09).
+        hw = _make_hw()
+        hw.psu_inst = MagicMock()
+        hw.psu_inst.query.return_value = "0,\"No error\""
+
+        hw.set_psu_protection(ocp_a=62.5, ovp_v=16.17)
+
+        hw.psu_inst.write.assert_any_call(":CURR:PROT:LEV 40.5")
+
     def test_noop_when_not_connected(self):
         hw = _make_hw()
         self.assertEqual(hw.set_psu_protection(ocp_a=1.0), "")

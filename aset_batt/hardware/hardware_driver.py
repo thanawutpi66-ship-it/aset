@@ -325,8 +325,12 @@ class HardwareController:
             try:
                 # GW Instek PSW series requires OVP/OCP to be >= 10% of rated max.
                 # For PSW80-40.5 (80V/40.5A), min OVP is 8.0V and min OCP is 4.05A.
+                # OCP also cannot exceed the unit's own 40.5 A rated max output —
+                # a battery's discharge-side max_current * 1.25 margin (meant for
+                # the Load) can easily be higher than that and was previously sent
+                # unclamped, tripping -222 "Data out of range" on every connect.
                 if ocp_a is not None:
-                    safe_ocp = max(ocp_a, 4.05)
+                    safe_ocp = min(max(ocp_a, 4.05), 40.5)
                     self.psu_inst.write(f":CURR:PROT:LEV {safe_ocp}")
                     self.psu_inst.write(":CURR:PROT:STAT ON")
                 if ovp_v is not None:
