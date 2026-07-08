@@ -728,6 +728,23 @@ class ZonesMixin:
         load_row.addWidget(load_off)
         lay.addLayout(load_row)
 
+        # Hardware OVP/OCP/OTP protection is set automatically on every Connect
+        # (see _on_connect) — a trip means something real happened, so clearing it
+        # is a deliberate operator action here, never auto-retried by software.
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("PSU PROTECTION"))
+        prot_row = QHBoxLayout()
+        self.lbl_psu_trip = QLabel("Trip: —")
+        self.lbl_psu_trip.setStyleSheet(f"color:{MUTED};")
+        prot_row.addWidget(self.lbl_psu_trip, 1)
+        self.btn_check_trip = _btn("Check", bg="#d0d4d7", hover="#c2c6ca")
+        self.btn_clear_trip = _btn("Clear Trip", bg=WARN, fg="white", hover="#a06800")
+        self.btn_check_trip.clicked.connect(self._on_check_psu_trip)
+        self.btn_clear_trip.clicked.connect(self._on_clear_psu_trip)
+        prot_row.addWidget(self.btn_check_trip)
+        prot_row.addWidget(self.btn_clear_trip)
+        lay.addLayout(prot_row)
+
         note = QLabel("⚠  ใช้เฉพาะทดสอบฮาร์ดแวร์  —  ไม่มี SoC หรือ safety interlock")
         note.setStyleSheet(f"color:{WARN}; font-size:10px;")
         note.setWordWrap(True)
