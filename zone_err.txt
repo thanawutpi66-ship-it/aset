@@ -1,0 +1,9 @@
+run error:
+Traceback (most recent call last):
+  File "C:\Users\boatl\OneDrive\ASET_BATT\aset_batt\ui\isa101_views.py", line 653, in _build_left_panel
+    self._zone_stack.addWidget(_scroll(self._zone_run()))
+                                       ^^^^^^^^^^^^^^^^
+  File "C:\Users\boatl\OneDrive\ASET_BATT\aset_batt\ui\zones.py", line 793, in _zone_run
+    self.led_ssr = _led()
+                   ^^^^
+NameError: name '_led' is not defined

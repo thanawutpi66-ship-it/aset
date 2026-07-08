@@ -1,0 +1,14 @@
+INFO - aset_batt.services.logging_config - ASET Battery Characterization System logging initialized
+INFO - aset_batt.services.logging_config - Log level: INFO
+INFO - aset_batt.services.logging_config - Log file: logs/aset_20260708_175701.log
+INFO - aset_batt.app.app_bootstrapper - Logging system initialized
+INFO - aset_batt.core.config - Configuration loaded from config.json
+INFO - aset_batt.app.app_bootstrapper - Configuration loaded and validated
+INFO - aset_batt.app.app_bootstrapper - Core services registered
+INFO - aset_batt.app.app_bootstrapper - Application initialized successfully
+INFO - aset_batt.core.battery_profiles - โหลด battery profiles: 4 chemistries, 6 products จาก C:\Users\boatl\OneDrive\ASET_BATT\aset_batt\core\battery_profiles.json
+INFO - aset_batt.app.app_bootstrapper - Using mock hardware controller (simulation mode)
+INFO - aset_batt.app.auto_controller - AutoController initialized
+ERROR - aset_batt.ui.isa101_views - apply product: BatteryModel.__init__() got an unexpected keyword argument 'product_name'
+INFO - aset_batt.app.app_bootstrapper - Auto-connected mock hardware (simulation mode)
+INFO - aset_batt.app.run - Entering Qt event loop
