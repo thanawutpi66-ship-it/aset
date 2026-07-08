@@ -70,6 +70,14 @@ class SystemConfig:
     cloud_analysis_interval: float = 60.0
     ui_theme: str = "light"  # "light" or "dark" — read once at startup, before the GUI is built
     safety_limits: Dict[str, float] = None
+    # R3 (industrial-grade audit): who ran a given session — no operator identity
+    # was captured anywhere before this, so a graded result could never be traced
+    # back to who tested it. Plain free-text (no auth/login system — this is a
+    # single-workstation lab tool, not a multi-user system), written into each
+    # session's metadata sidecar (see data_utils.write_session_metadata). Empty
+    # string falls back to the OS username at write time rather than at rest,
+    # so it always reflects who was actually logged into Windows for that session.
+    operator_name: str = ""
 
     def __post_init__(self):
         if self.safety_limits is None:
@@ -99,6 +107,13 @@ class ConfigManager:
         self.battery = BatteryConfig()
         self.system = SystemConfig()
         self.hardware = HardwareConfig()
+        # G5 (industrial-grade audit): set when _load_config() had to fall back to
+        # defaults because the file was corrupt/unreadable — a silent fallback used
+        # to wipe out calibration (e.g. harness_resistance_ohm) with no indication
+        # to the operator beyond a log line nobody watches during normal use. The
+        # GUI launcher (aset_batt/app/run.py) checks this and shows a blocking
+        # warning dialog before the main window opens.
+        self.load_error: Optional[str] = None
         self._load_config()
 
     def _load_config(self) -> None:
@@ -125,6 +140,22 @@ class ConfigManager:
 
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Error loading config: {e}, using defaults")
+            # Preserve the corrupt file for manual recovery instead of just
+            # overwriting it — the calibration values it may still contain
+            # (harness_resistance_ohm, product selection, ...) are otherwise lost
+            # the instant save_config() below writes fresh defaults over it.
+            try:
+                if os.path.exists(self.config_file):
+                    backup_path = self.config_file + ".corrupt"
+                    os.replace(self.config_file, backup_path)
+                    logger.error(f"Backed up unreadable config to {backup_path}")
+            except OSError as backup_exc:
+                logger.error(f"Could not back up corrupt config file: {backup_exc}")
+            self.load_error = (
+                f"config.json ไม่สามารถอ่านได้ ({e}) — ใช้ค่าเริ่มต้นแทน "
+                f"(ไฟล์เดิมสำรองไว้ที่ {self.config_file}.corrupt) "
+                f"กรุณาตรวจสอบค่า calibration (harness_resistance_ohm ฯลฯ) ก่อนใช้งานเทสจริง"
+            )
             self.save_config()
 
     def _update_from_dict(self, obj: Any, data: Dict[str, Any]) -> None:
@@ -161,6 +192,18 @@ class ConfigManager:
             errors.append("Battery capacity must be positive")
         if self.battery.max_voltage <= self.battery.min_voltage:
             errors.append("Max voltage must be greater than min voltage")
+        # G4 (industrial-grade audit): these feed pack_nominal_voltage/pack_max_voltage
+        # (properties below) directly — a mistyped 0/negative cells_series or
+        # cells_parallel used to pass validate_config() cleanly and silently corrupt
+        # every pack-voltage-derived safety window and grading baseline from then on.
+        if self.battery.cells_series <= 0:
+            errors.append("cells_series must be positive")
+        if self.battery.cells_parallel <= 0:
+            errors.append("cells_parallel must be positive")
+        if self.battery.nominal_voltage <= 0:
+            errors.append("nominal_voltage must be positive")
+        if self.battery.mass_grams < 0:
+            errors.append("mass_grams must not be negative")
         # D2 config-entry guard (defense-in-depth pair with the runtime warn-and-skip
         # check in aset_batt.acquisition.analysis._correct_for_harness_r): a test-rig
         # cabling/contact resistance above this is not a plausible wiring value for

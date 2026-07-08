@@ -13,6 +13,10 @@ class TestDataHandler(unittest.TestCase):
         self.assertTrue(os.path.exists(filepath))
         self.dh.stop_logging()
         os.remove(filepath)
+        # stop_logging() now also writes a .sha256 integrity sidecar (R4,
+        # industrial-grade audit) — see test_csv_integrity_sidecar.py.
+        if os.path.exists(filepath + '.sha256'):
+            os.remove(filepath + '.sha256')
 
     def test_log_row(self):
         filepath = 'test_data.csv'
@@ -23,6 +27,8 @@ class TestDataHandler(unittest.TestCase):
             lines = f.readlines()
             self.assertEqual(len(lines), 2)  # header + data
         os.remove(filepath)
+        if os.path.exists(filepath + '.sha256'):
+            os.remove(filepath + '.sha256')
 
     def tearDown(self):
         if self.dh.is_recording:

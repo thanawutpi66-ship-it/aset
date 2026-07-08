@@ -68,7 +68,7 @@ from aset_batt.ui.theme import (
     BG, PANEL, PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
 )
 from aset_batt.ui.widgets import (
-    _btn, _hline, QtRootShim, TemperatureGauge,
+    _btn, _hline, QtRootShim,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
     _PdfNotifier, _PdfTask,
 )
@@ -767,6 +767,24 @@ class ZonesMixin:
         self._buttons["btn_ocv"] = self.btn_ocv   # register for sig_loading
         ocv_row.addWidget(self.btn_ocv)
         lay.addLayout(ocv_row)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Mode:"))
+        self.cb_manual_charge_mode = QComboBox()
+        self.cb_manual_charge_mode.addItems(["Auto (by chemistry)", "CC-CV", "3-Stage (Lead-Acid)"])
+        mode_row.addWidget(self.cb_manual_charge_mode, 1)
+        lay.addLayout(mode_row)
+
+        crate_row = QHBoxLayout()
+        crate_row.addWidget(QLabel("C-rate:"))
+        self.cb_manual_charge_crate = QComboBox()
+        self.cb_manual_charge_crate.addItems(["0.1C", "0.2C", "0.3C", "0.5C", "1.0C"])
+        self.cb_manual_charge_crate.setEditable(True)
+        self.cb_manual_charge_crate.setCurrentText("0.5C")
+        crate_row.addWidget(self.cb_manual_charge_crate)
+        crate_row.addStretch(1)
+        lay.addLayout(crate_row)
+
         crow = QHBoxLayout()
         self.btn_charge = _btn("CHARGE", bg=OK, fg="white", hover="#266a2a")
         self.btn_stop_charge = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
@@ -792,6 +810,25 @@ class ZonesMixin:
                                                OperationMode.HPPC)])
         trow.addWidget(self.cb_op_mode, 1)
         lay.addLayout(trow)
+
+        dcrate_row = QHBoxLayout()
+        dcrate_row.addWidget(QLabel("C-rate:"))
+        self.cb_manual_discharge_crate = QComboBox()
+        self.cb_manual_discharge_crate.addItems(["0.1C", "0.2C", "0.5C", "1.0C"])
+        self.cb_manual_discharge_crate.setEditable(True)
+        self.cb_manual_discharge_crate.setCurrentText("0.2C")
+        dcrate_row.addWidget(self.cb_manual_discharge_crate)
+        dcrate_row.addStretch(1)
+        lay.addLayout(dcrate_row)
+
+        cutoff_row = QHBoxLayout()
+        cutoff_row.addWidget(QLabel("Cutoff V:"))
+        self.ed_manual_cutoff_v = QLineEdit()
+        self.ed_manual_cutoff_v.setPlaceholderText("Auto (Profile)")
+        cutoff_row.addWidget(self.ed_manual_cutoff_v)
+        cutoff_row.addStretch(1)
+        lay.addLayout(cutoff_row)
+
         crow2 = QHBoxLayout()
         self.btn_run_test = _btn("RUN TEST", bg=INFO, fg="white", hover="#0d4a89")
         self.btn_run_test.clicked.connect(self._on_run_test)
@@ -1040,10 +1077,15 @@ class ZonesMixin:
         t.setStyleSheet(f"color:{MUTED}; font-size:10px; font-weight:700; letter-spacing:1px; border:0;")
         # SoH/Rin(final)/Grade are only ever set once a test's analysis completes
         # (never live) — start "pending" so a placeholder number is never mistaken
-        # for a reading. Rin in the live row is only valid under load.
-        val = QLabel("—" if name in ("SoH", "Rin", "Grade") else f"0.0 {unit}")
+        # for a reading. Rin in the live row is only valid under load. Styled in
+        # MUTED (not TEXT) while pending so a "—" placeholder is visually distinct
+        # from an actual reading at a glance, not just distinguishable by re-reading
+        # the digits — callers restore color:{TEXT} when they set a real value (see
+        # _slot_display's Rin update).
+        is_pending = name in ("SoH", "Rin", "Grade")
+        val = QLabel("—" if is_pending else f"0.0 {unit}")
         val.setFont(QFont("Consolas", 19, QFont.Weight.Bold))
-        val.setStyleSheet(f"color:{TEXT}; border:0;")
+        val.setStyleSheet(f"color:{MUTED if is_pending else TEXT}; border:0;")
         lay.addWidget(t)
         lay.addWidget(val)
         store[name] = (val, unit)
@@ -1305,6 +1347,22 @@ class ZonesMixin:
         # Row colour bookkeeping {row_index: (bright_bg, dim_bg, fg, evt_fg)}
         self._alarm_row_colors: dict = {}
 
+        # R2/G2 (industrial-grade audit, ISA-18.2 dedup/rate-limit): every
+        # _log_alarm() call used to unconditionally insertRow() — a stuck sensor
+        # re-firing the identical fault every telemetry tick would flood the log
+        # with duplicate rows, burying whatever alarm actually mattered. See
+        # _log_alarm()'s own comment for how these are used.
+        self._ALARM_DEDUP_WINDOW_S = 30.0    # coalesce the SAME (event, point) within this
+        self._last_alarm_key = None          # (event, point) of the most recent row
+        self._last_alarm_row = None          # its row index, so a repeat can update in place
+        self._last_alarm_occurrence = 1      # occurrence count shown as "(xN)"
+        self._last_alarm_time = 0.0
+        self._ALARM_RATE_LIMIT = 20          # max distinct rows...
+        self._ALARM_RATE_WINDOW_S = 10.0     # ...within this many seconds
+        self._alarm_recent_times: deque = deque()
+        self._alarm_rate_limit_row = None    # row index of the current flood's summary row
+        self._alarm_rate_suppressed = 0      # count shown in that row's text
+
         # ── Header bar ────────────────────────────────────────────────
         hdr = QFrame()
         hdr.setStyleSheet(f"background:{PANEL}; border-bottom:1px solid #888;")
@@ -1382,6 +1440,23 @@ class ZonesMixin:
         return w
 
     def _alarm_clear(self):
+        """Wipes the alarm/event log — irreversible (no undo, no export-first
+        prompt), so this asks for confirmation first. A stale comment used to sit
+        right here claiming a "full SCADA implementation" of this method lived in
+        BatteryQtWindow and would override this one via MRO — it does not; grep
+        confirms this is the only _alarm_clear in the codebase, so the unconfirmed
+        version was what actually ran until now. Same class of bug as the
+        _zone_characterize shadowing case documented in CLAUDE.md: verify what's
+        live via grep, don't trust a comment's claim about it."""
+        if not self._headless:
+            reply = QMessageBox.question(
+                self, "Clear Alarm Log",
+                f"Clear all {self.tbl_alarms.rowCount()} event(s) from the log?\n\n"
+                "This cannot be undone.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         self.tbl_alarms.setRowCount(0)
         self._unack_rows.clear()
         self._alarm_row_colors.clear()
@@ -1393,10 +1468,3 @@ class ZonesMixin:
             "background:#1C1F23; color:#7A9A5A; padding:3px 10px; font-size:10px;"
             " font-family:Consolas,monospace; border-top:1px solid #333;"
         )
-
-    # ── Alarm Tab & Alarm Clear ───────────────────────────────────────────────
-    # ⚠  _tab_alarms() and _alarm_clear() are intentionally NOT defined here.
-    #    They live in BatteryQtWindow (isa101_views.py) as the full SCADA
-    #    implementation (flashing rows, ACKNOWLEDGE button, ACK STATUS column).
-    #    Python MRO ensures that version is used; duplicating it here would
-    #    silently override the SCADA features.

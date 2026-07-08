@@ -217,12 +217,22 @@ class ApplicationBootstrapper:
             # Shutdown services
             if self.service_provider:
                 from aset_batt.app.auto_controller import AutoController
-                # Get controller and shutdown
-                try:
-                    controller = ServiceLocator.get(AutoController)
-                    controller.shutdown()
-                except Exception:
-                    pass  # Controller might not be registered yet
+                # G6 (industrial-grade audit): this used to be one bare
+                # `except Exception: pass` covering BOTH "controller not registered
+                # yet" (expected, e.g. cleanup fired during a failed early-init) AND
+                # a genuine controller.shutdown() failure (which cuts PSU/Load/SSR —
+                # if THAT fails after a crash, there was previously no record of it
+                # at all). ServiceLocator.has() separates the expected case from the
+                # one that actually needs to be logged loudly.
+                if ServiceLocator.has(AutoController):
+                    try:
+                        controller = ServiceLocator.get(AutoController)
+                        controller.shutdown()
+                    except Exception as exc:
+                        logger.error(
+                            "AutoController.shutdown() failed during cleanup — "
+                            "hardware may not have been safely powered down: %s",
+                            exc, exc_info=True)
 
                 # Clear all services
                 ServiceLocator.clear()

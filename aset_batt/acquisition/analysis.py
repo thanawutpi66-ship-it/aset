@@ -532,6 +532,25 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     if not gradeable:
         confidence = 0.0
 
+    # R5 (industrial-grade audit): the grading decision itself used to produce NO
+    # structured log line — only ECM-fit-rejection reasons were logged (see the
+    # logger.info calls in identify_ecm_fit above), never the actual soh/dcir/r0/
+    # r1/harness_r/grade/confidence values a grade was decided from. Post-hoc
+    # investigation of a mis-graded batch had to re-run analysis on the archived
+    # CSV and hope config/battery_profiles.json hadn't since changed (they aren't
+    # versioned — see the R3 audit-trail work). One line here makes the decision
+    # itself reconstructable from the log alone.
+    logger.info(
+        "GRADE DECISION product=%s chemistry=%s grade=%s confidence=%.2f "
+        "soh=%s dcir_mohm=%.2f r0_mohm=%.2f r1_mohm=%.2f harness_r_mohm=%.2f "
+        "n_steps=%d measured=%s ecm_identified=%s gradeable=%s warnings=%d",
+        getattr(profile, "name", "?"), getattr(profile, "chemistry", "?"),
+        grade, confidence,
+        "nan" if np.isnan(soh) else f"{soh:.1f}",
+        dcir * 1000.0, r0 * 1000.0, r1 * 1000.0, harness_r * 1000.0,
+        n_steps, measured, bool(ecm), gradeable, len(warnings),
+    )
+
     ica_v, ica = Analytics.incremental_capacity(v, q)
     return {
         "soh": soh, "capacity_ah": capacity,

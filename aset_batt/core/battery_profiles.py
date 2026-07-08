@@ -273,6 +273,17 @@ def _load_registry() -> Tuple[Dict[str, ChemistryProfile], Dict[str, ProductProf
                 raise ValueError("ocv_curve ต้องมีอย่างน้อย 2 จุด")
             if "r0" not in prof.rin:
                 raise ValueError("rin ต้องมีคีย์ 'r0'")
+            # R8 (industrial-grade audit): range-check, not just presence-check — a
+            # mistyped r0 or OCV point used to load silently and corrupt DCIR/grading
+            # for every test of that chemistry from then on with no indication
+            # anything was wrong. Ceilings are generous (cover every chemistry in
+            # this registry with wide margin), not tight calibration limits.
+            r0 = prof.rin["r0"]
+            if not (0.0 < r0 < 1.0):
+                raise ValueError(f"rin.r0 ({r0} Ω/cell) ไม่สมเหตุสมผล — ต้องอยู่ในช่วง 0-1.0")
+            bad_ocv = [(soc, v) for soc, v in prof.ocv_curve.items() if not (0.5 <= v <= 6.0)]
+            if bad_ocv:
+                raise ValueError(f"ocv_curve มีค่าที่ไม่สมเหตุสมผล (0.5-6.0 V/cell): {bad_ocv}")
             chemistries[name] = prof
         except (ValueError, TypeError) as e:
             if name in chemistries:
@@ -282,8 +293,30 @@ def _load_registry() -> Tuple[Dict[str, ChemistryProfile], Dict[str, ProductProf
 
     for name, d in data.get("products", {}).items():
         try:
-            products[name] = ProductProfile(name=name, **d)
-        except TypeError as e:
+            prod = ProductProfile(name=name, **d)
+            # R8: same range-checking philosophy as the chemistry loop above — a
+            # typo'd 0/negative cells_series or rated_capacity_ah used to load
+            # silently and corrupt pack_max_voltage/capacity math for every test of
+            # this product. max/min/safety_ovp/safety_uvp are "0 = not specified"
+            # by this dataclass's own convention (see its docstring), so only
+            # validated pairwise when both sides are actually set.
+            if prod.cells_series <= 0:
+                raise ValueError(f"cells_series ({prod.cells_series}) ต้อง > 0")
+            if prod.cells_parallel <= 0:
+                raise ValueError(f"cells_parallel ({prod.cells_parallel}) ต้อง > 0")
+            if prod.rated_capacity_ah <= 0:
+                raise ValueError(f"rated_capacity_ah ({prod.rated_capacity_ah}) ต้อง > 0")
+            if prod.nominal_voltage_per_cell <= 0:
+                raise ValueError(
+                    f"nominal_voltage_per_cell ({prod.nominal_voltage_per_cell}) ต้อง > 0")
+            if prod.max_voltage_per_cell and prod.min_voltage_per_cell and \
+                    prod.max_voltage_per_cell <= prod.min_voltage_per_cell:
+                raise ValueError("max_voltage_per_cell ต้องมากกว่า min_voltage_per_cell")
+            if prod.safety_ovp_pack and prod.safety_uvp_pack and \
+                    prod.safety_ovp_pack <= prod.safety_uvp_pack:
+                raise ValueError("safety_ovp_pack ต้องมากกว่า safety_uvp_pack")
+            products[name] = prod
+        except (TypeError, ValueError) as e:
             logger.error(f"product '{name}' ใน profile ไม่ถูกต้อง ({e}) — ข้าม")
 
     logger.info(f"โหลด battery profiles: {len(chemistries)} chemistries, "
@@ -374,14 +407,41 @@ def save_measured_params(product_name: str, params: dict) -> bool:
 
 
 def get_measured_params(product_name: str) -> dict:
-    """Return measured_params dict for a product entry, or {} if none stored."""
+    """Return measured_params dict for a product entry, or {} if none stored.
+
+    R8 (industrial-grade audit): range-checks internal_r_ohm/r0_fraction here
+    (the actual read path profile_from_config() uses to override the
+    chemistry-generic grading baseline) as a second, independent layer —
+    _load_registry()'s own validation only covers products loaded at import
+    time; this function re-reads the file fresh on every call, so it's the one
+    place that also catches a bad value written by save_measured_params() (or
+    a manual edit) AFTER the module was already imported. An out-of-range
+    value used to load silently and floor/inflate DCIR grading for every
+    subsequent test of this product with no indication anything was wrong.
+    """
     if not os.path.exists(_PROFILE_FILE):
         return {}
     try:
         with open(_PROFILE_FILE, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        return (data.get("products", {})
-                    .get(product_name, {})
-                    .get("measured_params", {}))
+        mp = (data.get("products", {})
+                  .get(product_name, {})
+                  .get("measured_params", {}))
     except Exception:
         return {}
+
+    r0_ohm = mp.get("internal_r_ohm")
+    if r0_ohm is not None and not (0.0 < float(r0_ohm) < 5.0):
+        logger.error(
+            "measured_params.internal_r_ohm (%s Ω) for '%s' is out of the plausible "
+            "pack-level range (0-5 Ω) — ignoring measured_params, falling back to the "
+            "chemistry-generic baseline", r0_ohm, product_name)
+        return {}
+    r0_frac = mp.get("r0_fraction")
+    if r0_frac is not None and not (0.0 <= float(r0_frac) <= 1.0):
+        logger.error(
+            "measured_params.r0_fraction (%s) for '%s' is out of range (0-1) — "
+            "ignoring measured_params, falling back to the chemistry-generic baseline",
+            r0_frac, product_name)
+        return {}
+    return mp

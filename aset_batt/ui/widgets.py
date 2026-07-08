@@ -82,35 +82,6 @@ class QtRootShim(QObject):
         QApplication.quit()
 
 
-class TemperatureGauge(QFrame):
-    def __init__(self):
-        super().__init__()
-        self.setStyleSheet(
-            f"QFrame {{ background:{PANEL2}; border:1px solid {BORDER}; border-radius:4px; }}"
-        )
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 6, 10, 10)
-        cap = QLabel("CASE TEMPERATURE")
-        cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cap.setStyleSheet(
-            f"color:{MUTED}; font-size:10px; font-weight:700; letter-spacing:1px; border:0;"
-        )
-        self.value = QLabel("-- °C")
-        self.value.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.value.setFont(QFont("Consolas", 30, QFont.Weight.Bold))
-        self.value.setStyleSheet(f"color:{TEXT}; border:0;")
-        lay.addWidget(cap)
-        lay.addWidget(self.value)
-
-    def update_temp(self, temp: float, warn: float, crit: float):
-        if math.isnan(temp):
-            self.value.setText("-- °C")
-            return
-        color = CRIT if temp >= crit else WARN if temp >= warn else OK
-        self.value.setText(f"{temp:.1f} °C")
-        self.value.setStyleSheet(f"color:{color}; border:0;")
-
-
 class MultiAxisTrend(pg.GraphicsLayoutWidget):
     """Voltage (left) + Current (right) + Temperature (far right) over time."""
 
@@ -122,6 +93,11 @@ class MultiAxisTrend(pg.GraphicsLayoutWidget):
         self.p.setLabel("left", "Voltage", units="V", color=INFO)
         self.p.showGrid(x=True, y=True, alpha=0.2)
         self.p.getAxis("left").setPen(INFO)
+        # Lock to a plain-seconds display — with no data yet (idle) pyqtgraph's
+        # SI-prefix auto-scaling can pick ms/µs based on a near-zero default range,
+        # which looks like a bug (and did not match the sibling Temp plot's own
+        # independently-scaled axis) rather than an empty-state placeholder.
+        self.p.getAxis("bottom").enableAutoSIPrefix(False)
 
         self.vb_i = pg.ViewBox()
         self.p.showAxis("right")
@@ -154,6 +130,15 @@ class MultiAxisTrend(pg.GraphicsLayoutWidget):
         self.vb_i.linkedViewChanged(self.p.vb, self.vb_i.XAxis)
         self.vb_t.linkedViewChanged(self.p.vb, self.vb_t.XAxis)
 
+    def set_default_ranges(self, v_max, i_max, t_max, x_max=60):
+        """Sensible idle-state view before any real data exists — otherwise
+        pyqtgraph auto-ranges an empty curve to an arbitrary small window (e.g.
+        0-1.2 for a pack that reads 12.4V), which looks broken rather than empty."""
+        self.p.setXRange(0, x_max, padding=0.02)
+        self.p.setYRange(0, v_max, padding=0.05)
+        self.vb_i.setYRange(-i_max, i_max, padding=0.05)
+        self.vb_t.setYRange(0, t_max, padding=0.05)
+
     def update(self, t, v, i, temp):
         self.c_v.setData(t, v)
         self.c_i.setData(t, i)
@@ -175,6 +160,7 @@ class SplitTrend(QWidget):
         self._vi.setLabel("left", "Voltage", units="V", color=INFO)
         self._vi.showGrid(x=True, y=True, alpha=0.2)
         self._vi.getAxis("left").setPen(INFO)
+        self._vi.getAxis("bottom").enableAutoSIPrefix(False)
         self._vi.showAxis("right")
         self._vb_i = pg.ViewBox()
         self._vi.scene().addItem(self._vb_i)
@@ -193,6 +179,7 @@ class SplitTrend(QWidget):
         self._tp.setLabel("left", "Temp", units="°C", color=CRIT)
         self._tp.showGrid(x=True, y=True, alpha=0.2)
         self._tp.getAxis("left").setPen(CRIT)
+        self._tp.getAxis("bottom").enableAutoSIPrefix(False)
         self._c_t = self._tp.plot(pen=pg.mkPen(CRIT, width=2, style=Qt.PenStyle.DashLine))
 
         lay.addWidget(self._vi, 3)
@@ -201,6 +188,13 @@ class SplitTrend(QWidget):
     def _sync_vi(self):
         self._vb_i.setGeometry(self._vi.getPlotItem().vb.sceneBoundingRect())
         self._vb_i.linkedViewChanged(self._vi.getPlotItem().vb, self._vb_i.XAxis)
+
+    def set_default_ranges(self, v_max, i_max, t_max, x_max=60):
+        self._vi.setXRange(0, x_max, padding=0.02)
+        self._vi.setYRange(0, v_max, padding=0.05)
+        self._vb_i.setYRange(-i_max, i_max, padding=0.05)
+        self._tp.setXRange(0, x_max, padding=0.02)
+        self._tp.setYRange(0, t_max, padding=0.05)
 
     def update(self, t, v, i, temp):
         self._c_v.setData(t, v)
@@ -223,6 +217,7 @@ class TripleTrend(QWidget):
             ("Temp",    "°C", CRIT, Qt.PenStyle.DashLine),
         ]
         self._curves = []
+        self._plots = []
         for label, unit, color, style in specs:
             pw = pg.PlotWidget()
             pw.setBackground(PANEL2)
@@ -230,9 +225,16 @@ class TripleTrend(QWidget):
             pw.setLabel("left", label, units=unit, color=color)
             pw.showGrid(x=True, y=True, alpha=0.2)
             pw.getAxis("left").setPen(color)
+            pw.getAxis("bottom").enableAutoSIPrefix(False)
             curve = pw.plot(pen=pg.mkPen(color, width=2, style=style))
             self._curves.append(curve)
+            self._plots.append(pw)
             lay.addWidget(pw, 1)
+
+    def set_default_ranges(self, v_max, i_max, t_max, x_max=60):
+        for pw, (lo, hi) in zip(self._plots, [(0, v_max), (-i_max, i_max), (0, t_max)]):
+            pw.setXRange(0, x_max, padding=0.02)
+            pw.setYRange(lo, hi, padding=0.05)
 
     def update(self, t, v, i, temp):
         for curve, data in zip(self._curves, [v, i, temp]):
@@ -299,6 +301,14 @@ class TrendContainer(QWidget):
         self._btn_group.idClicked.connect(self._on_mode_changed)
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def set_default_ranges(self, v_max, i_max, t_max, x_max=60):
+        """Sensible idle-state view for all 3 modes (not just the currently-visible
+        one) so switching modes before any real data exists never lands on an
+        auto-ranged-on-nothing, seemingly-broken graph."""
+        self._combined.set_default_ranges(v_max, i_max, t_max, x_max)
+        self._split2.set_default_ranges(v_max, i_max, t_max, x_max)
+        self._split3.set_default_ranges(v_max, i_max, t_max, x_max)
 
     def _on_mode_changed(self, idx: int):
         self._stack.setCurrentIndex(idx)

@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 class AutoController:
     """Advanced controller for battery testing operations"""
 
+    # G8 (industrial-grade audit): sustained-staleness escalation threshold — see
+    # _monitor_loop's temp_is_stale() handling below. Deliberately much larger than
+    # HardwareController.temp_is_stale()'s own 10s default so a momentary serial
+    # glitch only warns, not trips.
+    _TEMP_STALE_TRIP_S = 60.0
+
     def __init__(self, root, hw, data, estimator, config):
         self.root = root
         self.hw = hw
@@ -111,12 +117,14 @@ class AutoController:
             self._last_update_time = None
             self.monitor_running = True
             # สร้าง session file ใหม่ทุกครั้งที่ monitor เริ่ม
-            from aset_batt.storage.data_utils import DataHandler
+            from aset_batt.storage.data_utils import DataHandler, write_session_metadata
             csv_path = DataHandler.make_session_path()
             ok, msg = self.data.start_logging(csv_path)
             if not ok:
                 import logging
                 logging.getLogger(__name__).error(f"Cannot start CSV logging: {msg}")
+            else:
+                write_session_metadata(csv_path, self.config)   # R3: audit trail
             threading.Thread(target=self._monitor_loop, daemon=True).start()
 
     def stop_monitor(self):
@@ -324,6 +332,19 @@ class AutoController:
                     # below (and Rin/OCV temperature compensation) would keep trusting
                     # a stale number. Warn once per stale episode; don't hard-stop the
                     # test on this alone (a false trip here would be its own hazard).
+                    if getattr(self.hw, "temp_is_stale", None) and \
+                            self.hw.temp_is_stale(self._TEMP_STALE_TRIP_S):
+                        # G8 (industrial-grade audit): a brief staleness blip only
+                        # warns (see below) — a hard stop on that alone would be its
+                        # own false-trip hazard, per the original reasoning here.
+                        # But if the sensor has been dead for a SUSTAINED period, OTP
+                        # protection has been genuinely blind for real time, not a
+                        # momentary glitch — that's now treated as an actual safety
+                        # trip like any other breach, not left running forever.
+                        self._trigger_safety(
+                            f"ESP32 temperature reading stale for {self._TEMP_STALE_TRIP_S:.0f}s+ "
+                            f"— over-temperature protection is blind, stopping test")
+                        break
                     if getattr(self.hw, "temp_is_stale", None) and self.hw.temp_is_stale():
                         if not self._temp_stale_warned:
                             self._temp_stale_warned = True
@@ -688,6 +709,14 @@ class AutoController:
         except Exception as e:
             logger.error(f"IEC 61960 test failed: {e}")
             test_data['error'] = str(e)
+            # R7 (industrial-grade audit): an unhandled exception inside any of the
+            # _run_*_test() loops above used to just get logged here — the loop
+            # itself (e.g. _run_cycle_life_test) has no try/except of its own, so a
+            # genuinely unexpected fault (not a checked safety-limit breach, which
+            # already calls _trigger_safety via check_safety_limits) left the PSU/
+            # Load in whatever state they were in when the exception fired, with no
+            # attempt to cut power. Treat any test-loop crash as unsafe by default.
+            self._emergency_shutdown()
 
             if self.event_handler:
                 self.event_handler.post_event(
@@ -713,8 +742,11 @@ class AutoController:
 
         # ให้ dashboard เห็นข้อมูล IEC test แบบ live -> เปิด logging + อ้างอิงเวลาเริ่ม
         if not self.data.is_recording:
-            from aset_batt.storage.data_utils import DataHandler
-            self.data.start_logging(DataHandler.make_session_path())
+            from aset_batt.storage.data_utils import DataHandler, write_session_metadata
+            csv_path = DataHandler.make_session_path()
+            ok, _ = self.data.start_logging(csv_path)
+            if ok:
+                write_session_metadata(csv_path, self.config)   # R3: audit trail
         if self._start_time is None:
             self._start_time = time.time()
 
@@ -937,8 +969,11 @@ class AutoController:
 
         label (เช่น "HPPC", "QuickScan") ถูกฝังในชื่อไฟล์ session เพื่อบอกชนิดเทสต์."""
         if not self.data.is_recording:
-            from aset_batt.storage.data_utils import DataHandler
-            self.data.start_logging(DataHandler.make_session_path(label=label))
+            from aset_batt.storage.data_utils import DataHandler, write_session_metadata
+            csv_path = DataHandler.make_session_path(label=label)
+            ok, _ = self.data.start_logging(csv_path)
+            if ok:
+                write_session_metadata(csv_path, self.config)   # R3: audit trail
         if self._start_time is None:
             self._start_time = time.time()
 

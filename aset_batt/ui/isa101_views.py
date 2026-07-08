@@ -31,10 +31,11 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -48,7 +49,6 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSizePolicy,
     QSplitter,
-    QHeaderView,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -57,6 +57,77 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.setMinimumWidth(400)
+        lay = QVBoxLayout(self)
+
+        # 1. Appearance
+        lbl_app = QLabel("APPEARANCE")
+        lbl_app.setStyleSheet("font-weight: bold; color: #a1a6ab; margin-top: 10px;")
+        lay.addWidget(lbl_app)
+        self.cb_dark = QCheckBox("Dark Theme")
+        if parent and hasattr(parent, 'config'):
+            self.cb_dark.setChecked(parent.config.system.dark_mode)
+        lay.addWidget(self.cb_dark)
+
+        # 2. Cloud Integration
+        lbl_cloud = QLabel("CLOUD INTEGRATION")
+        lbl_cloud.setStyleSheet("font-weight: bold; color: #a1a6ab; margin-top: 10px;")
+        lay.addWidget(lbl_cloud)
+        
+        row1 = QHBoxLayout()
+        self.cb_push = QCheckBox("Enable Cloud Push")
+        if parent and hasattr(parent, 'config'):
+            self.cb_push.setChecked(parent.config.system.cloud_push)
+        row1.addWidget(self.cb_push)
+        lay.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("InfluxDB / MQTT URL:"))
+        self.ed_url = QLineEdit()
+        self.ed_url.setPlaceholderText("https://...")
+        if parent and hasattr(parent, 'config'):
+            self.ed_url.setText(parent.config.system.cloud_url)
+        row2.addWidget(self.ed_url, 1)
+        lay.addLayout(row2)
+
+        # 3. PDF Reporting
+        lbl_pdf = QLabel("REPORTS")
+        lbl_pdf.setStyleSheet("font-weight: bold; color: #a1a6ab; margin-top: 10px;")
+        lay.addWidget(lbl_pdf)
+        
+        btn_pdf = QPushButton("Generate PDF Report")
+        btn_pdf.clicked.connect(self._on_pdf)
+        lay.addWidget(btn_pdf)
+
+        lay.addStretch(1)
+        btn_box = QHBoxLayout()
+        btn_save = QPushButton("Save && Close")
+        btn_save.clicked.connect(self.accept)
+        btn_box.addStretch(1)
+        btn_box.addWidget(btn_save)
+        lay.addLayout(btn_box)
+
+    def accept(self):
+        parent = self.parent()
+        if parent and hasattr(parent, 'config'):
+            parent.config.system.dark_mode = self.cb_dark.isChecked()
+            parent.config.system.cloud_push = self.cb_push.isChecked()
+            parent.config.system.cloud_url = self.ed_url.text()
+            parent.config.save()
+            QMessageBox.information(self, "Restart Required", "Theme changes will take effect on next restart.")
+        super().accept()
+
+    def _on_pdf(self):
+        parent = self.parent()
+        if parent and hasattr(parent, '_on_pdf_report'):
+            parent._on_pdf_report()
+            self.accept()
+
 
 import aset_batt.core.battery_profiles as battery_profiles
 from aset_batt.core.analysis_module import ChemistryDetector
@@ -70,7 +141,7 @@ from aset_batt.ui.theme import (
 )
 
 from aset_batt.ui.widgets import (
-    _btn, _hline, QtRootShim, TemperatureGauge,
+    _btn, _hline, QtRootShim,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
     _PdfNotifier, _PdfTask,
 )
@@ -304,7 +375,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([300, 880, 360])
+        splitter.setSizes([350, 830, 360])
         self.setCentralWidget(splitter)
 
     def _logo(self, filename, h=40):
@@ -314,41 +385,6 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         if not pix.isNull():
             lbl.setPixmap(pix.scaledToHeight(h, Qt.TransformationMode.SmoothTransformation))
         return lbl
-
-    def _build_header(self):
-        bar = QFrame()
-        bar.setFixedHeight(62)
-        bar.setStyleSheet(f"background:{PANEL}; border:1px solid {BORDER}; border-radius:4px;")
-        lay = QHBoxLayout(bar)
-        lay.setContentsMargins(14, 6, 14, 6)
-        lay.setSpacing(12)
-        lay.addWidget(self._logo("00021f2021030914260622.png", 42))
-        lay.addWidget(self._logo("00021b2021031713352962.png", 38))
-
-        title = QLabel("BATTERY TEST & SORTING COMMAND CENTER")
-        title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        lay.addWidget(title)
-        lay.addStretch(1)
-
-        self.conn_led = QLabel("●")
-        self.conn_led.setStyleSheet(f"color:{NEUTRAL}; font-size:16px;")
-        self.conn_text = QLabel("Disconnected")
-        self.conn_text.setStyleSheet(f"color:{MUTED}; font-weight:600;")
-        lay.addWidget(self.conn_led)
-        lay.addWidget(self.conn_text)
-
-        mode = "SIMULATION" if self.config.system.simulation_mode else "HARDWARE"
-        color = WARN if self.config.system.simulation_mode else OK
-        self.mode_badge = QLabel(f"  {mode}  ")
-        self.mode_badge.setStyleSheet(
-            f"background:transparent; color:{color}; border:1px solid {color}; border-radius:4px; padding:4px 8px; font-weight:700; letter-spacing:1px;"
-        )
-        lay.addWidget(self.mode_badge)
-
-        self.state_pill = QLabel("  IDLE  ")
-        self.state_pill.setStyleSheet(self._pill(NEUTRAL))
-        lay.addWidget(self.state_pill)
-        return bar
 
     def _pill(self, color):
         return f"background:{color}; color:white; border-radius:3px; padding:5px 12px; font-weight:700; letter-spacing:1px;"
@@ -369,49 +405,62 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         m.addAction("Connect", self._on_connect)
         m.addAction("Disconnect", self._on_disconnect)
         m.addSeparator()
-        m.addAction("OCV Calibrate", self._on_ocv_calibrate)
-        m.addSeparator()
         m.addAction("Charge", self._on_charge)
         m.addAction("Stop Charge", self._on_stop_charge)
         m.addSeparator()
         m.addAction("Run Test", self._on_run_test)
         m.addAction("Stop Test", self._on_stop_test)
-        m.addSeparator()
-        m.addAction("Start Monitor", self._on_start_monitor)
-        m.addAction("Stop Monitor", lambda: self.controller and self.controller.stop_monitor())
-        m.addSeparator()
-        m.addAction("Auto Sequence", self._on_auto_sequence)
-        m.addAction("Quick Scan", self._on_quick_scan)
 
         m = bar.addMenu("View")
         g = m.addMenu("Graph Mode")
         for _lbl in ("Combined", "Split 2", "Split 3"):
             g.addAction(_lbl, lambda l=_lbl: self._set_graph_mode(l))
 
+        # Tools: workflow/calibration utilities + settings, grouped together (moved
+        # OCV Calibrate/Auto Sequence/Quick Scan out of Run, and folded the standalone
+        # Settings menu's one action in here too) so Run stays limited to core
+        # connect/charge/test start-stop actions.
         m = bar.addMenu("Tools")
         m.addAction("Detect Chemistry", self._on_detect_chemistry)
+        m.addSeparator()
+        m.addAction("OCV Calibrate", self._on_ocv_calibrate)
+        m.addAction("Auto Sequence", self._on_auto_sequence)
+        m.addAction("Quick Scan", self._on_quick_scan)
         m.addSeparator()
         m.addAction("Refresh Ports", self._refresh_ports)
         m.addSeparator()
         m.addAction("Open Cloud Dashboard", self._on_open_dashboard)
         m.addSeparator()
         m.addAction("Generate PDF Report", self._on_pdf_report)
+        m.addSeparator()
+        m.addAction("Preferences", self._on_open_settings)
 
         m = bar.addMenu("Help")
         m.addAction("About ASET Battery Tester", self._on_about)
 
     def _build_toolbar(self):
-        tb = self.addToolBar("Main")
-        tb.setMovable(False)
+        # We replace the default MenuBar placement with a custom MenuWidget
+        # that holds BOTH the QMenuBar and our badges to ensure they render reliably
+        # on the same top row on all operating systems.
+        
+        container = QWidget()
+        # Ensure the container has the same background as the menu bar
+        container.setStyleSheet(f"QWidget {{ background:{PANEL}; border-bottom:1px solid {BORDER}; }}")
+        
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 10, 0)
+        layout.setSpacing(10)
 
-        # Action shortcuts (Connect/Disconnect/OCV/Auto Seq/Quick Scan/Start-Stop
-        # Monitor) were removed from here — every one is still available in its zone
-        # (SETUP, TEST MODE) and the menu, so the toolbar is now just the mode/state
-        # badges + E-STOP.
-
+        # Grab the menu bar we built and put it on the left
+        bar = self.menuBar()
+        bar.setNativeMenuBar(False)
+        bar.setStyleSheet("QMenuBar { border: none; }") # avoid double border
+        layout.addWidget(bar)
+        
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        tb.addWidget(spacer)
+        spacer.setStyleSheet("border: none; background: transparent;")
+        layout.addWidget(spacer)
 
         mode = "SIMULATION" if self.config.system.simulation_mode else "HARDWARE"
         color = WARN if self.config.system.simulation_mode else OK
@@ -420,28 +469,46 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             f"background:transparent; color:{color}; border:1px solid {color}; "
             f"border-radius:4px; padding:3px 8px; font-weight:700; letter-spacing:1px;"
         )
-        tb.addWidget(self.mode_badge)
+        layout.addWidget(self.mode_badge)
 
         self.state_pill = QLabel("  IDLE  ")
-        self.state_pill.setStyleSheet(self._pill(NEUTRAL))
-        tb.addWidget(self.state_pill)
-        tb.addSeparator()
+        self.state_pill.setStyleSheet(self._pill(NEUTRAL) + " border: none;")
+        layout.addWidget(self.state_pill)
 
         self.btn_estop = QPushButton("⛔ E-STOP")
         self.btn_estop.setStyleSheet(
             f"QPushButton {{ background:{CRIT}; color:white; border:none; border-radius:5px; "
-            f"padding:7px 14px; font-size:13px; font-weight:800; }}"
+            f"padding:4px 14px; font-size:13px; font-weight:800; }}"
             f"QPushButton:hover {{ background:#9b2020; }}"
         )
-        self.btn_estop.setCursor(Qt.PointingHandCursor)
+        self.btn_estop.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_estop.clicked.connect(self._on_estop)
-        tb.addWidget(self.btn_estop)
+        layout.addWidget(self.btn_estop)
+        
+        self.setMenuWidget(container)
 
     def _build_statusbar(self):
         sb = self.statusBar()
         self.status_label = QLabel("Ready — connect hardware to begin")
         self.status_label.setStyleSheet(f"color:{MUTED};")
         sb.addWidget(self.status_label, 1)
+        # G3 (industrial-grade audit): test progress/ETA (wf_progress/lbl_eta, see
+        # zones.py) used to live only inside the SETUP tab's AUTO-sequence sub-page
+        # — switching to TEST MODE or another workflow sub-tab during a running test
+        # hid progress entirely. This compact mirror lives in the status bar, which
+        # is visible regardless of which tab is active. Driven from the same single
+        # update site as wf_progress (sequences.py's _slot_phase_progress).
+        self.status_progress = QProgressBar()
+        self.status_progress.setTextVisible(True)
+        self.status_progress.setMaximumWidth(160)
+        self.status_progress.setMaximumHeight(14)
+        self.status_progress.setStyleSheet(
+            f"QProgressBar{{border:1px solid {BORDER};border-radius:3px;"
+            f"background:{PANEL2};text-align:center;font-size:9px;}}"
+            f"QProgressBar::chunk{{background:{INFO};border-radius:2px;}}"
+        )
+        self.status_progress.hide()
+        sb.addPermanentWidget(self.status_progress)
         # Update banner — hidden until a git check finds origin ahead of us.
         self.btn_update = QPushButton("⭯ Update available")
         self.btn_update.setVisible(False)
@@ -478,11 +545,20 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         # live telemetry only, and groups the final-test numbers with the rest of
         # the Analytics tab's session/history tools instead of duplicating them.
 
-        self._temp_gauge = TemperatureGauge()
-        lay.addWidget(self._temp_gauge)
-
+        # The old "CASE TEMPERATURE" box duplicated the TEMP metric card above it
+        # (same signal, same value, twice) — removed; the TEMP card's own color now
+        # carries the CRIT/WARN over-temperature signal instead (see
+        # _set_temp_label_color), and the graph gets the reclaimed vertical space.
         self.trend = TrendContainer()
-        lay.addWidget(self.trend, 2)
+        # Sensible idle-state view (before any real telemetry exists) instead of
+        # pyqtgraph auto-ranging an empty curve to an arbitrary small window that
+        # doesn't include the pack's actual voltage.
+        b = self.config.battery
+        crit_temp = self.config.system.safety_limits.get("max_temperature", 55.0)
+        self.trend.set_default_ranges(
+            v_max=b.pack_max_voltage * 1.05, i_max=max(1.0, b.max_current),
+            t_max=crit_temp * 1.2)
+        lay.addWidget(self.trend, 3)
         return panel
 
     def _set_graph_mode(self, label: str):
@@ -526,7 +602,6 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         tabs.setMinimumWidth(300)
         tabs.addTab(_scroll(self._zone_setup()),     "SETUP")
         tabs.addTab(_scroll(self._zone_test_mode()), "TEST MODE")
-        tabs.addTab(_scroll(self._zone_tools()),     "TOOLS")
         return tabs
 
     # ---- small UI helpers --------------------------------------------------
@@ -724,6 +799,21 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
 
     _I_IDLE = 0.05  # A — threshold below which current is considered "at rest"
 
+    def _set_temp_label_color(self, temp):
+        """Color-code the TEMP metric card (CRIT/WARN/OK) against the REAL configured
+        safety_limits.max_temperature — single source of truth for all 3 telemetry
+        paths (_slot_display, _slot_live_readback, _on_test_telemetry), which used to
+        each drive a separate, now-removed "CASE TEMPERATURE" duplicate box, two of
+        them with a hardcoded 35/45°C threshold that didn't match the configured
+        safety limit at all."""
+        if math.isnan(temp):
+            return
+        lbl, unit = self.metric_labels["Temp"]
+        crit = self.config.system.safety_limits.get("max_temperature", 55)
+        warn = crit - 10
+        color = CRIT if temp >= crit else WARN if temp >= warn else TEXT
+        lbl.setStyleSheet(f"color:{color}; border:0;")
+
     def _update_vi_temp_labels(self, v, i, temp):
         """Voltage/Current/Temp labels + current-direction badge — the subset of
         metrics valid even without a running test (no SoC/Rin, those need the
@@ -735,14 +825,26 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         i_lbl, i_unit = self.metric_labels["Current"]
         i_lbl.setText(f"{abs(i):.3f} {i_unit}")
         _IDLE = self._I_IDLE
+        # G1 (industrial-grade audit): discharging is this device's normal, expected
+        # operating state — coloring it WARN (amber) unconditionally for the entire
+        # duration of every routine discharge test misused the "caution" color for a
+        # non-caution state (ISA-101: color reserved for abnormal, not routine
+        # status — see theme.py's own docstring). Amber now only appears if the
+        # current is actually approaching the configured max_current limit; CHG
+        # keeps the existing accent color (INFO reads as a neutral "active" tag in
+        # this app's palette, not an alarm color, so charging isn't misrepresented
+        # the same way discharging was).
+        max_i = max(1e-6, getattr(self.config.battery, "max_current", 0.0))
+        load_frac = abs(i) / max_i
         if i < -_IDLE:                              # charging (convention: negative)
             i_lbl.setStyleSheet(f"color:{INFO}; border:0;")
             self._lbl_i_dir.setText("▲  CHG")
             self._lbl_i_dir.setStyleSheet(f"color:{INFO}; border:0;")
         elif i > _IDLE:                             # discharging (convention: positive)
-            i_lbl.setStyleSheet(f"color:{WARN}; border:0;")
+            i_color = CRIT if load_frac >= 1.0 else WARN if load_frac >= 0.9 else TEXT
+            i_lbl.setStyleSheet(f"color:{i_color}; border:0;")
             self._lbl_i_dir.setText("▼  DSG")
-            self._lbl_i_dir.setStyleSheet(f"color:{WARN}; border:0;")
+            self._lbl_i_dir.setStyleSheet(f"color:{i_color if load_frac >= 0.9 else MUTED}; border:0;")
         else:                                       # at rest
             i_lbl.setStyleSheet(f"color:{TEXT}; border:0;")
             self._lbl_i_dir.setText("—  REST")
@@ -783,6 +885,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 alpha = 0.6 if rel_jump > 0.15 else 0.3
                 self._rin_ema = (1.0 - alpha) * prev + alpha * rin_mohm
             rin_lbl.setText(f"{self._rin_ema:.1f} {rin_unit}")
+            rin_lbl.setStyleSheet(f"color:{TEXT}; border:0;")  # no longer a "—" placeholder
         else:
             self._rin_ema = None                            # reset smoothing between loads
         # SoH is intentionally NOT updated here — it is a final-analysis metric,
@@ -812,15 +915,11 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             self._last_trend_redraw = _now_redraw
             self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
 
-        self._update_temp_gauge(temp)
+        self._set_temp_label_color(temp)
         i_dir = "CHG" if i < -self._I_IDLE else "DSG" if i > self._I_IDLE else "REST"
         self.status_label.setText(
             f"V={v:.3f} V  I={abs(i):.3f} A ({i_dir})  SoC={soc:.1f}%  Rin={rin_mohm:.1f} mΩ  Temp={temp:.1f} °C"
         )
-
-    def _update_temp_gauge(self, temp):
-        if hasattr(self, "_temp_gauge") and self._temp_gauge is not None:
-            self._temp_gauge.update_temp(temp, warn=35.0, crit=45.0)
 
     @Slot(float, float, float)
     def _slot_live_readback(self, v, i, temp):
@@ -829,7 +928,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         estimator), no CSV logging, no graph buffer — those stay owned by the real
         test's _slot_display so the recorded session isn't polluted with idle data."""
         self._update_vi_temp_labels(v, i, temp)
-        self._update_temp_gauge(temp)
+        self._set_temp_label_color(temp)
 
     @Slot(str, str)
     def _slot_profile_status(self, text, color):
@@ -960,6 +1059,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self._on_test_finished(result)
 
     def _log_alarm(self, msg: str):
+        import time as _time
+        now = _time.time()
         ts = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
         m = msg.strip()
         m_low = m.lower()
@@ -998,10 +1099,85 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         else:
             point = m
 
-        # ── Insert row ─────────────────────────────────────────────
         if not hasattr(self, "tbl_alarms"):
             return
         tbl = self.tbl_alarms
+
+        # ── R2/G2 dedup ──────────────────────────────────────────────
+        # The SAME (event, point) repeating within _ALARM_DEDUP_WINDOW_S updates
+        # the existing row in place (bumping an "(xN)" occurrence count + its
+        # timestamp) instead of inserting a new one — a stuck sensor re-firing the
+        # identical fault every telemetry tick no longer floods the log or buries
+        # whatever alarm actually mattered. ACK/flash/cloud-push/beep are NOT
+        # re-triggered on a repeat — they already fired for the first occurrence.
+        key = (event, point)
+        if (key == self._last_alarm_key and self._last_alarm_row is not None
+                and (now - self._last_alarm_time) <= self._ALARM_DEDUP_WINDOW_S
+                and self._last_alarm_row < tbl.rowCount()):
+            self._last_alarm_occurrence += 1
+            self._last_alarm_time = now
+            row = self._last_alarm_row
+            item0 = tbl.item(row, 0)
+            item1 = tbl.item(row, 1)
+            if item0 is not None:
+                item0.setText(ts)
+            if item1 is not None:
+                item1.setText(f"{point}  (×{self._last_alarm_occurrence})")
+            tbl.scrollToBottom()
+            return
+
+        # ── R2/G2 rate limit ─────────────────────────────────────────
+        # More than _ALARM_RATE_LIMIT DISTINCT rows within _ALARM_RATE_WINDOW_S is
+        # treated as a flood, not real information (ISA-18.2: alarm flood
+        # suppression) — further rows are coalesced into one running "rate limit"
+        # row instead of each getting its own, until the rate drops back down.
+        while self._alarm_recent_times and \
+                now - self._alarm_recent_times[0] > self._ALARM_RATE_WINDOW_S:
+            self._alarm_recent_times.popleft()
+        if len(self._alarm_recent_times) >= self._ALARM_RATE_LIMIT:
+            self._alarm_rate_suppressed += 1
+            rl_row = self._alarm_rate_limit_row
+            rl_text = (f"Alarm rate limit — {self._alarm_rate_suppressed} event(s) "
+                      f"suppressed in the last {self._ALARM_RATE_WINDOW_S:.0f}s "
+                      f"(most recent: {point})")
+            if rl_row is not None and rl_row < tbl.rowCount():
+                item0 = tbl.item(rl_row, 0)
+                item1 = tbl.item(rl_row, 1)
+                if item0 is not None:
+                    item0.setText(ts)
+                if item1 is not None:
+                    item1.setText(rl_text)
+                tbl.scrollToBottom()
+                return
+            # First trip — insert one WARNING-styled row for the rate-limit notice
+            # itself, and remember its index so further floods coalesce into it.
+            rl_row = tbl.rowCount()
+            tbl.insertRow(rl_row)
+            for col, (text, bold, f_color) in enumerate([
+                (ts, False, "#E0E3E6"), (rl_text, False, "#E0E3E6"),
+                ("ACTIVE", False, "#E0E3E6"), ("WARNING", True, "#FFB700"),
+                ("", True, MUTED),
+            ]):
+                item = QTableWidgetItem(text)
+                item.setBackground(QColor("#3D3010"))
+                item.setForeground(QColor(f_color))
+                if bold:
+                    fnt = item.font(); fnt.setBold(True); item.setFont(fnt)
+                tbl.setItem(rl_row, col, item)
+            tbl.setRowHeight(rl_row, 24)
+            tbl.scrollToBottom()
+            self._alarm_rate_limit_row = rl_row
+            self._alarm_count_lbl.setText(f"{tbl.rowCount()} events") \
+                if hasattr(self, "_alarm_count_lbl") else None
+            return
+        self._alarm_recent_times.append(now)
+        # A genuinely new/distinct alarm invalidates the rate-limit coalescing row
+        # (it's no longer "the most recent" flood) so a future flood starts fresh,
+        # with its own suppressed-count starting back at 0.
+        self._alarm_rate_limit_row = None
+        self._alarm_rate_suppressed = 0
+
+        # ── Insert row ─────────────────────────────────────────────
         row = tbl.rowCount()
         tbl.insertRow(row)
 
@@ -1096,6 +1272,13 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                     "background:#1C1F23; color:#7A9A5A; padding:3px 10px; font-size:10px;"
                     " font-family:Consolas,monospace; border-top:1px solid #333;"
                 )
+
+        # R2/G2: remember this row so an immediate repeat coalesces into it
+        # instead of inserting a duplicate (see the dedup check above).
+        self._last_alarm_key = key
+        self._last_alarm_row = row
+        self._last_alarm_occurrence = 1
+        self._last_alarm_time = now
 
     def _refresh_ports(self):
         if self.hw is None:
@@ -1380,56 +1563,26 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             return
         try:
             self.hw.connect_instruments(psu, load)
-            if hasattr(self.hw, "set_load_range"):
-                try:
-                    from aset_batt.hardware.hardware_driver import recommend_pel3111_ranges
-                    i_range, v_range = recommend_pel3111_ranges(
-                        self.config.battery.max_current,
-                        self.config.battery.pack_max_voltage,
-                    )
-                    self.hw.set_load_range(i_range, v_range)
-                except Exception as range_exc:
-                    self._log_alarm(f"Load range auto-set skipped (non-fatal): {range_exc}")
-            # Mandatory hardware-level safety backstop — applied automatically on every
-            # connect, not an operator toggle. Margins are deliberately generous (this
-            # is a backstop against a hung/crashed PC or a software bug, not the
-            # primary cutoff — the existing software safety_limits checks stay primary)
-            # so it doesn't nuisance-trip on normal HPPC pulses/transients.
-            if hasattr(self.hw, "set_load_protection"):
-                try:
-                    max_i = self.config.battery.max_current
-                    uvp_v = self.config.system.safety_limits.get("min_voltage", 0.0)
-                    err = self.hw.set_load_protection(
-                        ocp_a=round(max_i * 1.25, 2),
-                        uvp_v=round(uvp_v, 2) if uvp_v > 0 else None,
-                        ovp_v=round(self.config.battery.pack_max_voltage * 1.1, 2),
-                    )
-                    if err:
-                        self._log_alarm(f"Load protection SCPI error (non-fatal): {err}")
-                except Exception as prot_exc:
-                    self._log_alarm(f"Load protection auto-set skipped (non-fatal): {prot_exc}")
-            if hasattr(self.hw, "set_psu_protection"):
-                try:
-                    err = self.hw.set_psu_protection(
-                        ocp_a=round(self.config.battery.max_current * 1.25, 2),
-                        ovp_v=round(self.config.battery.pack_max_voltage * 1.1, 2),
-                    )
-                    if err:
-                        self._log_alarm(f"PSU protection SCPI error (non-fatal): {err}")
-                except Exception as prot_exc:
-                    self._log_alarm(f"PSU protection auto-set skipped (non-fatal): {prot_exc}")
-            if hasattr(self.hw, "harden_instrument_config"):
-                try:
-                    self.hw.harden_instrument_config()
-                except Exception:
-                    pass
-            if hasattr(self.hw, "get_instrument_info"):
-                try:
-                    info = self.hw.get_instrument_info()
-                    self._log_alarm(f"PSU: {info.get('psu', '')}")
-                    self._log_alarm(f"Load: {info.get('load', '')}")
-                except Exception:
-                    pass
+            # G7 (industrial-grade audit): range-set + OVP/OCP/UVP protection +
+            # instrument hardening now live in ONE HardwareController method
+            # (apply_default_safety_protection) instead of being inlined here only
+            # — any other real-hardware entry point (a script, a test harness, a
+            # future alternate UI) gets the exact same backstop by calling it too,
+            # instead of silently getting none. MockHardwareController doesn't
+            # implement it (simulation has nothing to protect), hence the hasattr.
+            if hasattr(self.hw, "apply_default_safety_protection"):
+                result = self.hw.apply_default_safety_protection(
+                    max_current_a=self.config.battery.max_current,
+                    pack_max_voltage_v=self.config.battery.pack_max_voltage,
+                    min_voltage_v=self.config.system.safety_limits.get("min_voltage", 0.0),
+                )
+                for w in result.get("warnings", []):
+                    self._log_alarm(w)
+                info = result.get("info") or {}
+                if info.get("psu"):
+                    self._log_alarm(f"PSU: {info['psu']}")
+                if info.get("load"):
+                    self._log_alarm(f"Load: {info['load']}")
             if esp:
                 baud = getattr(self.config.hardware, "serial_baudrate", 9600)
                 try:
@@ -1551,13 +1704,15 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
     def _on_direct_toggled(self, on: bool):
         if not on:
             return
-        if self._seq_running.is_set():
-            # A sequence is active — refuse to switch into direct control.
+        # Same guard as _psu_manual/_load_manual (see their comment) — refuses entry
+        # into the tab at all rather than letting the operator in and then rejecting
+        # the ON action, which would be a confusing dead end.
+        busy = self._busy_reason()
+        if busy:
             if not self._headless:
                 QMessageBox.warning(
                     self, "Direct Control",
-                    "ไม่สามารถใช้ Direct Control ขณะที่ AUTO sequence กำลังรันอยู่\n"
-                    "กด CANCEL SEQUENCE ก่อน"
+                    f"{busy}\nหยุดก่อนแล้วค่อยใช้ Direct Control"
                 )
             # Revert radio selection back to whichever page was showing.
             idx = self.run_stack.currentIndex()
@@ -1566,32 +1721,51 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self.run_stack.setCurrentIndex(3)
 
     def _psu_manual(self, on):
-        if on and self._seq_running.is_set():
-            if not self._headless:
-                QMessageBox.warning(self, "Direct Control",
-                                    "ไม่สามารถใช้ Direct Control ขณะที่ AUTO sequence กำลังรันอยู่")
-            return
+        # _seq_running alone missed RUN TEST (AcquisitionWorker) and CHARACTERIZE-tab
+        # tests, which drive self.hw from their own background thread exactly like a
+        # sequence does — an operator clicking Manual PSU ON while one of those was
+        # active could issue a conflicting SCPI command to the same instrument mid-test.
+        # _busy_reason() already covers all three entry points (see its own docstring).
+        if on:
+            busy = self._busy_reason()
+            if busy:
+                if not self._headless:
+                    QMessageBox.warning(self, "Direct Control",
+                                        f"{busy} — หยุดก่อนแล้วค่อยใช้ Direct Control")
+                return
         try:
             if on:
-                self.hw.set_psu(
+                ok = self.hw.set_psu(
                     True,
                     str(float(self.ed_psu_v.text())),
                     str(float(self.ed_psu_i.text())),
                 )
             else:
-                self.hw.set_psu(False)
+                ok = self.hw.set_psu(False)
+            # G9 (industrial-grade audit): set_psu() now reports whether the SCPI
+            # write actually succeeded — a failed command used to just be logged,
+            # so the operator watching this exact button had no way to know the PSU
+            # didn't really change state.
+            if not ok and not self._headless:
+                QMessageBox.warning(self, "PSU", "PSU command failed — see log for details")
         except ValueError:
             if not self._headless:
                 QMessageBox.warning(self, "PSU", "Invalid voltage / current")
 
     def _load_manual(self, on):
-        if on and self._seq_running.is_set():
-            if not self._headless:
-                QMessageBox.warning(self, "Direct Control",
-                                    "ไม่สามารถใช้ Direct Control ขณะที่ AUTO sequence กำลังรันอยู่")
-            return
+        # See _psu_manual's comment — same interlock gap, same fix.
+        if on:
+            busy = self._busy_reason()
+            if busy:
+                if not self._headless:
+                    QMessageBox.warning(self, "Direct Control",
+                                        f"{busy} — หยุดก่อนแล้วค่อยใช้ Direct Control")
+                return
         try:
-            self.hw.set_load(on, str(float(self.ed_load_a.text())) if on else "0")
+            ok = self.hw.set_load(on, str(float(self.ed_load_a.text())) if on else "0")
+            # G9 (industrial-grade audit): see _psu_manual's comment — same fix.
+            if not ok and not self._headless:
+                QMessageBox.warning(self, "Load", "Load command failed — see log for details")
             try:
                 from aset_batt.storage.cloud_push import set_cloud_meta
                 if on:
@@ -1642,9 +1816,18 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             if not self._headless:
                 QMessageBox.warning(self, "Charge", "Connect hardware first")
             return
-        strategy = {"CC-CV": "cc_cv",
-                    "3-Stage (Lead-Acid)": "three_stage"}.get(self.cb_charge_mode.currentText())
-        ok = self.controller.start_charge(strategy=strategy)
+            
+        mode_txt = self.cb_manual_charge_mode.currentText()
+        strategy = {"CC-CV": "cc_cv", "3-Stage (Lead-Acid)": "three_stage"}.get(mode_txt)
+        
+        crate_override = None
+        c_txt = self.cb_manual_charge_crate.currentText().replace("C", "")
+        try:
+            crate_override = float(c_txt)
+        except ValueError:
+            pass
+            
+        ok = self.controller.start_charge(strategy=strategy, bulk_c_rate_override=crate_override)
         mode = self.cb_charge_mode.currentText()
         self._log_alarm(f"Charge started ({mode})." if ok else "Charge start failed.")
         if ok:
@@ -1768,6 +1951,25 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
 
         op_mode = mode or OperationMode(self.cb_op_mode.currentText())
         cfg = TestConfig(self._acq_profile(), op_mode)
+        
+        # Override with manual inputs if we are in manual discharge
+        if op_mode not in (OperationMode.HPPC, OperationMode.CC_CV_CHARGE):
+            # C-rate override
+            if hasattr(self, 'cb_manual_discharge_crate'):
+                c_txt = self.cb_manual_discharge_crate.currentText().replace("C", "")
+                try:
+                    cfg.profile.discharge_c_rate = float(c_txt)
+                except ValueError:
+                    pass
+            # Cutoff V override
+            if hasattr(self, 'ed_manual_cutoff_v'):
+                v_txt = self.ed_manual_cutoff_v.text().strip()
+                if v_txt:
+                    try:
+                        cfg.profile.cutoff_v = float(v_txt)
+                    except ValueError:
+                        pass
+        
         self.buf_t.clear(); self.buf_v.clear(); self.buf_i.clear()
         self.buf_soc.clear(); self.buf_rin.clear(); self.buf_temp.clear()
         self._elapsed_t0 = None
@@ -1820,9 +2022,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 else:
                     self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} {_u}')
             self.metric_labels["Temp"][0].setText(f'{row["temp"]:.1f} {self.metric_labels["Temp"][1]}')
-        self._temp_gauge.update_temp(
-            row["temp"], self.config.system.safety_limits.get("max_temperature", 55) - 10,
-            self.config.system.safety_limits.get("max_temperature", 55))
+        self._set_temp_label_color(row["temp"])
         # Throttled the same way as _slot_display — see its comment.
         import time as _time
         _now_redraw = _time.perf_counter()
@@ -1875,10 +2075,15 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 is not None and soh == soh:
             self.controller.estimator.set_soh(soh)
         soh_txt = "N/A" if soh != soh else f"{soh:.1f}"   # soh != soh → NaN
-        self.metric_labels_final["SoH"][0].setText(
-            "N/A" if soh != soh else f'{soh:.1f} {self.metric_labels_final["SoH"][1]}')
-        self.metric_labels_final["Rin"][0].setText(
-            f'{results["ri_mohm"]:.1f} {self.metric_labels_final["Rin"][1]}')
+        soh_final_lbl, _soh_unit = self.metric_labels_final["SoH"]
+        soh_final_lbl.setText("N/A" if soh != soh else f"{soh:.1f} {_soh_unit}")
+        # "N/A" is still a pending/no-data state (not measurable this test) — keep it
+        # MUTED like the initial "—" placeholder; only a real number gets full TEXT
+        # contrast (see _metric_card's pending-placeholder styling).
+        soh_final_lbl.setStyleSheet(f"color:{MUTED if soh != soh else TEXT}; border:0;")
+        rin_final_lbl, _rin_unit = self.metric_labels_final["Rin"]
+        rin_final_lbl.setText(f"{results['ri_mohm']:.1f} {_rin_unit}")
+        rin_final_lbl.setStyleSheet(f"color:{TEXT}; border:0;")
         grade = results["grade"]
         gc = {"A": OK, "B": INFO, "C": WARN, "REJECT": CRIT, "REVIEW": NEUTRAL}.get(grade, NEUTRAL)
         conf = results.get("confidence", 1.0)
@@ -2184,10 +2389,11 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             self.btn_log.setText("START DATA LOGGING")
             self._refresh_session_list()
         else:
-            from aset_batt.storage.data_utils import DataHandler
+            from aset_batt.storage.data_utils import DataHandler, write_session_metadata
             csv_path = DataHandler.make_session_path()
             ok, msg = self.data.start_logging(csv_path)
             if ok:
+                write_session_metadata(csv_path, self.config)   # R3: audit trail
                 self.btn_log.setText("STOP DATA LOGGING")
                 self._last_csv = csv_path
                 self.lbl_csv.setText(f"CSV: {os.path.basename(csv_path)}")
@@ -2421,6 +2627,10 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             shutdown_analysis_pool()
         except Exception as exc:
             logger.error("analysis pool shutdown on close: %s", exc)
+
+    def _on_open_settings(self):
+        dlg = SettingsDialog(self)
+        dlg.exec()
 
     def closeEvent(self, event):
         if self._headless:

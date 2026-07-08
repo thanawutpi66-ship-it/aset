@@ -23,6 +23,8 @@ logs/
 
 # Data / measurement output (regenerate via generate_sample_data.py)
 *.csv
+*.csv.sha256
+*.csv.meta.json
 
 # Trained models + generated training data
 *.joblib

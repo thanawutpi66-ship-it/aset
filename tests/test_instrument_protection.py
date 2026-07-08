@@ -265,5 +265,78 @@ class TestCheckScpiError(unittest.TestCase):
         self.assertEqual(hw._check_scpi_error(None, "Test"), "")
 
 
+class TestApplyDefaultSafetyProtection(unittest.TestCase):
+    """G7 (industrial-grade audit): range-set + OVP/OCP/UVP protection +
+    instrument hardening used to live ONLY inline in isa101_views.py's
+    _on_connect() handler — any other real-hardware entry point (a script, a
+    test harness, a future alternate UI) got no instrument-level backstop at
+    all. Now consolidated into one HardwareController method any caller can
+    invoke directly, independent of the UI."""
+
+    def _connected_hw(self):
+        hw = _make_hw()
+        hw.psu_inst = MagicMock()
+        hw.psu_inst.query.return_value = "0,\"No error\""
+        hw.load_inst = MagicMock()
+        hw.load_inst.query.return_value = "0,\"No error\""
+        return hw
+
+    def test_applies_load_range_load_protection_psu_protection_and_hardening(self):
+        hw = self._connected_hw()
+
+        result = hw.apply_default_safety_protection(
+            max_current_a=5.0, pack_max_voltage_v=14.7, min_voltage_v=10.5)
+
+        # Range auto-set
+        load_writes = [c.args[0] for c in hw.load_inst.write.call_args_list]
+        self.assertTrue(any(":CRANge" in w for w in load_writes))
+        self.assertTrue(any(":VRANge" in w for w in load_writes))
+        # Load protection: OCP = 5.0*1.25, OVP = 14.7*1.1, UVP = 10.5
+        self.assertTrue(any(":CONFigure:OCP 6.25" == w for w in load_writes))
+        self.assertTrue(any(":CONFigure:UVP 10.5" == w for w in load_writes))
+        self.assertTrue(any(":CONFigure:OVP 16.17" == w for w in load_writes))
+        # PSU protection
+        psu_writes = [c.args[0] for c in hw.psu_inst.write.call_args_list]
+        self.assertTrue(any(":CURR:PROT:LEV 6.25" == w for w in psu_writes))
+        self.assertTrue(any(":VOLT:PROT:LEV 16.17" == w for w in psu_writes))
+        # Hardening (panel lock is one of harden_instrument_config's writes)
+        self.assertTrue(any("KLOC ON" in w for w in psu_writes))
+
+    def test_returns_instrument_info(self):
+        hw = self._connected_hw()
+        hw.psu_inst.query.side_effect = lambda cmd: (
+            "0,\"No error\"" if "SYST:ERR" in cmd else "PSW-ID")
+        hw.load_inst.query.side_effect = lambda cmd: (
+            "0,\"No error\"" if "SYST:ERR" in cmd else "PEL-ID")
+
+        result = hw.apply_default_safety_protection(5.0, 14.7)
+
+        self.assertEqual(result["info"]["psu"], "PSW-ID")
+        self.assertEqual(result["info"]["load"], "PEL-ID")
+
+    def test_a_single_scpi_failure_is_collected_as_a_warning_not_raised(self):
+        hw = self._connected_hw()
+        hw.load_inst.write.side_effect = Exception("VISA timeout")
+
+        result = hw.apply_default_safety_protection(5.0, 14.7)   # must not raise
+
+        self.assertTrue(any("skipped" in w.lower() or "error" in w.lower()
+                            for w in result["warnings"]))
+        # A failure on the Load side must not prevent PSU protection from
+        # still being attempted.
+        hw.psu_inst.write.assert_any_call(":CURR:PROT:LEV 6.25")
+
+    def test_no_instruments_connected_does_not_raise(self):
+        hw = _make_hw()   # psu_inst/load_inst both None
+        result = hw.apply_default_safety_protection(5.0, 14.7)
+        self.assertEqual(result["info"], {"psu": "", "load": ""})
+
+    def test_omitted_min_voltage_skips_uvp(self):
+        hw = self._connected_hw()
+        hw.apply_default_safety_protection(5.0, 14.7)   # min_voltage_v defaults to 0.0
+        load_writes = [c.args[0] for c in hw.load_inst.write.call_args_list]
+        self.assertFalse(any("UVP" in w for w in load_writes))
+
+
 if __name__ == "__main__":
     unittest.main()
