@@ -324,10 +324,16 @@ class BatteryModel:
             energy_wh += avg_current * segment_voltage * dt_hours
             avg_voltage += segment_voltage
 
-        avg_voltage /= len(voltage_data)
+        # Empty arrays reach here on an abort before the first sample (e.g. the
+        # operator stops a profile test immediately) — guard both divisions the
+        # same way actual_time_hours already does below, instead of letting a
+        # ZeroDivisionError crash the abort-results step.
+        avg_voltage = avg_voltage / len(voltage_data) if voltage_data else 0.0
 
         # IEC 61960 compliance check
-        expected_time_hours = self.iec_data['rated_capacity_ah'] / discharge_rate
+        expected_time_hours = (
+            self.iec_data['rated_capacity_ah'] / discharge_rate if discharge_rate else 0.0
+        )
         actual_time_hours = time_data[-1] / 3600.0 if time_data else 0
 
         return {
