@@ -29,20 +29,22 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _meta_override: dict = {}
 
-# Rolling window of recent safety events (ALARM/WARNING) from the GUI's alarm
-# log — pushed with every payload (not drained) so a missed poll on the
+# Rolling window of recent events from the GUI's alarm log (every entry, not
+# just ALARM/WARNING — operators watching remotely wanted the full activity
+# feed) — pushed with every payload (not drained) so a missed poll on the
 # browser side doesn't lose an event; the frontend dedupes by timestamp.
+# Capped at 50 to match the frontend's own alarmLog cap (app.js).
 _pending_alarms: list = []
-_MAX_PENDING_ALARMS = 20
+_MAX_PENDING_ALARMS = 50
 
 
 def push_alarm(severity: str, message: str) -> None:
-    """Queue a safety event to ride along on the next push(es).
+    """Queue an event from the GUI's alarm log to ride along on the next push(es).
 
-    Called by the GUI's _log_alarm() for ALARM/WARNING-classified events only,
-    so cloud viewers see the same safety events the lab operator's alarm log
-    shows — instead of the dashboard's old behavior of only ever guessing an
-    alarm from temperature crossing a threshold during a live poll.
+    Called by _log_alarm() for every log line, so cloud viewers see the same
+    activity feed the lab operator's alarm log shows — instead of the
+    dashboard's old behavior of only ever guessing an alarm from temperature
+    crossing a threshold during a live poll.
     """
     _pending_alarms.append({"ts": time.time(), "severity": severity, "message": message})
     if len(_pending_alarms) > _MAX_PENDING_ALARMS:
