@@ -1005,14 +1005,18 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         row = tbl.rowCount()
         tbl.insertRow(row)
 
-        # Determine if this event needs ACK (ALARM or WARNING only)
+        # Forward every log line to the cloud dashboard's Alarm Log, not just
+        # ALARM/WARNING — operators watching remotely wanted the full activity
+        # feed (Connected, Charge started, etc.), not just safety trips.
+        try:
+            from aset_batt.storage.cloud_push import push_alarm
+            push_alarm(event, point)
+        except Exception:
+            pass
+
+        # Determine if this event needs ACK (ALARM or WARNING only) — GUI-side
+        # flash/acknowledge behavior only, independent of the cloud push above.
         needs_ack = event in ("ALARM", "WARNING")
-        if needs_ack:
-            try:
-                from aset_batt.storage.cloud_push import push_alarm
-                push_alarm(event, point)
-            except Exception:
-                pass
         # Audible alert on genuine ALARM events only (not WARNING — stays visual-only
         # so a routine "temperature reading stale" warning doesn't beep as loudly as
         # a real safety trip). hw.beep() is itself non-fatal.
