@@ -84,7 +84,7 @@ class MockHardwareController:
     # PSU / Load control
     # ------------------------------------------------------------------
 
-    def set_psu(self, state, voltage_val="0", current_val="1.0"):
+    def set_psu(self, state, voltage_val="0", current_val="1.0") -> bool:
         # current_val = CC limit (A); mock just records voltage, limit ไม่มีผลในจำลอง
         if state:
             self._psu_voltage = float(voltage_val)
@@ -93,8 +93,9 @@ class MockHardwareController:
             self._charging = False
             self._psu_output_on = False
         self.set_ssr(bool(state))
+        return True   # mirrors HardwareController.set_psu's success/failure return
 
-    def set_load(self, state, current_val="0"):
+    def set_load(self, state, current_val="0") -> bool:
         if state:
             was_on = self._load_current > 0
             # Discharge: PSU disconnected → set load directly
@@ -104,6 +105,7 @@ class MockHardwareController:
                 self._load_on_t = time.monotonic()   # mark pulse start for RC model
         else:
             self.load_off()
+        return True   # mirrors HardwareController.set_load's success/failure return
 
     def set_load_raw(self, target):
         self._load_current = abs(float(target))

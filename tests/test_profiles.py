@@ -83,6 +83,122 @@ class TestProfileValidation(unittest.TestCase):
         self.assertGreaterEqual(len(chems["LeadAcid"].ocv_curve), 2)
 
 
+class TestR8RangeValidation(unittest.TestCase):
+    """Industrial-grade audit R8: presence-only checks used to let an out-of-range
+    r0/OCV/cells_series/rated_capacity_ah value load silently and corrupt DCIR/
+    grading for every subsequent test — now range-checked, not just "key exists"."""
+
+    # Not a TestProfileValidation subclass (that would re-run its tests too) —
+    # same small helper, duplicated on purpose.
+    def _load_with(self, payload):
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, encoding="utf-8")
+        json.dump(payload, tmp)
+        tmp.close()
+        orig = battery_profiles._PROFILE_FILE
+        try:
+            battery_profiles._PROFILE_FILE = tmp.name
+            return battery_profiles._load_registry()
+        finally:
+            battery_profiles._PROFILE_FILE = orig
+            os.unlink(tmp.name)
+
+    def test_implausible_r0_rejected_keeps_builtin(self):
+        chems, _ = self._load_with(
+            {"chemistries": {"LeadAcid": {"rin": {"r0": 12.0}}}})   # 12 Ω/cell, absurd
+        self.assertLess(chems["LeadAcid"].rin["r0"], 1.0)   # built-in retained
+
+    def test_negative_r0_rejected(self):
+        chems, _ = self._load_with(
+            {"chemistries": {"LeadAcid": {"rin": {"r0": -0.01}}}})
+        self.assertGreater(chems["LeadAcid"].rin["r0"], 0.0)
+
+    def test_implausible_ocv_point_rejected(self):
+        chems, _ = self._load_with(
+            {"chemistries": {"LeadAcid": {"ocv_curve": [[0, 2.0], [100, 55.0]]}}})
+        # 55 V/cell is absurd -> whole override rejected, built-in kept
+        self.assertTrue(all(0.5 <= v <= 6.0 for v in chems["LeadAcid"].ocv_curve.values()))
+
+    def test_new_chemistry_with_implausible_r0_is_skipped(self):
+        chems, _ = self._load_with(
+            {"chemistries": {"NewChem": {"ocv_curve": [[0, 2.0], [100, 2.2]],
+                                         "rin": {"r0": 0.0}}}})
+        self.assertNotIn("NewChem", chems)   # r0=0.0 fails the 0 < r0 < 1.0 check
+
+    def test_product_with_zero_cells_series_is_skipped(self):
+        _, prods = self._load_with({"products": {"BadProduct": {
+            "chemistry": "LeadAcid", "nominal_voltage_per_cell": 2.0,
+            "cells_series": 0, "cells_parallel": 1, "rated_capacity_ah": 5.0,
+        }}})
+        self.assertNotIn("BadProduct", prods)
+
+    def test_product_with_negative_capacity_is_skipped(self):
+        _, prods = self._load_with({"products": {"BadProduct": {
+            "chemistry": "LeadAcid", "nominal_voltage_per_cell": 2.0,
+            "cells_series": 6, "cells_parallel": 1, "rated_capacity_ah": -5.0,
+        }}})
+        self.assertNotIn("BadProduct", prods)
+
+    def test_product_with_max_voltage_below_min_is_skipped(self):
+        _, prods = self._load_with({"products": {"BadProduct": {
+            "chemistry": "LeadAcid", "nominal_voltage_per_cell": 2.0,
+            "cells_series": 6, "cells_parallel": 1, "rated_capacity_ah": 5.0,
+            "max_voltage_per_cell": 1.0, "min_voltage_per_cell": 2.0,
+        }}})
+        self.assertNotIn("BadProduct", prods)
+
+    def test_valid_product_still_loads(self):
+        _, prods = self._load_with({"products": {"GoodProduct": {
+            "chemistry": "LeadAcid", "nominal_voltage_per_cell": 2.0,
+            "cells_series": 6, "cells_parallel": 1, "rated_capacity_ah": 5.3,
+            "max_voltage_per_cell": 2.45, "min_voltage_per_cell": 1.75,
+        }}})
+        self.assertIn("GoodProduct", prods)
+
+
+class TestGetMeasuredParamsValidation(unittest.TestCase):
+    """R8, second independent layer: get_measured_params() re-validates on every
+    read (not just at module-import time), so a bad value written later — by
+    save_measured_params() or a manual edit — is still caught."""
+
+    def _with_measured_params(self, mp: dict):
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, encoding="utf-8")
+        json.dump({"products": {"TestProduct": {"measured_params": mp}}}, tmp)
+        tmp.close()
+        orig = battery_profiles._PROFILE_FILE
+        try:
+            battery_profiles._PROFILE_FILE = tmp.name
+            return battery_profiles.get_measured_params("TestProduct")
+        finally:
+            battery_profiles._PROFILE_FILE = orig
+            os.unlink(tmp.name)
+
+    def test_valid_values_pass_through(self):
+        mp = self._with_measured_params({"internal_r_ohm": 0.1, "r0_fraction": 0.5})
+        self.assertEqual(mp["internal_r_ohm"], 0.1)
+
+    def test_implausible_internal_r_ohm_rejected(self):
+        mp = self._with_measured_params({"internal_r_ohm": 50.0, "r0_fraction": 0.5})
+        self.assertEqual(mp, {})
+
+    def test_negative_internal_r_ohm_rejected(self):
+        mp = self._with_measured_params({"internal_r_ohm": -0.1})
+        self.assertEqual(mp, {})
+
+    def test_out_of_range_r0_fraction_rejected(self):
+        mp = self._with_measured_params({"internal_r_ohm": 0.1, "r0_fraction": 1.5})
+        self.assertEqual(mp, {})
+
+    def test_missing_file_returns_empty(self):
+        orig = battery_profiles._PROFILE_FILE
+        try:
+            battery_profiles._PROFILE_FILE = "does_not_exist.json"
+            self.assertEqual(battery_profiles.get_measured_params("Anything"), {})
+        finally:
+            battery_profiles._PROFILE_FILE = orig
+
+
 class TestModelMatchesProfile(unittest.TestCase):
     """BatteryModel หลัง refactor ต้องคืน OCV เดิม (ค่าที่ test อื่นผูกไว้)"""
 

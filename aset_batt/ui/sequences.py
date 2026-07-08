@@ -69,7 +69,7 @@ from aset_batt.ui.theme import (
     BG, PANEL, PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
 )
 from aset_batt.ui.widgets import (
-    _btn, _hline, QtRootShim, TemperatureGauge,
+    _btn, _hline, QtRootShim,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
     _PdfNotifier, _PdfTask,
 )
@@ -222,8 +222,15 @@ class SequencesMixin:
             set_cloud_meta(elapsed_s=elapsed_s, total_s=total_s)
         except Exception:
             pass
+        # G3 (industrial-grade audit): status_progress (status bar, isa101_views.py)
+        # mirrors wf_progress so test progress stays visible no matter which tab is
+        # active — see its own comment for why.
+        has_status_progress = hasattr(self, "status_progress")
         if total_s <= 0:
-            self.wf_progress.hide(); self.lbl_eta.hide(); return
+            self.wf_progress.hide(); self.lbl_eta.hide()
+            if has_status_progress:
+                self.status_progress.hide()
+            return
         self.wf_progress.setRange(0, total_s)
         self.wf_progress.setValue(min(elapsed_s, total_s))
         self.wf_progress.setFormat(f"%p%  ({elapsed_s // 60}m {elapsed_s % 60:02d}s / "
@@ -231,6 +238,11 @@ class SequencesMixin:
         rem = max(0, total_s - elapsed_s)
         self.lbl_eta.setText(f"ETA: {rem // 60}m {rem % 60:02d}s remaining")
         self.wf_progress.show(); self.lbl_eta.show()
+        if has_status_progress:
+            self.status_progress.setRange(0, total_s)
+            self.status_progress.setValue(min(elapsed_s, total_s))
+            self.status_progress.setFormat(f"%p% · ETA {rem // 60}m{rem % 60:02d}s")
+            self.status_progress.show()
 
     @Slot(str)
     def _slot_seq_result(self, html: str):
@@ -328,25 +340,50 @@ class SequencesMixin:
         self.btn_seq_cancel.setEnabled(True)
         self.sig_loading.emit(btn_key, True, loading_label)
 
-    def _seq_check_temp_stale(self):
+    # G8 (industrial-grade audit): a momentary staleness blip only warns — a hard
+    # stop on that alone would be its own false-trip hazard. Sustained staleness
+    # beyond this means OTP protection has genuinely been blind for real time, not
+    # a glitch — see the escalation branch below. Mirrors AutoController's own
+    # _TEMP_STALE_TRIP_S.
+    _SEQ_TEMP_STALE_TRIP_S = 60.0
+
+    def _seq_check_temp_stale(self) -> bool:
         """Warn once per sequence run if the ESP32 temperature reading has gone
-        stale (serial glitch / hung sensor). Mirrors AutoController._monitor_loop's
-        warn-only handling: we deliberately don't touch the temperature value itself
-        (no NaN injection) since these sequence loops feed it straight into the EKF
-        and Arrhenius Rin compensation — corrupting it there would poison the whole
-        estimate, which is worse than trusting a slightly-stale-but-sane last value.
+        stale (serial glitch / hung sensor); escalate to aborting the sequence if it
+        stays stale for _SEQ_TEMP_STALE_TRIP_S. We deliberately don't touch the
+        temperature value itself (no NaN injection) since these sequence loops feed
+        it straight into the EKF and Arrhenius Rin compensation — corrupting it
+        there would poison the whole estimate, which is worse than trusting a
+        slightly-stale-but-sane last value; the escalation stops the TEST instead.
         Not called from AutoController's own monitor loop (it has its own guard) —
         only from the ISA-101 sequence threads, which had no staleness check at all.
         Also called from CHARACTERIZE's Peukert/eta/GITT threads (characterize.py),
         which never run _seq_common_start() — so this can't assume that ran first;
-        getattr() with a default avoids an AttributeError crashing their first sample."""
+        getattr() with a default avoids an AttributeError crashing their first
+        sample. Those callers currently ignore the return value (each characterize
+        test tracks its own running-flag in self._char_running, not self._seq_running,
+        so auto-abort there needs its own wiring — out of scope for this pass) —
+        returns True (safe to continue) unless sequences.py's own _seq_running loops
+        check it, matching the _seq_check_otp() pattern right next to it.
+
+        Returns False (and has already cleared self._seq_running + emitted an
+        alarm) only on the sustained-staleness trip.
+        """
+        if getattr(self.hw, "temp_is_stale", None) and \
+                self.hw.temp_is_stale(self._SEQ_TEMP_STALE_TRIP_S):
+            self._seq_running.clear()
+            reason = f"ESP32 temperature stale for {self._SEQ_TEMP_STALE_TRIP_S:.0f}s+"
+            self.sig_alarm.emit(f"[SAFETY] {reason} — OTP protection is blind, sequence aborted")
+            self.sig_wf_status.emit(f"⛔ {reason}")
+            return False
         if getattr(self, "_seq_temp_stale_warned", False):
-            return
+            return True
         if getattr(self.hw, "temp_is_stale", None) and self.hw.temp_is_stale():
             self._seq_temp_stale_warned = True
             self.sig_alarm.emit(
                 "[WARNING] ESP32 temperature reading is stale — Rin/OCV temperature "
                 "compensation and OTP protection may not reflect the real battery.")
+        return True
 
     def _on_auto_sequence(self):
         if self.controller is None or not getattr(self.hw, "is_connected", False):
@@ -936,7 +973,8 @@ class SequencesMixin:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
                     now = _t.perf_counter()   # stamp AT the measurement, not after temp/etc.
                     temp3 = self.hw.current_temp
-                    self._seq_check_temp_stale()
+                    if not self._seq_check_temp_stale():
+                        break
                     dt = now - last_log
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
@@ -1069,7 +1107,8 @@ class SequencesMixin:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
                     now    = _t.perf_counter()   # stamp AT the measurement
                     temp3  = self.hw.current_temp
-                    self._seq_check_temp_stale()
+                    if not self._seq_check_temp_stale():
+                        break
                     dt     = now - last_log
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)

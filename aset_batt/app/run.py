@@ -47,6 +47,13 @@ def run() -> int:
         
     root = QtRootShim()
     window = BatteryQtWindow(bootstrapper.config_manager)
+    # G5 (industrial-grade audit): config.json being corrupt used to silently fall
+    # back to defaults (wiping calibration like harness_resistance_ohm) with only a
+    # log line most operators never see. Surface it loudly before the main window
+    # opens so it can't be missed and mistaken for a freshly-calibrated rig.
+    if getattr(bootstrapper.config_manager, "load_error", None):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.warning(None, "Configuration Error", bootstrapper.config_manager.load_error)
     try:
         bootstrapper.create_ui(root, window)
         window.show()

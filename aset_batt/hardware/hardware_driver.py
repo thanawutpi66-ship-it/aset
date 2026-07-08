@@ -163,16 +163,24 @@ class HardwareController:
         # instead from connect_esp32(), right after set_ssr(False) forces the SSR
         # open (PSU genuinely isolated from the battery loop at that point).
 
-    def set_psu(self, state, voltage_val="0", current_val="1.0"):
+    def set_psu(self, state, voltage_val="0", current_val="1.0") -> bool:
         """Manual PSU control (CV with a CC current limit).
 
         current_val is the CC limit (A) — a safety ceiling, not a target. It used to
         be hardcoded to 5.0 A, which could blast up to 5 A into a small/deeply-
         discharged battery on manual ON; it is now caller-supplied so the UI can pass
         a gentle limit (e.g. 0.25–1 A for recovery).
+
+        Returns True if the SCPI write(s) actually succeeded, False otherwise (see
+        the industrial-grade audit's G9 finding: a failed write used to only be
+        logged, so a caller — e.g. the manual PSU ON/OFF buttons — had no way to
+        know the instrument didn't actually change state). set_ssr() is only called
+        on success now too: previously it ran unconditionally, so a failed PSU write
+        could leave the SSR relay state out of sync with the PSU's real output.
         """
         if not self.is_connected:
-            return
+            return False
+        ok = True
         with self.inst_lock:
             try:
                 if state:
@@ -185,11 +193,17 @@ class HardwareController:
                     self._psu_output_on = False
             except Exception as e:
                 logger.error(f"PSU Command Error: {e}")
-        self.set_ssr(bool(state))
+                ok = False
+        if ok:
+            self.set_ssr(bool(state))
+        return ok
 
-    def set_load(self, state, current_val="0"):
+    def set_load(self, state, current_val="0") -> bool:
+        """Returns True if the SCPI write(s) actually succeeded, False otherwise —
+        see set_psu()'s docstring for why this matters (G9, industrial-grade audit).
+        """
         if not self.is_connected:
-            return
+            return False
         with self.inst_lock:
             try:
                 if state:
@@ -199,8 +213,10 @@ class HardwareController:
                     self.load_inst.write(":INP ON")
                 else:
                     self.load_inst.write(":INP OFF")
+                return True
             except Exception as e:
                 logger.error(f"Load Command Error: {e}")
+                return False
 
     def set_load_raw(self, target):
         with self.inst_lock:
@@ -395,6 +411,70 @@ class HardwareController:
                 except Exception as e:
                     info["load"] = f"(query failed: {e})"
         return info
+
+    def apply_default_safety_protection(self, max_current_a: float, pack_max_voltage_v: float,
+                                        min_voltage_v: float = 0.0) -> dict:
+        """Apply the mandatory hardware-level safety backstop — PEL-3111 range
+        auto-set, Load/PSU OVP/OCP/UVP protection trip limits, and instrument
+        hardening (panel lock, PSU auto-power-on disable, Load short-safety) — call
+        this right after connect_instruments() succeeds, from ANY entry point (the
+        UI's Connect handler, a script, a test harness talking to real hardware),
+        not just the GUI.
+
+        G7 (industrial-grade audit): this setup used to live ONLY inline in
+        isa101_views.py's _on_connect() handler — any OTHER way of connecting to
+        real hardware got NO instrument-level backstop at all, silently. Margins
+        are deliberately generous (this is a backstop against a hung/crashed PC or
+        a software bug, not the primary cutoff — software safety_limits checks stay
+        primary) so it doesn't nuisance-trip on normal HPPC pulses/transients.
+
+        Every step is independently best-effort — a single SCPI write failing must
+        never block using the rig, so failures are collected into "warnings"
+        instead of raised.
+
+        Returns {"info": {"psu": ..., "load": ...}, "warnings": [...]} — the
+        caller decides how (or whether) to surface these.
+        """
+        warnings: list = []
+
+        try:
+            i_range, v_range = recommend_pel3111_ranges(max_current_a, pack_max_voltage_v)
+            self.set_load_range(i_range, v_range)
+        except Exception as exc:
+            warnings.append(f"Load range auto-set skipped (non-fatal): {exc}")
+
+        try:
+            err = self.set_load_protection(
+                ocp_a=round(max_current_a * 1.25, 2),
+                uvp_v=round(min_voltage_v, 2) if min_voltage_v > 0 else None,
+                ovp_v=round(pack_max_voltage_v * 1.1, 2),
+            )
+            if err:
+                warnings.append(f"Load protection SCPI error (non-fatal): {err}")
+        except Exception as exc:
+            warnings.append(f"Load protection auto-set skipped (non-fatal): {exc}")
+
+        try:
+            err = self.set_psu_protection(
+                ocp_a=round(max_current_a * 1.25, 2),
+                ovp_v=round(pack_max_voltage_v * 1.1, 2),
+            )
+            if err:
+                warnings.append(f"PSU protection SCPI error (non-fatal): {err}")
+        except Exception as exc:
+            warnings.append(f"PSU protection auto-set skipped (non-fatal): {exc}")
+
+        try:
+            self.harden_instrument_config()
+        except Exception as exc:
+            warnings.append(f"Instrument hardening skipped (non-fatal): {exc}")
+
+        try:
+            info = self.get_instrument_info()
+        except Exception:
+            info = {"psu": "", "load": ""}
+
+        return {"info": info, "warnings": warnings}
 
     def beep(self, seconds: float = 1.0) -> None:
         """Audible alert on the PSU (SYSTem:BEEPer[:IMMediate] {<NR1>}, 0-3600s —
