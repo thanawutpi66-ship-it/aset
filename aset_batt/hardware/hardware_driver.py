@@ -145,6 +145,13 @@ class HardwareController:
         self.load_inst = load
         self.is_connected = True
 
+        # Flush any stale entries left in each instrument's SCPI error queue from a
+        # previous run/session (see _drain_error_queue docstring) — must happen
+        # before apply_default_safety_protection()'s SYST:ERR? checks, or old
+        # errors get misattributed to this session's protection writes.
+        self._drain_error_queue(self.psu_inst, "PSU")
+        self._drain_error_queue(self.load_inst, "Load")
+
         # Safe idle state after connect: ensure PSU output and Load input are OFF.
         try:
             self.psu_inst.write(":OUTP OFF")
@@ -256,6 +263,27 @@ class HardwareController:
             return resp
         except Exception as e:
             return f"({label} error-queue check itself failed: {e})"
+
+    def _drain_error_queue(self, inst, label: str, max_entries: int = 20) -> None:
+        """Pop every pending entry out of the instrument's SCPI error queue.
+
+        The queue is FIFO and persists on the instrument itself for as long as it
+        stays powered — it is NOT reset by opening a new VISA session, so leftover
+        errors from a previous run (e.g. before a protection-setup bug was fixed)
+        keep surfacing on the *next* connect's SYST:ERR? check and get misread as
+        freshly caused by the current session's writes. Call this once right after
+        connect, before any protection/config writes, so later _check_scpi_error()
+        calls only ever see errors this session actually caused."""
+        if inst is None:
+            return
+        try:
+            for _ in range(max_entries):
+                resp = inst.query("SYST:ERR?").strip()
+                if resp.startswith("0,") or resp.startswith("+0,"):
+                    return
+                logger.info("%s stale error-queue entry drained: %s", label, resp)
+        except Exception as e:
+            logger.debug("%s error-queue drain failed (non-fatal): %s", label, e)
 
     def set_load_protection(self, ocp_a: float = None, uvp_v: float = None,
                             ovp_v: float = None) -> str:
