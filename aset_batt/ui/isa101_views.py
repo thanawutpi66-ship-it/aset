@@ -439,21 +439,28 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         m.addAction("About ASET Battery Tester", self._on_about)
 
     def _build_toolbar(self):
-        # This method (a real QToolBar via addToolBar(), not a QMenuBar corner
-        # widget) is the reliable home for the mode/state badges + E-STOP —
-        # QMenuBar.setCornerWidget() is unreliable with native platform menu-bar
-        # styles (renders fine offscreen/headless, but can silently fail to paint
-        # on a real Windows session, which is how E-STOP went missing before this
-        # existed). Action shortcuts (Connect/Disconnect/OCV/Auto Seq/Quick Scan/
-        # Start-Stop Monitor) were deliberately removed from here — every one is
-        # still available in its zone (SETUP, TEST MODE) and the menu, so the
-        # toolbar is just the mode/state badges + E-STOP.
-        tb = self.addToolBar("Main")
-        tb.setMovable(False)
+        # We replace the default MenuBar placement with a custom MenuWidget
+        # that holds BOTH the QMenuBar and our badges to ensure they render reliably
+        # on the same top row on all operating systems.
+        
+        container = QWidget()
+        # Ensure the container has the same background as the menu bar
+        container.setStyleSheet(f"QWidget {{ background:{PANEL}; border-bottom:1px solid {BORDER}; }}")
+        
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 10, 0)
+        layout.setSpacing(10)
 
+        # Grab the menu bar we built and put it on the left
+        bar = self.menuBar()
+        bar.setNativeMenuBar(False)
+        bar.setStyleSheet("QMenuBar { border: none; }") # avoid double border
+        layout.addWidget(bar)
+        
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        tb.addWidget(spacer)
+        spacer.setStyleSheet("border: none; background: transparent;")
+        layout.addWidget(spacer)
 
         mode = "SIMULATION" if self.config.system.simulation_mode else "HARDWARE"
         color = WARN if self.config.system.simulation_mode else OK
@@ -462,22 +469,23 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             f"background:transparent; color:{color}; border:1px solid {color}; "
             f"border-radius:4px; padding:3px 8px; font-weight:700; letter-spacing:1px;"
         )
-        tb.addWidget(self.mode_badge)
+        layout.addWidget(self.mode_badge)
 
         self.state_pill = QLabel("  IDLE  ")
-        self.state_pill.setStyleSheet(self._pill(NEUTRAL))
-        tb.addWidget(self.state_pill)
-        tb.addSeparator()
+        self.state_pill.setStyleSheet(self._pill(NEUTRAL) + " border: none;")
+        layout.addWidget(self.state_pill)
 
         self.btn_estop = QPushButton("⛔ E-STOP")
         self.btn_estop.setStyleSheet(
             f"QPushButton {{ background:{CRIT}; color:white; border:none; border-radius:5px; "
-            f"padding:7px 14px; font-size:13px; font-weight:800; }}"
+            f"padding:4px 14px; font-size:13px; font-weight:800; }}"
             f"QPushButton:hover {{ background:#9b2020; }}"
         )
         self.btn_estop.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_estop.clicked.connect(self._on_estop)
-        tb.addWidget(self.btn_estop)
+        layout.addWidget(self.btn_estop)
+        
+        self.setMenuWidget(container)
 
     def _build_statusbar(self):
         sb = self.statusBar()
