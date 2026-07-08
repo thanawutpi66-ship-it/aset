@@ -275,10 +275,10 @@ class ZonesMixin:
         sel_row.addWidget(QLabel("Workflow:"))
         self.cb_workflow_type = QComboBox()
         self.cb_workflow_type.addItems([
-            "IEC 61960 Standard  (~10–12h LeadAcid / ~8h Li-ion)",
-            "Quick Scan  (~1.5h  Peukert-corrected SoH)",
-            "HPPC Full Sequence  (~2–3h  R0/R1/C1/τ ECM)",
-            "Cycle Life Test  (N × charge + discharge)",
+            "IEC 61960 Standard",
+            "Quick Scan",
+            "HPPC Full Sequence",
+            "Cycle Life Test",
         ])
         self._combo_shrink(self.cb_workflow_type, 10)
         sel_row.addWidget(self.cb_workflow_type, 1)
