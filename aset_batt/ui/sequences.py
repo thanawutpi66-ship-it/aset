@@ -761,25 +761,31 @@ class SequencesMixin:
         if len(self._wf_time_lbls) >= 5:
             self._wf_time_lbls[0].setText(ocv_est)
             c_ch = _crate(self.cb_seq_crate, 0.1) if hasattr(self, "cb_seq_crate") else 0.1
-            self._wf_time_lbls[1].setText(f"~{charge_min(c_ch):.0f} min")
+            ch_m = charge_min(c_ch)
+            self._wf_time_lbls[1].setText(f"~{ch_m:.0f} min")
             rest_min = self.spn_rest_min.value() if hasattr(self, "spn_rest_min") else 30
             self._wf_time_lbls[2].setText(f"{rest_min} min")
             c_test = _crate(self.cb_test_crate, 0.2) if hasattr(self, "cb_test_crate") else 0.2
-            self._wf_time_lbls[3].setText(f"~{discharge_min(c_test):.0f} min")
-            self._wf_time_lbls[4].setText("< 1 min\n(Total est. ~10–12h LeadAcid / ~8h Li-ion)")
+            dis_m = discharge_min(c_test)
+            self._wf_time_lbls[3].setText(f"~{dis_m:.0f} min")
+            total_h = ((ocv_timeout / 60.0) + ch_m + rest_min + dis_m) / 60.0
+            self._wf_time_lbls[4].setText(f"< 1 min\n(Total est. ~{total_h:.1f} h)")
 
         # --- Quick Scan ---
         if len(self._qs_time_lbls) >= 4:
             self._qs_time_lbls[0].setText(ocv_est)
             self._qs_time_lbls[1].setText("5 min")
-            self._qs_time_lbls[2].setText(f"~{discharge_min(1.0):.0f} min")
-            self._qs_time_lbls[3].setText("< 1 min\n(Total est. ~1.5h)")
+            dis_m = discharge_min(1.0)
+            self._qs_time_lbls[2].setText(f"~{dis_m:.0f} min")
+            total_h = ((ocv_timeout / 60.0) + 5 + dis_m) / 60.0
+            self._qs_time_lbls[3].setText(f"< 1 min\n(Total est. ~{total_h:.1f} h)")
 
         # --- HPPC Full Sequence ---
         if len(self._hppc_seq_time_lbls) >= 5:
             self._hppc_seq_time_lbls[0].setText(ocv_est)
             cp = battery_profiles.get_chemistry(chemistry).charge
-            self._hppc_seq_time_lbls[1].setText(f"~{charge_min(cp.bulk_c_rate or 0.1):.0f} min")
+            ch_m = charge_min(cp.bulk_c_rate or 0.1)
+            self._hppc_seq_time_lbls[1].setText(f"~{ch_m:.0f} min")
             self._hppc_seq_time_lbls[2].setText("30 min")
             try:
                 n_cyc = self.spn_hppc_cycles.value()
@@ -789,7 +795,8 @@ class SequencesMixin:
                 n_cyc, pulse_s, relax_s = 5, 30.0, 30.0
             hppc_min = n_cyc * (pulse_s + relax_s) / 60.0
             self._hppc_seq_time_lbls[3].setText(f"~{hppc_min:.0f} min")
-            self._hppc_seq_time_lbls[4].setText("< 1 min\n(Total est. ~2–3h)")
+            total_h = ((ocv_timeout / 60.0) + ch_m + 30 + hppc_min) / 60.0
+            self._hppc_seq_time_lbls[4].setText(f"< 1 min\n(Total est. ~{total_h:.1f} h)")
 
         # --- Cycle Life ---
         if len(self._cycle_time_lbls) >= 5:
