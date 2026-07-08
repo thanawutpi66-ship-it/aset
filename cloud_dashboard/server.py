@@ -9,8 +9,10 @@ ENV:
   INGEST_TOKEN  token สำหรับ /api/ingest (ต้องตั้ง ไม่งั้น ingest ถูกปฏิเสธ)
   SNAPSHOT_PATH ไฟล์เก็บ snapshot ล่าสุด (default ./snapshot.json, best-effort)
 """
+import hmac
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -31,6 +33,15 @@ INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
 SNAPSHOT_PATH = os.environ.get("SNAPSHOT_PATH", "snapshot.json")
 SESSIONS_PATH = os.environ.get("SESSIONS_PATH", "sessions.json")
 MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "20"))
+# CloudPusher downsamples series to max_points=400 by default (aset_batt/storage/
+# cloud_push.py) — a real payload is realistically well under 500 KB. 5 MB leaves
+# generous headroom while still bounding a malicious/broken oversized POST.
+MAX_BODY_BYTES = int(os.environ.get("MAX_BODY_BYTES", str(5 * 1024 * 1024)))
+# Caps for _validate_payload() — well above anything a real CloudPusher payload
+# would ever contain, just enough to reject obviously-abusive input.
+MAX_BATTERY_NAME_LEN = 100
+MAX_ALARM_FIELD_LEN = 500
+MAX_ALARMS = 100
 
 # Static frontend lives in ./static (index.html + style.css + app.js). It is served
 # for any non-/api path; the whole UI is editable there without touching this file.
@@ -62,16 +73,17 @@ def _load_snapshot() -> None:
                 data = json.load(f)
             _store["payload"] = data.get("payload")
             _store["received_at"] = data.get("received_at", 0.0)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"_load_snapshot failed (non-fatal): {e}", file=sys.stderr)
 
 
 def _save_snapshot() -> None:
     try:
         with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
             json.dump(_store, f)
-    except Exception:
-        pass  # ระบบไฟล์ ephemeral (Heroku) ล้มได้ — ไม่เป็นไร
+    except Exception as e:
+        # ระบบไฟล์ ephemeral (Heroku/Azure) ล้มได้ — ไม่เป็นไร แค่ log ไว้ไม่ให้เงียบสนิท
+        print(f"_save_snapshot failed (non-fatal): {e}", file=sys.stderr)
 
 
 def _sessions_meta(sessions: list) -> list:
@@ -88,16 +100,16 @@ def _load_sessions() -> None:
                 data = json.load(f)
             for m in data.get("sessions", []):
                 _sessions.append({**m, "payload": None})  # payloads lost on restart
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"_load_sessions failed (non-fatal): {e}", file=sys.stderr)
 
 
 def _save_sessions() -> None:
     try:
         with open(SESSIONS_PATH, "w", encoding="utf-8") as f:
             json.dump({"sessions": _sessions_meta(_sessions[-MAX_SESSIONS:])}, f)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"_save_sessions failed (non-fatal): {e}", file=sys.stderr)
 
 
 def _json_sanitize(obj):
@@ -115,8 +127,50 @@ def _json_sanitize(obj):
     return obj
 
 
+def _validate_payload(payload) -> str:
+    """Structural check on an /api/ingest payload before it's stored and later
+    re-served verbatim to every dashboard viewer. Returns an error message if
+    the payload should be rejected outright (wrong shape), else "" — mutates
+    payload in place to truncate oversized string/list fields rather than
+    rejecting the whole request for that alone. Defense-in-depth alongside the
+    frontend's own escapeHtml()/textContent fix (static/app.js) — this stops
+    obviously-abusive input at the door instead of trusting whatever JSON
+    shape happens to arrive from whoever holds the ingest token."""
+    if not isinstance(payload, dict):
+        return "payload must be a JSON object"
+
+    meta = payload.get("meta")
+    if meta is not None:
+        if not isinstance(meta, dict):
+            return "meta must be an object"
+        battery = meta.get("battery")
+        if isinstance(battery, str) and len(battery) > MAX_BATTERY_NAME_LEN:
+            meta["battery"] = battery[:MAX_BATTERY_NAME_LEN]
+
+    # Shape from aset_batt/storage/cloud_push.py's push_alarm(): {ts, severity, message}
+    alarms = payload.get("alarms")
+    if alarms is not None:
+        if not isinstance(alarms, list):
+            return "alarms must be a list"
+        if len(alarms) > MAX_ALARMS:
+            del alarms[MAX_ALARMS:]
+        for a in alarms:
+            if not isinstance(a, dict):
+                continue
+            for k in ("severity", "message"):
+                v = a.get(k)
+                if isinstance(v, str) and len(v) > MAX_ALARM_FIELD_LEN:
+                    a[k] = v[:MAX_ALARM_FIELD_LEN]
+    return ""
+
+
 def _make_handler():
     class Handler(BaseHTTPRequestHandler):
+        # Socket read/write timeout (seconds) — without this, a slow-loris-style
+        # connection that opens but never finishes sending can hold a
+        # ThreadingHTTPServer worker thread open indefinitely.
+        timeout = 10
+
         def _json(self, payload, status=200):
             body = json.dumps(_json_sanitize(payload), ensure_ascii=False).encode("utf-8")
             self.send_response(status)
@@ -125,12 +179,30 @@ def _make_handler():
             self.end_headers()
             self.wfile.write(body)
 
+        def _read_body_or_413(self):
+            """Reads the POST body, enforcing MAX_BODY_BYTES. Returns the raw
+            bytes, or None if it already sent a 413 response because the
+            declared Content-Length was too large (the body is never read in
+            that case, so an oversized upload can't sit in memory first)."""
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = 0
+            if length > MAX_BODY_BYTES:
+                self._json({"error": f"payload too large (max {MAX_BODY_BYTES} bytes)"}, 413)
+                return None
+            return self.rfile.read(length) if length else b"{}"
+
         def _serve_static(self, path) -> bool:
             """Serve a file from STATIC_DIR. Returns False if it does not exist
             (so the caller can fall back to a 404). Blocks path traversal."""
             rel = path.lstrip("/") or "index.html"
             full = os.path.normpath(os.path.join(STATIC_DIR, rel))
-            if not full.startswith(STATIC_DIR) or not os.path.isfile(full):
+            try:
+                traversal = os.path.commonpath([full, STATIC_DIR]) != STATIC_DIR
+            except ValueError:
+                traversal = True   # different drives (Windows) — definitely not inside STATIC_DIR
+            if traversal or not os.path.isfile(full):
                 return False
             ext = os.path.splitext(full)[1].lower()
             ctype = _CONTENT_TYPES.get(ext, "application/octet-stream")
@@ -147,11 +219,10 @@ def _make_handler():
 
         # ---- ingest + re-analysis endpoints (จากเครื่องแล็บ / web) ----------
         def do_POST(self):  # noqa: N802
-            import re as _re
             path = urlparse(self.path).path
 
             # POST /api/analyze-request/:id — web browser requests re-analysis (no auth)
-            _ar = _re.match(r"^/api/analyze-request/(\d+)$", path)
+            _ar = re.match(r"^/api/analyze-request/(\d+)$", path)
             if _ar:
                 sidx = int(_ar.group(1))
                 with _lock:
@@ -166,19 +237,20 @@ def _make_handler():
                 return
 
             # POST /api/update-analysis/:id — lab pushes fresh analysis back (auth required)
-            _ua = _re.match(r"^/api/update-analysis/(\d+)$", path)
+            _ua = re.match(r"^/api/update-analysis/(\d+)$", path)
             if _ua:
                 if not INGEST_TOKEN:
                     self._json({"error": "server INGEST_TOKEN not configured"}, 503)
                     return
                 token = self.headers.get("X-Ingest-Token", "")
-                if token != INGEST_TOKEN:
+                if not hmac.compare_digest(token, INGEST_TOKEN):
                     self._json({"error": "unauthorized"}, 401)
                     return
                 sidx = int(_ua.group(1))
+                raw = self._read_body_or_413()
+                if raw is None:
+                    return
                 try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                    raw = self.rfile.read(length) if length else b"{}"
                     body = json.loads(raw.decode("utf-8"))
                 except Exception as e:
                     self._json({"error": f"bad payload: {e}"}, 400)
@@ -203,15 +275,20 @@ def _make_handler():
                 self._json({"error": "server INGEST_TOKEN not configured"}, 503)
                 return
             token = self.headers.get("X-Ingest-Token", "")
-            if token != INGEST_TOKEN:
+            if not hmac.compare_digest(token, INGEST_TOKEN):
                 self._json({"error": "unauthorized"}, 401)
                 return
+            raw = self._read_body_or_413()
+            if raw is None:
+                return
             try:
-                length = int(self.headers.get("Content-Length", "0"))
-                raw = self.rfile.read(length) if length else b"{}"
                 payload = json.loads(raw.decode("utf-8"))
             except Exception as e:
                 self._json({"error": f"bad payload: {e}"}, 400)
+                return
+            err = _validate_payload(payload)
+            if err:
+                self._json({"error": err}, 400)
                 return
             with _lock:
                 now = time.time()
@@ -267,7 +344,7 @@ def _make_handler():
                 # GET /api/pending-analyses — lab polls for re-analysis requests (auth required)
                 if path == "/api/pending-analyses":
                     token = self.headers.get("X-Ingest-Token", "")
-                    if not INGEST_TOKEN or token != INGEST_TOKEN:
+                    if not INGEST_TOKEN or not hmac.compare_digest(token, INGEST_TOKEN):
                         self._json({"error": "unauthorized"}, 401)
                         return
                     with _lock:
@@ -280,8 +357,7 @@ def _make_handler():
                     self._json({"pending": pending})
                     return
 
-                import re as _re
-                _sm = _re.match(r"^/api/session/(\d+)$", path)
+                _sm = re.match(r"^/api/session/(\d+)$", path)
                 if _sm:
                     sidx = int(_sm.group(1))
                     with _lock:
