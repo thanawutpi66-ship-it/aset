@@ -397,17 +397,10 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         tb = self.addToolBar("Main")
         tb.setMovable(False)
 
-        tb.addAction("Connect", self._on_connect)
-        tb.addAction("Disconnect", self._on_disconnect)
-        tb.addSeparator()
-        tb.addAction("OCV", self._on_ocv_calibrate)
-        tb.addSeparator()
-        tb.addAction("▶ Auto Seq", self._on_auto_sequence)
-        tb.addAction("⚡ Quick Scan", self._on_quick_scan)
-        tb.addSeparator()
-        tb.addAction("Start Monitor", self._on_start_monitor)
-        tb.addAction("Stop Monitor", lambda: self.controller and self.controller.stop_monitor())
-        tb.addSeparator()
+        # Action shortcuts (Connect/Disconnect/OCV/Auto Seq/Quick Scan/Start-Stop
+        # Monitor) were removed from here — every one is still available in its zone
+        # (SETUP, TEST MODE) and the menu, so the toolbar is now just the mode/state
+        # badges + E-STOP.
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
