@@ -260,7 +260,7 @@ class HardwareController:
     def set_load_protection(self, ocp_a: float = None, uvp_v: float = None,
                             ovp_v: float = None) -> str:
         """Set PEL-3111 hardware trip points — verified syntax:
-        [:CONFigure]:OCP {<NRf>|LIMit|LOFF}, [:CONFigure]:UVP/OVP {<NRf>}.
+        [:CONFigure]:OCP {<NRf>|LIMit|LOFF}, [:CONFigure]:UVP {<NRf>}.
         A backstop independent of the PC's own software safety_limits checks: this
         trips at the *instrument* even if the PC hangs/crashes. OCP mode is forced
         to LOFF (shut the load off) rather than LIMit (clamp and keep going) — a
@@ -277,9 +277,10 @@ class HardwareController:
                     self.load_inst.write(f":CONFigure:OCP {ocp_a}")
                 if uvp_v is not None:
                     self.load_inst.write(f":CONFigure:UVP {uvp_v}")
-                if ovp_v is not None:
-                    self.load_inst.write(f":CONFigure:OVP {ovp_v}")
-                logger.info("Load protection set: OCP=%s UVP=%s OVP=%s", ocp_a, uvp_v, ovp_v)
+                # Note: PEL-3111 does not support :CONFigure:OVP (throws -113 Undefined header)
+                # if ovp_v is not None:
+                #     self.load_inst.write(f":CONFigure:OVP {ovp_v}")
+                logger.info("Load protection set: OCP=%s UVP=%s", ocp_a, uvp_v)
             except Exception as e:
                 logger.warning("set_load_protection failed (non-fatal): %s", e)
                 return str(e)
@@ -294,11 +295,15 @@ class HardwareController:
             return ""
         with self.inst_lock:
             try:
+                # GW Instek PSW series requires OVP/OCP to be >= 10% of rated max.
+                # For PSW80-40.5 (80V/40.5A), min OVP is 8.0V and min OCP is 4.05A.
                 if ocp_a is not None:
-                    self.psu_inst.write(f":CURR:PROT:LEV {ocp_a}")
+                    safe_ocp = max(ocp_a, 4.05)
+                    self.psu_inst.write(f":CURR:PROT:LEV {safe_ocp}")
                     self.psu_inst.write(":CURR:PROT:STAT ON")
                 if ovp_v is not None:
-                    self.psu_inst.write(f":VOLT:PROT:LEV {ovp_v}")
+                    safe_ovp = max(ovp_v, 8.0)
+                    self.psu_inst.write(f":VOLT:PROT:LEV {safe_ovp}")
                 logger.info("PSU protection set: OCP=%s OVP=%s", ocp_a, ovp_v)
             except Exception as e:
                 logger.warning("set_psu_protection failed (non-fatal): %s", e)
