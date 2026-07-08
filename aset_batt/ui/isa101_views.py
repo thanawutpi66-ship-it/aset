@@ -375,7 +375,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([300, 880, 360])
+        splitter.setSizes([350, 830, 360])
         self.setCentralWidget(splitter)
 
     def _logo(self, filename, h=40):
