@@ -888,6 +888,18 @@ class SequencesMixin:
                     mins, secs = divmod(remaining, 60)
                     status(f"REST: เหลือ {mins:d}:{secs:02d} นาที")
                     self.sig_phase_progress.emit(elapsed_r, rest_total)
+                    # see the matching comment in _hppc_seq_thread's PHASE 2 — monitor
+                    # is stopped here to avoid double-counting the estimator, but that
+                    # left the CSV/live gauges frozen at the last CHARGE reading for
+                    # the whole rest window. _log_sample() only logs (no
+                    # estimator.update()), so it's safe to call during this loop.
+                    try:
+                        v_r, i_r, _ = self.hw.read_vi()
+                        self.controller._log_sample(v_r, i_r)
+                        self.update_display(v_r, i_r, self.controller.estimator.soc,
+                                            self.controller.estimator.rin, self.hw.current_temp)
+                    except Exception:
+                        pass
                     if not self._seq_sleep(10.0):
                         return
                 self.sig_phase_progress.emit(0, 0)
@@ -1214,6 +1226,19 @@ class SequencesMixin:
                 mins, secs = divmod(remaining, 60)
                 status(f"HPPC REST (OCV settle): เหลือ {mins}:{secs:02d}")
                 self.sig_phase_progress.emit(elapsed_r, _rest_total)
+                # monitor_running is stopped for this whole phase (see the comment on
+                # stop_monitor() right above) to avoid double-counting the estimator —
+                # but that also meant no CSV row / live gauge update happened for the
+                # entire 30 min, so the GUI and web dashboard both showed the last
+                # CHARGE voltage frozen instead of the real OCV decay. _log_sample()
+                # only logs the reading (no estimator.update()), so it's safe here.
+                try:
+                    v_r, i_r, _ = self.hw.read_vi()
+                    self.controller._log_sample(v_r, i_r)
+                    self.update_display(v_r, i_r, self.controller.estimator.soc,
+                                        self.controller.estimator.rin, self.hw.current_temp)
+                except Exception:
+                    pass
                 if not self._seq_sleep(10.0):
                     break
             self.sig_phase_progress.emit(0, 0)
@@ -1519,6 +1544,16 @@ class SequencesMixin:
                     mins, secs = divmod(remaining, 60)
                     status(f"CYCLE {cyc}/{n_cyc} REST: เหลือ {mins}:{secs:02d}")
                     self.sig_phase_progress.emit(elapsed_r, rest_s)
+                    # see the matching comment in _hppc_seq_thread's PHASE 2 REST —
+                    # monitor is stopped for this loop, so log/update explicitly here
+                    # instead of leaving the CSV/gauges frozen at the last reading.
+                    try:
+                        v_r, i_r, _ = self.hw.read_vi()
+                        self.controller._log_sample(v_r, i_r)
+                        self.update_display(v_r, i_r, self.controller.estimator.soc,
+                                            self.controller.estimator.rin, self.hw.current_temp)
+                    except Exception:
+                        pass
                     if not self._seq_sleep(10.0):
                         break
                 self.sig_phase_progress.emit(0, 0)
