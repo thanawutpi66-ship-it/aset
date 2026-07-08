@@ -119,7 +119,15 @@ def _synthetic_hppc_pulse(r0_true=0.010, r1=0.005, c1=3000.0, harness=0.0,
 
 
 class TestHarnessResistanceCompensation(unittest.TestCase):
-    R0_TRUE, R1_TRUE, HARNESS = 0.010, 0.005, 0.065
+    # R0_TRUE must stay above HARNESS (raw = R0_TRUE + HARNESS, so harness/raw < 50%)
+    # or the Phase-D2 runtime guard (_correct_for_harness_r,
+    # aset_batt/acquisition/analysis.py) refuses the correction on purpose — see
+    # tests/test_harness_resistance_guard.py for that guard's own dedicated coverage,
+    # including the >50%-of-raw case this class used to (accidentally) exercise before
+    # the guard existed — a REJECT->A flip in particular ALWAYS requires removing
+    # >=48% of the raw reading ((2.5-1.3)/2.5), i.e. it is inherently on the edge of
+    # (or past) what the D2 guard allows, which is the whole point of the guard.
+    R0_TRUE, R1_TRUE, HARNESS = 0.095, 0.005, 0.065
 
     def test_uncorrected_r0_includes_harness(self):
         t, i, v, temp, cap = _synthetic_hppc_pulse(
@@ -139,14 +147,18 @@ class TestHarnessResistanceCompensation(unittest.TestCase):
         self.assertAlmostEqual(res["r1_mohm"] / 1000.0, self.R1_TRUE, delta=0.002)
 
     def test_harness_correction_can_flip_the_grade(self):
+        # internal_r=0.1 (not the 0.03 used by the other tests in this class): a
+        # REJECT->B flip, not REJECT->A — a REJECT->A flip requires removing >=48%
+        # of the raw reading, which the D2 guard would (correctly) refuse. See the
+        # class-level comment above.
         t, i, v, temp, cap = _synthetic_hppc_pulse(
             self.R0_TRUE, self.R1_TRUE, harness=self.HARNESS)
-        uncorrected = _profile(internal_r=0.03, harness_r_ohm=0.0)
-        corrected = _profile(internal_r=0.03, harness_r_ohm=self.HARNESS)
+        uncorrected = _profile(internal_r=0.1, harness_r_ohm=0.0)
+        corrected = _profile(internal_r=0.1, harness_r_ohm=self.HARNESS)
         grade_before = analyze_series(t, i, v, temp, cap, uncorrected, is_hppc=True)["grade"]
         grade_after = analyze_series(t, i, v, temp, cap, corrected, is_hppc=True)["grade"]
         self.assertEqual(grade_before, "REJECT")
-        self.assertEqual(grade_after, "A")
+        self.assertEqual(grade_after, "B")
 
     def test_harness_defaults_to_zero_no_behaviour_change(self):
         profile = _profile()

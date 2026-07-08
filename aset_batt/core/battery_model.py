@@ -301,6 +301,28 @@ class BatteryModel:
         self.aging_factor = soh / 100.0
         return max(0.0, min(100.0, soh))
 
+    def set_aging_from_soh(self, soh: Optional[float]) -> None:
+        """Wire a capacity-based SoH (aset_batt.core.state_estimator's live ``soh`` —
+        itself sourced from acquisition.analysis's full-discharge measurement, or a
+        prior test in the same session/state) into the aging factor that
+        ``_calculate_base_rin`` blends into the Rin baseline — so a pack's OWN
+        measured health, not just its chemistry, shapes what "healthy" DCIR/R0 mean
+        for grading (Phase D3: was previously always exactly 1.0 in production, since
+        nothing called this or ``update_aging_factor``/``get_soh_from_capacity``).
+
+        ``soh=None`` (or NaN — e.g. a quick HPPC-only test with no full discharge
+        yet in this session) resets aging_factor to 1.0: a safe "assume new/unknown"
+        default rather than carrying over a stale value that could belong to a
+        previously-tested, different physical battery.
+        """
+        if soh is None or soh != soh:   # None or NaN
+            self.aging_factor = 1.0
+            return
+        # Same floor as update_aging_factor(): never assume more than 50% extra
+        # resistance from aging alone. Capped at 1.0 — a SoH reading above 100% (measurement
+        # noise/calibration) should not further REDUCE the baseline below chemistry-generic.
+        self.aging_factor = max(0.5, min(1.0, float(soh) / 100.0))
+
     def calculate_iec61960_capacity(self, voltage_data: List[float], current_data: List[float],
                                    time_data: List[float], discharge_rate: float) -> Dict[str, float]:
         """

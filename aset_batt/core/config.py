@@ -9,6 +9,12 @@ from dataclasses import dataclass, asdict
 
 logger = logging.getLogger(__name__)
 
+# Config-entry ceiling for BatteryConfig.harness_resistance_ohm — see the D2 comment
+# in ConfigManager.validate_config(). The one calibrated value on record for this rig
+# is ~0.065 Ω; 0.15 Ω leaves headroom for a genuinely longer/worse harness while still
+# catching a decimal-place typo (e.g. 1.5 Ω) before it reaches grading.
+HARNESS_RESISTANCE_MAX_OHM = 0.15
+
 @dataclass
 class BatteryConfig:
     """Battery configuration parameters
@@ -155,6 +161,20 @@ class ConfigManager:
             errors.append("Battery capacity must be positive")
         if self.battery.max_voltage <= self.battery.min_voltage:
             errors.append("Max voltage must be greater than min voltage")
+        # D2 config-entry guard (defense-in-depth pair with the runtime warn-and-skip
+        # check in aset_batt.acquisition.analysis._correct_for_harness_r): a test-rig
+        # cabling/contact resistance above this is not a plausible wiring value for
+        # this bench (the one calibrated value on record is ~0.065 Ω) — most likely a
+        # decimal-place typo, which would otherwise silently floor every DCIR/R0
+        # reading and grade every pack "A".
+        if self.battery.harness_resistance_ohm < 0.0:
+            errors.append("harness_resistance_ohm must not be negative")
+        elif self.battery.harness_resistance_ohm > HARNESS_RESISTANCE_MAX_OHM:
+            errors.append(
+                f"harness_resistance_ohm ({self.battery.harness_resistance_ohm:.3f} Ω) "
+                f"exceeds the plausible test-rig wiring/contact resistance ceiling "
+                f"({HARNESS_RESISTANCE_MAX_OHM:.2f} Ω) — check for a calibration/entry "
+                f"error before trusting DCIR/R0 grading")
 
         # System validation
         if self.system.max_points <= 0:

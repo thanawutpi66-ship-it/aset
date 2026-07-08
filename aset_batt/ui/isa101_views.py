@@ -1848,6 +1848,15 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         # Written to the separate "Analysis Results" row (metric_labels_final), never
         # the live telemetry row — a final result can't be mistaken for a live reading.
         soh = results["soh"]
+        # D3: feed a measurable SoH into the live estimator's Rin-baseline aging
+        # factor — same wiring as AcquisitionWorker.run()'s post-test feedback (the
+        # command-center pipeline). NaN (not measurable, e.g. an HPPC-only test) is a
+        # deliberate no-op — set_soh() is only called with a real value, so
+        # aging_factor is left at whatever a PRIOR completed capacity test in this
+        # session already set it to (or 1.0, the safe default, if none yet).
+        if self.controller is not None and getattr(self.controller, "estimator", None) \
+                is not None and soh == soh:
+            self.controller.estimator.set_soh(soh)
         soh_txt = "N/A" if soh != soh else f"{soh:.1f}"   # soh != soh → NaN
         self.metric_labels_final["SoH"][0].setText(
             "N/A" if soh != soh else f'{soh:.1f} {self.metric_labels_final["SoH"][1]}')
