@@ -184,6 +184,32 @@ class CharacterizeMixin:
         row_gitt.addWidget(self.btn_char_gitt_cancel)
         lay.addLayout(row_gitt)
 
+        # ── Card 4 · CCA proxy ──────────────────────────────────────────
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("④ CCA Proxy  — cranking-current sag check"))
+
+        self.lbl_char_cca = QLabel(
+            "ชาร์จเต็ม → พัก 5 นาที → pulse ที่กระแส CCA ของ product 30 วิ → เช็ค V ไม่ตก\n"
+            "ต่ำกว่า 1.2V/cell — ⚠ ไม่ใช่ CCA มาตรฐาน (ไม่มีคุม 0°C, กระแสอาจถูก clamp ตาม "
+            "max_current ของ rig) ใช้เป็นตัวเทียบสุขภาพแบตเทียบกับตัวเองเท่านั้น")
+        self.lbl_char_cca.setWordWrap(True)
+        self.lbl_char_cca.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        lay.addWidget(self.lbl_char_cca)
+
+        self.lbl_char_cca_status = QLabel("● ยังไม่ได้ทดสอบ")
+        self.lbl_char_cca_status.setStyleSheet(f"color:{MUTED}; font-size:11px; font-weight:600;")
+        lay.addWidget(self.lbl_char_cca_status)
+
+        row_cca = QHBoxLayout()
+        self.btn_char_cca_start  = _btn("START CCA", bg=OK, fg="white", hover="#266a2a")
+        self.btn_char_cca_cancel = _btn("CANCEL", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_char_cca_cancel.setEnabled(False)
+        self.btn_char_cca_start.clicked.connect(self._on_char_cca_start)
+        self.btn_char_cca_cancel.clicked.connect(self._on_char_cca_cancel)
+        row_cca.addWidget(self.btn_char_cca_start)
+        row_cca.addWidget(self.btn_char_cca_cancel)
+        lay.addLayout(row_cca)
+
         # ── Profile Parameters panel ──────────────────────────────────────
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("PROFILE PARAMETERS (current + measured)"))
@@ -772,6 +798,136 @@ class CharacterizeMixin:
             ev.clear()
             self.sig_char_update.emit("gitt", "__DONE__")
 
+    # ── CCA proxy ────────────────────────────────────────────────────────────
+
+    def _on_char_cca_start(self):
+        if not self._char_guard():
+            return
+        if self._char_running.get("cca", _FalseEvent()).is_set():
+            return
+        prod = battery_profiles.get_product(self.cb_product.currentText())
+        cca_a = getattr(prod, "cca_a", 0.0) if prod else 0.0
+        if cca_a <= 0:
+            if not self._headless:
+                QMessageBox.warning(
+                    self, "CCA Proxy",
+                    "Product นี้ไม่มีค่า cca_a (0 = ไม่ใช่แบต starter หรือยังไม่ได้กรอกสเปก)")
+            return
+        ev = threading.Event()
+        ev.set()
+        self._char_running["cca"] = ev
+        self.btn_char_cca_start.setEnabled(False)
+        self.btn_char_cca_cancel.setEnabled(True)
+        self.sig_char_update.emit("cca", "● กำลังทดสอบ CCA proxy...")
+        import threading as _th
+        _th.Thread(target=self._char_cca_thread, daemon=True).start()
+
+    def _on_char_cca_cancel(self):
+        if "cca" in self._char_running:
+            self._char_running["cca"].clear()
+        self._char_hw_stop()
+
+    def _char_cca_thread(self):
+        """Background: charge full -> rest 5min -> single CCA-rated pulse (30s) ->
+        pass/fail against a 1.2V/cell floor (SAE-style, generalised from the
+        7.2V/6-cell 12V-battery convention). NOT a certified CCA test — no 0°C
+        temperature control, and current is clamped to this rig's configured
+        max_current (real CCA current, e.g. 95A, far exceeds what this rig's
+        wiring/breaker is rated for on small AGM packs) — see the on-screen note
+        and docs/rig_status_action_items.md. Comparative health-check only."""
+        import time
+        ev = self._char_running["cca"]
+
+        def status(msg):
+            # see the comment in _char_peukert_thread — no sig_alarm here, this
+            # can tick every few seconds; milestones get their own explicit emit().
+            self.sig_char_update.emit("cca", msg)
+
+        try:
+            self.controller._ensure_logging(label="CCA")
+            prod = battery_profiles.get_product(self.cb_product.currentText())
+            cca_a = getattr(prod, "cca_a", 0.0) if prod else 0.0
+            max_i = self.controller.config.battery.max_current
+            i_test = min(cca_a, max_i)
+            clamped = i_test < cca_a
+            cells = self.controller.config.battery.cells_series
+            v_floor = 1.2 * cells
+            pack_min = self.controller.config.battery.pack_min_voltage
+            note = " (clamped to rig max_current — NOT true CCA current)" if clamped else ""
+
+            status(f"CCA proxy: ชาร์จเต็มก่อน (rated CCA={cca_a:.0f}A, ทดสอบจริงที่ {i_test:.3f}A{note})...")
+            self.sig_alarm.emit(f"[CHAR/CCA] เริ่มทดสอบ — I={i_test:.3f}A{note}")
+            self.controller.start_charge(strategy=None)
+            while ev.is_set():
+                if not getattr(self.controller, "is_charging", False):
+                    break
+                if not self._char_sleep(ev, 30.0):
+                    return
+            if not ev.is_set():
+                return
+            # see the comment in _char_peukert_thread — start_charge() restarted
+            # the shared monitor loop; stop it again before this test's own pulse
+            # loop starts double-feeding the estimator.
+            if self.controller.monitor_running:
+                self.controller.stop_monitor()
+
+            status("CCA proxy: พักหลังชาร์จ 5 นาที...")
+            if not self._char_sleep(ev, 300):
+                return
+
+            status(f"CCA proxy: pulse {i_test:.3f}A x 30s{note}...")
+            t0 = time.perf_counter()
+            self.hw.set_load(True, i_test)
+            v_min = None
+            last = t0
+            while ev.is_set() and (time.perf_counter() - t0) < 30.0:
+                try:
+                    v, i_meas = self.hw.read_measurements(prefer_load_v=True)
+                    now = time.perf_counter()
+                    temp = self.hw.current_temp
+                    self._seq_check_temp_stale()
+                    dt = now - last
+                    last = now
+                    state = self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
+                    self.controller._log_sample(v, i_meas)
+                    self.update_display(v, i_meas, state["soc"], state["rin"], temp)
+                    v_min = v if v_min is None else min(v_min, v)
+                    elapsed = int(now - t0)
+                    status(f"CCA pulse {elapsed}s/30s  {v:.3f}V (min so far {v_min:.3f}V)")
+                    if v <= pack_min:
+                        status(f"UVP reached ({v:.3f}V <= {pack_min:.3f}V) — หยุด")
+                        break
+                except Exception as exc:
+                    self.sig_alarm.emit(f"[CHAR/CCA] read error: {exc}")
+                    break
+                if not self._char_sleep(ev, 0.2):
+                    break
+            self.hw.set_load(False)
+            if not ev.is_set():
+                return
+
+            passed = (v_min is not None) and (v_min >= v_floor)
+            self._char_results["cca"] = {
+                "cca_current_a": i_test, "cca_rated_a": cca_a, "cca_clamped": clamped,
+                "cca_v_min": v_min, "cca_v_floor": v_floor, "cca_pass": passed,
+            }
+            if v_min is None:
+                status("✗ CCA proxy: ไม่มีข้อมูลวัดได้")
+                self.sig_alarm.emit("[CHAR/CCA] ✗ ไม่มีข้อมูลวัดได้")
+            else:
+                verdict = "PASS" if passed else "FAIL"
+                mark = "✓" if passed else "✗"
+                status(f"{mark} CCA proxy {verdict}: V_min={v_min:.3f}V (floor {v_floor:.2f}V){note}")
+                self.sig_alarm.emit(f"[CHAR/CCA] เสร็จสิ้น: {verdict} V_min={v_min:.3f}V "
+                                    f"floor={v_floor:.2f}V{note}")
+
+        except Exception as exc:
+            self.sig_char_update.emit("cca", f"✗ Error: {exc}")
+            logger.exception("CCA thread error")
+        finally:
+            ev.clear()
+            self.sig_char_update.emit("cca", "__DONE__")
+
     # ── slot & helpers ─────────────────────────────────────────────────────────
 
     def _slot_char_update(self, test_id: str, msg: str):
@@ -787,6 +943,9 @@ class CharacterizeMixin:
             elif test_id == "gitt":
                 self.btn_char_gitt_start.setEnabled(True)
                 self.btn_char_gitt_cancel.setEnabled(False)
+            elif test_id == "cca":
+                self.btn_char_cca_start.setEnabled(True)
+                self.btn_char_cca_cancel.setEnabled(False)
             self._refresh_char_params()
             # enable save if at least one result exists
             if self._char_results:
@@ -807,6 +966,8 @@ class CharacterizeMixin:
             lbl = self.lbl_char_eta_status
         elif test_id == "gitt":
             lbl = self.lbl_char_gitt_status
+        elif test_id == "cca":
+            lbl = self.lbl_char_cca_status
 
         if lbl is not None:
             lbl.setText(msg)

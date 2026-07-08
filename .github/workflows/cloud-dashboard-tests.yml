@@ -1,0 +1,47 @@
+name: cloud_dashboard test suite (pytest)
+
+# Runs cloud_dashboard/'s test suite on every push/PR touching that folder.
+# Separate from main_aset-batt-dashboard.yml (which builds/deploys to Azure)
+# and from gui-tests.yml (which covers aset_batt/) — until this workflow
+# existed, cloud_dashboard/server.py had never had a single test run against
+# it, automated or otherwise, despite deploying straight to production on
+# every push to main.
+#
+# NOTE: this workflow only *reports* pass/fail — it does not currently block
+# main_aset-batt-dashboard.yml's deploy job. Wiring a `needs:` dependency so a
+# failing test blocks the Azure deploy is a deliberate follow-up choice for
+# whoever owns that workflow, not something wired in here silently.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cloud_dashboard/**'
+      - '.github/workflows/cloud-dashboard-tests.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'cloud_dashboard/**'
+      - '.github/workflows/cloud-dashboard-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # cloud_dashboard/ itself is stdlib-only by design (see its
+      # requirements.txt) — pytest is a test-time-only dependency, not
+      # something the deployed app needs.
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+
+      - name: Run pytest
+        run: python -m pytest cloud_dashboard/tests/ -q

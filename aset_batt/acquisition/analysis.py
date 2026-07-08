@@ -79,10 +79,14 @@ def profile_from_config(config) -> BatteryProfile:
     )
 
 
-# DCIR rises ~0.4 %/°C; normalise every reading to 25 °C so a battery measured at a
-# warmer terminal isn't graded as artificially "better" (the bench terminal sits ~4 °C
-# above ambient and self-heats during a test).
-_DCIR_TEMP_COEFF = 0.004     # per °C
+# identify_dcir() normalises every reading to 25 °C (see _dcir_temp_normalizer) so a
+# battery measured at a warmer terminal isn't graded as artificially "better" (the
+# bench terminal sits ~4 °C above ambient and self-heats during a test). The primary
+# path is chemistry-specific Arrhenius (BatteryModel.temp_rin_multiplier, matching the
+# Rin baseline's own temperature model); this flat coefficient is now ONLY the
+# defensive fallback used if a BatteryModel can't be constructed for the profile's
+# chemistry.
+_DCIR_TEMP_COEFF = 0.004     # per °C — fallback only, see _dcir_temp_normalizer
 _T_REF = 25.0                # °C
 # Rest/standby current baseline. Was 0.6 A to compensate for PSU quiescent bleed
 # before the SSR (ESP32 GPIO16) fully disconnected the load — now 0.0 A, matching
@@ -105,6 +109,39 @@ _DCIR_MAX_STEP_DT = 0.5      # s
 # pack reads a proportionally LOW SoH (a 50 %-charged healthy pack → SoH ≈ 50 %).
 # reached_cutoff can't catch it (it guards the END), so a known-partial start is flagged.
 _SOH_MIN_START_SOC = 95.0    # %
+
+# D2 runtime guard: refuse a harness-resistance correction that would remove more
+# than this fraction of a raw ohmic reading — see _correct_for_harness_r.
+_HARNESS_MAX_REMOVAL_FRACTION = 0.5
+
+
+def _correct_for_harness_r(raw_ohm: float, harness_r: float, label: str,
+                           warnings: list) -> tuple:
+    """Subtract the rig's harness/contact resistance (BatteryConfig.
+    harness_resistance_ohm) from a raw ohmic reading (DCIR / DCIR-slope / ECM R0) —
+    but refuse and warn instead if that would remove more than
+    ``_HARNESS_MAX_REMOVAL_FRACTION`` of the raw value.
+
+    A harness_resistance_ohm calibrated once against a healthy specimen (or simply
+    mis-entered) can be too large relative to a SPECIFIC later reading — e.g. a
+    genuinely degraded pack whose true resistance is smaller than the harness value
+    calibrated for a healthy one. Applied blindly, ``max(1e-4, raw - harness_r)``
+    would floor that reading near zero and grade a bad pack "A" with no indication
+    anything was wrong. This is the runtime half of the D2 defense-in-depth pair —
+    see ConfigManager.validate_config() for the config-entry-time ceiling.
+
+    Returns ``(corrected_ohm, warnings)`` — ``warnings`` is the input list with a new
+    entry appended only when the correction was skipped.
+    """
+    if harness_r <= 0.0 or raw_ohm <= 0.0:
+        return raw_ohm, warnings
+    if harness_r >= _HARNESS_MAX_REMOVAL_FRACTION * raw_ohm:
+        return raw_ohm, warnings + [
+            f"harness_resistance_ohm ({harness_r * 1e3:.1f} mΩ) would remove "
+            f"≥{_HARNESS_MAX_REMOVAL_FRACTION * 100:.0f}% of raw {label} "
+            f"({raw_ohm * 1e3:.1f} mΩ) — correction SKIPPED (check harness_resistance_ohm "
+            f"calibration); grading on the uncorrected value"]
+    return max(1e-4, raw_ohm - harness_r), warnings
 
 
 def _reject_outliers_mad(x, n_sigma=3.0):
@@ -170,6 +207,27 @@ def _vi_levels(current_a, voltage_v):
     return pts
 
 
+def _dcir_temp_normalizer(profile: BatteryProfile):
+    """Chemistry-specific Arrhenius temperature multiplier for identify_dcir's 25 °C
+    normalization (see BatteryModel.temp_rin_multiplier — the SAME model the Rin
+    baseline that graded DCIR is compared against already uses). Replaces the old
+    flat ``_DCIR_TEMP_COEFF`` linear approximation, which did not match the
+    chemistry-aware baseline and, for some chemistries, even had the wrong sign
+    relative to the physically-correct Arrhenius relationship.
+
+    Returns a ``multiplier(temp_c) -> float`` callable; falls back to the legacy
+    linear approximation if BatteryModel can't be constructed for this chemistry
+    (defensive only — get_chemistry() itself already falls back to a default
+    chemistry rather than raising, so this should not normally trigger).
+    """
+    try:
+        from aset_batt.core.battery_model import BatteryModel
+        model = BatteryModel(profile.chemistry)
+        return model.temp_rin_multiplier
+    except Exception:
+        return lambda T: 1.0 + _DCIR_TEMP_COEFF * (T - _T_REF)
+
+
 def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=None):
     """Repeatable single-step DCIR aggregated over EVERY current step in the record.
 
@@ -177,9 +235,11 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=
     from the RC relaxation, so a 1-RC ECM (R0/R1/C1 separation) is not identifiable
     (see ``docs/project_pivot.md``). Instead, ``R = |ΔV/ΔI|`` is read at the first
     sample after each current edge (a consistent ~200 ms readback point), each value
-    is normalised to 25 °C, and the **median across all steps** is reported with its
-    spread — so an HPPC record's many pulses, or repeated load on/off edges, give a
-    repeatable DCIR with a measurable uncertainty instead of a single noisy number.
+    is normalised to 25 °C using the same chemistry-specific Arrhenius model as the
+    Rin baseline it's graded against (see ``_dcir_temp_normalizer``), and the
+    **median across all steps** is reported with its spread — so an HPPC record's
+    many pulses, or repeated load on/off edges, give a repeatable DCIR with a
+    measurable uncertainty instead of a single noisy number.
 
     ``time_s`` (optional, elapsed seconds per sample): when supplied, a step whose
     post-edge sample arrives more than ``_DCIR_MAX_STEP_DT`` after the edge is dropped
@@ -196,6 +256,7 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=
     ta = np.asarray(time_s, float) if time_s is not None else None
     if ia.size < 4:
         return profile.internal_r, 0.0, 0, False, 0
+    temp_mult = _dcir_temp_normalizer(profile)
     di = np.diff(ia)
     thr = max(1e-3, 0.20 * float(np.max(np.abs(ia))))     # a real load edge, not jitter
     vals = []
@@ -213,7 +274,7 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=
             v_after = float(va[k + 1])                             # first post-edge sample
             r = abs((v_after - v_before) / di[k])
             T = float(tc[k + 1]) if (k + 1 < tc.size and not np.isnan(tc[k + 1])) else _T_REF
-            vals.append(r / (1.0 + _DCIR_TEMP_COEFF * (T - _T_REF)))   # → 25 °C
+            vals.append(r / temp_mult(T))   # → 25 °C, chemistry-specific Arrhenius
             k += 2                                                 # skip the paired sample
         else:
             k += 1
@@ -383,16 +444,27 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     # fixed amount regardless of the pack's real health. Only ohmic readings (DCIR,
     # dcir_slope, ECM R0 below) are corrected; R1/C1/τ characterise the cell's own RC
     # relaxation and aren't affected by simple wiring resistance.
+    #
+    # Defense-in-depth pair (D2): ConfigManager.validate_config() rejects an
+    # implausible harness_resistance_ohm at config-entry time; _correct_for_harness_r
+    # below is the runtime backstop — a value that survived entry validation but is
+    # still too large RELATIVE TO A GIVEN READING (e.g. calibrated against a healthy
+    # pack's DCIR, then applied to a genuinely degraded one whose true resistance is
+    # smaller) would otherwise silently floor that reading and grade a bad pack "A".
     harness_r = max(0.0, float(getattr(profile, "harness_r_ohm", 0.0)))
+    harness_warnings: list = []
     if harness_r > 0.0:
         if measured:
-            dcir = max(1e-4, dcir - harness_r)
+            dcir, harness_warnings = _correct_for_harness_r(
+                dcir, harness_r, "DCIR", harness_warnings)
         if dcir_slope == dcir_slope:   # not NaN
-            dcir_slope = max(1e-4, dcir_slope - harness_r)
+            dcir_slope, harness_warnings = _correct_for_harness_r(
+                dcir_slope, harness_r, "DCIR slope", harness_warnings)
 
     sag, cca_est, ocv = _load_metrics(current_a, voltage_v, dcir, profile)
     warnings, temp_drift = _quality_flags(current_a, voltage_v, temp_c, profile,
                                           is_hppc, n_steps, reached_cutoff)
+    warnings = warnings + harness_warnings
     # A latency-corrupted step reads too high (relaxed past ohmic) — those were dropped
     # in identify_dcir; flag it so the operator knows the rig's sampling stalled and the
     # DCIR rests on fewer (or, if all were stale, zero → baseline) steps than it looks.
@@ -425,7 +497,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     if ecm:
         r0, r1 = float(ecm["R0_ohm"]), float(ecm["R1_ohm"])
         if harness_r > 0.0:
-            r0 = max(1e-4, r0 - harness_r)   # ohmic only — R1/C1/τ are the cell's own RC
+            # ohmic only — R1/C1/τ are the cell's own RC, untouched by wiring resistance
+            r0, warnings = _correct_for_harness_r(r0, harness_r, "ECM R0", warnings)
         # 2-RC dict uses tau1_s; 1-RC uses tau_s
         c1 = float(ecm["C1_farad"])
         tau = float(ecm.get("tau1_s", ecm.get("tau_s", 0.0)))

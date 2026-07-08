@@ -10,6 +10,14 @@ const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 function fmtR(mOhm){ if (mOhm == null) return '–'; return mOhm >= 1000 ? (mOhm/1000).toFixed(2)+' Ω' : mOhm.toFixed(2)+' mΩ'; }
 function fmtKB(bytes){ return bytes >= 1024 ? Math.round(bytes/1024)+' KB' : bytes+' B'; }
+// Escapes text pulled from an ingest payload (meta.battery, alarm ts/msg) before
+// it's interpolated into an innerHTML string — those fields come from whoever
+// holds the ingest token, not from this page, so they're untrusted input.
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
 function fmtDate(ts){
   const d = new Date(ts * 1000);
   const day = d.getDate(), mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
@@ -294,7 +302,7 @@ function renderPayload(p, received_at) {
   lastSeriesFull = p.series_full || p.series || {};
   const ser = graphWindow === 'full' ? lastSeriesFull : lastSeriesRecent;
 
-  $('battery').innerHTML = '<i class="dot"></i>battery: <b>' + ((p.meta||{}).battery || '–') + '</b>';
+  $('battery').innerHTML = '<i class="dot"></i>battery: <b>' + escapeHtml((p.meta||{}).battery || '–') + '</b>';
 
   const T = num(L, 'Temperature_C');
   $('tempTitle').textContent = T != null ? f(T, 2) + ' °C' : '-- °C';
@@ -537,9 +545,22 @@ function pushAlarm(ts, msg) {
 function renderAlarmLog() {
   const list = $('alarmList');
   if (!alarmLog.length) { list.innerHTML = '<div class="alarm-empty">No alarms recorded.</div>'; return; }
-  list.innerHTML = alarmLog.map(a =>
-    `<div class="alarm-item"><span class="alarm-ts">${a.ts}</span><span class="alarm-msg">${a.msg}</span></div>`
-  ).join('');
+  // Built via DOM nodes + textContent (not innerHTML string-templating) — a.ts/
+  // a.msg come from the ingest payload's alarms[], which is untrusted input.
+  list.innerHTML = '';
+  for (const a of alarmLog) {
+    const item = document.createElement('div');
+    item.className = 'alarm-item';
+    const tsSpan = document.createElement('span');
+    tsSpan.className = 'alarm-ts';
+    tsSpan.textContent = a.ts;
+    const msgSpan = document.createElement('span');
+    msgSpan.className = 'alarm-msg';
+    msgSpan.textContent = a.msg;
+    item.appendChild(tsSpan);
+    item.appendChild(msgSpan);
+    list.appendChild(item);
+  }
 }
 
 /* ---- graph mode ---------------------------------------------------------- */

@@ -695,6 +695,27 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 self.hw.feed_watchdog()
             except Exception:
                 pass
+        # Direct control (raw PSU/Load jog) has no test/monitor loop of its own by
+        # design (see _direct_page's warning — no SoC, no CSV) so nothing else feeds
+        # the graph while it's active; piggyback on this 1s tick instead. Read-only —
+        # does not touch the estimator, so it can't double-count against whatever
+        # else might still be running (e.g. a manual Charge left on while the
+        # operator switches over to peek at Direct).
+        if getattr(self, "rb_direct", None) is not None and self.rb_direct.isChecked() \
+                and getattr(self.hw, "is_connected", False):
+            try:
+                v, psu_i, load_i = self.hw.read_vi()
+                if load_i > 0.02:
+                    i_net = load_i
+                elif getattr(self.hw, "_psu_output_on", False):
+                    i_net = -psu_i
+                else:
+                    i_net = psu_i
+                soc = getattr(self.estimator, "soc", 0.0) if self.estimator else 0.0
+                rin = getattr(self.estimator, "rin", 0.0) if self.estimator else 0.0
+                self.update_display(v, i_net, soc, rin, self.hw.current_temp)
+            except Exception:
+                pass
 
     def update_status_bar(self):
         self._update_connection_status()
@@ -997,6 +1018,14 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             try:
                 from aset_batt.storage.cloud_push import push_alarm
                 push_alarm(event, point)
+            except Exception:
+                pass
+        # Audible alert on genuine ALARM events only (not WARNING — stays visual-only
+        # so a routine "temperature reading stale" warning doesn't beep as loudly as
+        # a real safety trip). hw.beep() is itself non-fatal.
+        if event == "ALARM" and hasattr(self.hw, "beep"):
+            try:
+                self.hw.beep(1)
             except Exception:
                 pass
         # For SCADA flash: bright = saturated alert, dim = muted background
@@ -1364,6 +1393,46 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                     self.hw.set_load_range(i_range, v_range)
                 except Exception as range_exc:
                     self._log_alarm(f"Load range auto-set skipped (non-fatal): {range_exc}")
+            # Mandatory hardware-level safety backstop — applied automatically on every
+            # connect, not an operator toggle. Margins are deliberately generous (this
+            # is a backstop against a hung/crashed PC or a software bug, not the
+            # primary cutoff — the existing software safety_limits checks stay primary)
+            # so it doesn't nuisance-trip on normal HPPC pulses/transients.
+            if hasattr(self.hw, "set_load_protection"):
+                try:
+                    max_i = self.config.battery.max_current
+                    uvp_v = self.config.system.safety_limits.get("min_voltage", 0.0)
+                    err = self.hw.set_load_protection(
+                        ocp_a=round(max_i * 1.25, 2),
+                        uvp_v=round(uvp_v, 2) if uvp_v > 0 else None,
+                        ovp_v=round(self.config.battery.pack_max_voltage * 1.1, 2),
+                    )
+                    if err:
+                        self._log_alarm(f"Load protection SCPI error (non-fatal): {err}")
+                except Exception as prot_exc:
+                    self._log_alarm(f"Load protection auto-set skipped (non-fatal): {prot_exc}")
+            if hasattr(self.hw, "set_psu_protection"):
+                try:
+                    err = self.hw.set_psu_protection(
+                        ocp_a=round(self.config.battery.max_current * 1.25, 2),
+                        ovp_v=round(self.config.battery.pack_max_voltage * 1.1, 2),
+                    )
+                    if err:
+                        self._log_alarm(f"PSU protection SCPI error (non-fatal): {err}")
+                except Exception as prot_exc:
+                    self._log_alarm(f"PSU protection auto-set skipped (non-fatal): {prot_exc}")
+            if hasattr(self.hw, "harden_instrument_config"):
+                try:
+                    self.hw.harden_instrument_config()
+                except Exception:
+                    pass
+            if hasattr(self.hw, "get_instrument_info"):
+                try:
+                    info = self.hw.get_instrument_info()
+                    self._log_alarm(f"PSU: {info.get('psu', '')}")
+                    self._log_alarm(f"Load: {info.get('load', '')}")
+                except Exception:
+                    pass
             if esp:
                 baud = getattr(self.config.hardware, "serial_baudrate", 9600)
                 try:
@@ -1395,6 +1464,11 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             if self.controller is not None:
                 self.controller.stop_live_readback()
             self._cloud_push_stop()
+            if hasattr(self.hw, "release_instrument_config"):
+                try:
+                    self.hw.release_instrument_config()
+                except Exception:
+                    pass
             if hasattr(self.hw, "disconnect_instruments"):
                 self.hw.disconnect_instruments()
             if hasattr(self.hw, "disconnect_esp32"):
@@ -1532,6 +1606,37 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         except ValueError:
             if not self._headless:
                 QMessageBox.warning(self, "Load", "Invalid current")
+
+    def _on_check_psu_trip(self):
+        if not hasattr(self.hw, "get_psu_protection_tripped"):
+            return
+        tripped = self.hw.get_psu_protection_tripped()
+        if tripped:
+            self.lbl_psu_trip.setText("Trip: ⛔ TRIPPED (OVP/OCP/OTP)")
+            self.lbl_psu_trip.setStyleSheet(f"color:{CRIT}; font-weight:600;")
+        else:
+            self.lbl_psu_trip.setText("Trip: OK")
+            self.lbl_psu_trip.setStyleSheet(f"color:{OK}; font-weight:600;")
+
+    def _on_clear_psu_trip(self):
+        """Deliberate operator action — a trip means something real happened
+        (see harden_instrument_config), so this is never auto-retried by software."""
+        if not hasattr(self.hw, "clear_psu_protection"):
+            return
+        if not self._headless:
+            reply = QMessageBox.warning(
+                self, "Clear PSU Protection Trip",
+                "ล้างสถานะ OVP/OCP/OTP ของ PSU\n\n"
+                "ใช้เฉพาะหลังตรวจสอบแล้วว่าสาเหตุที่ trip ได้รับการแก้ไขแล้วจริงๆ "
+                "(เช่น ต่อสายผิด/โหลดเกิน) — ไม่งั้นอาจ trip ซ้ำทันที\n\nยืนยันล้าง trip?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        ok = self.hw.clear_psu_protection()
+        self._log_alarm("PSU protection trip cleared (operator)." if ok else "Clear PSU trip failed.")
+        self._on_check_psu_trip()
 
     def _on_charge(self):
         if self.controller is None:
@@ -1763,6 +1868,15 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         # Written to the separate "Analysis Results" row (metric_labels_final), never
         # the live telemetry row — a final result can't be mistaken for a live reading.
         soh = results["soh"]
+        # D3: feed a measurable SoH into the live estimator's Rin-baseline aging
+        # factor — same wiring as AcquisitionWorker.run()'s post-test feedback (the
+        # command-center pipeline). NaN (not measurable, e.g. an HPPC-only test) is a
+        # deliberate no-op — set_soh() is only called with a real value, so
+        # aging_factor is left at whatever a PRIOR completed capacity test in this
+        # session already set it to (or 1.0, the safe default, if none yet).
+        if self.controller is not None and getattr(self.controller, "estimator", None) \
+                is not None and soh == soh:
+            self.controller.estimator.set_soh(soh)
         soh_txt = "N/A" if soh != soh else f"{soh:.1f}"   # soh != soh → NaN
         self.metric_labels_final["SoH"][0].setText(
             "N/A" if soh != soh else f'{soh:.1f} {self.metric_labels_final["SoH"][1]}')

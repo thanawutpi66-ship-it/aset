@@ -793,6 +793,12 @@ class SequencesMixin:
             self.sig_workflow.emit(0, "active")
             self.hw.psu_off()
             self.hw.load_off()
+            # Log PREPARE's rest from the start — otherwise CSV recording only truly
+            # begins once start_charge() implicitly opens a session (via
+            # start_monitor()) at PHASE 1, so the CSV never contains a genuine rest
+            # window and _quality_flags always flags "no clear rest before load" even
+            # though a real rest DID happen, just off-CSV.
+            self.controller._ensure_logging(label="IEC")
             # Use ΔV/Δt criterion (Fick diffusion settling) instead of a fixed sleep.
             # calibrate_from_ocv_stable() enforces the chemistry-specific minimum rest
             # (Lead-Acid: 300 s min, ΔV < 10 mV over 60 s window) and then syncs
@@ -800,6 +806,9 @@ class SequencesMixin:
             def _ocv_progress(elapsed, v, dv_mv, st):
                 dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
                 status(f"PREPARE: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+                self.controller._log_sample(v, 0.0)
+                self.update_display(v, 0.0, self.controller.estimator.soc,
+                                    self.controller.estimator.rin)
 
             soc, v, result = self.controller.calibrate_from_ocv_stable(
                 on_progress=_ocv_progress,
@@ -987,6 +996,11 @@ class SequencesMixin:
             status("QUICK: ปิดอุปกรณ์, อ่าน OCV...")
             self.hw.psu_off()
             self.hw.load_off()
+            # See the comment in _auto_sequence_thread — log from PREPARE so the CSV
+            # actually contains a genuine rest window (otherwise the file only starts
+            # once start_charge()/start_monitor() implicitly opens one, and
+            # _quality_flags always flags "no clear rest before load").
+            self.controller._ensure_logging(label="QuickScan")
             if not self._seq_sleep(5.0):
                 return
 
@@ -1007,6 +1021,13 @@ class SequencesMixin:
                 mins, secs = divmod(remaining, 60)
                 status(f"QUICK REST: เหลือ {mins}:{secs:02d}")
                 self.sig_phase_progress.emit(elapsed_r, _rest_total)
+                try:
+                    v_r, _, _ = self.hw.read_vi()
+                    self.controller._log_sample(v_r, 0.0)
+                    self.update_display(v_r, 0.0, self.controller.estimator.soc,
+                                        self.controller.estimator.rin)
+                except Exception:
+                    pass
                 if not self._seq_sleep(10.0):
                     break
             self.sig_phase_progress.emit(0, 0)
@@ -1120,10 +1141,16 @@ class SequencesMixin:
             # still polarized, which would just relock onto a different wrong SoC.
             self.hw.psu_off()
             self.hw.load_off()
+            # See the same comment in _auto_sequence_thread — log PREPARE's rest from
+            # the start so the CSV actually contains a genuine rest window.
+            self.controller._ensure_logging(label="HPPC")
 
             def _ocv_progress(elapsed, v, dv_mv, st):
                 dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
                 status(f"HPPC SEQ: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+                self.controller._log_sample(v, 0.0)
+                self.update_display(v, 0.0, self.controller.estimator.soc,
+                                    self.controller.estimator.rin)
 
             soc0_ocv, v0_ocv, ocv_result = self.controller.calibrate_from_ocv_stable(
                 on_progress=_ocv_progress,
@@ -1233,6 +1260,7 @@ class SequencesMixin:
                     pass
                 t_phase = _t.time() + relax_s
                 while self._seq_running.is_set() and _t.time() < t_phase:
+                    _iter_t0 = _t.perf_counter()
                     try:
                         v_r, _, _ = self.hw.read_vi()
                         self.controller._log_sample(v_r, 0.0)
@@ -1261,7 +1289,17 @@ class SequencesMixin:
                     # _seq_sleep (not a bare sleep) so the 5-min "no measurement"
                     # watchdog actually gets checked — a hung hw.read_vi() call used
                     # to freeze this whole loop forever with no way out.
-                    if not self._seq_sleep(1.0):
+                    #
+                    # Paced to a ~5 Hz target (0.2 s period), same technique as
+                    # AutoController._monitor_loop: sleep only the time REMAINING
+                    # after the SCPI round-trip, not a flat 1 s on top of it — this
+                    # was 1 Hz before, well under the 5 Hz identify_ecm_fit()'s own
+                    # docstring assumes ("30s pulse at 5Hz gives ~150 points... R1/C1
+                    # are well-resolved at 5Hz") for a good R1/C1 fit. Real achieved
+                    # rate will land somewhat under 5 Hz once USB/SCPI latency (~40-
+                    # 200 ms) is accounted for — still a large improvement over 1 Hz.
+                    _elapsed_iter = _t.perf_counter() - _iter_t0
+                    if not self._seq_sleep(max(0.0, 0.2 - _elapsed_iter)):
                         break
                 if not self._seq_running.is_set():
                     break
@@ -1276,6 +1314,7 @@ class SequencesMixin:
                     pass
                 t_phase = _t.time() + pulse_s
                 while self._seq_running.is_set() and _t.time() < t_phase:
+                    _iter_t0 = _t.perf_counter()
                     try:
                         v_p, i_p = self.hw.read_measurements(prefer_load_v=True)
                         # discharge-positive convention (matches AUTO/QUICK SCAN) — do
@@ -1301,7 +1340,12 @@ class SequencesMixin:
                             break
                     except Exception:
                         pass
-                    if not self._seq_sleep(1.0):
+                    # Same ~5 Hz pacing as the relax leg above — see its comment.
+                    # Extra important here: R0's t=0 extrapolation depends on having
+                    # enough points densely sampled right at the pulse edge, which
+                    # 1 Hz could barely resolve at all.
+                    _elapsed_iter = _t.perf_counter() - _iter_t0
+                    if not self._seq_sleep(max(0.0, 0.2 - _elapsed_iter)):
                         break
                 self.hw.load_off()
                 if not self._seq_running.is_set():
@@ -1401,10 +1445,16 @@ class SequencesMixin:
             self.sig_cycle_wf.emit(0, "active")
             self.hw.psu_off()
             self.hw.load_off()
+            # See the same comment in _auto_sequence_thread — log PREPARE's rest from
+            # the start so the CSV actually contains a genuine rest window.
+            self.controller._ensure_logging(label="CycleLife")
 
             def _ocv_progress(elapsed, v, dv_mv, st):
                 dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
                 status(f"CYCLE PREPARE: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+                self.controller._log_sample(v, 0.0)
+                self.update_display(v, 0.0, self.controller.estimator.soc,
+                                    self.controller.estimator.rin)
 
             soc0_ocv, v0_ocv, ocv_result = self.controller.calibrate_from_ocv_stable(
                 on_progress=_ocv_progress,
