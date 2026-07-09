@@ -28,7 +28,7 @@ import unittest
 
 from pathlib import Path
 
-_SEQUENCES_PY = Path(__file__).resolve().parent.parent / "aset_batt" / "ui" / "sequences.py"
+_SEQUENCES_PY = Path(__file__).resolve().parent.parent / "aset_batt" / "ui" / "sequences" / "hppc.py"
 
 
 class TestHppcPacingSourcePattern(unittest.TestCase):
@@ -37,7 +37,8 @@ class TestHppcPacingSourcePattern(unittest.TestCase):
         # Isolate the HPPC full-sequence method so this test can't accidentally
         # match some unrelated 1.0s sleep elsewhere in the file.
         start = self.src.index("def _hppc_seq_thread")
-        end = self.src.index("\n    def ", start + 1)
+        end = self.src.find("\n    def ", start + 1)
+        if end == -1: end = len(self.src)
         self.hppc_src = self.src[start:end]
 
     def test_old_flat_1hz_sleep_is_gone_from_hppc_legs(self):

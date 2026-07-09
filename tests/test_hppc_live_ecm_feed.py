@@ -33,7 +33,7 @@ from aset_batt.core.battery_model import BatteryModel
 from aset_batt.core.state_estimator import StateEstimator
 from aset_batt.acquisition.analysis import identify_ecm_fit, _correct_for_harness_r
 
-_SEQUENCES_PY = Path(__file__).resolve().parent.parent / "aset_batt" / "ui" / "sequences.py"
+_SEQUENCES_PY = Path(__file__).resolve().parent.parent / "aset_batt" / "ui" / "sequences" / "hppc.py"
 
 
 def _synthetic_pulse(r0, r1, c1, current, voc, dt=0.2, pulse_s=30.0, rest_s=1.0,
@@ -137,7 +137,8 @@ class TestSourcePatternWiresTheFeedIntoThePulseLoop(unittest.TestCase):
     def setUp(self):
         self.src = _SEQUENCES_PY.read_text(encoding="utf-8")
         start = self.src.index("def _hppc_seq_thread")
-        end = self.src.index("\n    def ", start + 1)
+        end = self.src.find("\n    def ", start + 1)
+        if end == -1: end = len(self.src)
         self.hppc_src = self.src[start:end]
 
     def test_pulse_loop_buffers_samples_for_the_fit(self):

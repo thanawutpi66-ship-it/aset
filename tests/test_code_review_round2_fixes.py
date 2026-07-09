@@ -35,8 +35,8 @@ from aset_batt.acquisition.models import BatteryProfile, TestConfig, OperationMo
 
 _app = QApplication.instance() or QApplication([])
 
-_SEQUENCES_SRC = (Path(__file__).resolve().parent.parent
-                  / "aset_batt" / "ui" / "sequences.py").read_text(encoding="utf-8")
+_seq_dir = Path(__file__).resolve().parent.parent / "aset_batt" / "ui" / "sequences"
+_SEQUENCES_SRC = "\n".join(f.read_text(encoding="utf-8") for f in _seq_dir.glob("*.py"))
 
 
 def _profile():

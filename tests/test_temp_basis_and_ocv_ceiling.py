@@ -165,9 +165,10 @@ class TestLiveFitFeedsEstimatorOn25CBasis(unittest.TestCase):
         this bench's ~30 degC."""
         from pathlib import Path
         src = (Path(__file__).resolve().parent.parent
-               / "aset_batt" / "ui" / "sequences.py").read_text(encoding="utf-8")
+               / "aset_batt" / "ui" / "sequences" / "hppc.py").read_text(encoding="utf-8")
         start = src.index("def _hppc_seq_thread")
-        end = src.index("\n    def ", start + 1)
+        end = src.find("\n    def ", start + 1)
+        if end == -1: end = len(src)
         hppc = src[start:end]
         self.assertIn("temp_rin_multiplier", hppc)
         # normalization must sit between the fit and the feed
