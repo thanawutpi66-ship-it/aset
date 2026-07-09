@@ -77,9 +77,11 @@ class TestIecPrepareLogsRest(unittest.TestCase):
             ctrl.calibrate_from_ocv_stable = _fake_calibrate_stable(win)
 
             log_calls = []
+            was_recording = []
             orig_log_sample = ctrl._log_sample
             def _spy_log_sample(*a, **k):
                 log_calls.append(a)
+                was_recording.append(data.is_recording)
                 orig_log_sample(*a, **k)
             ctrl._log_sample = _spy_log_sample
 
@@ -94,7 +96,13 @@ class TestIecPrepareLogsRest(unittest.TestCase):
                     "seq_crate": "1.0C", "rest_min": 1, "test_crate": "0.2C"}
             win._auto_sequence_thread(opts)
 
-            self.assertTrue(data.is_recording, "CSV must already be open during PREPARE")
+            # data.is_recording is checked AT EACH log call, not after the whole
+            # sequence has finished — a normally-completed sequence now closes its
+            # own CSV session (end_session()) so the NEXT sequence doesn't inherit
+            # a stale one; checking the post-completion flag would be a false
+            # negative on that (separately fixed and tested) behavior.
+            self.assertTrue(was_recording, "no samples were logged during PREPARE")
+            self.assertTrue(all(was_recording), "CSV must already be open during PREPARE")
             self.assertEqual(len(log_calls), 4, "each on_progress sample must be logged")
             self.assertEqual(len(display_calls), 4, "each on_progress sample must feed the graph")
             # every logged sample during PREPARE is a rest sample (0.0 A)
@@ -112,9 +120,11 @@ class TestQuickScanPrepareLogsRest(unittest.TestCase):
             ctrl.calibrate_from_ocv = MagicMock(return_value=75.0)
 
             log_calls = []
+            was_recording = []
             orig_log_sample = ctrl._log_sample
             def _spy_log_sample(*a, **k):
                 log_calls.append(a)
+                was_recording.append(data.is_recording)
                 orig_log_sample(*a, **k)
             ctrl._log_sample = _spy_log_sample
 
@@ -131,7 +141,11 @@ class TestQuickScanPrepareLogsRest(unittest.TestCase):
 
             win._quick_scan_thread()
 
-            self.assertTrue(data.is_recording)
+            # Checked AT log time, not after the whole (now-completed) sequence has
+            # closed its own session via end_session() — see the IEC test above for
+            # why the post-completion flag is no longer the right thing to assert.
+            self.assertTrue(was_recording, "no samples were logged during the rest loop")
+            self.assertTrue(all(was_recording))
             self.assertGreaterEqual(len(log_calls), 1)
             self.assertEqual(log_calls[0][1], 0.0)
         finally:

@@ -114,22 +114,31 @@ class AutoController:
     # Monitor Loop
     # ------------------------------------------------------------------
 
-    def start_monitor(self):
-        """เริ่มลูปอ่านค่าจาก Hardware"""
+    def start_monitor(self, reuse_session: bool = False):
+        """เริ่มลูปอ่านค่าจาก Hardware
+
+        reuse_session=True: เรียกจากกลางเซสชันที่ sequence เปิด CSV ไว้แล้วตั้งแต่
+        PREPARE (_ensure_logging(label="HPPC") ฯลฯ) — ต้อง "สานต่อ" ไฟล์เดิม ไม่ใช่
+        เปิดใหม่ (เดิมสร้างไฟล์ใหม่ไม่มีเงื่อนไขทุกครั้ง ทำให้ label+OCV-settle
+        หลายนาทีจาก PREPARE โดนทอดทิ้ง — ตรงกับหลักฐานใน test_20260708_152502.csv).
+
+        reuse_session=False (ค่าเริ่มต้น — ใช้เมื่อผู้ใช้กดปุ่มมือ เช่น Start
+        Charge/Start Test นอก sequence): ปิด session ค้าง (ถ้ามี) แล้วเปิดไฟล์ใหม่
+        เสมอ ไม่งั้น is_recording ที่ไม่เคยถูกเคลียร์หลังเทสแรกจบ (Stop Charge ไม่ได้
+        เรียก stop_logging()) จะทำให้เทสมือครั้งที่สองในแอปเดียวกันเงียบๆ ไปเขียน
+        ทับ/ต่อท้ายไฟล์เทสแรกพร้อมนาฬิกา elapsed ที่ค้างจากรันแรก.
+        """
         if not self.monitor_running:
             self.stop_live_readback()   # real monitor takes over V/I/temp display
             self._last_update_time = None
             self.monitor_running = True
-            # เปิด session ใหม่เฉพาะเมื่อยังไม่มีการบันทึกอยู่ — เดิมสร้างไฟล์ใหม่
-            # ทุกครั้งแบบไม่มีเงื่อนไข ทำให้ session ที่ sequence เปิดไว้ตั้งแต่
-            # PREPARE (_ensure_logging(label="HPPC") ฯลฯ) โดนสลับทิ้งกลางคันตอน
-            # start_charge() เรียก start_monitor(): ไฟล์ติด label พร้อมข้อมูล
-            # OCV-settle หลายนาทีถูกทอดทิ้ง แล้วทุกอย่างไปลงไฟล์ใหม่ไร้ label ที่
-            # เวลา elapsed ถูกรีเซ็ตเป็นศูนย์ — ตรงกับหลักฐานในไฟล์เทสจริง
-            # (test_20260708_152502.csv: ไม่มี label HPPC, เริ่ม t=0 มี rest แค่
-            # ~3 แถวก่อนกระแสชาร์จไหล ทั้งที่ PREPARE รอ OCV จริงหลายนาที) และคือ
-            # ต้นเหตุที่ _quality_flags ฟ้อง "no clear rest before load" ทุกเทส.
-            if not self.data.is_recording:
+            if reuse_session and self.data.is_recording:
+                if self._start_time is None:
+                    self._start_time = time.time()
+                    self._start_mono = time.perf_counter()
+            else:
+                if self.data.is_recording:
+                    self.data.stop_logging()
                 self._start_time = time.time()
                 self._start_mono = time.perf_counter()
                 from aset_batt.storage.data_utils import DataHandler, write_session_metadata
@@ -140,9 +149,6 @@ class AutoController:
                     logging.getLogger(__name__).error(f"Cannot start CSV logging: {msg}")
                 else:
                     write_session_metadata(csv_path, self.config)   # R3: audit trail
-            elif self._start_time is None:
-                self._start_time = time.time()
-                self._start_mono = time.perf_counter()
             threading.Thread(target=self._monitor_loop, daemon=True).start()
 
     def stop_monitor(self):
@@ -150,6 +156,17 @@ class AutoController:
         if self.monitor_running:
             self.monitor_running = False
             logger.info("Monitor loop stopped by user")
+
+    def end_session(self):
+        """ปิด CSV session ปัจจุบันอย่างชัดเจน (ให้ workflow ถัดไปเริ่ม session ใหม่
+        แน่ๆ) — เรียกตอนจบ/ยกเลิก auto-sequence เท่านั้น. ไม่เรียกจาก stop_charge()/
+        stop_monitor() ธรรมดา เพราะสองอันนั้นถูกเรียกกลาง sequence ระหว่างเปลี่ยน
+        phase ด้วย (อยากให้ session เดิมยังอยู่); ไม่มีจุดนี้ is_recording จะค้าง True
+        ตลอดไปหลัง sequence จบ ทำให้ sequence รอบถัดไปเผลอต่อท้ายไฟล์เดิม."""
+        if self.data.is_recording:
+            self.data.stop_logging()
+        self._start_time = None
+        self._start_mono = None
 
     # ------------------------------------------------------------------
     # Live readback — lightweight V/I/Temp display right after Connect, before
@@ -650,11 +667,14 @@ class AutoController:
     # ------------------------------------------------------------------
 
     def start_charge(self, float_hold_s: float = 0.0, strategy: str = None,
-                     bulk_c_rate_override: float = None):
+                     bulk_c_rate_override: float = None, reuse_session: bool = False):
         """เริ่มชาร์จ; strategy=None → เลือกตามเคมีของแบตอัตโนมัติ
         (LeadAcid → 3-stage, Lithium → CC-CV). ส่ง strategy เพื่อ override จาก dropdown:
         "three_stage" หรือ "cc_cv". รันใน thread แยก; monitor loop ยัง log+safety ระหว่างชาร์จ
-        """
+
+        reuse_session: ส่งเป็น True เมื่อเรียกจากกลาง auto-sequence (session เปิดไว้
+        แล้วตั้งแต่ PREPARE) — ดู start_monitor()'s docstring. ปุ่มมือ Start Charge
+        ใช้ค่าเริ่มต้น False เสมอ (อยากได้ session ใหม่ทุกครั้งที่ผู้ใช้กดเอง)."""
         if self.is_charging:
             logger.info("Charge already running")
             return False
@@ -673,7 +693,7 @@ class AutoController:
 
         self.is_charging = True
         if not self.monitor_running:
-            self.start_monitor()
+            self.start_monitor(reuse_session=reuse_session)
         threading.Thread(target=self._run_charge_loop,
                          args=(float_hold_s, strategy, bulk_c_rate_override), daemon=True).start()
         return True

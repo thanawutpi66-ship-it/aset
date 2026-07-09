@@ -37,7 +37,7 @@ class TestDcirUsesArrheniusNormalization(unittest.TestCase):
                         v_rest - 5.0 * raw_r, v_rest - 5.0 * raw_r])
         temp_c = np.full(6, 10.0)
 
-        dcir_25, std, n_steps, measured, n_stale = identify_dcir(ia, va, temp_c, profile)
+        dcir_25, std, n_steps, measured, n_stale, n_bad = identify_dcir(ia, va, temp_c, profile)
 
         self.assertTrue(measured)
         self.assertEqual(n_steps, 1)

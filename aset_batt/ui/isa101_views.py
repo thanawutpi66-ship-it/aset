@@ -1981,6 +1981,18 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         p.hppc_pulse_crate = _fld(self.ed_hppc_crate, 1.0)
         return p
 
+    def _ensure_battery_sn(self):
+        """Auto-generate a serial number if none is provided."""
+        sn = self.config.battery.serial_number
+        if not sn or not str(sn).strip():
+            import datetime
+            ts = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+            new_sn = f"UNSPECIFIED_BATT_{ts}"
+            self.config.battery.serial_number = new_sn
+            if hasattr(self, "ed_sn"):
+                self.ed_sn.setText(new_sn)
+            self._log_alarm(f"No SN provided, auto-generated: {new_sn}")
+
     def _on_run_hppc(self):
         self._on_run_test(mode=OperationMode.HPPC)
 
@@ -2001,6 +2013,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             self._log_alarm("Charge stopped (auto) — starting test.")
         if self.controller and self.controller.monitor_running:
             self.controller.stop_monitor()
+            
+        self._ensure_battery_sn()
 
         op_mode = mode or OperationMode(self.cb_op_mode.currentText())
         cfg = TestConfig(self._acq_profile(), op_mode)
@@ -2150,9 +2164,16 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         dstd = results.get("dcir_std_mohm", 0.0)
         nstep = results.get("dcir_n_steps", 0)
         warns = results.get("quality_warnings", [])
+        
+        # explicitly mark fallback vs measured DCIR
+        if nstep > 0:
+            dcir_txt = f"DCIR {dcir:.1f}±{dstd:.1f} mΩ"
+        else:
+            dcir_txt = f"R_base {dcir:.1f} mΩ (No pulse)"
+            
         self.lbl_analytics.setText(
             f"Grade {grade} (conf {conf*100:.0f}%) · SoH {soh_txt}% · "
-            f"DCIR {dcir:.1f}±{dstd:.1f} mΩ · Sag {results.get('voltage_sag_v', 0.0):.3f} V · "
+            f"{dcir_txt} · Sag {results.get('voltage_sag_v', 0.0):.3f} V · "
             f"CCA~{results.get('cca_est_a', 0.0):.0f} A · Cap {results['capacity_ah']:.3f} Ah")
         # 5 Hz-measurable sorting features (see project pivot): SoH + DCIR + sag + CCA proxy
         if results.get("ecm_identified"):
@@ -2254,6 +2275,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         ptype, pid = self._profile_map.get(sel, (None, None))
         try:
             if ptype == "iec":
+                self._ensure_battery_sn()
                 self.controller.start_iec61960_test(pid, self.iec_standard)
         except Exception as exc:
             if not self._headless:
@@ -2264,6 +2286,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             if not self._headless:
                 QMessageBox.warning(self, "Monitor", "Connect hardware first")
             return
+        self._ensure_battery_sn()
         self.controller.start_monitor()
         import time
         self._elapsed_t0 = time.perf_counter()   # interval only — see _slot_display

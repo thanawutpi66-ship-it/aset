@@ -104,11 +104,12 @@ def build_results_html(results: dict) -> str:
 
     # ── DCIR ──
     parts.append(hdr("Resistance &amp; Cranking  (DCIR @ ~250 ms, norm. 25 °C)"))
-    meas_hint = "" if results.get("dcir_measured", True) else "no current step → profile baseline"
+    meas_hint = "" if results.get("dcir_measured", True) else "no usable current step → profile baseline"
     step_sub = f"n={nstep} step{'s' if nstep != 1 else ''}" + (
         f"  {meas_hint}" if meas_hint else ""
     )
-    parts.append(row("DCIR", f"{dcir:.2f} ± {dstd:.2f}", "mΩ", step_sub))
+    label = "DCIR" if nstep > 0 else "R_base"
+    parts.append(row(label, f"{dcir:.2f} ± {dstd:.2f}", "mΩ", step_sub))
     parts.append(row("Voltage sag (load)", f"{results.get('voltage_sag_v', 0.0):.3f}", "V"))
     parts.append(row("CCA proxy", f"{results.get('cca_est_a', 0.0):.0f}", "A",
                      "(OCV − cutoff) / DCIR"))

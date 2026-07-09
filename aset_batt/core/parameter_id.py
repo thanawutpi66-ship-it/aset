@@ -56,6 +56,11 @@ class FitResult:
     r0_std_ohm: float = float("nan")
     r1_std_ohm: float = float("nan")
     c1_std_farad: float = float("nan")
+    # Absolute timestamp (same clock as the time_array passed to fit_model) of the
+    # pulse edge used for this fit — lets a caller holding a parallel SoC history
+    # anchor the fit to the SoC AT the pulse, not whatever SoC is current when the
+    # result is consumed (worker.py's _post_process runs after the whole record).
+    t_edge_s: float = float("nan")
     # arrays kept for plotting / inspection (not part of the summary dict)
     _t: np.ndarray = field(default=None, repr=False)
     _v_meas: np.ndarray = field(default=None, repr=False)
@@ -75,6 +80,7 @@ class FitResult:
             "R0_std_ohm": self.r0_std_ohm,
             "R1_std_ohm": self.r1_std_ohm,
             "C1_std_farad": self.c1_std_farad,
+            "t_edge_s": self.t_edge_s,
         }
 
 
@@ -97,6 +103,7 @@ class FitResult2RC:
     rmse_v: float
     current_a: float
     voc_v: float
+    t_edge_s: float = float("nan")
     # arrays kept for plotting / inspection (not part of the summary dict)
     _t: np.ndarray = field(default=None, repr=False)
     _v_meas: np.ndarray = field(default=None, repr=False)
@@ -112,6 +119,7 @@ class FitResult2RC:
             "R2_ohm": self.R2_ohm,
             "C2_farad": self.C2_farad,
             "tau2_s": self.tau2_s,
+            "t_edge_s": self.t_edge_s,
             "r_squared": self.r_squared,
             "rmse_v": self.rmse_v,
             "current_a": self.current_a,
@@ -317,6 +325,7 @@ class BatteryParameterIdentifier:
             r0_ohm=r0, r1_ohm=r1, c1_farad=c1, tau_s=r1 * c1,
             rmse_v=rmse, r_squared=r2, current_a=i_pulse, voc_v=voc,
             r0_std_ohm=r0_std, r1_std_ohm=r1_std, c1_std_farad=c1_std,
+            t_edge_s=float(t[k + 1]),
             _t=t_rel, _v_meas=v_seg, _v_pred=v_pred,
         )
         logger.info("ECM fit: R0=%.4f±%.4f Ω, R1=%.4f±%.4f Ω, C1=%.1f F, τ=%.2f s, R²=%.4f",
@@ -444,6 +453,7 @@ class BatteryParameterIdentifier:
                 R2_ohm=r2, C2_farad=c2, tau2_s=tau2,
                 r_squared=r2_val, rmse_v=rmse,
                 current_a=i_pulse, voc_v=voc,
+                t_edge_s=float(t[k + 1]),
                 _t=t_rel, _v_meas=v_seg, _v_pred=v_pred,
             )
             logger.info(
