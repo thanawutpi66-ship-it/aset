@@ -66,11 +66,11 @@ class TestStateEstimator(unittest.TestCase):
 
     def test_initialization(self):
         # 50% SoC ต่อเซลล์ ≈ 3.28V (ตารางใหม่)
-        self.estimator.init_from_voltage(3.28)
+        self.estimator.sync_with_ocv(3.28)
         self.assertAlmostEqual(self.estimator.soc, 50.0, delta=3.0)
 
     def test_coulomb_counting(self):
-        self.estimator.set_initial_soc(50.0)
+        self.estimator._reset_to_soc(50.0)
         # Discharge 1A for 1 hour (current > 0 = discharge) → ~2% coulomb drop.
         # The estimator now fuses the terminal-voltage measurement via the EKF, so a
         # small extra correction beyond the pure-coulomb 48% is expected and correct.

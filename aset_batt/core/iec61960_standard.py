@@ -221,22 +221,7 @@ class IEC61960Standard:
             "iec61960_compliant": True,
         }
 
-    def calculate_internal_resistance(self, voltage_before: float, voltage_after: float,
-                                    current: float) -> Dict[str, float]:
-        """
-        [LEGACY single-pulse] DCIR = (V_before - V_after) / I เทียบกับ OCV
-        IEC 61960 จริง ๆ ใช้ two-pulse — ดู calculate_dcir_two_pulse()
-        """
-        if abs(current) < 0.1:
-            return {"dcir_mohm": 0.0, "acir_mohm": 0.0}
 
-        dcir = abs((voltage_before - voltage_after) / current) * 1000  # mΩ
-
-        return {
-            "dcir_mohm": dcir,
-            "acir_mohm": dcir * 0.8,  # Approximation
-            "measurement_current_a": current
-        }
 
     def assess_cycle_life(self, capacity_fade_data: List[float]) -> Dict[str, float]:
         """

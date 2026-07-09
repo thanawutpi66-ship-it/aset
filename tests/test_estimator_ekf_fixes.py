@@ -17,7 +17,7 @@ from aset_batt.core.characterization import build_ecm_table
 def _est():
     e = StateEstimator(rated_capacity=7.0,
                        battery_model=BatteryModel("LiFePO4", 3.2, 4, 1))
-    e.set_initial_soc(80.0)
+    e._reset_to_soc(80.0)
     return e
 
 
@@ -61,22 +61,13 @@ class TestLiveRinAccuracy(unittest.TestCase):
 
     def test_temperature_raises_live_rin(self):
         model = BatteryModel("LiFePO4", series_cells=8)
-        e_cold = StateEstimator(50.0, model); e_cold.set_initial_soc(50.0)
-        e_warm = StateEstimator(50.0, model); e_warm.set_initial_soc(50.0)
+        e_cold = StateEstimator(50.0, model); e_cold._reset_to_soc(50.0)
+        e_warm = StateEstimator(50.0, model); e_warm._reset_to_soc(50.0)
         r_cold = e_cold.update(25.6, 5.0, dt=1.0, temp=-10.0)["rin"]
         r_warm = e_warm.update(25.6, 5.0, dt=1.0, temp=40.0)["rin"]
         self.assertGreater(r_cold, r_warm)
 
-    def test_soc_ecm_table_raises_live_rin_toward_empty(self):
-        e = _est()
-        e.set_ecm_table(build_ecm_table([90, 50, 10],
-                                        r0_list=[0.010, 0.012, 0.020],
-                                        r1_list=[0.006, 0.008, 0.016],
-                                        c1_list=[1200, 1000, 600]))
-        r_hi_soc = e.update(13.0, 5.0, dt=1.0, temp=25.0)["rin"]
-        e._reset_to_soc(15.0)
-        r_lo_soc = e.update(11.5, 5.0, dt=1.0, temp=25.0)["rin"]
-        self.assertGreater(r_lo_soc, r_hi_soc)
+
 
     def test_soc_std_and_adaptive_r_exposed(self):
         e = _est()

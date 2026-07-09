@@ -35,7 +35,7 @@ class TestCurrentSignConvention(unittest.TestCase):
         """discharge (กระแสบวก) ต้องทำให้ SoC ลดลง ไม่ใช่เพิ่ม"""
         est = StateEstimator(rated_capacity=50.0,
                              battery_model=BatteryModel(battery_type="LiFePO4"))
-        est.set_initial_soc(80.0)
+        est._reset_to_soc(80.0)
         # discharge 10A เป็นเวลา 1 ชั่วโมง (ค่าบวก = discharge)
         result = est.update(voltage=3.2, current=10.0, dt=3600, temp=25.0)
         self.assertLess(

@@ -25,7 +25,8 @@ import re
 import unittest
 from pathlib import Path
 
-_SEQUENCES_PY = Path(__file__).resolve().parent.parent / "aset_batt" / "ui" / "sequences.py"
+_SEQ_DIR = Path(__file__).resolve().parent.parent / "aset_batt" / "ui" / "sequences"
+_SEQUENCES_PY = _SEQ_DIR / "hppc.py"  # For legacy tests referencing _SEQUENCES_PY.read_text()
 
 
 def _method_src(src: str, name: str) -> str:
@@ -71,7 +72,7 @@ class TestHppcLegsFeedEstimator(unittest.TestCase):
 
 class TestCycleLifeDischargeFeedsEstimator(unittest.TestCase):
     def test_discharge_loop_calls_estimator_update(self):
-        src = _method_src(_SEQUENCES_PY.read_text(encoding="utf-8"),
+        src = _method_src((_SEQ_DIR / "cycle_life.py").read_text(encoding="utf-8"),
                           "_cycle_life_thread")
         self.assertIn("self.controller.estimator.update(", src)
 

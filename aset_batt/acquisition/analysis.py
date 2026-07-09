@@ -62,8 +62,9 @@ def profile_from_config(config) -> BatteryProfile:
         if internal_r_ohm and float(internal_r_ohm) > 0:
             rin = float(internal_r_ohm)
             r0_fraction = float(mp.get("r0_fraction", 0.0))
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     return BatteryProfile(
         name=b.battery_type, chemistry=b.battery_type,
@@ -460,8 +461,9 @@ def identify_ecm_fit(time_s, current_a, voltage_v, voc):
                                            r1rc_result=res)
         if res_2rc is not None:
             res = res_2rc
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
     return res, ""
 
 
@@ -602,8 +604,9 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                             f"logged start SoC ({soc_start:.0f}%) is not corroborated by "
                             f"the rested head voltage ({v_head:.3f} V → ~{soc_ocv:.0f}%) — "
                             f"SoH may be under-stated (pack likely not full at start)"]
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     # 1-RC / 2-RC ECM for HPPC (reported ALONGSIDE the DCIR, not instead of it).
     ecm, ecm_reason = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc \
@@ -666,8 +669,9 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                             f"({voc_local:.3f} V) differs from the whole-record rest "
                             f"median ({ocv:.3f} V) — rest history inconsistent "
                             f"(surface charge?); R0 is sensitive to this anchor"]
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         # cross-check: the DCIR@~250 ms should sit between R0 and R0+R1+R2; a big gap
         # means the fit and the step disagree → surface it.
         if measured and dcir > 0 and not (0.5 * r0 <= dcir <= 1.5 * ri_total):

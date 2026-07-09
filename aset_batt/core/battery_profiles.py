@@ -396,8 +396,9 @@ def save_measured_params(product_name: str, params: dict) -> bool:
         try:
             with open(_PROFILE_FILE, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     products_section = data.setdefault("products", {})
     entry = products_section.setdefault(product_name, {})

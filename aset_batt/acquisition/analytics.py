@@ -76,8 +76,9 @@ class Analytics:
                 if win >= 5:
                     delta = (grid[-1] - grid[0]) / (n - 1)
                     return savgol_filter(y, win, 3, deriv=1, delta=delta)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         return Analytics.gaussian_smooth(np.gradient(Analytics.gaussian_smooth(y, 3.0), grid), 2.0)
 
     @staticmethod

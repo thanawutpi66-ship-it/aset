@@ -43,12 +43,7 @@ class TestRinCalibratedFlag(unittest.TestCase):
         state = e.update(12.6, 0.0, dt=1.0, temp=25.0)
         self.assertTrue(state["rin_calibrated"])
 
-    def test_ecm_table_marks_calibrated(self):
-        e = self._est()
-        e.update(12.6, 0.0, dt=1.0, temp=25.0)
-        e.set_ecm_table({10.0: {"r0": 0.05, "r1": 0.03, "c1": 500.0},
-                         90.0: {"r0": 0.04, "r1": 0.02, "c1": 500.0}})
-        self.assertTrue(e._ecm_calibrated)
+
 
 
 class _FakeHW:

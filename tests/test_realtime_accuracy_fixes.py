@@ -73,7 +73,7 @@ class TestEkfDefaultR0Margin(unittest.TestCase):
 class TestPeukertSustainGate(unittest.TestCase):
     def _est(self):
         e = StateEstimator(7.0, BatteryModel("LeadAcid", 2.0, 6, 1))
-        e.set_initial_soc(80.0)
+        e._reset_to_soc(80.0)
         return e
 
     def test_short_pulse_does_not_reach_the_gate(self):

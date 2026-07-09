@@ -29,7 +29,7 @@ from aset_batt.core.state_estimator import StateEstimator
 class TestAnchorSettleWindow(unittest.TestCase):
     def _est(self):
         e = StateEstimator(7.0, BatteryModel("LeadAcid", 2.0, 6, 1))
-        e.set_initial_soc(50.0)
+        e._reset_to_soc(50.0)
         e.update(12.0, 0.0, dt=1.0, temp=25.0)   # lazily create the EKF
         return e
 
@@ -95,7 +95,7 @@ class TestResetBatteryState(unittest.TestCase):
         so the SAME real Ah delivered reads as a much bigger SoC jump. Confirms
         reset_battery_state() removes that distortion."""
         e = StateEstimator(5.0, BatteryModel("LeadAcid", 2.0, 6, 1))
-        e.set_initial_soc(87.0)
+        e._reset_to_soc(87.0)
         e.set_soh(40.0)                          # stale, from a previously-tested pack
         cap_stale = e.effective_capacity()
         e.reset_battery_state()

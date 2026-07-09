@@ -77,25 +77,7 @@ class DischargeResult:
     source: str = "pc_coulomb"     # or "native_datalog"
 
 
-# ---------------------------------------------------------------------------
-# Native BATT-test SCPI — verified against PEL-3000H_ProgrammingManual_EN_20190401.pdf
-# ("BATTery Subsystem Commands"). ``fetch_ah``/``fetch_wh`` are intentionally left
-# unset — no such command exists (see module docstring) — native_supported() is
-# hardcoded False so this dict is not reachable from run_native_batt_test() yet.
-# ---------------------------------------------------------------------------
-NATIVE_BATT_SCPI = {
-    "select_mode": ":BATTery:MODE CC",         # discharge mode (CC/CR/CP)
-    "set_current": ":BATTery:VALue {a}",       # discharge current — NOT ":BATT:CURR"
-    "stop_volt":   ":BATTery:STOP:VOLTage {v}",
-    "datalog_int": ":BATTery:DATalog:TIMer {s}",   # NOT ":BATT:DLOG:TIM"
-    "enable":      ":BATTery:STATe ON",        # arms BATT mode — does not start it
-    "run":         ":BATT:RUN",                # separate command actually starts it
-    "running?":    ":BATT:CHANnel:STATus?",    # numeric 0/1 (":BATTery:STATe?" instead
-                                                # returns a string like "ON,RUN"/"OFF")
-    "fetch_ah":    None,                       # NOT AVAILABLE — no accumulated-Ah query
-    "fetch_wh":    None,                       # NOT AVAILABLE — no accumulated-Wh query
-    "abort":       ":BATTery:STATe OFF",       # NOT ":BATT:STAR OFF"
-}
+
 
 
 class PelBattTest:
@@ -126,8 +108,9 @@ class PelBattTest:
     def safe_off(self):
         try:
             self._w(":INP OFF")
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     # -- recommended path: PC-driven CC discharge + coulomb counting -------
     def run_pc_discharge(self, current_a: float, stop_voltage: float,
@@ -164,51 +147,4 @@ class PelBattTest:
             duration_s=(t_s[-1] if t_s else 0.0), stopped_reason=reason,
             n_samples=len(t_s), t_s=t_s, v_v=v_v, i_a=i_a, source="pc_coulomb")
 
-    # -- optional path: instrument-native BATT test + datalog --------------
-    def native_supported(self) -> bool:
-        """Always False — see module docstring: the instrument has no verified SCPI
-        to retrieve accumulated Ah/Wh after a native BATT test, so starting one would
-        discharge the real battery with no way to get a usable result back. Kept as a
-        method (rather than deleting the native path) so run_native_batt_test() still
-        has one single gate to flip once Ah/Wh retrieval (e.g. datalog-file download)
-        is implemented."""
-        return False
 
-    def run_native_batt_test(self, current_a: float, stop_voltage: float,
-                             datalog_interval_s: float = 1.0,
-                             poll_s: float = 2.0,
-                             max_seconds: float = 8 * 3600) -> Optional[DischargeResult]:
-        """Run the load's built-in BATT Test + Datalog, then read back Ah/Wh.
-
-        Currently always returns None (native_supported() is hardcoded False) —
-        caller should then use ``run_pc_discharge``. See module docstring."""
-        if not self.native_supported():
-            return None
-        s = NATIVE_BATT_SCPI
-        try:
-            self._w(s["select_mode"])
-            self._w(s["set_current"].format(a=current_a))
-            self._w(s["stop_volt"].format(v=stop_voltage))
-            self._w(s["datalog_int"].format(s=datalog_interval_s))
-            self._w(s["enable"])
-            self._w(s["run"])
-            t0 = time.perf_counter()
-            while time.perf_counter() - t0 < max_seconds:
-                if self._qf(s["running?"]) < 0.5:
-                    break
-                time.sleep(poll_s)
-            else:
-                self._w(s["abort"])
-            ah = self._qf(s["fetch_ah"]) if s["fetch_ah"] else float("nan")
-            wh = self._qf(s["fetch_wh"]) if s["fetch_wh"] else float("nan")
-            if ah != ah:
-                logger.warning("native datalog returned no Ah — fall back to PC path")
-                return None
-            return DischargeResult(
-                capacity_ah=ah, energy_wh=(wh if wh == wh else 0.0),
-                soh_pct=soh_from_capacity(ah, self.rated_ah),
-                stopped_reason="native batt test", source="native_datalog")
-        except Exception as e:
-            logger.warning("native BATT test failed (%s) — fall back to PC path", e)
-            self.safe_off()
-            return None

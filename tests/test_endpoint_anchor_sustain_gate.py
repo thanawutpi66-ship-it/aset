@@ -26,7 +26,7 @@ from aset_batt.core.state_estimator import StateEstimator
 class TestZeroAnchorSustainGate(unittest.TestCase):
     def _est(self, rated_capacity=5.3):
         e = StateEstimator(rated_capacity, BatteryModel("LeadAcid", 2.0, 6, 1))
-        e.set_initial_soc(65.0)
+        e._reset_to_soc(65.0)
         return e
 
     def test_single_marginal_sample_does_not_fire(self):

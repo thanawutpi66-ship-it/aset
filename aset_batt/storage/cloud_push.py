@@ -99,8 +99,9 @@ def resolve_token(explicit: str = "") -> str:
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
                     return f.read().strip()
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
     return ""
 
 
@@ -171,8 +172,9 @@ class _NumpySafeEncoder(json.JSONEncoder):
         if hasattr(obj, "item"):
             try:
                 return obj.item()
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         # numpy arrays
         if hasattr(obj, "tolist"):
             return obj.tolist()
@@ -335,17 +337,17 @@ def main():
         status, body = push(args.url, args.token, payload)
         rows = payload["summary"].get("row_count", 0)
         grade = payload["analysis"].get("grade", "?")
-        print(f"[{time.strftime('%H:%M:%S')}] pushed rows={rows} grade={grade} -> HTTP {status}")
+        logger.info(f"[{time.strftime('%H:%M:%S')}] pushed rows={rows} grade={grade} -> HTTP {status}")
 
     if args.interval <= 0:
         once()
         return
-    print(f"pushing every {args.interval}s to {args.url} (Ctrl+C to stop)")
+    logger.info(f"pushing every {args.interval}s to {args.url} (Ctrl+C to stop)")
     while True:
         try:
             once()
         except urllib.error.URLError as e:
-            print(f"push failed: {e}")
+            logger.error(f"push failed: {e}")
         time.sleep(args.interval)
 
 

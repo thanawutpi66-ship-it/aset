@@ -15,8 +15,8 @@ def run() -> int:
         from aset_batt.app.app_bootstrapper import ApplicationBootstrapper
         from aset_batt.ui import theme
     except ImportError as e:
-        print(f"Import error: {e}")
-        print("Install dependencies first: pip install -r requirements.txt")
+        logger.error(f"Import error: {e}")
+        logger.error("Install dependencies first: pip install -r requirements.txt")
         return 1
 
     bootstrapper = ApplicationBootstrapper()
@@ -36,8 +36,9 @@ def run() -> int:
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("aset.batterytester.app.1")
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     app = QApplication(sys.argv)
     QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
