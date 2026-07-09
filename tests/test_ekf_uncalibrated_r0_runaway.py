@@ -67,10 +67,15 @@ class TestUncalibratedR0DoesNotRunawaySoc(unittest.TestCase):
     def test_ekf_update_still_runs_near_rest_while_uncalibrated(self):
         """The gate only guards against active current -- near true rest the
         IR-drop model error is negligible regardless of R0 accuracy, matching the
-        non-EKF OCV-correction fallback's own near-rest threshold."""
+        non-EKF OCV-correction fallback's own near-rest threshold. The rest must
+        also be LONGER than _min_rest_s: a later fix added the same polarization
+        gate the fallback path always had (fresh post-pulse relaxation reads as a
+        fake positive innovation with the default τ), so a just-started rest is
+        deliberately not trusted yet — simulate a long-settled rest here."""
         est = _lead_acid_estimator()
         est.update(12.7, 0.0, dt=0.1, temp=25.0)       # lazily creates the EKF
         self.assertFalse(est._ecm_calibrated)
+        est._rested_s = est._min_rest_s + 1.0          # long-rested, polarization gone
         called = {"n": 0}
         real_update = est._ekf.update
         def spy(*a, **k):

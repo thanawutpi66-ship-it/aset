@@ -144,8 +144,18 @@ _DEFAULT_CHEMISTRIES: Dict[str, ChemistryProfile] = {
             75: 2.097, 80: 2.108, 85: 2.119, 90: 2.130, 95: 2.139,
             100: 2.148,
         },
+        # arrhenius_ea_r 2200 K (≈0.19 eV), NOT the previous 4000 K: near room temp
+        # lead-acid internal resistance is dominated by H₂SO₄ electrolyte
+        # conductivity, whose activation energy is ~0.17–0.20 eV → Ea/R ≈
+        # 2000–2300 K ≈ 2.5 %/°C at 25 °C. The old 4000 K (4.5 %/°C) belongs to
+        # low-temperature charge-transfer kinetics and OVER-corrected every
+        # normalization: a reading at just 30 °C was inflated ×1.25 on its way to
+        # the 25 °C basis, when the physically-expected correction is ~×1.12.
+        # (Grading ratios were largely insulated only because the baseline
+        # specimen happened to be measured at the same bench temp — a different-
+        # temperature test would have graded against a mismatched basis.)
         rin={"r0": 0.005, "temp_coeff": 0.005, "soc_coeff": 0.0010,
-             "aging_coeff": 0.003, "arrhenius_ea_r": 4000.0},
+             "aging_coeff": 0.003, "arrhenius_ea_r": 2200.0},
         # VRLA 3-stage: absorption 2.40V/cell (14.4V@6S), float 2.275V/cell (13.65V@6S)
         # tail_current_c_rate=0.03 (was 0.02): the exponential CV/absorption tail takes
         # exponentially longer the closer the threshold is to zero, so 2% made routine

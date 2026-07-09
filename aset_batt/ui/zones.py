@@ -287,6 +287,12 @@ class ZonesMixin:
             "Quick Scan",
             "HPPC Full Sequence",
             "Cycle Life Test",
+            # Same PREPARE→CHARGE→REST→DISCHARGE→ANALYZE machinery as the IEC
+            # workflow (page index 0 — see _on_workflow_type_changed's page map);
+            # selecting it PRESETS the standard's own conditions visibly (I10
+            # reference rate, no skipped phases) instead of silently overriding
+            # at run time. The result carries the EN 50342-1 Ce-vs-Cn verdict.
+            "EN 50342-1 Lead-Acid C10",
         ])
         self._combo_shrink(self.cb_workflow_type, 10)
         sel_row.addWidget(self.cb_workflow_type, 1)
@@ -368,7 +374,10 @@ class ZonesMixin:
         self.cb_test_crate = QComboBox()
         self.cb_test_crate.addItems(["0.1C", "0.2C", "0.5C", "1.0C"])
         self.cb_test_crate.setCurrentText("0.2C")
-        self.cb_test_crate.setToolTip("C-rate สำหรับ IEC discharge test (มาตรฐาน = 0.2C)")
+        self.cb_test_crate.setToolTip(
+            "C-rate ของ discharge test — lead-acid: เลือก 0.1C (= I10 อัตราอ้างอิง "
+            "EN 50342-1, ได้ Ce เทียบ Cn ตรงๆ ไม่พึ่ง Peukert) · lithium: 0.2C ตาม "
+            "IEC 61960. อัตราอื่นยังเทสได้แต่ผลจะติดป้าย non-standard")
         self.lbl_test_crate_a = QLabel("— A")
         self.lbl_test_crate_a.setStyleSheet(
             f"color:{INFO}; font-weight:700; font-size:11px;"
@@ -561,7 +570,10 @@ class ZonesMixin:
         self._wf_stack.currentChanged.connect(self._on_wf_stack_changed)
         self._on_wf_stack_changed(self._wf_stack.currentIndex())
 
-        self.cb_workflow_type.currentIndexChanged.connect(self._wf_stack.setCurrentIndex)
+        # NOT a direct setCurrentIndex connect: item 4 (EN 50342-1) shares the
+        # IEC page (index 0) and applies standard presets — see the slot in
+        # SequencesMixin.
+        self.cb_workflow_type.currentIndexChanged.connect(self._on_workflow_type_changed)
 
         # ── Shared CANCEL + status ────────────────────────────
         self.btn_seq_cancel = _btn("■  CANCEL", bg=CRIT, fg="white", hover="#9b2020")

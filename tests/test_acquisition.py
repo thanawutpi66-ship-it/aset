@@ -105,7 +105,11 @@ class TestWorkerEcmAndDcirWiring(unittest.TestCase):
 
     def test_post_process_fits_ecm_and_reports_dcir(self):
         from aset_batt.acquisition.worker import AcquisitionWorker
-        r0, r1, c1, cur, voc = 0.012, 0.018, 1000.0, 8.0, 13.2   # τ=18 s
+        # voc 12.80 (was 13.2): a rested OCV must sit WITHIN the chemistry's
+        # calibrated curve — 13.2 V is above the LeadAcid 100% point (12.888 V),
+        # i.e. synthetic surface charge, which the pipeline now correctly clamps
+        # out of the sag/CCA arithmetic (making sag legitimately 0 for that input).
+        r0, r1, c1, cur, voc = 0.012, 0.018, 1000.0, 8.0, 12.80   # τ=18 s
         tau = r1 * c1
         dt = 0.1
         t_rest = np.arange(0, 10, dt); t_pulse = np.arange(0, 40, dt)

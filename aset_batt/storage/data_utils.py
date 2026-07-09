@@ -221,6 +221,10 @@ class DataHandler:
         self.csv_writer = None
         self.current_path: str = ""   # path ของ session ปัจจุบัน
         self._last_flush = 0.0        # perf_counter of the last disk flush — see log_row
+        # Redundant-row throttle state — see log_row. Reset in start_logging so a
+        # new session's first row always writes.
+        self._last_row_vals = None
+        self._last_row_elapsed = -1e9
 
     @staticmethod
     def make_session_path(sessions_dir: str = "sessions", label: str = "") -> str:
@@ -252,6 +256,8 @@ class DataHandler:
                 ])
             self.current_path = filepath
             self.is_recording = True
+            self._last_row_vals = None       # new session — first row always writes
+            self._last_row_elapsed = -1e9
             return True, "Success"
         except Exception as e:
             return False, str(e)
@@ -333,15 +339,38 @@ class DataHandler:
         """
         if self.is_recording and self.csv_writer:
             try:
+                # Redundant-row throttle: the monitor loop polls at ~10 Hz but the
+                # instruments update slower, so long steady phases (a 4 h charge)
+                # produced thousands of rows whose every measured value was identical
+                # to the previous row (a real 4.8 h session: 3,542 of them) — zero
+                # information, real disk/OneDrive churn. Skip a row ONLY when all
+                # measured values match the previous row AND it's been under 0.25 s
+                # since the last write. 0.25 s (not 1 s) is a hard ceiling from
+                # identify_dcir's _DCIR_MAX_STEP_DT=0.5 s staleness gate: the recorded
+                # gap from the last pre-edge row to the first post-edge row is
+                # throttle-interval + one real sample period (~0.2 s), and 0.25+0.2
+                # stays inside the gate where 1.0 s would get every real current-step
+                # edge dropped as stale. A row with ANY changed value always writes
+                # immediately, so edges themselves are never delayed.
+                row_vals = (f"{v:.4f}", f"{i_net:.4f}", f"{soc:.2f}",
+                            f"{resistance_mohm:.2f}", f"{temp_c:.2f}",
+                            "1" if rin_calibrated else "0")
+                if (row_vals == self._last_row_vals
+                        and elapsed_s - self._last_row_elapsed < 0.25):
+                    return
+                self._last_row_vals = row_vals
+                self._last_row_elapsed = elapsed_s
                 self.csv_writer.writerow([
-                    datetime.now().strftime("%H:%M:%S"),
-                    f"{elapsed_s:.1f}",
-                    f"{v:.4f}",
-                    f"{i_net:.4f}",
-                    f"{soc:.2f}",
-                    f"{resistance_mohm:.2f}",
-                    f"{temp_c:.2f}",
-                    "1" if rin_calibrated else "0",
+                    # Full date, not just HH:MM:SS — a 4-5 h session crossing
+                    # midnight otherwise wraps 23:59→00:00 with nothing to
+                    # disambiguate the day during a post-hoc audit.
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    # 1 ms resolution, not 0.1 s: at ~10 Hz the old %.1f quantisation
+                    # gave thousands of duplicate timestamps per session (5,988 in a
+                    # real file), corrupting every dt-based consumer (identify_dcir's
+                    # staleness gate, ECM fit time axis, replay dt=0 divisions).
+                    f"{elapsed_s:.3f}",
+                    *row_vals,
                 ])
                 # flush() forces a real disk write (or, on this repo's OneDrive-synced
                 # project folder, a sync-agent wakeup) every call — at the monitor

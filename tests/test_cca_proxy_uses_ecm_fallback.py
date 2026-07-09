@@ -73,17 +73,21 @@ class TestCcaProxyPrefersEcmOverStaleDcirFallback(unittest.TestCase):
         self.assertGreater(res["ecm_r2"], 0.9)
 
     def test_cca_proxy_uses_ecm_total_resistance_not_the_fallback_baseline(self):
-        from aset_batt.acquisition.analysis import _cca_cutoff_v
+        from aset_batt.acquisition.analysis import _cca_cutoff_v, _ocv_ceiling
         res = analyze_series(self.t, self.i, self.v, self.temp, self.cap,
                              self.profile, is_hppc=True)
         ri_ohm = res["ri_mohm"] / 1000.0
         cutoff = _cca_cutoff_v(self.profile)
-        expected_cca = (res["ocv_v"] - cutoff) / ri_ohm
+        # ocv is surface-charge-clamped to the curve's own 100% point before the
+        # CCA arithmetic (see _load_metrics) — mirror that here.
+        ceil = _ocv_ceiling(self.profile, 25.0)
+        ocv_eff = min(res["ocv_v"], ceil) if ceil else res["ocv_v"]
+        expected_cca = (ocv_eff - cutoff) / ri_ohm
         self.assertAlmostEqual(res["cca_est_a"], expected_cca, places=3)
 
         # The bug: using the generic fallback baseline (much larger than the
         # true measured resistance here) instead would under-report CCA proxy.
-        fallback_cca = (res["ocv_v"] - cutoff) / self.profile.internal_r
+        fallback_cca = (ocv_eff - cutoff) / self.profile.internal_r
         self.assertGreater(res["cca_est_a"], fallback_cca)
 
 

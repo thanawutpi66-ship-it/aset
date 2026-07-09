@@ -35,7 +35,12 @@ class TestZeroAnchorSustainGate(unittest.TestCase):
         e = self._est()
         # Same numbers as the real CSV row: rin ~69.23 mOhm, I=5.01A, V=11.39V.
         e.rin = 0.06923
-        v, i = 11.39, 5.01
+        # v retuned 11.39->11.36 after the LeadAcid Ea/R 4000->2200 K correction:
+        # update() recomputes self.rin each call ((R0+R1)*temp_mult), and the
+        # weaker (physically-correct) multiplier raised the recomputed rin at
+        # 28.6 C from ~69 to ~75 mOhm, so the ORIGINAL voltage no longer sat a
+        # hair past the 0%-anchor threshold. Same marginal-crossing spirit kept.
+        v, i = 11.36, 5.01
         anchor_v_empty = e.battery_model.get_ocv_from_soc(0.0)
         ocv_est = v + i * e.rin
         # sanity-check this reproduces the actual marginal crossing before asserting
@@ -51,7 +56,12 @@ class TestZeroAnchorSustainGate(unittest.TestCase):
         persist past a single noisy sample."""
         e = self._est()
         e.rin = 0.06923
-        v, i = 11.39, 5.01
+        # v retuned 11.39->11.36 after the LeadAcid Ea/R 4000->2200 K correction:
+        # update() recomputes self.rin each call ((R0+R1)*temp_mult), and the
+        # weaker (physically-correct) multiplier raised the recomputed rin at
+        # 28.6 C from ~69 to ~75 mOhm, so the ORIGINAL voltage no longer sat a
+        # hair past the 0%-anchor threshold. Same marginal-crossing spirit kept.
+        v, i = 11.36, 5.01
         for _ in range(50):          # 50 x 0.1s = 5s, past _anchor_min_sustain_s
             e.update(v, i, dt=0.1, temp=28.6)
         self.assertLess(e.soc, 5.0,
@@ -62,7 +72,12 @@ class TestZeroAnchorSustainGate(unittest.TestCase):
         toward firing — mirrors the Peukert sustain gate's reset-on-rest behavior."""
         e = self._est()
         e.rin = 0.06923
-        v, i = 11.39, 5.01
+        # v retuned 11.39->11.36 after the LeadAcid Ea/R 4000->2200 K correction:
+        # update() recomputes self.rin each call ((R0+R1)*temp_mult), and the
+        # weaker (physically-correct) multiplier raised the recomputed rin at
+        # 28.6 C from ~69 to ~75 mOhm, so the ORIGINAL voltage no longer sat a
+        # hair past the 0%-anchor threshold. Same marginal-crossing spirit kept.
+        v, i = 11.36, 5.01
         for _ in range(20):          # 2s of the marginal condition (not enough alone)
             e.update(v, i, dt=0.1, temp=28.6)
         self.assertGreater(e._zero_anchor_sustain_s, 0.0)

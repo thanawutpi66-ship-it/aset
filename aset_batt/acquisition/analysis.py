@@ -316,7 +316,21 @@ def _cca_cutoff_v(profile: BatteryProfile) -> float:
     return profile.cutoff_v
 
 
-def _load_metrics(current_a, voltage_v, dcir_ohm, profile: BatteryProfile):
+def _ocv_ceiling(profile: BatteryProfile, temp_c: float):
+    """The chemistry OCV curve's own 100% point (pack-level) at ``temp_c`` — the
+    highest voltage that carries any real state-of-charge meaning. A rested
+    reading above it is undissipated surface charge (see BatteryModel.
+    ocv_out_of_range_mv), not extra capacity. None if the model can't be built."""
+    try:
+        from aset_batt.core.battery_model import BatteryModel
+        model = BatteryModel(profile.chemistry)          # series=1 → per-cell value
+        return model.get_ocv_from_soc(100.0, temp_c) * profile.series
+    except Exception:
+        return None
+
+
+def _load_metrics(current_a, voltage_v, dcir_ohm, profile: BatteryProfile,
+                  ocv_ceiling=None):
     """Lead-acid health features the rig CAN measure at 5 Hz (see project pivot §3,§8.5):
 
       * ``voltage_sag_v`` — rested OCV minus the lowest terminal voltage seen under
@@ -327,6 +341,14 @@ def _load_metrics(current_a, voltage_v, dcir_ohm, profile: BatteryProfile):
         CCA (that needs a cold high-rate crank; this is measured at ambient temp from
         a small pulse, linearly extrapolated), but a repeatable, physically grounded
         surrogate for sorting.
+
+    ``ocv_ceiling``: the OCV curve's 100% point (see _ocv_ceiling). The DERIVED
+    metrics (sag, CCA proxy) use min(ocv, ceiling): a surface-charge-inflated
+    rest voltage (a real fresh-charged test rested at 13.18 V vs the curve's
+    12.888 V ceiling) isn't charge the pack can actually deliver, so letting it
+    into the arithmetic overstated both the sag baseline and the CCA proxy by
+    ~5%. The RAW ocv is still returned unmodified — it is a truthful reading and
+    stays what the report displays.
     """
     ia = np.asarray(current_a, float)
     va = np.asarray(voltage_v, float)
@@ -335,10 +357,11 @@ def _load_metrics(current_a, voltage_v, dcir_ohm, profile: BatteryProfile):
         ocv = float(np.median(va[rest])) + _I_STANDBY * dcir_ohm
     else:
         ocv = float(np.max(va)) if va.size else 0.0
+    ocv_eff = min(ocv, ocv_ceiling) if ocv_ceiling else ocv
     under_load = np.abs(ia - _I_STANDBY) >= 0.2
-    v_min_load = float(np.min(va[under_load])) if under_load.any() else ocv
-    sag = max(0.0, ocv - v_min_load)
-    cca_est = (ocv - _cca_cutoff_v(profile)) / dcir_ohm if dcir_ohm > 1e-6 else 0.0
+    v_min_load = float(np.min(va[under_load])) if under_load.any() else ocv_eff
+    sag = max(0.0, ocv_eff - v_min_load)
+    cca_est = (ocv_eff - _cca_cutoff_v(profile)) / dcir_ohm if dcir_ohm > 1e-6 else 0.0
     return sag, max(0.0, cca_est), ocv
 
 
@@ -495,7 +518,15 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
             dcir_slope, harness_warnings = _correct_for_harness_r(
                 dcir_slope, harness_r, "DCIR slope", harness_warnings)
 
-    sag, cca_est, ocv = _load_metrics(current_a, voltage_v, dcir, profile)
+    # Median record temperature — shared 25 °C-normalization basis for the ECM
+    # parameters below (same chemistry Arrhenius model identify_dcir already
+    # uses per-step), and the temp at which the OCV ceiling is evaluated.
+    _tc_arr = np.asarray(temp_c, float)
+    t_med = float(np.nanmedian(_tc_arr)) if _tc_arr.size and not np.all(np.isnan(_tc_arr)) \
+        else _T_REF
+    ocv_ceil = _ocv_ceiling(profile, t_med)
+    sag, cca_est, ocv = _load_metrics(current_a, voltage_v, dcir, profile,
+                                      ocv_ceiling=ocv_ceil)
     warnings, temp_drift = _quality_flags(current_a, voltage_v, temp_c, profile,
                                           is_hppc, n_steps, reached_cutoff)
     warnings = warnings + harness_warnings
@@ -518,6 +549,35 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         warnings = warnings + [
             f"discharge started at {soc_start:.0f}% SoC (not full) — SoH is under-stated; "
             f"charge fully before a capacity test"]
+    # Circular-trust guard on the guard itself: soc_start comes from the logged SoC
+    # column — the very estimator this pipeline exists to check. A real case slipped
+    # straight through: the logged SoC said 100% (frozen by an estimator bug) while
+    # the pack was really ~95.7% full, so the "started full" gate passed and the
+    # missing 4.3% was reported as SoH degradation on a healthy battery. Corroborate
+    # the logged start SoC against the record's own rested head voltage — an
+    # independent physical witness — and flag a large disagreement instead of
+    # silently trusting either side. (BELOW-ceiling voltages only: an above-ceiling
+    # rest is surface charge and can't distinguish 90% from 100% — see _ocv_ceiling.)
+    if (not is_hppc) and not np.isnan(soh) and soc_start is not None \
+            and soc_start == soc_start and soc_start >= _SOH_MIN_START_SOC:
+        try:
+            from aset_batt.core.battery_model import BatteryModel
+            ia_h = np.asarray(current_a, float)[:25]
+            va_h = np.asarray(voltage_v, float)[:25]
+            head_rest = va_h[np.abs(ia_h - _I_STANDBY) < 0.15]
+            if head_rest.size >= 3:
+                v_head = float(np.median(head_rest))
+                if not (ocv_ceil and v_head > ocv_ceil):   # surface charge → no info
+                    model = BatteryModel(profile.chemistry)
+                    soc_ocv = model.get_soc_from_ocv(v_head / profile.series, t_med) \
+                        if model.series_cells == 1 else None
+                    if soc_ocv is not None and soc_start - soc_ocv > 15.0:
+                        warnings = warnings + [
+                            f"logged start SoC ({soc_start:.0f}%) is not corroborated by "
+                            f"the rested head voltage ({v_head:.3f} V → ~{soc_ocv:.0f}%) — "
+                            f"SoH may be under-stated (pack likely not full at start)"]
+        except Exception:
+            pass
 
     # 1-RC / 2-RC ECM for HPPC (reported ALONGSIDE the DCIR, not instead of it).
     ecm, ecm_reason = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc \
@@ -541,7 +601,47 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         r2_rc = float(ecm.get("R2_ohm", 0.0))
         c2 = float(ecm.get("C2_farad", 0.0))
         tau2 = float(ecm.get("tau2_s", 0.0))
+        # 25 °C normalization — the SAME chemistry Arrhenius basis identify_dcir
+        # has always applied per step. The ECM parameters used to skip this
+        # entirely, so the report showed a normalized DCIR next to raw-at-
+        # -bench-temp R0/R1 under one "norm. 25 °C" header, and the DCIR-vs-fit
+        # cross-check below compared a normalized value against a raw one — at
+        # this bench's typical ~30 °C that was a built-in ~12% wedge between two
+        # numbers that measure the same physics. C1 scales INVERSELY so the
+        # fitted time constant τ = R1·C1 (a directly-observed quantity) is
+        # preserved, not silently shifted by the normalization.
+        _ecm_mult = _dcir_temp_normalizer(profile)(t_med)
+        r0 /= _ecm_mult
+        r1 /= _ecm_mult
+        r2_rc /= _ecm_mult
+        c1 *= _ecm_mult
+        c2 *= _ecm_mult
         ri_total = r0 + r1 + r2_rc
+        # voc-anchor sensitivity check: the fit's Voc came from the GLOBAL rest
+        # median; if the LOCAL rest right before the first pulse sits far from
+        # it (classic cause: surface charge still relaxing between them), R0
+        # shifts by ΔV/I — a real file showed a 2.2× R0 spread from exactly
+        # this. The grade stays comparable only because the baseline specimen
+        # was measured with the same procedure; surface the divergence so an
+        # inconsistent rest history is visible instead of silently biasing R0.
+        try:
+            ia_ = np.asarray(current_a, float)
+            va_ = np.asarray(voltage_v, float)
+            edges = np.where((np.abs(ia_[:-1]) < 0.15) & (np.abs(ia_[1:]) >= 1.0))[0]
+            if edges.size:
+                k0 = int(edges[0])
+                local_rest = va_[max(0, k0 - 10):k0 + 1]
+                local_rest = local_rest[np.abs(ia_[max(0, k0 - 10):k0 + 1]) < 0.15]
+                if local_rest.size >= 3:
+                    voc_local = float(np.median(local_rest))
+                    if abs(voc_local - ocv) > 0.05:
+                        warnings = warnings + [
+                            f"rest voltage right before the first pulse "
+                            f"({voc_local:.3f} V) differs from the whole-record rest "
+                            f"median ({ocv:.3f} V) — rest history inconsistent "
+                            f"(surface charge?); R0 is sensitive to this anchor"]
+        except Exception:
+            pass
         # cross-check: the DCIR@~250 ms should sit between R0 and R0+R1+R2; a big gap
         # means the fit and the step disagree → surface it.
         if measured and dcir > 0 and not (0.5 * r0 <= dcir <= 1.5 * ri_total):
@@ -559,7 +659,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     # the better, actually-measured resistance (see the if/else above — it equals
     # dcir only when there's no ECM) — re-deriving cca_est from it instead avoids
     # reporting a CCA proxy suppressed by a resistance the pack never actually showed.
-    cca_est = max(0.0, (ocv - _cca_cutoff_v(profile)) / ri_total) if ri_total > 1e-6 else 0.0
+    _ocv_eff = min(ocv, ocv_ceil) if ocv_ceil else ocv   # surface-charge clamp, as in _load_metrics
+    cca_est = max(0.0, (_ocv_eff - _cca_cutoff_v(profile)) / ri_total) if ri_total > 1e-6 else 0.0
 
     gradeable = measured or bool(ecm) or not np.isnan(soh)
     if not gradeable:
@@ -601,6 +702,7 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "peukert_k": getattr(profile, "peukert_k", 1.1),
         "dcir_mohm": dcir * 1000.0, "dcir_std_mohm": dcir_std * 1000.0,
         "dcir_n_steps": n_steps, "dcir_measured": measured, "dcir_temp_normalised": True,
+        "ecm_temp_normalised": True,   # R0/R1(/R2) on the same 25 °C basis as DCIR
         "dcir_slope_mohm": dcir_slope * 1000.0, "dcir_slope_r2": dcir_slope_r2,
         "ri_mohm": ri_total * 1000.0,
         "voltage_sag_v": sag, "cca_est_a": cca_est, "ocv_v": ocv,

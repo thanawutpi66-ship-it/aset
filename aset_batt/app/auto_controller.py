@@ -38,8 +38,13 @@ class AutoController:
         self._shutdown_done = False   # กัน shutdown ทำงานซ้ำ (idempotent)
         self._skip_ocv_reset = False  # set by stop_charge() เพื่อข้าม OCV reset
 
-        # เวลาเริ่มต้นสำหรับคำนวณ elapsed time ใน CSV
+        # เวลาเริ่มต้นสำหรับคำนวณ elapsed time ใน CSV — เก็บคู่ wall-clock
+        # (_start_time, ไว้อ้างอิง/แสดงผล) กับ monotonic (_start_mono, ไว้คำนวณ
+        # Elapsed_s จริง): เดิม Elapsed_s = time.time()-_start_time ล้วนๆ ซึ่ง
+        # NTP/DST jump กลางเทสหลายชั่วโมงทำแกนเวลาใน CSV เพี้ยน/ถอยหลังได้ —
+        # ขัดกับ convention ของโปรเจกต์เอง (dt ทุกจุดใช้ perf_counter แล้ว)
         self._start_time = None
+        self._start_mono = None
         self._last_update_time = None  # ใช้คำนวณ dt จริงต่อรอบ (coulomb counting)
         self._temp_stale_warned = False  # one-shot guard for the stale-ESP32-temp alarm
 
@@ -113,18 +118,31 @@ class AutoController:
         """เริ่มลูปอ่านค่าจาก Hardware"""
         if not self.monitor_running:
             self.stop_live_readback()   # real monitor takes over V/I/temp display
-            self._start_time = time.time()
             self._last_update_time = None
             self.monitor_running = True
-            # สร้าง session file ใหม่ทุกครั้งที่ monitor เริ่ม
-            from aset_batt.storage.data_utils import DataHandler, write_session_metadata
-            csv_path = DataHandler.make_session_path()
-            ok, msg = self.data.start_logging(csv_path)
-            if not ok:
-                import logging
-                logging.getLogger(__name__).error(f"Cannot start CSV logging: {msg}")
-            else:
-                write_session_metadata(csv_path, self.config)   # R3: audit trail
+            # เปิด session ใหม่เฉพาะเมื่อยังไม่มีการบันทึกอยู่ — เดิมสร้างไฟล์ใหม่
+            # ทุกครั้งแบบไม่มีเงื่อนไข ทำให้ session ที่ sequence เปิดไว้ตั้งแต่
+            # PREPARE (_ensure_logging(label="HPPC") ฯลฯ) โดนสลับทิ้งกลางคันตอน
+            # start_charge() เรียก start_monitor(): ไฟล์ติด label พร้อมข้อมูล
+            # OCV-settle หลายนาทีถูกทอดทิ้ง แล้วทุกอย่างไปลงไฟล์ใหม่ไร้ label ที่
+            # เวลา elapsed ถูกรีเซ็ตเป็นศูนย์ — ตรงกับหลักฐานในไฟล์เทสจริง
+            # (test_20260708_152502.csv: ไม่มี label HPPC, เริ่ม t=0 มี rest แค่
+            # ~3 แถวก่อนกระแสชาร์จไหล ทั้งที่ PREPARE รอ OCV จริงหลายนาที) และคือ
+            # ต้นเหตุที่ _quality_flags ฟ้อง "no clear rest before load" ทุกเทส.
+            if not self.data.is_recording:
+                self._start_time = time.time()
+                self._start_mono = time.perf_counter()
+                from aset_batt.storage.data_utils import DataHandler, write_session_metadata
+                csv_path = DataHandler.make_session_path()
+                ok, msg = self.data.start_logging(csv_path)
+                if not ok:
+                    import logging
+                    logging.getLogger(__name__).error(f"Cannot start CSV logging: {msg}")
+                else:
+                    write_session_metadata(csv_path, self.config)   # R3: audit trail
+            elif self._start_time is None:
+                self._start_time = time.time()
+                self._start_mono = time.perf_counter()
             threading.Thread(target=self._monitor_loop, daemon=True).start()
 
     def stop_monitor(self):
@@ -491,8 +509,10 @@ class AutoController:
                             state["soh"],
                         )
 
-                    # คำนวณ elapsed seconds จากเวลาเริ่มต้น
-                    elapsed = time.time() - self._start_time
+                    # คำนวณ elapsed seconds จากเวลาเริ่มต้น (monotonic — ดู _start_mono)
+                    elapsed = (time.perf_counter() - self._start_mono
+                               if self._start_mono is not None
+                               else time.time() - self._start_time)
                     self.data.log_row(
                         elapsed, v, i_net,
                         state['soc'], state['rin'] * 1000,  # แปลงเป็น mOhm
@@ -848,6 +868,7 @@ class AutoController:
                 write_session_metadata(csv_path, self.config)   # R3: audit trail
         if self._start_time is None:
             self._start_time = time.time()
+            self._start_mono = time.perf_counter()
 
         # เริ่ม discharge จาก max voltage จนถึง min voltage
         self.hw.set_load(True, discharge_current)
@@ -888,7 +909,9 @@ class AutoController:
             # อัปเดต SoC/Rin ด้วย dt จริง (รอบจริง > 1.0s เพราะ SCPI + sleep) แล้ว log
             state = self.estimator.update(voltage, current, dt=dt, temp=temp)
             self.data.log_row(
-                time.time() - self._start_time, voltage, current,
+                (time.perf_counter() - self._start_mono
+                 if self._start_mono is not None else time.time() - self._start_time),
+                voltage, current,
                 state["soc"], state["rin"] * 1000, temp,
                 rin_calibrated=state.get("rin_calibrated", True),
             )
@@ -1095,6 +1118,7 @@ class AutoController:
                 write_session_metadata(csv_path, self.config)   # R3: audit trail
         if self._start_time is None:
             self._start_time = time.time()
+            self._start_mono = time.perf_counter()
 
     def _log_sample(self, voltage: float, current: float):
         """log หนึ่งแถว ใช้ค่า SoC/Rin ล่าสุดจาก estimator (สำหรับ IEC test ที่ไม่ผ่าน monitor loop)
@@ -1109,7 +1133,9 @@ class AutoController:
             calibrated = getattr(self.estimator, "_ecm_calibrated", True) or not getattr(
                 self.estimator, "use_ekf", True)
             self.data.log_row(
-                time.time() - self._start_time, voltage, current,
+                (time.perf_counter() - self._start_mono
+                 if self._start_mono is not None else time.time() - self._start_time),
+                voltage, current,
                 self.estimator.soc, self.estimator.rin * 1000.0,
                 self.hw.current_temp, rin_calibrated=calibrated,
             )

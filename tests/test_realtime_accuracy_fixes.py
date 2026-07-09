@@ -30,15 +30,16 @@ from aset_batt.app.auto_controller import AutoController
 # ---------------------------------------------------------------------------
 class TestTempRinMultiplierMatchesBaseRin(unittest.TestCase):
     def test_arrhenius_ratio_matches_calculate_base_rin(self):
-        m = BatteryModel("LeadAcid", 2.0, 6, 1)   # Ea/R = 4000 K in battery_profiles.py
+        m = BatteryModel("LeadAcid", 2.0, 6, 1)   # Ea/R = 2200 K in battery_profiles.py
         mult = m.temp_rin_multiplier(10.0)
         r10 = m._calculate_base_rin(50.0, 10.0)
         r25 = m._calculate_base_rin(50.0, 25.0)
         ratio = r10 / r25
         self.assertAlmostEqual(mult, ratio, places=3)
-        # the bug's signature: linear fallback (~1.075) vs correct Arrhenius (~2.04) —
-        # assert we're on the Arrhenius side, not silently back on the linear one.
-        self.assertGreater(mult, 1.5)
+        # the bug's signature: linear fallback (~1.075) vs correct Arrhenius (~1.48
+        # at the corrected Ea/R=2200 K) — assert we're on the Arrhenius side, not
+        # silently back on the linear one.
+        self.assertGreater(mult, 1.3)
 
     def test_reference_temperature_is_unity(self):
         m = BatteryModel("LeadAcid", 2.0, 6, 1)
