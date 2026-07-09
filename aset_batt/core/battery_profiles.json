@@ -441,10 +441,10 @@
       "cca_a": 95.0,
       "notes": "YTZ6V มอเตอร์ไซค์ lead-acid AGM 12V 5.3Ah; charge 3-stage absorption 14.4V/float 13.65V; mass+CCA ประมาณการ โปรดยืนยันกับฉลากจริง",
       "measured_params": {
-        "internal_r_ohm": 0.12552,
-        "r0_fraction": 0.182,
-        "internal_r_source": "single confirmed-new/unused specimen, HPPC pulse-1, rig test_20260706_185655.csv. R0 corrected for the _I_STANDBY OCV-anchor bug AND harness_resistance_ohm=0.065 (see BatteryConfig); this internal_r/r0_fraction is now consistent with the harness-corrected R0 the live pipeline computes. Refine once more known-good units are characterised.",
-        "measured_date": "2026-07-07"
+        "internal_r_ohm": 0.11294,
+        "r0_fraction": 0.2301,
+        "internal_r_source": "single confirmed-new/unused specimen, HPPC pulse-1, rig test_20260706_185655.csv (source CSV no longer on disk). 2026-07-09 re-basis, arithmetic (assumed bench temp 30.3 C, matching the 07-08 sessions): original 0.12552 was DCIR normalized to 25 C with the old LeadAcid Ea/R=4000 K (mult 0.7910 -> raw 0.09929); re-normalized with the corrected Ea/R=2200 K (mult 0.8791) -> 0.11294. r0_fraction was raw ECM R0 (0.182*0.12552=0.022845, un-normalized under the old mixed basis) over the normalized DCIR; with ECM R0 now normalized too (0.022845/0.8791=0.025987) the consistent split is 0.025987/0.11294=0.2301. Harness 0.065 correction from the original measurement retained. RECOMMENDED: re-characterize a known-good specimen with the current pipeline to replace this derived value with a measured one.",
+        "measured_date": "2026-07-09"
       }
     },
     "FB FTZ6V (12V 5.3Ah VRLA AGM)": {

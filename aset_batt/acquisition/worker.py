@@ -76,6 +76,7 @@ class AcquisitionWorker(QObject):
         p = self.cfg.profile
         v_hist, q_hist, t_hist = [], [], []
         time_hist, i_hist = [], []          # for 1-RC ECM identification (HPPC)
+        soc_hist = []                       # parallel to time_hist — see update_ecm() feedback below
         f = open(self.csv_path, "w", newline="", encoding="utf-8")
         writer = csv.writer(f)
         # Canonical project schema (matches data_utils.DataHandler / battery_data.csv)
@@ -135,7 +136,7 @@ class AcquisitionWorker(QObject):
                         logger.debug("estimator update skipped: %s", e)
 
                 v_hist.append(v); q_hist.append(self.cap_ah); t_hist.append(temp)
-                time_hist.append(elapsed); i_hist.append(i)
+                time_hist.append(elapsed); i_hist.append(i); soc_hist.append(soc)
 
                 self._check_safety(v, i, temp, p)
 
@@ -180,7 +181,18 @@ class AcquisitionWorker(QObject):
                     r1 = results.get("r1_mohm", 0.0) / 1000.0
                     c1 = results.get("c1_farad", 0.0)
                     if r0 > 0 and r1 > 0 and c1 > 0:
-                        self.estimator.update_ecm(r0, r1, c1)
+                        # This callback fires after the WHOLE record's sample loop has
+                        # already finished, so self.estimator.soc has moved on well past
+                        # the SoC the pulse actually happened at (update_ecm()'s default
+                        # anchor). Look up the SoC AT the fitted pulse's own timestamp
+                        # from the per-sample history captured above instead.
+                        fit_soc = None
+                        fit_t = results.get("ecm_fit_t_s")
+                        if fit_t is not None and not math.isnan(fit_t) and time_hist:
+                            idx = int(np.argmin(np.abs(np.asarray(time_hist) - fit_t)))
+                            if not math.isnan(soc_hist[idx]):
+                                fit_soc = soc_hist[idx]
+                        self.estimator.update_ecm(r0, r1, c1, fit_soc=fit_soc)
             except Exception as e:
                 logger.debug("estimator feedback skipped: %s", e)
         self.finished.emit(results)

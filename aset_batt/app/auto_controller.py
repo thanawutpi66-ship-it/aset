@@ -38,8 +38,13 @@ class AutoController:
         self._shutdown_done = False   # กัน shutdown ทำงานซ้ำ (idempotent)
         self._skip_ocv_reset = False  # set by stop_charge() เพื่อข้าม OCV reset
 
-        # เวลาเริ่มต้นสำหรับคำนวณ elapsed time ใน CSV
+        # เวลาเริ่มต้นสำหรับคำนวณ elapsed time ใน CSV — เก็บคู่ wall-clock
+        # (_start_time, ไว้อ้างอิง/แสดงผล) กับ monotonic (_start_mono, ไว้คำนวณ
+        # Elapsed_s จริง): เดิม Elapsed_s = time.time()-_start_time ล้วนๆ ซึ่ง
+        # NTP/DST jump กลางเทสหลายชั่วโมงทำแกนเวลาใน CSV เพี้ยน/ถอยหลังได้ —
+        # ขัดกับ convention ของโปรเจกต์เอง (dt ทุกจุดใช้ perf_counter แล้ว)
         self._start_time = None
+        self._start_mono = None
         self._last_update_time = None  # ใช้คำนวณ dt จริงต่อรอบ (coulomb counting)
         self._temp_stale_warned = False  # one-shot guard for the stale-ESP32-temp alarm
 
@@ -109,22 +114,41 @@ class AutoController:
     # Monitor Loop
     # ------------------------------------------------------------------
 
-    def start_monitor(self):
-        """เริ่มลูปอ่านค่าจาก Hardware"""
+    def start_monitor(self, reuse_session: bool = False):
+        """เริ่มลูปอ่านค่าจาก Hardware
+
+        reuse_session=True: เรียกจากกลางเซสชันที่ sequence เปิด CSV ไว้แล้วตั้งแต่
+        PREPARE (_ensure_logging(label="HPPC") ฯลฯ) — ต้อง "สานต่อ" ไฟล์เดิม ไม่ใช่
+        เปิดใหม่ (เดิมสร้างไฟล์ใหม่ไม่มีเงื่อนไขทุกครั้ง ทำให้ label+OCV-settle
+        หลายนาทีจาก PREPARE โดนทอดทิ้ง — ตรงกับหลักฐานใน test_20260708_152502.csv).
+
+        reuse_session=False (ค่าเริ่มต้น — ใช้เมื่อผู้ใช้กดปุ่มมือ เช่น Start
+        Charge/Start Test นอก sequence): ปิด session ค้าง (ถ้ามี) แล้วเปิดไฟล์ใหม่
+        เสมอ ไม่งั้น is_recording ที่ไม่เคยถูกเคลียร์หลังเทสแรกจบ (Stop Charge ไม่ได้
+        เรียก stop_logging()) จะทำให้เทสมือครั้งที่สองในแอปเดียวกันเงียบๆ ไปเขียน
+        ทับ/ต่อท้ายไฟล์เทสแรกพร้อมนาฬิกา elapsed ที่ค้างจากรันแรก.
+        """
         if not self.monitor_running:
             self.stop_live_readback()   # real monitor takes over V/I/temp display
-            self._start_time = time.time()
             self._last_update_time = None
             self.monitor_running = True
-            # สร้าง session file ใหม่ทุกครั้งที่ monitor เริ่ม
-            from aset_batt.storage.data_utils import DataHandler, write_session_metadata
-            csv_path = DataHandler.make_session_path()
-            ok, msg = self.data.start_logging(csv_path)
-            if not ok:
-                import logging
-                logging.getLogger(__name__).error(f"Cannot start CSV logging: {msg}")
+            if reuse_session and self.data.is_recording:
+                if self._start_time is None:
+                    self._start_time = time.time()
+                    self._start_mono = time.perf_counter()
             else:
-                write_session_metadata(csv_path, self.config)   # R3: audit trail
+                if self.data.is_recording:
+                    self.data.stop_logging()
+                self._start_time = time.time()
+                self._start_mono = time.perf_counter()
+                from aset_batt.storage.data_utils import DataHandler, write_session_metadata
+                csv_path = DataHandler.make_session_path()
+                ok, msg = self.data.start_logging(csv_path)
+                if not ok:
+                    import logging
+                    logging.getLogger(__name__).error(f"Cannot start CSV logging: {msg}")
+                else:
+                    write_session_metadata(csv_path, self.config)   # R3: audit trail
             threading.Thread(target=self._monitor_loop, daemon=True).start()
 
     def stop_monitor(self):
@@ -132,6 +156,17 @@ class AutoController:
         if self.monitor_running:
             self.monitor_running = False
             logger.info("Monitor loop stopped by user")
+
+    def end_session(self):
+        """ปิด CSV session ปัจจุบันอย่างชัดเจน (ให้ workflow ถัดไปเริ่ม session ใหม่
+        แน่ๆ) — เรียกตอนจบ/ยกเลิก auto-sequence เท่านั้น. ไม่เรียกจาก stop_charge()/
+        stop_monitor() ธรรมดา เพราะสองอันนั้นถูกเรียกกลาง sequence ระหว่างเปลี่ยน
+        phase ด้วย (อยากให้ session เดิมยังอยู่); ไม่มีจุดนี้ is_recording จะค้าง True
+        ตลอดไปหลัง sequence จบ ทำให้ sequence รอบถัดไปเผลอต่อท้ายไฟล์เดิม."""
+        if self.data.is_recording:
+            self.data.stop_logging()
+        self._start_time = None
+        self._start_mono = None
 
     # ------------------------------------------------------------------
     # Live readback — lightweight V/I/Temp display right after Connect, before
@@ -189,7 +224,24 @@ class AutoController:
         "LiPO":     ( 60,  30, 0.005),
     }
 
-    def calibrate_from_ocv_stable(self, on_progress=None, cancel_check=None):
+    # Lead-acid surface-charge bleed-off: standard practice (Battery University
+    # BU-903, IEEE 450 guidance on stationary lead-acid maintenance testing) is to
+    # apply a brief, moderate discharge rather than wait hours for the surface
+    # charge layer to passively diffuse into the bulk electrolyte. Commonly cited
+    # range is C/20-C/10 for 5-10 minutes; C/20 for 5 minutes is the conservative
+    # end (~0.4% of rated capacity removed) — verify on the bench against a
+    # reference SG/OCV reading before trusting this on a specific product, same
+    # as scripts/self_calibration_test.py's own note for harness calibration.
+    _SURFACE_CHARGE_BLEED_C_RATE = 0.05        # C/20
+    _SURFACE_CHARGE_BLEED_DURATION_S = 300.0   # 5 min
+    _SURFACE_CHARGE_BLEED_POLL_S = 2.0
+    # Headroom above the pack's hard discharge cutoff — this is a courtesy
+    # accuracy step, not the actual test, so it must back off well before UVP
+    # even for a pack that turns out weaker than the "reads as ≥100%" OCV implied.
+    _SURFACE_CHARGE_BLEED_SAFETY_MARGIN = 1.05
+
+    def calibrate_from_ocv_stable(self, on_progress=None, cancel_check=None,
+                                  _allow_bleed_off=True):
         """OCV calibration แบบ wait-for-settle ตามมาตรฐาน ΔV/Δt criterion.
 
         อ่านแรงดันทุก 5 วิ จนกว่าจะผ่านทั้งสองเงื่อนไข:
@@ -273,9 +325,92 @@ class AutoController:
             "OCV stable: %.3fV @ %.1f°C → SoC %.1f%% (%s, elapsed %.0fs)",
             v_final, temp_final, soc, final_status, _t.time() - t_start,
         )
+        # Surface-charge / not-actually-at-equilibrium check — see
+        # BatteryModel.ocv_out_of_range_mv's docstring. This settle window is
+        # tuned for coulomb-counting drift (seconds-to-minutes), not for lead-acid
+        # surface charge (hours) — a reading outside the curve's own calibrated
+        # range is flat/stable within the window without being at true rest.
+        oor_mv = self.estimator.battery_model.ocv_out_of_range_mv(v_final, temp_final)
+        if oor_mv != 0.0:
+            msg = (f"OCV {v_final:.3f}V is {abs(oor_mv):.0f} mV "
+                   f"{'above the 100%' if oor_mv > 0 else 'below the 0%'} point of the "
+                   f"calibrated curve — likely still settling (surface charge / fresh "
+                   f"polarisation), not a reliable rested reading despite passing the "
+                   f"{'settled' if settled else 'timeout'} ΔV/Δt check")
+            logger.warning(msg)
+            if self.event_handler:
+                self.event_handler.post_event(
+                    EventType.SHOW_MESSAGE, ("OCV Out of Range", msg, "warning"))
+            # Only bleed off for ABOVE-range (surface charge from a recent charge) —
+            # BELOW-range means the coulomb/OCV model already reads this pack as
+            # near-empty, and pulling MORE current out of a possibly genuinely
+            # depleted pack to "fix" that reading would be actively unsafe, not
+            # helpful. One attempt only (_allow_bleed_off guards the recursive
+            # re-check) — a pack still out of range after a real bleed-off is a
+            # genuine anomaly to surface, not something to keep retrying.
+            from aset_batt.core import battery_profiles
+            chem_name = battery_profiles.get_chemistry(chemistry).name
+            if oor_mv > 0.0 and _allow_bleed_off and chem_name == "LeadAcid":
+                if self._bleed_off_surface_charge(on_progress=on_progress,
+                                                  cancel_check=cancel_check):
+                    return self.calibrate_from_ocv_stable(
+                        on_progress=on_progress, cancel_check=cancel_check,
+                        _allow_bleed_off=False)
         if on_progress:
             on_progress(_t.time() - t_start, v_final, 0.0, final_status)
         return soc, v_final, final_status
+
+    def _bleed_off_surface_charge(self, on_progress=None, cancel_check=None) -> bool:
+        """Apply a brief C/20 discharge to strip lead-acid surface charge (see the
+        constants above calibrate_from_ocv_stable) instead of waiting hours for it
+        to passively dissipate. Returns True if the bleed ran (to completion or a
+        safe early stop on low voltage) so the caller should re-settle and
+        re-check; False if hardware failed outright or was cancelled, in which
+        case the caller should just return the still-flagged original reading.
+        """
+        import time as _t
+        rated = self.config.battery.rated_capacity
+        i_bleed = min(max(0.05, rated * self._SURFACE_CHARGE_BLEED_C_RATE),
+                     self.config.battery.max_current)
+        safety_floor = self.config.battery.pack_min_voltage * self._SURFACE_CHARGE_BLEED_SAFETY_MARGIN
+        logger.info("Surface-charge bleed-off: %.3fA for %.0fs (safety floor %.3fV)",
+                    i_bleed, self._SURFACE_CHARGE_BLEED_DURATION_S, safety_floor)
+        if on_progress:
+            on_progress(0.0, 0.0, float("nan"), "bleeding")
+        ok = True
+        try:
+            if not self.hw.set_load(True, i_bleed):
+                return False
+            t0 = _t.time()
+            while _t.time() - t0 < self._SURFACE_CHARGE_BLEED_DURATION_S:
+                if cancel_check is not None and not cancel_check():
+                    ok = False
+                    break
+                try:
+                    v, i = self.hw.read_measurements(prefer_load_v=True)
+                except Exception as exc:
+                    logger.error("Surface-charge bleed-off read failed: %s", exc)
+                    ok = False
+                    break
+                self._log_sample(v, i)
+                if v <= safety_floor:
+                    logger.warning(
+                        "Surface-charge bleed-off stopped early: %.3fV ≤ safety floor %.3fV",
+                        v, safety_floor)
+                    break
+                if on_progress:
+                    on_progress(_t.time() - t0, v, float("nan"), "bleeding")
+                t_end = _t.time() + self._SURFACE_CHARGE_BLEED_POLL_S
+                while _t.time() < t_end:
+                    if cancel_check is not None and not cancel_check():
+                        ok = False
+                        break
+                    _t.sleep(0.2)
+                if not ok:
+                    break
+        finally:
+            self.hw.load_off()
+        return ok
 
     # Consecutive read failures tolerated before the monitor loop gives up for real.
     # A single VISA/USB hiccup (timeout, transient bus reset) used to kill the whole
@@ -391,8 +526,10 @@ class AutoController:
                             state["soh"],
                         )
 
-                    # คำนวณ elapsed seconds จากเวลาเริ่มต้น
-                    elapsed = time.time() - self._start_time
+                    # คำนวณ elapsed seconds จากเวลาเริ่มต้น (monotonic — ดู _start_mono)
+                    elapsed = (time.perf_counter() - self._start_mono
+                               if self._start_mono is not None
+                               else time.time() - self._start_time)
                     self.data.log_row(
                         elapsed, v, i_net,
                         state['soc'], state['rin'] * 1000,  # แปลงเป็น mOhm
@@ -530,11 +667,14 @@ class AutoController:
     # ------------------------------------------------------------------
 
     def start_charge(self, float_hold_s: float = 0.0, strategy: str = None,
-                     bulk_c_rate_override: float = None):
+                     bulk_c_rate_override: float = None, reuse_session: bool = False):
         """เริ่มชาร์จ; strategy=None → เลือกตามเคมีของแบตอัตโนมัติ
         (LeadAcid → 3-stage, Lithium → CC-CV). ส่ง strategy เพื่อ override จาก dropdown:
         "three_stage" หรือ "cc_cv". รันใน thread แยก; monitor loop ยัง log+safety ระหว่างชาร์จ
-        """
+
+        reuse_session: ส่งเป็น True เมื่อเรียกจากกลาง auto-sequence (session เปิดไว้
+        แล้วตั้งแต่ PREPARE) — ดู start_monitor()'s docstring. ปุ่มมือ Start Charge
+        ใช้ค่าเริ่มต้น False เสมอ (อยากได้ session ใหม่ทุกครั้งที่ผู้ใช้กดเอง)."""
         if self.is_charging:
             logger.info("Charge already running")
             return False
@@ -553,7 +693,7 @@ class AutoController:
 
         self.is_charging = True
         if not self.monitor_running:
-            self.start_monitor()
+            self.start_monitor(reuse_session=reuse_session)
         threading.Thread(target=self._run_charge_loop,
                          args=(float_hold_s, strategy, bulk_c_rate_override), daemon=True).start()
         return True
@@ -737,10 +877,9 @@ class AutoController:
         # ตั้ง discharge current ตาม C-rate
         discharge_current = profile.discharge_rate.value * self.config.battery.rated_capacity
 
-        # เริ่ม discharge จาก max voltage จนถึง min voltage
-        self.hw.set_load(True, discharge_current)
-
         # ให้ dashboard เห็นข้อมูล IEC test แบบ live -> เปิด logging + อ้างอิงเวลาเริ่ม
+        # (ก่อน set_load() — ต้องเปิด logging ให้พร้อมก่อน จะได้ log sample แรกสุด
+        # ที่ขอบกระแสได้ทันที แทนที่จะรอ loop รอบแรกที่ 1Hz)
         if not self.data.is_recording:
             from aset_batt.storage.data_utils import DataHandler, write_session_metadata
             csv_path = DataHandler.make_session_path()
@@ -749,6 +888,20 @@ class AutoController:
                 write_session_metadata(csv_path, self.config)   # R3: audit trail
         if self._start_time is None:
             self._start_time = time.time()
+            self._start_mono = time.perf_counter()
+
+        # เริ่ม discharge จาก max voltage จนถึง min voltage
+        self.hw.set_load(True, discharge_current)
+        # Immediate post-edge sample before the 1Hz loop below reaches its first
+        # iteration — identify_dcir()'s single-step method needs a post-edge sample
+        # within _DCIR_MAX_STEP_DT (0.5s) of the true current transition, and this
+        # loop's own pacing (1Hz) is 2x that gate (same root cause already fixed
+        # for the HPPC/IEC/Quick Scan/Cycle Life sequences in sequences.py).
+        try:
+            v0, i0 = self.hw.read_measurements(prefer_load_v=True)
+            self._log_sample(v0, i0)   # log-only (cached soc/rin) — no estimator.update()
+        except Exception:
+            pass
 
         # Monitor จนกระทั่ง voltage ตกลงถึง cutoff
         start_time = time.time()
@@ -776,7 +929,9 @@ class AutoController:
             # อัปเดต SoC/Rin ด้วย dt จริง (รอบจริง > 1.0s เพราะ SCPI + sleep) แล้ว log
             state = self.estimator.update(voltage, current, dt=dt, temp=temp)
             self.data.log_row(
-                time.time() - self._start_time, voltage, current,
+                (time.perf_counter() - self._start_mono
+                 if self._start_mono is not None else time.time() - self._start_time),
+                voltage, current,
                 state["soc"], state["rin"] * 1000, temp,
                 rin_calibrated=state.get("rin_calibrated", True),
             )
@@ -789,6 +944,13 @@ class AutoController:
 
         # หยุด discharge
         self.hw.set_load(False)
+        # Same low-latency edge sample as the discharge-start above, for the
+        # discharge-end transition.
+        try:
+            v_end, i_end = self.hw.read_measurements(prefer_load_v=False)
+            self._log_sample(v_end, i_end)
+        except Exception:
+            pass
         self._ocv_reset_after_rest("discharge")
 
         # บันทึก test data
@@ -976,6 +1138,7 @@ class AutoController:
                 write_session_metadata(csv_path, self.config)   # R3: audit trail
         if self._start_time is None:
             self._start_time = time.time()
+            self._start_mono = time.perf_counter()
 
     def _log_sample(self, voltage: float, current: float):
         """log หนึ่งแถว ใช้ค่า SoC/Rin ล่าสุดจาก estimator (สำหรับ IEC test ที่ไม่ผ่าน monitor loop)
@@ -990,7 +1153,9 @@ class AutoController:
             calibrated = getattr(self.estimator, "_ecm_calibrated", True) or not getattr(
                 self.estimator, "use_ekf", True)
             self.data.log_row(
-                time.time() - self._start_time, voltage, current,
+                (time.perf_counter() - self._start_mono
+                 if self._start_mono is not None else time.time() - self._start_time),
+                voltage, current,
                 self.estimator.soc, self.estimator.rin * 1000.0,
                 self.hw.current_temp, rin_calibrated=calibrated,
             )

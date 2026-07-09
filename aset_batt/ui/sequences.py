@@ -78,8 +78,86 @@ from aset_batt.ui.report_html import format_seq_result, build_results_html
 logger = logging.getLogger(__name__)
 
 
+# EN 50342-1 (SLI lead-acid) Cn capacity-test conditions this rig can verify.
+# The standard defines capacity at the n-hour reference rate In = Cn/n (this
+# project's lead-acid ratings are C10 — see ChemistryProfile.peukert_hr), with a
+# 1.75 V/cell end voltage, from a fully-charged, rested battery. Measuring AT
+# the reference rate is what makes the result a direct Ce-vs-Cn comparison with
+# Peukert correction mathematically a no-op — the number stands on its own
+# instead of leaning on a rate-conversion model.
+_EN50342_END_V_PER_CELL = 1.75
+_EN50342_RATE_TOL = 0.15       # ±15% around In still counts as the reference rate
+_EN50342_END_V_TOL = 0.06      # V/cell tolerance on the configured cutoff
+
+
+def en50342_capacity_conditions(chemistry: str, c_test: float, pack_min_v: float,
+                                cells_series: int, skip_charge: bool,
+                                skip_rest: bool):
+    """Check a capacity run's settings against EN 50342-1's Cn-test conditions.
+
+    Returns ``(applicable, violations)``: ``applicable`` False for non-lead-acid
+    chemistries (IEC 61960 applies there instead); ``violations`` lists every
+    condition this run does NOT satisfy — empty means the measured Ah is a
+    direct standard-basis Ce, reportable against the rated Cn as-is.
+    """
+    from aset_batt.core import battery_profiles
+    chem = battery_profiles.get_chemistry(chemistry)
+    if chem.name != "LeadAcid":
+        return False, []
+    violations = []
+    ref_hr = float(getattr(chem, "peukert_hr", 10.0) or 10.0)
+    ref_rate = 1.0 / ref_hr
+    if abs(c_test - ref_rate) > _EN50342_RATE_TOL * ref_rate:
+        violations.append(
+            f"discharge rate {c_test:g}C is not the I{ref_hr:.0f} reference rate "
+            f"({ref_rate:g}C)")
+    end_v_cell = pack_min_v / max(1, cells_series)
+    if abs(end_v_cell - _EN50342_END_V_PER_CELL) > _EN50342_END_V_TOL:
+        violations.append(
+            f"end voltage {end_v_cell:.2f} V/cell is not the standard "
+            f"{_EN50342_END_V_PER_CELL:.2f} V/cell")
+    if skip_charge:
+        violations.append("CHARGE phase skipped — standard requires a fully "
+                          "charged battery")
+    if skip_rest:
+        violations.append("REST phase skipped — standard requires a rested "
+                          "battery before discharge")
+    return True, violations
+
+
 class SequencesMixin:
     # ---- Workflow guide slots -----------------------------------------------
+
+    # combo index → _wf_stack page. Item 4 (EN 50342-1 Lead-Acid C10) reuses the
+    # IEC page: the standard test IS the same PREPARE→CHARGE→REST→DISCHARGE
+    # machinery, just with the standard's own conditions preset.
+    _WF_PAGE_MAP = {0: 0, 1: 1, 2: 2, 3: 3, 4: 0}
+    _WF_EN50342_INDEX = 4
+
+    @Slot(int)
+    def _on_workflow_type_changed(self, idx: int):
+        """Switch the settings page; for the EN 50342-1 item also preset the
+        standard's conditions VISIBLY on the shared IEC page (I10 reference
+        rate, no skipped phases) — the operator sees exactly what will run and
+        can still change them, in which case the run is honestly re-labelled
+        non-standard by the en50342_capacity_conditions() verdict at the end."""
+        self._wf_stack.setCurrentIndex(self._WF_PAGE_MAP.get(idx, 0))
+        if idx == self._WF_EN50342_INDEX:
+            try:
+                from aset_batt.core import battery_profiles
+                chem = battery_profiles.get_chemistry(
+                    self.config.battery.battery_type)
+                ref_hr = float(getattr(chem, "peukert_hr", 10.0) or 10.0)
+                self.cb_test_crate.setCurrentText(f"{1.0 / ref_hr:g}C")
+                self.chk_skip_charge.setChecked(False)
+                self.chk_skip_rest.setChecked(False)
+                if chem.name != "LeadAcid":
+                    self.sig_alarm.emit(
+                        "[EN 50342-1] selected battery chemistry is "
+                        f"{chem.name} — this standard applies to lead-acid only; "
+                        "the run will be reported as IEC 61960 instead")
+            except Exception:
+                pass
 
     @Slot(int, str)
     def _slot_cloud_phase(self, step: int, state: str,
@@ -310,6 +388,22 @@ class SequencesMixin:
 
         return dlg.exec() == QDialog.DialogCode.Accepted
 
+    def _capacity_standard_name(self) -> str:
+        """Chemistry-correct capacity-test standard label. "IEC 61960" is a
+        SECONDARY LITHIUM standard — stamping it on a lead-acid report claims a
+        methodology that standard does not define for this chemistry. SLI
+        lead-acid capacity testing lives in EN 50342-1 / IEC 60896 instead. The
+        workflow's internal name stays as-is (it is an app identity, not a
+        compliance claim); only user-facing result/report text uses this."""
+        try:
+            chem = self.controller.config.battery.battery_type
+            is_lead_acid = battery_profiles.get_chemistry(chem).name == "LeadAcid"
+        except Exception:
+            is_lead_acid = False
+        if is_lead_acid:
+            return "EN 50342-1 (SLI lead-acid)"
+        return "IEC 61960"
+
     def _seq_common_start(self, btn_key: str, loading_label: str):
         """Shared startup: reset all step leds, buffers, progress, result card."""
         # The background monitor loop (Start Monitor) also calls estimator.update()
@@ -412,7 +506,8 @@ class SequencesMixin:
             ]
         except Exception:
             plan = ["(hardware not ready — values unavailable)"]
-        if not self._show_pretest_dialog("IEC 61960 AUTO SEQUENCE", plan, eta_min=600):
+        if not self._show_pretest_dialog(
+                f"{self._capacity_standard_name()} AUTO SEQUENCE", plan, eta_min=600):
             return
         self._seq_common_start("btn_auto_seq", "Running…")
         # Snapshot every widget value on the GUI thread BEFORE spawning the worker —
@@ -635,6 +730,7 @@ class SequencesMixin:
         try:
             if self.controller:
                 self.controller.stop_charge()
+                self.controller.end_session()   # ปิด session ให้รอบถัดไปเริ่มไฟล์ใหม่แน่ๆ
             self.hw.load_off()
             self.hw.psu_off()
         except Exception:
@@ -875,7 +971,10 @@ class SequencesMixin:
             self.sig_workflow.emit(0, "done")
 
             # ── PHASE 1: CHARGE ──────────────────────────────────────────
-            if skip_charge or soc >= soc_thresh:
+            # actual runtime skip (user flag OR auto-skip on SoC) — the EN 50342-1
+            # verdict below needs what really happened, not just the checkbox.
+            _charge_ran = not (skip_charge or soc >= soc_thresh)
+            if not _charge_ran:
                 reason = "skip-charge checked" if skip_charge else f"SoC={soc:.0f}% ≥ {soc_thresh}%"
                 self.sig_alarm.emit(f"[AUTO] Skipping charge ({reason})")
                 self.sig_workflow.emit(1, "skip")
@@ -888,7 +987,8 @@ class SequencesMixin:
                 status(f"CHARGE: SoC={soc:.0f}% → charging "
                        f"({seq_crate})...")
                 self.controller.start_charge(strategy=None,
-                                             bulk_c_rate_override=_c_rate_override)
+                                             bulk_c_rate_override=_c_rate_override,
+                                             reuse_session=True)
                 _ch_t0 = time.time()
                 _ch_est = self._estimate_charge_s(soc, _c_rate_override or 0.1)
                 _tail_t_hist, _tail_i_hist = [], []
@@ -982,6 +1082,17 @@ class SequencesMixin:
             # NTP/clock-jump and consistent with worker.py's own established convention.
             last_log = _t.perf_counter()
             _dis_t0 = _t.perf_counter()
+            # Capture one sample immediately after set_load() returns, before the loop
+            # below even reaches its first ~5s-paced iteration — identify_dcir()'s
+            # single-step method needs a post-edge sample within _DCIR_MAX_STEP_DT
+            # (0.5s) of the true current transition; this loop's own pacing is 10x
+            # that, so every discharge-start edge was guaranteed to be dropped as
+            # stale (same root cause already fixed for the HPPC sequence).
+            try:
+                v3_0, i3_0 = self.hw.read_measurements(prefer_load_v=True)
+                self.controller._log_sample(v3_0, i3_0)
+            except Exception:
+                pass
             # Estimate discharge duration from SoC and C-rate (seconds)
             rated2 = self.controller.config.battery.rated_capacity
             _dis_est = int(rated2 / max(i_dis, 0.01) * 3600)
@@ -1029,11 +1140,43 @@ class SequencesMixin:
             self.sig_workflow.emit(4, "done")
             if res:
                 self.sig_seq_result.emit(format_seq_result(res))
+            # ── EN 50342-1 verdict (lead-acid only) ───────────────────────
+            # When the run satisfied the standard's Cn-test conditions, the
+            # measured Ah IS a direct standard-basis Ce — report it against the
+            # rated Cn outright (Peukert is a no-op at the reference rate, so
+            # this number leans on no rate-conversion model at all). When any
+            # condition was violated, say exactly which, so a screenshot of the
+            # result can never silently masquerade as a standard measurement.
+            en_line = ""
+            try:
+                applicable, violations = en50342_capacity_conditions(
+                    self.controller.config.battery.battery_type, c_test, pack_min,
+                    self.controller.config.battery.cells_series,
+                    not _charge_ran, skip_rest)
+                if applicable and res:
+                    ce = float(res.get("capacity_ah", 0.0))
+                    pct = 100.0 * ce / rated if rated else 0.0
+                    if not violations:
+                        verdict = "PASS (Ce ≥ Cn)" if pct >= 100.0 else (
+                            f"below Cn — standard allows up to 3 conditioning "
+                            f"cycles to reach Cn")
+                        en_line = (f"EN 50342-1 Ce = {ce:.2f} Ah = {pct:.0f}% of "
+                                   f"Cn ({rated:g} Ah) → {verdict}")
+                    else:
+                        en_line = ("EN 50342-1: non-standard run — "
+                                   + "; ".join(violations))
+                    self.sig_alarm.emit(f"[AUTO] {en_line}")
+            except Exception as exc:
+                logger.debug("EN 50342-1 verdict skipped: %s", exc)
             status("เสร็จสิ้น — ดูผลที่แท็บ Analytics")
             self.sig_alarm.emit("[AUTO] Sequence complete ✓")
             grade_str = res.get("grade", "?") if res else "?"
-            self.sig_seq_done.emit("IEC 61960 Sequence Complete",
-                                   f"Grade: {grade_str}\nดูผลเพิ่มเติมที่แท็บ Analytics")
+            body = f"Grade: {grade_str}\n"
+            if en_line:
+                body += en_line + "\n"
+            body += "ดูผลเพิ่มเติมที่แท็บ Analytics"
+            self.sig_seq_done.emit(f"{self._capacity_standard_name()} Sequence Complete",
+                                   body)
             completed_ok = True
 
         except Exception as exc:
@@ -1041,6 +1184,8 @@ class SequencesMixin:
             status(f"Error: {exc}")
         finally:
             self._seq_running.clear()
+            if self.controller:
+                self.controller.end_session()
             self.sig_phase_progress.emit(0, 0)
             if not completed_ok:
                 self.sig_seq_aborted.emit()
@@ -1119,6 +1264,14 @@ class SequencesMixin:
             last_log = _t.perf_counter()
             _dis_t0 = _t.perf_counter()
             _dis_est = int(rated / max(i_dis, 0.01) * 3600)
+            # Same low-latency edge sample as _auto_sequence_thread's IEC discharge —
+            # this loop's own pacing (~5s) is 10x identify_dcir()'s staleness gate
+            # (0.5s), so every discharge-start edge was guaranteed dropped as stale.
+            try:
+                v3_0, i3_0 = self.hw.read_measurements(prefer_load_v=True)
+                self.controller._log_sample(v3_0, i3_0)
+            except Exception:
+                pass
             while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
@@ -1178,6 +1331,8 @@ class SequencesMixin:
             status(f"QUICK Error: {exc}")
         finally:
             self._seq_running.clear()
+            if self.controller:
+                self.controller.end_session()
             self.sig_phase_progress.emit(0, 0)
             if not completed_ok:
                 self.sig_seq_aborted.emit()
@@ -1235,7 +1390,7 @@ class SequencesMixin:
             self.sig_hppc_seq_wf.emit(1, "active")
             status("HPPC SEQ: ชาร์จ CC-CV → 100%...")
             rated = self.controller.config.battery.rated_capacity
-            self.controller.start_charge(strategy=None)
+            self.controller.start_charge(strategy=None, reuse_session=True)
             _ch_t0 = _t.time()
             _soc0 = getattr(self.controller.estimator, "soc", 50.0)
             _cp = battery_profiles.get_chemistry(
@@ -1314,6 +1469,19 @@ class SequencesMixin:
                 crate   = max(0.1, float(opts["crate"] or "1.0"))
             except (ValueError, AttributeError):
                 pulse_s, relax_s, crate = 30.0, 30.0, 1.0
+            # If relax_s never reaches the chemistry's own _min_rest_s, the EKF's
+            # still_polarised gate (state_estimator.py) stays true for the WHOLE
+            # relax leg — the per-sample estimator.update() call still counts
+            # coulombs, but the voltage-measurement correction never fires. Warn
+            # once so a lead-acid/LFP run on the 30 s UI default isn't silently
+            # missing half of what "relax leg now feeds the estimator" implies.
+            _min_rest_s = getattr(self.controller.estimator, "_min_rest_s", 0.0)
+            if relax_s < _min_rest_s:
+                self.sig_alarm.emit(
+                    f"[HPPC SEQ] relax_s={relax_s:.0f}s is shorter than this "
+                    f"chemistry's rest-settle time ({_min_rest_s:.0f}s) — the relax "
+                    f"leg's estimator update will only count coulombs, the voltage "
+                    f"correction won't fire this run")
             max_dis = self.controller.config.battery.max_current
             i_pulse = min(crate * rated, max_dis)
             pack_min = self.controller.config.battery.pack_min_voltage
@@ -1329,6 +1497,11 @@ class SequencesMixin:
             self.hw.psu_off()
             self.hw.load_off()
             _hppc_t0 = _t.time()
+            v_r = None   # rested voltage from the relax leg — voc for each cycle's ECM fit
+            # Real per-sample dt for estimator.update() in both legs below — one clock
+            # across relax/pulse boundaries so no interval is ever dropped or doubled.
+            _upd_last = _t.perf_counter()
+            _rate_warned = False   # once-per-sequence low-sample-rate alarm
             for cyc in range(1, n_cyc + 1):
                 if not self._seq_running.is_set():
                     break
@@ -1339,17 +1512,52 @@ class SequencesMixin:
                     set_cloud_meta(sub_phase="relax", cycle_index=cyc, cycle_total=n_cyc)
                 except Exception:
                     pass
+                # Trailing rest samples for the upcoming pulse's ECM fit —
+                # identify_ecm_fit() needs to see the actual rest->pulse edge to
+                # locate the step (fit_model._detect_step()), not just the pulse's
+                # own already-loaded current throughout.
+                _relax_tail_v = []
                 t_phase = _t.time() + relax_s
                 while self._seq_running.is_set() and _t.time() < t_phase:
                     _iter_t0 = _t.perf_counter()
                     try:
                         v_r, _, _ = self.hw.read_vi()
+                        temp_h = self.hw.current_temp
+                        # Stale-temp escalation (G8) — IEC/Quick Scan discharge loops
+                        # have had this since the industrial-grade audit; checked BEFORE
+                        # feeding the estimator/CSV (same check-then-feed order as those
+                        # loops) so a stale ESP32 reading never contaminates the
+                        # Arrhenius-compensated fit or gets written to disk before the
+                        # sequence aborts.
+                        if not self._seq_check_temp_stale():
+                            hppc_safety_tripped = True
+                            break
+                        if not self._seq_check_otp(temp_h):
+                            hppc_safety_tripped = True
+                            break
+                        # estimator.update() per-sample — this leg deliberately did NOT
+                        # call it for a long time ("R0/R1/C1 are fit afterwards"), but
+                        # that froze coulomb counting for the entire pulse/relax phase:
+                        # a real test's 5 pulses removed 0.226Ah (4.3% of rated) that
+                        # was never counted anywhere, and the very next capacity test
+                        # (charge skipped on a surface-charge OCV misread) then
+                        # reported that exact missing charge as "SoH 95.66%" on a
+                        # healthy pack (100% − 4.27% = 95.73%, matching within 0.07%).
+                        # Safe to feed now: the monitor loop is stopped for the whole
+                        # sequence (no double counting), and the EKF's uncalibrated-R0
+                        # runaway guard + step detector are in place. Feeding the relax
+                        # leg also keeps the R0 step detector's rolling buffer primed
+                        # with rest samples so it can fire on each pulse edge.
+                        _upd_now = _t.perf_counter()
+                        state_r = self.controller.estimator.update(
+                            v_r, 0.0, dt=max(1e-3, _upd_now - _upd_last),
+                            temp=temp_h)
+                        _upd_last = _upd_now
                         self.controller._log_sample(v_r, 0.0)
-                        # HPPC doesn't call estimator.update() per-sample (R0/R1/C1/τ are
-                        # fit from the whole pulse/relax record afterwards), so reuse its
-                        # last cached soc/rin here — same values _log_sample already used.
-                        self.update_display(v_r, 0.0, self.controller.estimator.soc,
-                                            self.controller.estimator.rin)
+                        _relax_tail_v.append(v_r)
+                        if len(_relax_tail_v) > 5:
+                            _relax_tail_v.pop(0)
+                        self.update_display(v_r, 0.0, state_r["soc"], state_r["rin"])
                         self._seq_kick_watchdog()
                         elapsed_h = int(_t.time() - _hppc_t0)
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
@@ -1360,10 +1568,6 @@ class SequencesMixin:
                                       f"{v_r:.3f}V ≤ {pack_min:.3f}V cutoff")
                             self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
                             self.sig_wf_status.emit(f"⛔ {reason}")
-                            break
-                        temp_h = self.hw.current_temp
-                        if not self._seq_check_otp(temp_h):
-                            hppc_safety_tripped = True
                             break
                     except Exception:
                         pass
@@ -1386,6 +1590,18 @@ class SequencesMixin:
                     break
                 # Pulse leg
                 self.hw.set_load(True, str(i_pulse))
+                # Capture one sample immediately after the SCPI command returns, before
+                # the ~0.2s-paced while loop below even starts its first iteration —
+                # identify_dcir()'s single-step method needs a post-edge sample within
+                # _DCIR_MAX_STEP_DT (0.5s) of the true current transition, and waiting
+                # for the next full loop iteration stacks a whole pacing period on top
+                # of set_load()'s own serial round-trip, which was regularly pushing
+                # real pulses past the gate and dropping them as "stale" (n_stale).
+                try:
+                    v_p0, i_p0 = self.hw.read_measurements(prefer_load_v=True)
+                    self.controller._log_sample(v_p0, i_p0)
+                except Exception:
+                    pass
                 status(f"HPPC {cyc}/{n_cyc}: PULSE {pulse_s:.0f}s  {i_pulse:.3f} A")
                 try:
                     from aset_batt.storage.cloud_push import set_cloud_meta
@@ -1393,6 +1609,26 @@ class SequencesMixin:
                                    pulse_current_a=i_pulse)
                 except Exception:
                     pass
+                # Buffer this cycle's own pulse curve for a live per-cycle ECM fit
+                # once the pulse ends — see the fit-and-feed block after the loop.
+                # voc = MEDIAN of the trailing relax samples, not just the single last
+                # reading: real relax-end voltages are still visibly declining at the
+                # end of a practical relax window (a real test showed 13.34→13.15 V
+                # across 5 cycles' relax-ends), so any single sample carries both
+                # noise and residual-relaxation bias into the fit's R0 — the median
+                # of the tail is the same robustness idea analyze_series' own
+                # _load_metrics uses for its OCV anchor.
+                # Seed with the trailing rest samples (negative relative time, i=0)
+                # so identify_ecm_fit() can actually locate the rest->pulse edge —
+                # the pulse loop's own samples are ALL at i_pulse, with no edge in
+                # them by themselves.
+                _fit_t0 = _t.perf_counter()
+                _rest_n = len(_relax_tail_v)
+                _fit_t = [-(_rest_n - k) * 0.2 for k in range(_rest_n)]
+                _fit_i = [0.0] * _rest_n
+                _fit_v = list(_relax_tail_v)
+                voc_for_fit = (sorted(_relax_tail_v)[_rest_n // 2]
+                               if _rest_n else v_r)
                 t_phase = _t.time() + pulse_s
                 while self._seq_running.is_set() and _t.time() < t_phase:
                     _iter_t0 = _t.perf_counter()
@@ -1401,9 +1637,34 @@ class SequencesMixin:
                         # discharge-positive convention (matches AUTO/QUICK SCAN) — do
                         # NOT negate i_p here, or the CSV's current sign is inverted and
                         # the 1-RC ECM fit never converges on this sequence's own data.
+                        temp_h = self.hw.current_temp
+                        # Stale-temp escalation (G8) — IEC/Quick Scan discharge loops
+                        # have had this since the industrial-grade audit; checked BEFORE
+                        # feeding the estimator/CSV (same check-then-feed order as those
+                        # loops) so a stale ESP32 reading never contaminates the
+                        # Arrhenius-compensated fit or gets written to disk before the
+                        # sequence aborts.
+                        if not self._seq_check_temp_stale():
+                            hppc_safety_tripped = True
+                            break
+                        if not self._seq_check_otp(temp_h):
+                            hppc_safety_tripped = True
+                            break
+                        # estimator.update() per-sample — see the relax leg's comment
+                        # above: without this the pulse's own Ah removal was never
+                        # coulomb-counted (SoC stayed frozen at 100% through all 5
+                        # pulses of a real test), and the pulse edge itself is exactly
+                        # what the universal R0 step detector needs to see.
+                        _upd_now = _t.perf_counter()
+                        state_p = self.controller.estimator.update(
+                            v_p, i_p, dt=max(1e-3, _upd_now - _upd_last),
+                            temp=temp_h)
+                        _upd_last = _upd_now
                         self.controller._log_sample(v_p, i_p)
-                        self.update_display(v_p, i_p, self.controller.estimator.soc,
-                                            self.controller.estimator.rin)
+                        _fit_t.append(_t.perf_counter() - _fit_t0)
+                        _fit_i.append(i_p)
+                        _fit_v.append(v_p)
+                        self.update_display(v_p, i_p, state_p["soc"], state_p["rin"])
                         self._seq_kick_watchdog()
                         elapsed_h = int(_t.time() - _hppc_t0)
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
@@ -1415,10 +1676,6 @@ class SequencesMixin:
                             self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
                             self.sig_wf_status.emit(f"⛔ {reason}")
                             break
-                        temp_h = self.hw.current_temp
-                        if not self._seq_check_otp(temp_h):
-                            hppc_safety_tripped = True
-                            break
                     except Exception:
                         pass
                     # Same ~5 Hz pacing as the relax leg above — see its comment.
@@ -1429,6 +1686,81 @@ class SequencesMixin:
                     if not self._seq_sleep(max(0.0, 0.2 - _elapsed_iter)):
                         break
                 self.hw.load_off()
+                # Same low-latency edge sample as the pulse-start above, for the
+                # pulse-end transition — otherwise this edge suffers the identical
+                # staleness gap and identify_dcir() sees no valid steps at all.
+                try:
+                    v_r0, i_r0 = self.hw.read_measurements(prefer_load_v=False)
+                    self.controller._log_sample(v_r0, i_r0)
+                except Exception:
+                    pass
+                # Achieved-sample-rate instrumentation: on the real rig a pulse leg
+                # designed for 5 Hz (0.2s pacing) measured only ~0.7 Hz — each
+                # iteration's real cost (SCPI round-trip + display + log + cloud) was
+                # ~1.4s, starving the ECM fit of points (22 instead of ~150 per 30s
+                # pulse) with nothing anywhere reporting it. Log it every pulse and
+                # alarm once per sequence when badly under target, so a slow rig is
+                # visible instead of silently degrading every fit.
+                _n_pulse_samples = len(_fit_t) - _rest_n
+                _pulse_span = (_fit_t[-1] - max(0.0, _fit_t[_rest_n])) if _n_pulse_samples > 1 else 0.0
+                if _pulse_span > 1.0:
+                    _hz = _n_pulse_samples / _pulse_span
+                    logger.info("HPPC pulse %d/%d sampled at %.1f Hz (%d samples / %.1fs)",
+                                cyc, n_cyc, _hz, _n_pulse_samples, _pulse_span)
+                    if _hz < 2.0 and not _rate_warned:
+                        _rate_warned = True
+                        self.sig_alarm.emit(
+                            f"[HPPC SEQ] Sampling only {_hz:.1f} Hz during pulses "
+                            f"(target ~5 Hz) — SCPI/system overhead is eating the "
+                            f"budget; R1/C1 fit quality degraded")
+                # Feed this cycle's own real R0/R1/C1 into the live estimator — HPPC's
+                # pulse leg used to never feed the estimator at all, so without this
+                # the live SoC/Rin display never benefited from a real per-unit
+                # calibration despite 5 real pulses' worth of fittable data being
+                # collected every run. Reuses the exact same fit + harness-correction
+                # the post-hoc analysis (analyze_csv) already does, just applied live
+                # per cycle instead of once at the very end.
+                if voc_for_fit is not None and len(_fit_t) >= 10:
+                    try:
+                        from aset_batt.acquisition.analysis import (
+                            identify_ecm_fit, _correct_for_harness_r)
+                        ecm, _reason = identify_ecm_fit(_fit_t, _fit_i, _fit_v, voc_for_fit)
+                        if ecm is not None:
+                            r0 = float(ecm["R0_ohm"])
+                            harness_r = max(0.0, float(getattr(
+                                self.controller.config.battery, "harness_resistance_ohm", 0.0)))
+                            if harness_r > 0.0:
+                                r0, _warn = _correct_for_harness_r(r0, harness_r, "live ECM R0", [])
+                                if _warn:
+                                    self.sig_alarm.emit(f"[HPPC SEQ] {_warn[0]}")
+                            # Normalize to the estimator's 25 °C contract:
+                            # StateEstimator's live rin is (R0+R1)×temp_rin_multiplier,
+                            # i.e. it treats stored values as 25 °C-basis (the step
+                            # detector and analyze_series both divide by the
+                            # multiplier already). Feeding raw at-bench-temp values
+                            # here made the displayed rin come out UNDER-stated by
+                            # the multiplier (~12% at this bench's ~30 °C). C1 scales
+                            # inversely so the fitted τ = R1·C1 is preserved.
+                            r1 = float(ecm["R1_ohm"])
+                            c1 = float(ecm["C1_farad"])
+                            # If normalization itself fails, do NOT fall back to
+                            # feeding raw/un-normalized values — that would silently
+                            # reintroduce the exact ~12% under-statement bug this
+                            # block exists to fix, with zero diagnostic anywhere.
+                            # Skip this cycle's live feed instead and log why.
+                            try:
+                                _mult = self.controller.estimator.battery_model \
+                                    .temp_rin_multiplier(self.hw.current_temp)
+                            except Exception as _exc:
+                                logger.debug(
+                                    "Live ECM temp-normalization failed (%s) — "
+                                    "skipping this cycle's update_ecm() feed", _exc)
+                                _mult = None
+                            if _mult is not None and _mult > 1e-6:
+                                r0, r1, c1 = r0 / _mult, r1 / _mult, c1 * _mult
+                                self.controller.estimator.update_ecm(r0, r1, c1)
+                    except Exception as exc:
+                        logger.debug("Live per-cycle ECM fit failed (non-fatal): %s", exc)
                 if not self._seq_running.is_set():
                     break
             self.sig_phase_progress.emit(0, 0)
@@ -1483,6 +1815,8 @@ class SequencesMixin:
             status(f"HPPC SEQ Error: {exc}")
         finally:
             self._seq_running.clear()
+            if self.controller:
+                self.controller.end_session()
             self.sig_phase_progress.emit(0, 0)
             self.hw.load_off()
             if not completed_ok:
@@ -1555,7 +1889,8 @@ class SequencesMixin:
                 # ── step 1: CHARGE
                 self.sig_cycle_wf.emit(1, "active")
                 self.controller.start_charge(strategy=None,
-                                             bulk_c_rate_override=c_ch)
+                                             bulk_c_rate_override=c_ch,
+                                             reuse_session=True)
                 _ch_t0 = _t.time()
                 _soc0 = getattr(self.controller.estimator, "soc", 50.0)
                 _ch_est = self._estimate_charge_s(_soc0, c_ch or 0.1)
@@ -1626,6 +1961,13 @@ class SequencesMixin:
                 _dis_est = int(rated / max(i_dis, 0.01) * 3600)
                 ah_acc = 0.0
                 last_log = _t.perf_counter()
+                # Same low-latency edge sample as _auto_sequence_thread's IEC discharge —
+                # this loop's own pacing (~5s) is 10x identify_dcir()'s staleness gate.
+                try:
+                    v_d0, i_d0 = self.hw.read_measurements(prefer_load_v=True)
+                    self.controller._log_sample(v_d0, i_d0)
+                except Exception:
+                    pass
                 while self._seq_running.is_set():
                     try:
                         v_d, i_d = self.hw.read_measurements(prefer_load_v=True)
@@ -1633,22 +1975,35 @@ class SequencesMixin:
                         dt  = now - last_log
                         last_log = now
                         ah_acc += abs(i_d) * dt / 3600.0
+                        temp_d = self.hw.current_temp
+                        # Stale-temp escalation (G8), checked BEFORE feeding the
+                        # estimator/CSV — same check-then-feed order as the IEC/Quick
+                        # Scan discharge loops, so a stale ESP32 reading never
+                        # contaminates the Arrhenius-compensated fit or gets written to
+                        # disk before the sequence aborts.
+                        if not self._seq_check_temp_stale():
+                            break
+                        if not self._seq_check_otp(temp_d):
+                            break
                         # discharge-positive convention — do not negate (same fix as
                         # the HPPC pulse leg; a negated sign here corrupts the CSV that
                         # a later "Analyze CSV" pass or ECM fit would read back).
+                        #
+                        # estimator.update() per-sample — same frozen-SoC fix as the
+                        # HPPC pulse leg (see its comment): ah_acc above is only this
+                        # sequence's own capacity-fade tracker, so without this every
+                        # cycle's real Ah removal was invisible to the shared
+                        # estimator, leaving its SoC frozen through the whole test.
+                        # Safe now for the same reasons (monitor stopped, EKF guard).
+                        state_d = self.controller.estimator.update(
+                            v_d, i_d, dt=max(1e-3, dt), temp=temp_d)
                         self.controller._log_sample(v_d, i_d)
-                        # Cycle Life doesn't call estimator.update() per-sample either (ah_acc
-                        # above is its own rough capacity-fade tracker) — reuse cached soc/rin.
-                        self.update_display(v_d, i_d, self.controller.estimator.soc,
-                                            self.controller.estimator.rin)
+                        self.update_display(v_d, i_d, state_d["soc"], state_d["rin"])
                         self._seq_kick_watchdog()
                         elapsed_d = int(now - _dis_t0)
-                        temp_d = self.hw.current_temp
                         status(f"CYCLE {cyc}/{n_cyc} DIS: {v_d:.3f} V  "
                                f"{ah_acc:.3f} Ah  SoC ~{max(0, 100-100*ah_acc/rated):.0f}%")
                         self.sig_phase_progress.emit(elapsed_d, _dis_est)
-                        if not self._seq_check_otp(temp_d):
-                            break
                         if v_d <= pack_min:
                             break
                     except Exception as exc:
@@ -1700,6 +2055,8 @@ class SequencesMixin:
             status(f"CYCLE Error: {exc}")
         finally:
             self._seq_running.clear()
+            if self.controller:
+                self.controller.end_session()
             self.sig_phase_progress.emit(0, 0)
             self.hw.load_off()
             if not completed_ok:

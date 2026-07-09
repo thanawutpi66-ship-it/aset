@@ -76,9 +76,12 @@ class TestCapacityTestHappyPath(unittest.TestCase):
 
         # Three readings: two above the pack cutoff, one at/below it so the
         # loop's own end-condition (not is_profile_running flipping False)
-        # is what terminates it.
+        # is what terminates it. A leading and a trailing reading are consumed
+        # by the immediate post-edge samples taken right after set_load(True,
+        # ...) (before the loop starts) and set_load(False) (after it ends).
         cutoff = cfg.battery.pack_min_voltage
-        readings = [(cutoff + 0.5, 1.0), (cutoff + 0.2, 1.0), (cutoff - 0.05, 1.0)]
+        readings = [(cutoff + 0.6, 1.0), (cutoff + 0.5, 1.0), (cutoff + 0.2, 1.0),
+                    (cutoff - 0.05, 1.0), (cutoff - 0.05, 0.0)]
         hw.read_measurements = MagicMock(side_effect=readings)
         ctrl.is_profile_running = True
 
@@ -119,10 +122,15 @@ class TestCapacityTestSafetyBreak(unittest.TestCase):
         hw.psu_off = MagicMock()
 
         over_current = cfg.system.safety_limits["max_current"] + 1.0
-        # First sample already violates the current limit — loop must break
-        # immediately, before ever reaching a second read.
-        hw.read_measurements = MagicMock(side_effect=[(cfg.battery.pack_min_voltage + 1.0,
-                                                         over_current)])
+        safe_v = cfg.battery.pack_min_voltage + 1.0
+        # A leading safe reading is consumed by the immediate post-edge sample
+        # taken right after set_load(True, ...), before the loop starts. The
+        # loop's own first (and only) read already violates the current limit
+        # and must break immediately, before ever reaching a second read — a
+        # trailing safe reading is then consumed by the post-break
+        # set_load(False) immediate sample.
+        hw.read_measurements = MagicMock(side_effect=[
+            (safe_v, 1.0), (safe_v, over_current), (safe_v, 0.0)])
         ctrl.is_profile_running = True
 
         iec_standard = IEC61960Standard(
