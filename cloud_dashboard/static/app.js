@@ -48,7 +48,10 @@ function mkDataset(label, data, color, yAxisID) {
 function mkScale(pos, color, label, drawGrid) {
   return {
     type: 'linear', position: pos,
-    ticks: { color, font: { size: 10 } },
+    // Chart.js auto-picks tick precision from the data range — on a nearly-flat
+    // Current trace that means 4+ decimals of noise (-0.5330, -0.5332, ...).
+    // Force 2 decimals to match every other reading on the page.
+    ticks: { color, font: { size: 10 }, callback: (v) => Number(v).toFixed(2) },
     grid: { color: drawGrid ? css('--border') : 'rgba(0,0,0,0)' },
     border: { color, width: pos === 'right' ? 2 : 1 },
     title: { display: true, text: label, color, font: { size: 10 } },
