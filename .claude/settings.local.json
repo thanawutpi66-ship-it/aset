@@ -16,7 +16,8 @@
       "Bash(QT_QPA_PLATFORM=offscreen PYTHONIOENCODING=utf-8 PYTHONPATH=\"C:/Users/boatl/OneDrive/ASET_BATT\" timeout 40 venv/Scripts/python.exe -u /tmp/smoke_ui.py)",
       "Bash(venv/Scripts/python.exe -m pytest -q)",
       "Bash(venv/Scripts/python.exe -c \"import main, main_qt, app_bootstrapper, charge_controller, report_generator, battery_profiles; from ui import qt_views, ui_views; print\\('all entry points + modules import OK'\\)\")",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(rtk curl *)"
     ]
   }
 }

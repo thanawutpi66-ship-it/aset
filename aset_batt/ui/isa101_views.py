@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -136,9 +135,7 @@ from aset_batt.core.iec61960_standard import IEC61960Standard
 logger = logging.getLogger(__name__)
 
 # ISA-101 palette: neutral gray shell with color reserved for state/alarm only.
-from aset_batt.ui.theme import (
-    BG, PANEL, PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
-)
+from aset_batt.ui import theme
 
 from aset_batt.ui.widgets import (
     _btn, _hline, QtRootShim,
@@ -325,47 +322,22 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self._update_connection_status()
 
     def _build_ui(self):
-        # Show which palette this process actually baked in — diagnoses stale
-        # code / wrong-CWD launches where config says dark but the UI stays light.
-        from aset_batt.ui import theme
-        _theme_name = "dark" if BG == theme.DARK["BG"] else "light"
-        self.setWindowTitle(
-            f"ASET Battery Tester — ISA-101 Command Center  [{_theme_name}]")
+        # Show which palette is actually active — diagnoses stale code / wrong-CWD
+        # launches where config says dark but the UI stays light, and updates live
+        # on retheme() so it stays trustworthy after a toggle (see _on_retheme()).
+        self._update_window_title()
         self.resize(1440, 900)
         _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aset_logo.png")
         if os.path.exists(_icon_path):
             from PySide6.QtGui import QIcon
             self.setWindowIcon(QIcon(_icon_path))
-        self.setStyleSheet(
-            f"""
-            QMainWindow, QWidget {{ background:{BG}; color:{TEXT}; font-family:'Segoe UI','Inter',sans-serif; font-size:12px; }}
-            QGroupBox {{ border:1px solid {BORDER}; border-radius:4px; margin-top:12px; background:{PANEL}; font-weight:700; }}
-            QGroupBox::title {{ subcontrol-origin:margin; left:10px; padding:1px 6px; color:{TEXT}; background:{PANEL}; letter-spacing:1px; }}
-            QLabel {{ background:transparent; }}
-            QComboBox, QLineEdit {{ background:{FIELD}; border:1px solid {BORDER}; border-radius:3px; padding:4px 6px; color:{TEXT}; }}
-            QComboBox:focus, QLineEdit:focus {{ border:1px solid {INFO}; }}
-            QDoubleSpinBox, QSpinBox {{ background:{FIELD}; border:1px solid {BORDER}; border-radius:3px; padding:3px 4px; color:{TEXT}; }}
-            QDoubleSpinBox:focus, QSpinBox:focus {{ border:1px solid {INFO}; }}
-            QDoubleSpinBox:hover, QSpinBox:hover {{ border:1px solid {INFO}; }}
-            QComboBox QAbstractItemView {{ background:{FIELD}; color:{TEXT}; selection-background-color:{INFO}; selection-color:white; }}
-            QListWidget {{ background:{PANEL2}; border:1px solid {BORDER}; border-radius:4px; }}
-            QListWidget::item {{ padding:5px 6px; }}
-            QListWidget::item:selected {{ background:{INFO}; color:white; }}
-            QTextEdit {{ background:{PANEL2}; border:1px solid {BORDER}; color:{TEXT}; }}
-            QTabWidget::pane {{ border:1px solid {BORDER}; background:{PANEL2}; }}
-            QTabBar::tab {{ background:{PANEL}; padding:6px 14px; border:1px solid {BORDER}; border-bottom:0; color:{MUTED}; }}
-            QTabBar::tab:selected {{ background:{PANEL2}; color:{TEXT}; font-weight:700; }}
-            QMenuBar {{ background:{PANEL}; border-bottom:1px solid {BORDER}; padding:1px 0; }}
-            QMenuBar::item {{ padding:4px 10px; border-radius:3px; }}
-            QMenuBar::item:selected {{ background:{INFO}; color:white; }}
-            QMenu {{ background:{PANEL2}; border:1px solid {BORDER}; padding:3px 0; }}
-            QMenu::item {{ padding:5px 22px; }}
-            QMenu::item:selected {{ background:{INFO}; color:white; }}
-            QMenu::separator {{ height:1px; background:{BORDER}; margin:3px 0; }}
-            QToolBar {{ background:{PANEL}; border-bottom:1px solid {BORDER}; spacing:3px; padding:3px 6px; }}
-            QStatusBar {{ background:{PANEL}; border-top:1px solid {BORDER}; font-size:11px; }}
-            """
-        )
+        # Base widget chrome (QComboBox/QLineEdit/QTabBar/QMenu/QToolBar/...) now
+        # comes entirely from qt-material's app-wide stylesheet (applied in
+        # aset_batt/app/run.py, re-applied live by _on_theme_toggle below) — a
+        # window-level setStyleSheet() here would win the Qt QSS cascade over
+        # those rules and paint back over the Material look. Only ISA-101-
+        # specific accents (badges, LEDs, alarm colors, graph pens) get styled
+        # directly at their own widgets, elsewhere in this file.
 
         self._build_menubar()
         self._build_toolbar()
@@ -394,6 +366,24 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
     def _pill(self, color):
         return f"background:{color}; color:white; border-radius:3px; padding:5px 12px; font-weight:700; letter-spacing:1px;"
 
+    @staticmethod
+    def _pill_color_for(text: str):
+        text = text.upper()
+        if "RUN" in text:
+            return theme.INFO
+        if "STOP" in text or "FAIL" in text:
+            return theme.CRIT
+        return theme.NEUTRAL
+
+    def _mode_badge_style(self):
+        color = theme.WARN if self.config.system.simulation_mode else theme.OK
+        return (f"background:transparent; color:{color}; border:1px solid {color}; "
+                f"border-radius:4px; padding:3px 8px; font-weight:700; letter-spacing:1px; margin-right: 10px;")
+
+    def _update_window_title(self):
+        self.setWindowTitle(
+            f"ASET Battery Tester — ISA-101 Command Center  [{theme.current_theme()}]")
+
     # ---- International standard: Menu bar / Toolbar / Status bar ---------------
 
     def _build_menubar(self):
@@ -417,8 +407,6 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         m.addAction("Stop Test", self._on_stop_test)
 
         m = bar.addMenu("View")
-        m.addAction("Toggle Dark Mode", self._on_toggle_dark_mode)
-        m.addSeparator()
         g = m.addMenu("Graph Mode")
         for _lbl in ("Combined", "Split 2", "Split 3"):
             g.addAction(_lbl, lambda l=_lbl: self._set_graph_mode(l))
@@ -448,42 +436,49 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
     def _build_toolbar(self):
         toolbar = QToolBar("Main")
         toolbar.setMovable(False)
-        toolbar.setStyleSheet(f"QToolBar {{ background:{PANEL}; border-bottom:1px solid {BORDER}; }}")
-        
+        theme.style(toolbar, lambda: f"QToolBar {{ background:{theme.PANEL}; border-bottom:1px solid {theme.BORDER}; }}")
+
+        # Put File/Run/View/Tools/Help on the same row as the badges below,
+        # instead of QMainWindow's default separate menu-bar row above it.
+        bar = self.menuBar()
+        bar.setNativeMenuBar(False)
+        # QMenuBar doesn't inherit the QToolBar's background it's embedded in —
+        # each widget class matches its own QSS selector — so without this it
+        # falls through to qt-material's own QMenuBar rule (white in the light
+        # theme), a visible seam against the toolbar's theme.PANEL grey.
+        theme.style(bar, lambda: f"QMenuBar {{ background:{theme.PANEL}; border: none; }}")
+        toolbar.addWidget(bar)
+
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         spacer.setStyleSheet("border: none; background: transparent;")
         toolbar.addWidget(spacer)
 
         mode = "SIMULATION" if self.config.system.simulation_mode else "HARDWARE"
-        color = WARN if self.config.system.simulation_mode else OK
         self.mode_badge = QLabel(f"  {mode}  ")
-        self.mode_badge.setStyleSheet(
-            f"background:transparent; color:{color}; border:1px solid {color}; "
-            f"border-radius:4px; padding:3px 8px; font-weight:700; letter-spacing:1px; margin-right: 10px;"
-        )
+        theme.style(self.mode_badge, self._mode_badge_style)
         toolbar.addWidget(self.mode_badge)
 
         self.state_pill = QLabel("  IDLE  ")
-        self.state_pill.setStyleSheet(self._pill(NEUTRAL) + " border: none; margin-right: 10px;")
+        self.state_pill.setStyleSheet(self._pill(theme.NEUTRAL) + " border: none; margin-right: 10px;")
         toolbar.addWidget(self.state_pill)
 
         self.btn_estop = QPushButton("⛔ E-STOP")
-        self.btn_estop.setStyleSheet(
-            f"QPushButton {{ background:{CRIT}; color:white; border:none; border-radius:5px; "
+        theme.style(self.btn_estop, lambda: (
+            f"QPushButton {{ background:{theme.CRIT}; color:white; border:none; border-radius:5px; "
             f"padding:4px 14px; font-size:13px; font-weight:800; margin-right: 10px; }}"
             f"QPushButton:hover {{ background:#9b2020; }}"
-        )
+        ))
         self.btn_estop.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_estop.clicked.connect(self._on_estop)
         toolbar.addWidget(self.btn_estop)
-        
+
         self.addToolBar(toolbar)
 
     def _build_statusbar(self):
         sb = self.statusBar()
         self.status_label = QLabel("Ready — connect hardware to begin")
-        self.status_label.setStyleSheet(f"color:{MUTED};")
+        theme.style(self.status_label, lambda: f"color:{theme.MUTED};")
         sb.addWidget(self.status_label, 1)
         # G3 (industrial-grade audit): test progress/ETA (wf_progress/lbl_eta, see
         # zones.py) used to live only inside the SETUP tab's AUTO-sequence sub-page
@@ -495,28 +490,28 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self.status_progress.setTextVisible(True)
         self.status_progress.setMaximumWidth(160)
         self.status_progress.setMaximumHeight(14)
-        self.status_progress.setStyleSheet(
-            f"QProgressBar{{border:1px solid {BORDER};border-radius:3px;"
-            f"background:{PANEL2};text-align:center;font-size:9px;}}"
-            f"QProgressBar::chunk{{background:{INFO};border-radius:2px;}}"
-        )
+        theme.style(self.status_progress, lambda: (
+            f"QProgressBar{{border:1px solid {theme.BORDER};border-radius:3px;"
+            f"background:{theme.PANEL2};text-align:center;font-size:9px;}}"
+            f"QProgressBar::chunk{{background:{theme.INFO};border-radius:2px;}}"
+        ))
         self.status_progress.hide()
         sb.addPermanentWidget(self.status_progress)
         # Update banner — hidden until a git check finds origin ahead of us.
         self.btn_update = QPushButton("⭯ Update available")
         self.btn_update.setVisible(False)
         self.btn_update.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_update.setStyleSheet(
-            f"QPushButton{{background:{INFO}; color:white; border:0; border-radius:3px; "
+        theme.style(self.btn_update, lambda: (
+            f"QPushButton{{background:{theme.INFO}; color:white; border:0; border-radius:3px; "
             f"padding:2px 10px; font-weight:700;}} QPushButton:hover{{background:#1565c0;}} "
-            f"QPushButton:disabled{{background:{MUTED};}}")
+            f"QPushButton:disabled{{background:{theme.MUTED};}}"))
         self.btn_update.clicked.connect(self._on_update_clicked)
         sb.addPermanentWidget(self.btn_update)
         self.conn_led = QLabel("●")
-        self.conn_led.setStyleSheet(f"color:{NEUTRAL}; font-size:14px; padding:0 4px;")
+        self.conn_led.setStyleSheet(f"color:{theme.NEUTRAL}; font-size:14px; padding:0 4px;")
         sb.addPermanentWidget(self.conn_led)
         self.conn_text = QLabel("Disconnected")
-        self.conn_text.setStyleSheet(f"color:{MUTED}; font-weight:600; padding-right:8px;")
+        self.conn_text.setStyleSheet(f"color:{theme.MUTED}; font-weight:600; padding-right:8px;")
         sb.addPermanentWidget(self.conn_text)
 
     def _build_center_panel(self):
@@ -574,34 +569,6 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 "Built with PySide6 · Python",
             )
 
-    def _on_toggle_dark_mode(self):
-        from PySide6.QtGui import QPalette, QColor
-        from PySide6.QtWidgets import QApplication
-        from PySide6.QtCore import Qt
-        app = QApplication.instance()
-        is_dark = getattr(self, '_is_dark_mode', False)
-        self._is_dark_mode = not is_dark
-        if self._is_dark_mode:
-            palette = QPalette()
-            palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
-            palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)
-            palette.setColor(QPalette.ColorRole.Base, QColor(25, 25, 25))
-            palette.setColor(QPalette.ColorRole.AlternateBase, QColor(53, 53, 53))
-            palette.setColor(QPalette.ColorRole.ToolTipBase, Qt.GlobalColor.black)
-            palette.setColor(QPalette.ColorRole.ToolTipText, Qt.GlobalColor.white)
-            palette.setColor(QPalette.ColorRole.Text, Qt.GlobalColor.white)
-            palette.setColor(QPalette.ColorRole.Button, QColor(53, 53, 53))
-            palette.setColor(QPalette.ColorRole.ButtonText, Qt.GlobalColor.white)
-            palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.red)
-            palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
-            palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
-            palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.black)
-            app.setStyle("Fusion")
-            app.setPalette(palette)
-        else:
-            app.setStyle("Fusion")
-            app.setPalette(self.style().standardPalette())
-
     def _build_left_panel(self):
         """Left column: three top-level tabs (SETUP / TEST MODE / TOOLS) that
         follow the 1→2→3 workflow order. Each tab scrolls independently."""
@@ -621,16 +588,18 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
 
         tabs = QTabWidget()
         tabs.setMinimumWidth(300)
+        theme.style(tabs, self._tabbar_style)
         tabs.addTab(_scroll(self._zone_setup()),     "SETUP")
         tabs.addTab(_scroll(self._zone_test_mode()), "TEST MODE")
+        tabs.addTab(_scroll(self._zone_tools()),     "TOOLS")
         return tabs
 
     # ---- small UI helpers --------------------------------------------------
     def _subheader(self, text):
         """Bold caption that groups related controls inside a zone."""
         lbl = QLabel(text)
-        lbl.setStyleSheet(
-            f"color:{TEXT}; font-size:11px; font-weight:800; letter-spacing:1px; padding-top:4px;")
+        theme.style(lbl, lambda: (
+            f"color:{theme.TEXT}; font-size:11px; font-weight:800; letter-spacing:1px; padding-top:4px;"))
         return lbl
 
     @staticmethod
@@ -757,7 +726,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self.sig_live_readback.emit(float(v), float(i), float(temp))
 
     def set_profile_status(self, text, color=None):
-        self.sig_profile_status.emit(str(text), str(color or MUTED))
+        self.sig_profile_status.emit(str(text), str(color or theme.MUTED))
 
     def set_charge_status(self, text):
         self.sig_charge_status.emit(str(text))
@@ -832,7 +801,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         lbl, unit = self.metric_labels["Temp"]
         crit = self.config.system.safety_limits.get("max_temperature", 55)
         warn = crit - 10
-        color = CRIT if temp >= crit else WARN if temp >= warn else TEXT
+        color = theme.CRIT if temp >= crit else theme.WARN if temp >= warn else theme.TEXT
         lbl.setStyleSheet(f"color:{color}; border:0;")
 
     def _update_vi_temp_labels(self, v, i, temp):
@@ -840,6 +809,12 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         metrics valid even without a running test (no SoC/Rin, those need the
         state estimator). Shared by _slot_display (full test telemetry) and
         _slot_live_readback (pre-test Connect readback)."""
+        # Cached so _on_retheme() can recolor these against the NEW theme even
+        # when idle (no telemetry arriving to naturally trigger a recolor) —
+        # otherwise they keep whatever color was picked under the OLD theme,
+        # which can be unreadable after a light<->dark switch (e.g. a light
+        # theme's near-white MUTED-on-dark-bg choice showing white-on-white).
+        self._last_vit = (v, i, temp)
         for name, val, fmt in [("Voltage", v, "{:.2f}"), ("Temp", temp, "{:.2f}")]:
             lbl, unit = self.metric_labels[name]
             lbl.setText(f"{fmt.format(val)} {unit}")
@@ -858,18 +833,18 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         max_i = max(1e-6, getattr(self.config.battery, "max_current", 0.0))
         load_frac = abs(i) / max_i
         if i < -_IDLE:                              # charging (convention: negative)
-            i_lbl.setStyleSheet(f"color:{INFO}; border:0;")
+            i_lbl.setStyleSheet(f"color:{theme.INFO}; border:0;")
             self._lbl_i_dir.setText("▲  CHG")
-            self._lbl_i_dir.setStyleSheet(f"color:{INFO}; border:0;")
+            self._lbl_i_dir.setStyleSheet(f"color:{theme.INFO}; border:0;")
         elif i > _IDLE:                             # discharging (convention: positive)
-            i_color = CRIT if load_frac >= 1.0 else WARN if load_frac >= 0.9 else TEXT
+            i_color = theme.CRIT if load_frac >= 1.0 else theme.WARN if load_frac >= 0.9 else theme.TEXT
             i_lbl.setStyleSheet(f"color:{i_color}; border:0;")
             self._lbl_i_dir.setText("▼  DSG")
-            self._lbl_i_dir.setStyleSheet(f"color:{i_color if load_frac >= 0.9 else MUTED}; border:0;")
+            self._lbl_i_dir.setStyleSheet(f"color:{i_color if load_frac >= 0.9 else theme.MUTED}; border:0;")
         else:                                       # at rest
-            i_lbl.setStyleSheet(f"color:{TEXT}; border:0;")
+            i_lbl.setStyleSheet(f"color:{theme.TEXT}; border:0;")
             self._lbl_i_dir.setText("—  REST")
-            self._lbl_i_dir.setStyleSheet(f"color:{MUTED}; border:0;")
+            self._lbl_i_dir.setStyleSheet(f"color:{theme.MUTED}; border:0;")
 
     def _on_pulse_tick(self):
         self._pulse_state = not getattr(self, '_pulse_state', False)
@@ -877,12 +852,12 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         if hasattr(self, 'state_pill'):
             text = self.state_pill.text().upper()
             if "CHARGE" in text or "DISCHARGE" in text or "RUN" in text:
-                color = OK if self._pulse_state else "#1A2E1A"
+                color = theme.OK if self._pulse_state else "#1A2E1A"
                 if "DISCHARGE" in text:
-                    color = WARN if self._pulse_state else "#3D3010"
+                    color = theme.WARN if self._pulse_state else "#3D3010"
                 self.state_pill.setStyleSheet(self._pill(color))
             elif "STOP" in text or "FAIL" in text or "ESTOP" in text:
-                color = CRIT if self._pulse_state else "#3D1A1A"
+                color = theme.CRIT if self._pulse_state else "#3D1A1A"
                 self.state_pill.setStyleSheet(self._pill(color))
 
     @Slot(float, float, float, float, float, float)
@@ -920,7 +895,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 alpha = 0.6 if rel_jump > 0.15 else 0.3
                 self._rin_ema = (1.0 - alpha) * prev + alpha * rin_mohm
             rin_lbl.setText(f"{self._rin_ema:.1f} {rin_unit}")
-            rin_lbl.setStyleSheet(f"color:{TEXT}; border:0;")  # no longer a "—" placeholder
+            rin_lbl.setStyleSheet(f"color:{theme.TEXT}; border:0;")  # no longer a "—" placeholder
         else:
             self._rin_ema = None                            # reset smoothing between loads
         # SoH is intentionally NOT updated here — it is a final-analysis metric,
@@ -970,8 +945,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self.lbl_profile_status.setText(text)
         self.lbl_profile_status.setStyleSheet(f"color:{color};")
         self.state_pill.setText(f"  {text.upper()}  ")
-        pill_color = INFO if "RUN" in text.upper() else CRIT if "STOP" in text.upper() or "FAIL" in text.upper() else NEUTRAL
-        self.state_pill.setStyleSheet(self._pill(pill_color))
+        self.state_pill.setStyleSheet(self._pill(self._pill_color_for(text)))
         # Lock hardware disconnect during active test runs
         is_idle = any(x in text.upper() for x in ["IDLE", "STOP", "FAIL", "DONE", "REVIEW"])
         if hasattr(self, 'btn_disconnect'):
@@ -1012,11 +986,11 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         esp_err    = getattr(self.hw, "esp_connect_error", "")
         # Header LED
         if connected:
-            led_color, conn_label = OK, "Connected"
+            led_color, conn_label = theme.OK, "Connected"
         elif conn_err:
-            led_color, conn_label = CRIT, "Connection Failed"
+            led_color, conn_label = theme.CRIT, "Connection Failed"
         else:
-            led_color, conn_label = NEUTRAL, "Disconnected"
+            led_color, conn_label = theme.NEUTRAL, "Disconnected"
         self.conn_led.setStyleSheet(f"color:{led_color}; font-size:16px;")
         self.conn_text.setText(conn_label)
         self.conn_text.setStyleSheet(f"color:{led_color}; font-weight:600;")
@@ -1030,15 +1004,15 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         def _set_led(lbl, ok, err, tip_ok, tip_err, tip_no):
             if ok:
                 lbl.setText("✓")
-                lbl.setStyleSheet(f"color:{OK}; font-size:13px; min-width:18px; font-weight:700;")
+                lbl.setStyleSheet(f"color:{theme.OK}; font-size:13px; min-width:18px; font-weight:700;")
                 lbl.setToolTip(tip_ok)
             elif err:
                 lbl.setText("✗")
-                lbl.setStyleSheet(f"color:{CRIT}; font-size:13px; min-width:18px; font-weight:700;")
+                lbl.setStyleSheet(f"color:{theme.CRIT}; font-size:13px; min-width:18px; font-weight:700;")
                 lbl.setToolTip(tip_err)
             else:
                 lbl.setText("●")
-                lbl.setStyleSheet(f"color:{NEUTRAL}; font-size:15px; min-width:18px;")
+                lbl.setStyleSheet(f"color:{theme.NEUTRAL}; font-size:15px; min-width:18px;")
                 lbl.setToolTip(tip_no)
         _set_led(self.led_psu,  connected, conn_err, "PSU connected",   conn_err,  "PSU: not connected")
         _set_led(self.led_load, connected, conn_err, "Load connected",  conn_err,  "Load: not connected")
@@ -1053,28 +1027,28 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             ssr_state = getattr(self.hw, "ssr_state", None)
             if not esp_ok or ssr_state is None:
                 self.led_ssr.setText("●")
-                self.led_ssr.setStyleSheet(f"color:{NEUTRAL}; font-size:15px; min-width:18px;")
+                self.led_ssr.setStyleSheet(f"color:{theme.NEUTRAL}; font-size:15px; min-width:18px;")
                 self.led_ssr.setToolTip("SSR: unknown / ESP32 not connected")
                 self.lbl_ssr_state.setText("—")
-                self.lbl_ssr_state.setStyleSheet(f"color:{MUTED}; font-weight:600;")
+                self.lbl_ssr_state.setStyleSheet(f"color:{theme.MUTED}; font-weight:600;")
             elif ssr_state:
                 self.led_ssr.setText("✓")
-                self.led_ssr.setStyleSheet(f"color:{OK}; font-size:13px; min-width:18px; font-weight:700;")
+                self.led_ssr.setStyleSheet(f"color:{theme.OK}; font-size:13px; min-width:18px; font-weight:700;")
                 self.led_ssr.setToolTip("SSR: ON (charging — power connected)")
                 self.lbl_ssr_state.setText("ON (charging)")
-                self.lbl_ssr_state.setStyleSheet(f"color:{OK}; font-weight:600;")
+                self.lbl_ssr_state.setStyleSheet(f"color:{theme.OK}; font-weight:600;")
             else:
                 self.led_ssr.setText("✗")
-                self.led_ssr.setStyleSheet(f"color:{CRIT}; font-size:13px; min-width:18px; font-weight:700;")
+                self.led_ssr.setStyleSheet(f"color:{theme.CRIT}; font-size:13px; min-width:18px; font-weight:700;")
                 self.led_ssr.setToolTip("SSR: OFF (power cut)")
                 self.lbl_ssr_state.setText("OFF")
-                self.lbl_ssr_state.setStyleSheet(f"color:{CRIT}; font-weight:600;")
+                self.lbl_ssr_state.setStyleSheet(f"color:{theme.CRIT}; font-weight:600;")
 
     @Slot(str)
     def _slot_safety(self, reason):
         self._log_alarm(f"⛔ SAFETY: {reason}")
         self.state_pill.setText("  ESTOP  ")
-        self.state_pill.setStyleSheet(self._pill(CRIT))
+        self.state_pill.setStyleSheet(self._pill(theme.CRIT))
         if not self._headless:
             QMessageBox.critical(self, "Safety Triggered", f"System safety triggered:\n{reason}\n\nAll operations stopped.")
 
@@ -1205,7 +1179,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             for col, (text, bold, f_color) in enumerate([
                 (ts, False, "#E0E3E6"), (rl_text, False, "#E0E3E6"),
                 ("ACTIVE", False, "#E0E3E6"), ("WARNING", True, "#FFB700"),
-                ("", True, MUTED),
+                ("", True, theme.MUTED),
             ]):
                 item = QTableWidgetItem(text)
                 item.setBackground(QColor("#3D3010"))
@@ -1266,7 +1240,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             (point,    False, row_fg),
             (state,    False, row_fg),
             (event,    True,  evt_fg),
-            (ack_text, True,  "#FF5555" if needs_ack else MUTED),
+            (ack_text, True,  "#FF5555" if needs_ack else theme.MUTED),
         ]):
             item = QTableWidgetItem(text)
             item.setBackground(bg)
@@ -1562,13 +1536,13 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         lay.addLayout(form)
 
         hint = QLabel("Changes saved to config.json and applied immediately.")
-        hint.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        hint.setStyleSheet(f"color:{theme.MUTED}; font-size:10px;")
         hint.setWordWrap(True)
         lay.addWidget(hint)
 
         btn_row = QHBoxLayout()
-        btn_ok = _btn("Save", bg=INFO, fg="white", hover="#0d4a89")
-        btn_cancel = _btn("Cancel", bg="#d0d4d7", hover="#c2c6ca")
+        btn_ok = _btn("Save", bg="INFO", fg="white", hover="#0d4a89")
+        btn_cancel = _btn("Cancel", bg="PANEL", hover="PANEL2")
         btn_ok.clicked.connect(dlg.accept)
         btn_cancel.clicked.connect(dlg.reject)
         btn_row.addWidget(btn_ok, 2); btn_row.addWidget(btn_cancel, 1)
@@ -1652,6 +1626,12 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             self.config.hardware.esp_port = esp
             self.config.save_config()
             self._update_connection_status()
+            # A successful reconnect is the operator's explicit "resume" action
+            # after an E-STOP/safety trip — nothing else ever resets the state
+            # pill from "ESTOP", so without this it stayed latched forever.
+            # (Connect is disabled while a test is running via the is_idle guard
+            # in _slot_profile_status, so this can't stomp a RUNNING state.)
+            self.set_profile_status("Idle")
             self._log_alarm("Hardware connected.")
             self._cloud_push_start()
             if self.controller is not None:
@@ -1835,12 +1815,12 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         if not hasattr(self.hw, "get_psu_protection_tripped"):
             return
         tripped = self.hw.get_psu_protection_tripped()
-        if tripped:
-            self.lbl_psu_trip.setText("Trip: ⛔ TRIPPED (OVP/OCP/OTP)")
-            self.lbl_psu_trip.setStyleSheet(f"color:{CRIT}; font-weight:600;")
-        else:
-            self.lbl_psu_trip.setText("Trip: OK")
-            self.lbl_psu_trip.setStyleSheet(f"color:{OK}; font-weight:600;")
+        self._psu_tripped = bool(tripped)
+        self.lbl_psu_trip.setText(
+            "Trip: ⛔ TRIPPED (OVP/OCP/OTP)" if tripped else "Trip: OK")
+        # Shared fn the theme.style() registry replays on retheme — the cached
+        # _psu_tripped flag above is what picks CRIT/OK.
+        self.lbl_psu_trip.setStyleSheet(self._psu_trip_style())
 
     def _on_clear_psu_trip(self):
         """Deliberate operator action — a trip means something real happened
@@ -2061,7 +2041,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             self.btn_run_hppc.setEnabled(False)
             self.lbl_hppc_phase.setText("RUNNING…")
             self.lbl_hppc_phase.setStyleSheet(
-                f"background:{INFO}; color:white; border:1px solid {BORDER}; "
+                f"background:{theme.INFO}; color:white; border:1px solid {theme.BORDER}; "
                 f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
             )
         else:
@@ -2109,14 +2089,14 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             if t_in_cycle < relax:
                 remaining = int(relax - t_in_cycle)
                 text = f"Cycle {cycle_num}  ·  REST  ({remaining} s left)"
-                bg, fg = PANEL2, MUTED
+                bg, fg = theme.PANEL2, theme.MUTED
             else:
                 remaining = int(pulse - (t_in_cycle - relax))
                 text = f"Cycle {cycle_num}  ·  PULSE  ({remaining} s left)"
-                bg, fg = OK, "white"
+                bg, fg = theme.OK, "white"
             self.lbl_hppc_phase.setText(text)
             self.lbl_hppc_phase.setStyleSheet(
-                f"background:{bg}; color:{fg}; border:1px solid {BORDER}; "
+                f"background:{bg}; color:{fg}; border:1px solid {theme.BORDER}; "
                 f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
             )
         except Exception:
@@ -2144,22 +2124,19 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         soh_txt = "N/A" if soh != soh else f"{soh:.1f}"   # soh != soh → NaN
         soh_final_lbl, _soh_unit = self.metric_labels_final["SoH"]
         soh_final_lbl.setText("N/A" if soh != soh else f"{soh:.1f} {_soh_unit}")
-        # "N/A" is still a pending/no-data state (not measurable this test) — keep it
-        # MUTED like the initial "—" placeholder; only a real number gets full TEXT
-        # contrast (see _metric_card's pending-placeholder styling).
-        soh_final_lbl.setStyleSheet(f"color:{MUTED if soh != soh else TEXT}; border:0;")
         rin_final_lbl, _rin_unit = self.metric_labels_final["Rin"]
         rin_final_lbl.setText(f"{results['ri_mohm']:.1f} {_rin_unit}")
-        rin_final_lbl.setStyleSheet(f"color:{TEXT}; border:0;")
         grade = results["grade"]
-        gc = {"A": OK, "B": INFO, "C": WARN, "REJECT": CRIT, "REVIEW": NEUTRAL}.get(grade, NEUTRAL)
         conf = results.get("confidence", 1.0)
         self.lbl_grade.setText(grade if grade == "REVIEW" else f"{grade}")
-        self.lbl_grade.setStyleSheet(
-            f"background:{gc}; color:white; border:1px solid {BORDER}; border-radius:6px; padding:10px;")
         grade_lbl, _ = self.metric_labels_final["Grade"]
         grade_lbl.setText(grade)
-        grade_lbl.setStyleSheet(f"color:{gc}; border:0;")
+        # Colors for the whole final-analysis row are state+theme hybrids —
+        # cache the state, then let one shared re-apply path handle both this
+        # call AND every later retheme() (see _apply_final_metric_styles).
+        self._last_grade = grade
+        self._last_soh_valid = (soh == soh)
+        self._apply_final_metric_styles()
         dcir = results.get("dcir_mohm", results.get("ri_mohm", 0.0))
         dstd = results.get("dcir_std_mohm", 0.0)
         nstep = results.get("dcir_n_steps", 0)
@@ -2182,32 +2159,23 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 c1=results['c1_farad'], tau=results['tau_s'],
                 ocv=results.get('ocv_v', 0.0),
             )
-            self.lbl_ecm_diagram.load(QByteArray(svg.encode()))
-            self.btn_ecm_toggle.setEnabled(True)
-            self.btn_ecm_toggle.setStyleSheet(
-                f"QPushButton{{background:{PANEL2};color:{TEXT};border:1px solid {INFO};"
-                f"border-radius:4px;padding:3px 8px;text-align:left;}}"
-                f"QPushButton:checked{{background:{PANEL};border-color:{INFO};}}"
-                f"QPushButton:hover{{border-color:#aaa;}}"
-            )
+            self._ecm_identified = True
         else:
             # ไม่ใช่ HPPC — แสดงวงจรเดียวกัน แต่ R1/C1 เป็นตัวแปร (ไม่มีค่า)
             svg = self._build_ecm_svg(
                 r0=results.get('dcir_mohm', results.get('ri_mohm', 0.0)),
                 ocv=results.get('ocv_v', 0.0),
             )
-            self.lbl_ecm_diagram.load(QByteArray(svg.encode()))
-            self.btn_ecm_toggle.setEnabled(True)
-            self.btn_ecm_toggle.setStyleSheet(
-                f"QPushButton{{background:{PANEL2};color:{TEXT};border:1px solid {MUTED};"
-                f"border-radius:4px;padding:3px 8px;text-align:left;}}"
-                f"QPushButton:checked{{background:{PANEL};border-color:{MUTED};}}"
-                f"QPushButton:hover{{border-color:#aaa;}}"
-            )
+            self._ecm_identified = False
+        self.lbl_ecm_diagram.load(QByteArray(svg.encode()))
+        self.btn_ecm_toggle.setEnabled(True)
+        # Same style fn the theme.style() registry replays on retheme — the
+        # cached _ecm_identified flag above is what switches the accent border.
+        self.btn_ecm_toggle.setStyleSheet(self._ecm_toggle_style())
         self.txt_analytics.setHtml(build_results_html(results))
         iv, ic = results["ica"]
         if len(iv):
-            self.plot_ica.clear(); self.plot_ica.plot(iv, ic, pen=pg.mkPen(INFO, width=2))
+            self.plot_ica.clear(); self.plot_ica.plot(iv, ic, pen=pg.mkPen(theme.INFO, width=2))
         wmsg = f" — {len(warns)} quality flag(s), review" if warns else ""
         # echo the headline grade in the RUN zone (full breakdown is in this tab)
         if hasattr(self, "lbl_run_grade"):
@@ -2221,7 +2189,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             self.lbl_hppc_phase.setText(
                 f"DONE · R₀={r0:.1f} mΩ  R₁={r1:.1f} mΩ  τ={tau:.1f} s  R²={ecm_r2:.3f}")
             self.lbl_hppc_phase.setStyleSheet(
-                f"background:{INFO}; color:white; border:1px solid {BORDER}; "
+                f"background:{theme.INFO}; color:white; border:1px solid {theme.BORDER}; "
                 f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
             )
         self._log_alarm(
@@ -2239,7 +2207,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         if hasattr(self, "lbl_hppc_phase"):
             self.lbl_hppc_phase.setText("IDLE")
             self.lbl_hppc_phase.setStyleSheet(
-                f"background:{PANEL2}; color:{MUTED}; border:1px solid {BORDER}; "
+                f"background:{theme.PANEL2}; color:{theme.MUTED}; border:1px solid {theme.BORDER}; "
                 f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
             )
         self.lbl_test_status.setText("Test idle")
@@ -2646,10 +2614,99 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             self._cloud_push_start()
 
     def _on_theme_toggle(self, state):
-        theme = "dark" if bool(state) else "light"
-        self.config.system.ui_theme = theme
+        mode = "dark" if bool(state) else "light"
+        self.config.system.ui_theme = mode
         self.config.save_config()
-        self._log_alarm(f"[UI] Theme set to {theme} — restart the program to apply")
+        # QApplication.setStyleSheet() re-matches every QSS selector against the
+        # whole widget tree — on a window this size that's genuinely ~2-3s of CPU
+        # work no matter how it's called, so give clear feedback instead of
+        # letting the UI just look frozen for a couple of seconds.
+        app = QApplication.instance()
+        app.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            # Each stage runs independently — a failure in one (e.g. a bad
+            # qt-material install) must not silently skip the others, which
+            # would leave the UI in a half-retheme'd state with no visible error.
+            try:
+                theme.retheme(mode)
+            except Exception:
+                logger.exception("theme.retheme(%s) failed", mode)
+            try:
+                # get_material_stylesheet() caches the built CSS per theme, and
+                # setStyle("Fusion") only needs to run once at startup (the
+                # style itself never changes, only the stylesheet colors do —
+                # re-setting it here would cost another ~2s for nothing).
+                app.setStyleSheet(theme.get_material_stylesheet(mode))
+            except ImportError:
+                logger.warning("qt-material not installed — theme colors updated, "
+                                "but app-wide widget chrome did not.")
+            except Exception:
+                logger.exception("apply_stylesheet(%s) failed", mode)
+            try:
+                self._on_retheme()
+            except Exception:
+                logger.exception("_on_retheme() failed")
+        finally:
+            app.restoreOverrideCursor()
+        self._log_alarm(f"[UI] Theme switched to {mode}")
+
+    def _on_retheme(self):
+        """Refresh everything that isn't covered by theme.style()'s automatic
+        registry: state-dependent widgets whose color depends on runtime state,
+        not just the active palette, so they need their own recompute.
+        (self.trend.retheme() is NOT called here — it's already registered via
+        theme.on_retheme() in TrendContainer.__init__, so theme.retheme(mode)
+        above already ran it; calling it again here would just redo the same
+        graph-pen/background work twice for nothing.)"""
+        self._update_window_title()
+        self._update_connection_status()
+        self.state_pill.setStyleSheet(self._pill(self._pill_color_for(self.state_pill.text())))
+        # Current/direction and Temp are colored from runtime state (charge vs.
+        # discharge vs. rest, temp vs. safety threshold), not just the palette —
+        # _metric_card()'s theme.style() baseline alone would show the wrong
+        # color for them (e.g. still MUTED-at-rest while actually charging).
+        # Re-run with the last known reading so they reflect BOTH the current
+        # state AND the new theme, same as if a fresh sample had just arrived.
+        last_vit = getattr(self, "_last_vit", None)
+        if last_vit is not None:
+            self._update_vi_temp_labels(*last_vit)
+            self._set_temp_label_color(last_vit[2])
+        # Rin has the same "pending vs. measured" split as SoH/Grade (see
+        # _metric_card), but flips back to pending between loads within a
+        # single test rather than only once — _rin_ema is non-None exactly
+        # when a real (non-placeholder) reading is currently displayed.
+        if getattr(self, "_rin_ema", None) is not None:
+            rin_lbl, _ = self.metric_labels["Rin"]
+            rin_lbl.setStyleSheet(f"color:{theme.TEXT}; border:0;")
+        # Same "only ever styled from one event-driven slot" situation as
+        # Current/Temp/Rin above, for the CHARACTERIZE tab's Peukert/ETA/GITT/
+        # CCA status labels (see CharacterizeMixin._refresh_char_status_colors).
+        self._refresh_char_status_colors()
+        # ...and for the ANALYTICS final-analysis row (SoH/Rin/Grade cards),
+        # colored once by _slot_analysis_done when a test's analysis lands.
+        self._apply_final_metric_styles()
+
+    def _apply_final_metric_styles(self):
+        """Re-apply the final-analysis row's state-dependent colors (Grade card
+        in its grade color, SoH TEXT-vs-MUTED for N/A, Rin TEXT) from cached
+        state — shared by _slot_analysis_done (fresh result) and _on_retheme()
+        (recolor the same result for a new theme). No-op before any analysis:
+        the theme.style() baselines from _metric_card()/_grade_bar_style()
+        already cover the pristine placeholder look."""
+        grade = getattr(self, "_last_grade", None)
+        if grade is None:
+            return
+        self.lbl_grade.setStyleSheet(self._grade_bar_style())
+        grade_lbl, _ = self.metric_labels_final["Grade"]
+        grade_lbl.setStyleSheet(f"color:{self._grade_color(grade)}; border:0;")
+        rin_final_lbl, _ = self.metric_labels_final["Rin"]
+        rin_final_lbl.setStyleSheet(f"color:{theme.TEXT}; border:0;")
+        # "N/A" SoH is still a pending/no-data state (not measurable this test)
+        # — keep it MUTED like the initial "—" placeholder; only a real number
+        # gets full TEXT contrast (see _metric_card's pending styling).
+        soh_final_lbl, _ = self.metric_labels_final["SoH"]
+        soh_color = theme.TEXT if getattr(self, "_last_soh_valid", False) else theme.MUTED
+        soh_final_lbl.setStyleSheet(f"color:{soh_color}; border:0;")
 
     def _on_open_dashboard(self):
         url = getattr(self.config.system, "cloud_dashboard_url", "").strip()
@@ -2708,7 +2765,17 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
     def _shutdown_services(self):
         """Tear down the controller + the analysis worker pool on quit. The pool must
         be shut down or a running curve_fit keeps a child process (and CPU) alive and
-        the interpreter hangs on atexit joining it."""
+        the interpreter hangs on atexit joining it. Also stops the window's own
+        QTimers — closeEvent() doesn't destroy the underlying C++ object (that needs
+        deleteLater() + the event loop actually running), so a merely-closed window's
+        heartbeat/pulse/flash timers otherwise keep firing for the rest of the
+        process's life against a "closed" window, which is harmless in production
+        (the process exits right after) but silently compounds in any long-lived
+        process that constructs more than one window, e.g. the test suite."""
+        for timer_attr in ("_tick", "_pulse_timer", "_flash_timer"):
+            timer = getattr(self, timer_attr, None)
+            if timer is not None:
+                timer.stop()
         try:
             if self.controller:
                 self.controller.shutdown()

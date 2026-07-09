@@ -46,6 +46,9 @@ secrets.*
 # Tracked template is config.example.json — copy it to config.json and edit.
 config.json
 
+# Local-only dashboard simulator (personal dev tool, not shared via git)
+dashboard_sim/
+
 # OS / editor
 .DS_Store
 Thumbs.db

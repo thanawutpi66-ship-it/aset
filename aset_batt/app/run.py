@@ -24,9 +24,12 @@ def run() -> int:
         logger.error("Failed to initialize application")
         return 1
 
-    # Must run before isa101_views is imported: widget stylesheets bake the
-    # palette constants in as literal strings at construction time.
-    theme.set_theme(getattr(bootstrapper.config_manager.system, "ui_theme", "light"))
+    # Must run before isa101_views is imported so the very first widgets built
+    # already read the right theme.* constants (retheme() can change them
+    # live afterwards, but the initial construction still needs a starting
+    # palette to build from).
+    ui_theme = getattr(bootstrapper.config_manager.system, "ui_theme", "light")
+    theme.set_theme(ui_theme)
     from aset_batt.ui.isa101_views import BatteryQtWindow, QtRootShim
 
     if sys.platform == "win32":
@@ -38,7 +41,18 @@ def run() -> int:
 
     app = QApplication(sys.argv)
     QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
-    
+
+    try:
+        # Routed through theme.get_material_stylesheet() (not qt_material.apply_
+        # stylesheet() directly) so the built CSS is cached — if the user later
+        # toggles back to this theme via _on_theme_toggle, it's instant instead
+        # of re-paying the ~0.5-0.8s Jinja2 build cost.
+        app.setStyle("Fusion")
+        app.setStyleSheet(theme.get_material_stylesheet(ui_theme))
+    except ImportError:
+        logger.warning("qt-material not installed — falling back to the built-in "
+                        "stylesheet only. Install it with: pip install qt-material")
+
     import os
     from PySide6.QtGui import QIcon
     _icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui", "aset_logo.png")

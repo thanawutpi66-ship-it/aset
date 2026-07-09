@@ -3,16 +3,14 @@ HTML formatters for analysis results shown in the GUI: the rich analytics
 table and the compact inline sequence-result card. Pure functions of the
 analysis dict — no widget state — extracted from isa101_views.py.
 
-Note: bakes the active theme palette into the generated HTML, so like the
-other UI modules this must only be imported after theme.set_theme() has run
-(isa101_views imports it, preserving that order).
+Reads aset_batt.ui.theme's palette constants live (via theme.X, not a
+one-time import), so the HTML always reflects whichever theme is active when
+each function is called — no special import ordering needed.
 """
 
 import math
 
-from aset_batt.ui.theme import (
-    PANEL2, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
-)
+from aset_batt.ui import theme
 
 
 def format_seq_result(res: dict) -> str:
@@ -45,7 +43,7 @@ def format_seq_result(res: dict) -> str:
 def build_results_html(results: dict) -> str:
     """Rich HTML table for the analytics results pane."""
     grade = results["grade"]
-    gc = {"A": OK, "B": INFO, "C": WARN, "REJECT": CRIT, "REVIEW": NEUTRAL}.get(grade, NEUTRAL)
+    gc = {"A": theme.OK, "B": theme.INFO, "C": theme.WARN, "REJECT": theme.CRIT, "REVIEW": theme.NEUTRAL}.get(grade, theme.NEUTRAL)
     soh = results["soh"]
     soh_txt = "N/A" if soh != soh else f"{soh:.1f}"
     conf = results.get("confidence", 1.0)
@@ -59,24 +57,24 @@ def build_results_html(results: dict) -> str:
 
     def hdr(text):
         return (
-            f'<tr><td colspan="2" style="background:{PANEL2};padding:5px 8px;'
-            f'font-weight:bold;color:{TEXT};font-size:11px;'
-            f'border-top:2px solid {BORDER};border-bottom:1px solid {BORDER}">'
+            f'<tr><td colspan="2" style="background:{theme.PANEL2};padding:5px 8px;'
+            f'font-weight:bold;color:{theme.TEXT};font-size:11px;'
+            f'border-top:2px solid {theme.BORDER};border-bottom:1px solid {theme.BORDER}">'
             f'{text}</td></tr>'
         )
 
     def row(label, value, unit="", sub=""):
         sub_html = (
-            f'<br><span style="font-size:9px;color:{MUTED}">{sub}</span>'
+            f'<br><span style="font-size:9px;color:{theme.MUTED}">{sub}</span>'
         ) if sub else ""
         return (
             f'<tr>'
-            f'<td style="padding:4px 8px 4px 14px;color:{MUTED};font-size:11px;vertical-align:top">'
+            f'<td style="padding:4px 8px 4px 14px;color:{theme.MUTED};font-size:11px;vertical-align:top">'
             f'{label}</td>'
-            f'<td style="padding:4px 8px;color:{INFO};font-family:Consolas,monospace;'
+            f'<td style="padding:4px 8px;color:{theme.INFO};font-family:Consolas,monospace;'
             f'font-size:12px;font-weight:bold;vertical-align:top">'
             f'{value}'
-            f'<span style="color:{MUTED};font-size:10px;font-weight:normal"> {unit}</span>'
+            f'<span style="color:{theme.MUTED};font-size:10px;font-weight:normal"> {unit}</span>'
             f'{sub_html}</td>'
             f'</tr>'
         )
@@ -133,7 +131,7 @@ def build_results_html(results: dict) -> str:
         parts.append(hdr("⚠ Data Quality Flags"))
         for w in warns:
             parts.append(
-                f'<tr><td colspan="2" style="padding:3px 14px;color:{CRIT};font-size:11px">'
+                f'<tr><td colspan="2" style="padding:3px 14px;color:{theme.CRIT};font-size:11px">'
                 f'• {w}</td></tr>'
             )
 

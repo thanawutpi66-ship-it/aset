@@ -64,9 +64,7 @@ import aset_batt.core.battery_profiles as battery_profiles
 from aset_batt.core.analysis_module import ChemistryDetector
 from aset_batt.core.iec61960_standard import IEC61960Standard
 
-from aset_batt.ui.theme import (
-    BG, PANEL, PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
-)
+from aset_batt.ui import theme
 from aset_batt.ui.widgets import (
     _btn, _hline, QtRootShim,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
@@ -95,17 +93,17 @@ class ZonesMixin:
         row.addWidget(self.cb_product, 1)
         lay.addLayout(row)
         self.lbl_battery_readout = QLabel("—")
-        self.lbl_battery_readout.setStyleSheet(f"color:{MUTED};")
+        theme.style(self.lbl_battery_readout, lambda: f"color:{theme.MUTED};")
         lay.addWidget(self.lbl_battery_readout)
         actions = QHBoxLayout()
-        self.btn_detect = _btn("Detect Chemistry", bg="#e0e2e4", hover="#d4d7da")
+        self.btn_detect = _btn("Detect Chemistry", bg="PANEL", hover="PANEL2")
         self.btn_detect.clicked.connect(self._on_detect_chemistry)
-        self.btn_save_default = _btn("Save as Default", bg="#d0d4d7", hover="#c2c6ca")
+        self.btn_save_default = _btn("Save as Default", bg="PANEL", hover="PANEL2")
         self.btn_save_default.clicked.connect(self._on_save_default)
         actions.addWidget(self.btn_detect, 2)
         actions.addWidget(self.btn_save_default, 1)
         lay.addLayout(actions)
-        btn_edit_profile = _btn("Edit Battery Profile…", bg="#e8f0fe", hover="#c5d8fd")
+        btn_edit_profile = _btn("Edit Battery Profile…", bg="PANEL", hover="PANEL2")
         btn_edit_profile.setToolTip("แก้ไขค่า BatteryConfig ในแอพโดยตรง")
         btn_edit_profile.clicked.connect(self._on_edit_battery_profile)
         lay.addWidget(btn_edit_profile)
@@ -127,7 +125,7 @@ class ZonesMixin:
 
         def _led():
             lbl = QLabel("●")
-            lbl.setStyleSheet(f"color:{NEUTRAL}; font-size:15px; min-width:18px;")
+            lbl.setStyleSheet(f"color:{theme.NEUTRAL}; font-size:15px; min-width:18px;")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             return lbl
 
@@ -148,14 +146,14 @@ class ZonesMixin:
             row.addWidget(led)
             lay.addLayout(row)
         row = QHBoxLayout()
-        self.btn_connect = _btn("Connect", bg=OK, fg="white", hover="#266a2a")
-        self.btn_disconnect = _btn("Disconnect", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_connect = _btn("Connect", bg="OK", fg="white", hover="#266a2a")
+        self.btn_disconnect = _btn("Disconnect", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_connect.clicked.connect(self._on_connect)
         self.btn_disconnect.clicked.connect(self._on_disconnect)
         row.addWidget(self.btn_connect)
         row.addWidget(self.btn_disconnect)
         lay.addLayout(row)
-        btn_refresh = _btn("Refresh Ports", bg="#d0d4d7", hover="#c2c6ca")
+        btn_refresh = _btn("Refresh Ports", bg="PANEL", hover="PANEL2")
         btn_refresh.clicked.connect(self._refresh_ports)
         lay.addWidget(btn_refresh)
 
@@ -173,13 +171,13 @@ class ZonesMixin:
         self.led_ssr = _led()
         ssr_row.addWidget(self.led_ssr)
         self.lbl_ssr_state = QLabel("—")
-        self.lbl_ssr_state.setStyleSheet(f"color:{MUTED}; font-weight:600;")
+        self.lbl_ssr_state.setStyleSheet(f"color:{theme.MUTED}; font-weight:600;")
         ssr_row.addWidget(self.lbl_ssr_state)
         ssr_row.addStretch(1)
         lay.addLayout(ssr_row)
         ssr_btn_row = QHBoxLayout()
-        self.btn_ssr_on = _btn("Manual ON", bg=OK, fg="white", hover="#266a2a")
-        self.btn_ssr_off = _btn("Manual OFF", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_ssr_on = _btn("Manual ON", bg="OK", fg="white", hover="#266a2a")
+        self.btn_ssr_off = _btn("Manual OFF", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_ssr_on.clicked.connect(self._on_ssr_manual_on)
         self.btn_ssr_off.clicked.connect(self._on_ssr_manual_off)
         self.btn_ssr_on.setEnabled(False)
@@ -192,7 +190,7 @@ class ZonesMixin:
             "ON ทันทีที่เริ่มชาร์จ (ทุกโหมดเทสต์), OFF ทันทีที่หยุดชาร์จ/E-STOP\n"
             "ปุ่ม Manual ด้านบนไว้สั่งตรงสำหรับ diagnostic/recovery เท่านั้น "
             "(ต้องต่อ ESP32 ก่อนถึงจะกดได้) — ไม่ได้ไปเริ่ม/หยุดการทดสอบ")
-        lbl_ssr_hint.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        theme.style(lbl_ssr_hint, lambda: f"color:{theme.MUTED}; font-size:10px;")
         lbl_ssr_hint.setWordWrap(True)
         lay.addWidget(lbl_ssr_hint)
 
@@ -237,7 +235,7 @@ class ZonesMixin:
         self.lbl_phase_banner = QLabel("● IDLE — เลือก workflow แล้วกด RUN")
         self.lbl_phase_banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_phase_banner.setStyleSheet(
-            f"background:{PANEL2}; color:{MUTED}; border:1px solid {BORDER}; "
+            f"background:{theme.PANEL2}; color:{theme.MUTED}; border:1px solid {theme.BORDER}; "
             f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;"
         )
         outer_lay.addWidget(self.lbl_phase_banner)
@@ -251,14 +249,13 @@ class ZonesMixin:
             for _num, name, desc in steps_list:
                 row = QHBoxLayout()
                 dot = QLabel("○")
-                dot.setStyleSheet(f"color:{NEUTRAL}; font-size:16px; min-width:22px;")
+                theme.style(dot, lambda: f"color:{theme.NEUTRAL}; font-size:16px; min-width:22px;")
                 dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 name_lbl = QLabel(name)
-                name_lbl.setStyleSheet(
-                    f"color:{MUTED}; font-weight:700; min-width:{min_name_w}px;"
-                )
+                theme.style(name_lbl, lambda w=min_name_w: (
+                    f"color:{theme.MUTED}; font-weight:700; min-width:{w}px;"))
                 desc_lbl = QLabel(desc)
-                desc_lbl.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+                theme.style(desc_lbl, lambda: f"color:{theme.MUTED}; font-size:11px;")
                 row.addWidget(dot)
                 row.addWidget(name_lbl)
                 row.addWidget(desc_lbl)
@@ -272,7 +269,7 @@ class ZonesMixin:
                     # the dot so it visually belongs to the row above it.
                     time_lbl = QLabel("~ — ")
                     time_lbl.setStyleSheet(
-                        f"color:{INFO}; font-size:10px; padding-left:{min_name_w + 22}px;"
+                        f"color:{theme.INFO}; font-size:10px; padding-left:{min_name_w + 22}px;"
                     )
                     sl.addWidget(time_lbl)
                     time_list.append(time_lbl)
@@ -316,7 +313,7 @@ class ZonesMixin:
         # separator
         _sep = QFrame()
         _sep.setFrameShape(QFrame.Shape.HLine)
-        _sep.setStyleSheet(f"color:{BORDER}; margin:2px 0;")
+        theme.style(_sep, lambda: f"color:{theme.BORDER}; margin:2px 0;")
         iec_lay.addWidget(_sep)
 
         # Charge mode
@@ -338,7 +335,7 @@ class ZonesMixin:
         self.cb_seq_crate.setCurrentText("0.5C")
         self.lbl_seq_crate_a = QLabel("— A")
         self.lbl_seq_crate_a.setStyleSheet(
-            f"color:{INFO}; font-weight:700; font-size:11px;"
+            f"color:{theme.INFO}; font-weight:700; font-size:11px;"
         )
         crate_row.addWidget(self.cb_seq_crate)
         crate_row.addWidget(self.lbl_seq_crate_a)
@@ -349,7 +346,7 @@ class ZonesMixin:
         # Stage breakdown
         self.lbl_charge_crate = QLabel("Charge rate: — (เลือกแบตก่อน)")
         self.lbl_charge_crate.setStyleSheet(
-            f"color:{MUTED}; font-size:10px; padding-left:24px; padding-bottom:2px;"
+            f"color:{theme.MUTED}; font-size:10px; padding-left:24px; padding-bottom:2px;"
         )
         self.lbl_charge_crate.setWordWrap(True)
         iec_lay.addWidget(self.lbl_charge_crate)
@@ -380,7 +377,7 @@ class ZonesMixin:
             "IEC 61960. อัตราอื่นยังเทสได้แต่ผลจะติดป้าย non-standard")
         self.lbl_test_crate_a = QLabel("— A")
         self.lbl_test_crate_a.setStyleSheet(
-            f"color:{INFO}; font-weight:700; font-size:11px;"
+            f"color:{theme.INFO}; font-weight:700; font-size:11px;"
         )
         test_row.addWidget(self.cb_test_crate)
         test_row.addWidget(self.lbl_test_crate_a)
@@ -411,7 +408,7 @@ class ZonesMixin:
         soc_row.addStretch(1)
         iec_lay.addLayout(soc_row)
 
-        self.btn_auto_seq = _btn("▶  AUTO SEQUENCE", bg=INFO, fg="white", hover="#0d4a89")
+        self.btn_auto_seq = _btn("▶  AUTO SEQUENCE", bg="INFO", fg="white", hover="#0d4a89")
         self.btn_auto_seq.setToolTip(
             "IEC 61960: OCV → Charge → Rest → Discharge → Analyze"
         )
@@ -453,7 +450,7 @@ class ZonesMixin:
 
         hppc_seq_sep = QFrame()
         hppc_seq_sep.setFrameShape(QFrame.Shape.HLine)
-        hppc_seq_sep.setStyleSheet(f"color:{BORDER}; margin:2px 0;")
+        theme.style(hppc_seq_sep, lambda: f"color:{theme.BORDER}; margin:2px 0;")
         hppc_seq_lay.addWidget(hppc_seq_sep)
 
         hppc_seq_form = QFormLayout()
@@ -482,7 +479,7 @@ class ZonesMixin:
         hppc_seq_lay.addLayout(hppc_seq_form)
 
         hppc_seq_note = QLabel("Pulse/relax duration from MANUAL → HPPC tab")
-        hppc_seq_note.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        theme.style(hppc_seq_note, lambda: f"color:{theme.MUTED}; font-size:10px;")
         hppc_seq_lay.addWidget(hppc_seq_note)
 
         self.btn_hppc_seq = _btn("▶  HPPC SEQUENCE", bg="#7b2d8b", fg="white", hover="#5c2068")
@@ -507,7 +504,7 @@ class ZonesMixin:
 
         cycle_sep = QFrame()
         cycle_sep.setFrameShape(QFrame.Shape.HLine)
-        cycle_sep.setStyleSheet(f"color:{BORDER}; margin:2px 0;")
+        theme.style(cycle_sep, lambda: f"color:{theme.BORDER}; margin:2px 0;")
         cycle_lay.addWidget(cycle_sep)
 
         cycle_form = QFormLayout()
@@ -545,7 +542,7 @@ class ZonesMixin:
         cycle_lay.addLayout(cycle_form)
 
         self.lbl_cycle_counter = QLabel("Cycle: —")
-        self.lbl_cycle_counter.setStyleSheet(f"color:{INFO}; font-weight:700; font-size:11px;")
+        theme.style(self.lbl_cycle_counter, lambda: f"color:{theme.INFO}; font-weight:700; font-size:11px;")
         cycle_lay.addWidget(self.lbl_cycle_counter)
 
         self.btn_cycle_life = _btn("▶  CYCLE LIFE TEST", bg="#6c3483", fg="white", hover="#4a235a")
@@ -576,7 +573,7 @@ class ZonesMixin:
         self.cb_workflow_type.currentIndexChanged.connect(self._on_workflow_type_changed)
 
         # ── Shared CANCEL + status ────────────────────────────
-        self.btn_seq_cancel = _btn("■  CANCEL", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_seq_cancel = _btn("■  CANCEL", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_seq_cancel.setEnabled(False)
         self.btn_seq_cancel.clicked.connect(self._on_seq_cancel)
         self._buttons["btn_seq_cancel"] = self.btn_seq_cancel
@@ -584,7 +581,7 @@ class ZonesMixin:
 
         self.lbl_wf_status = QLabel("เลือก workflow แล้วกดปุ่ม RUN")
         self.lbl_wf_status.setStyleSheet(
-            f"color:{MUTED}; font-size:11px; padding-top:2px;"
+            f"color:{theme.MUTED}; font-size:11px; padding-top:2px;"
         )
         self.lbl_wf_status.setWordWrap(True)
         outer_lay.addWidget(self.lbl_wf_status)
@@ -597,15 +594,15 @@ class ZonesMixin:
         self.wf_progress.setFormat("%p%  (%v / %m s)")
         self.wf_progress.setMaximumHeight(14)
         self.wf_progress.setStyleSheet(
-            f"QProgressBar{{border:1px solid {BORDER};border-radius:3px;"
-            f"background:{PANEL2};text-align:center;font-size:9px;}}"
-            f"QProgressBar::chunk{{background:{INFO};border-radius:2px;}}"
+            f"QProgressBar{{border:1px solid {theme.BORDER};border-radius:3px;"
+            f"background:{theme.PANEL2};text-align:center;font-size:9px;}}"
+            f"QProgressBar::chunk{{background:{theme.INFO};border-radius:2px;}}"
         )
         self.wf_progress.hide()
         outer_lay.addWidget(self.wf_progress)
 
         self.lbl_eta = QLabel("")
-        self.lbl_eta.setStyleSheet(f"color:{INFO}; font-size:10px; font-weight:600;")
+        theme.style(self.lbl_eta, lambda: f"color:{theme.INFO}; font-size:10px; font-weight:600;")
         self.lbl_eta.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.lbl_eta.hide()
         outer_lay.addWidget(self.lbl_eta)
@@ -613,17 +610,17 @@ class ZonesMixin:
         # Inline result card — shown after sequence completes
         self.frm_seq_result = QFrame()
         self.frm_seq_result.setStyleSheet(
-            f"QFrame{{background:{PANEL2};border:1px solid {INFO};"
+            f"QFrame{{background:{theme.PANEL2};border:1px solid {theme.INFO};"
             f"border-radius:5px;padding:4px 8px;}}"
         )
         result_lay = QVBoxLayout(self.frm_seq_result)
         result_lay.setContentsMargins(4, 4, 4, 4)
         result_lay.setSpacing(2)
         self.lbl_seq_result = QLabel("—")
-        self.lbl_seq_result.setStyleSheet(f"color:{TEXT}; font-size:11px; font-weight:600;")
+        theme.style(self.lbl_seq_result, lambda: f"color:{theme.TEXT}; font-size:11px; font-weight:600;")
         self.lbl_seq_result.setWordWrap(True)
         result_lay.addWidget(self.lbl_seq_result)
-        self.btn_seq_export = _btn("EXPORT PDF", bg=INFO, fg="white", hover="#0d4a89")
+        self.btn_seq_export = _btn("EXPORT PDF", bg="INFO", fg="white", hover="#0d4a89")
         self.btn_seq_export.clicked.connect(self._on_seq_export)
         result_lay.addWidget(self.btn_seq_export)
         self.frm_seq_result.hide()
@@ -640,9 +637,9 @@ class ZonesMixin:
         prow_sel.addWidget(self.cb_profiles, 1)
         outer_lay.addLayout(prow_sel)
         prow = QHBoxLayout()
-        self.btn_start_profile = _btn("RUN", bg=INFO, fg="white", hover="#0d4a89")
+        self.btn_start_profile = _btn("RUN", bg="INFO", fg="white", hover="#0d4a89")
         self.btn_start_profile.clicked.connect(self._on_run_profile)
-        self.btn_stop_profile = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_stop_profile = _btn("STOP", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_stop_profile.clicked.connect(
             lambda: self.controller and self.controller.stop_profile())
         self._buttons["btn_start_profile"] = self.btn_start_profile
@@ -650,7 +647,10 @@ class ZonesMixin:
         prow.addWidget(self.btn_stop_profile)
         outer_lay.addLayout(prow)
         self.lbl_profile_status = QLabel("No profile selected")
-        self.lbl_profile_status.setStyleSheet(f"color:{MUTED};")
+        # Baseline only — _slot_profile_status overwrites with each status
+        # event's own color; after a retheme the baseline wins until the next
+        # event, which is fine (the text itself carries the state).
+        theme.style(self.lbl_profile_status, lambda: f"color:{theme.MUTED};")
         outer_lay.addWidget(self.lbl_profile_status)
 
         return outer
@@ -707,7 +707,7 @@ class ZonesMixin:
 
         # Last grade echo (the full breakdown stays in the Analytics tab).
         self.lbl_run_grade = QLabel("Grade: —")
-        self.lbl_run_grade.setStyleSheet(f"color:{MUTED}; padding-top:4px;")
+        theme.style(self.lbl_run_grade, lambda: f"color:{theme.MUTED}; padding-top:4px;")
         lay.addWidget(self.lbl_run_grade)
         lay.addStretch(1)
         return w
@@ -732,8 +732,8 @@ class ZonesMixin:
         self.ed_psu_i.setValidator(QDoubleValidator(0.0, 40.0, 2))
         self.ed_psu_i.setToolTip("CC current limit (A)")
         psu_row.addWidget(self.ed_psu_i)
-        psu_on  = _btn("ON",  bg=OK,       fg="white", hover="#266a2a")
-        psu_off = _btn("OFF", bg="#d0d4d7",            hover="#c2c6ca")
+        psu_on  = _btn("ON",  bg="OK",       fg="white", hover="#266a2a")
+        psu_off = _btn("OFF", bg="PANEL", hover="PANEL2")
         psu_on.clicked.connect( lambda: self._psu_manual(True))
         psu_off.clicked.connect(lambda: self._psu_manual(False))
         psu_row.addWidget(psu_on)
@@ -747,8 +747,8 @@ class ZonesMixin:
         self.ed_load_a.setMaximumWidth(72)
         self.ed_load_a.setToolTip("CC load current (A)")
         load_row.addWidget(self.ed_load_a)
-        load_on  = _btn("ON",  bg=OK,       fg="white", hover="#266a2a")
-        load_off = _btn("OFF", bg="#d0d4d7",            hover="#c2c6ca")
+        load_on  = _btn("ON",  bg="OK",       fg="white", hover="#266a2a")
+        load_off = _btn("OFF", bg="PANEL", hover="PANEL2")
         load_on.clicked.connect( lambda: self._load_manual(True))
         load_off.clicked.connect(lambda: self._load_manual(False))
         load_row.addWidget(load_on)
@@ -762,10 +762,10 @@ class ZonesMixin:
         lay.addWidget(self._subheader("PSU PROTECTION"))
         prot_row = QHBoxLayout()
         self.lbl_psu_trip = QLabel("Trip: —")
-        self.lbl_psu_trip.setStyleSheet(f"color:{MUTED};")
+        theme.style(self.lbl_psu_trip, self._psu_trip_style)
         prot_row.addWidget(self.lbl_psu_trip, 1)
-        self.btn_check_trip = _btn("Check", bg="#d0d4d7", hover="#c2c6ca")
-        self.btn_clear_trip = _btn("Clear Trip", bg=WARN, fg="white", hover="#a06800")
+        self.btn_check_trip = _btn("Check", bg="PANEL", hover="PANEL2")
+        self.btn_clear_trip = _btn("Clear Trip", bg="WARN", fg="white", hover="#a06800")
         self.btn_check_trip.clicked.connect(self._on_check_psu_trip)
         self.btn_clear_trip.clicked.connect(self._on_clear_psu_trip)
         prot_row.addWidget(self.btn_check_trip)
@@ -773,7 +773,7 @@ class ZonesMixin:
         lay.addLayout(prot_row)
 
         note = QLabel("⚠  ใช้เฉพาะทดสอบฮาร์ดแวร์  —  ไม่มี SoC หรือ safety interlock")
-        note.setStyleSheet(f"color:{WARN}; font-size:10px;")
+        theme.style(note, lambda: f"color:{theme.WARN}; font-size:10px;")
         note.setWordWrap(True)
         lay.addWidget(note)
         lay.addStretch(1)
@@ -785,7 +785,7 @@ class ZonesMixin:
         lay.setContentsMargins(0, 0, 0, 0)
         # OCV calibration row — press before CHARGE to read resting voltage and anchor SoC
         ocv_row = QHBoxLayout()
-        self.btn_ocv = _btn("OCV CALIBRATE", bg=WARN, fg="white", hover="#a06800")
+        self.btn_ocv = _btn("OCV CALIBRATE", bg="WARN", fg="white", hover="#a06800")
         self.btn_ocv.setToolTip(
             "Turn off PSU & Load, wait 3 s, read OCV → set correct SoC.\n"
             "Press before CHARGE to fix the SOC display."
@@ -814,15 +814,15 @@ class ZonesMixin:
         lay.addLayout(crate_row)
 
         crow = QHBoxLayout()
-        self.btn_charge = _btn("CHARGE", bg=OK, fg="white", hover="#266a2a")
-        self.btn_stop_charge = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_charge = _btn("CHARGE", bg="OK", fg="white", hover="#266a2a")
+        self.btn_stop_charge = _btn("STOP", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_charge.clicked.connect(self._on_charge)
         self.btn_stop_charge.clicked.connect(self._on_stop_charge)
         crow.addWidget(self.btn_charge, 2)
         crow.addWidget(self.btn_stop_charge, 1)
         lay.addLayout(crow)
         self.lbl_charge = QLabel("Charge idle")
-        self.lbl_charge.setStyleSheet(f"color:{MUTED};")
+        theme.style(self.lbl_charge, lambda: f"color:{theme.MUTED};")
         lay.addWidget(self.lbl_charge)
         return w
 
@@ -859,15 +859,15 @@ class ZonesMixin:
         lay.addLayout(cutoff_row)
 
         crow2 = QHBoxLayout()
-        self.btn_run_test = _btn("RUN TEST", bg=INFO, fg="white", hover="#0d4a89")
+        self.btn_run_test = _btn("RUN TEST", bg="INFO", fg="white", hover="#0d4a89")
         self.btn_run_test.clicked.connect(self._on_run_test)
-        self.btn_stop_test = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_stop_test = _btn("STOP", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_stop_test.clicked.connect(self._on_stop_test)
         crow2.addWidget(self.btn_run_test, 2)
         crow2.addWidget(self.btn_stop_test, 1)
         lay.addLayout(crow2)
         self.lbl_test_status = QLabel("Test idle")
-        self.lbl_test_status.setStyleSheet(f"color:{MUTED};")
+        theme.style(self.lbl_test_status, lambda: f"color:{theme.MUTED};")
         lay.addWidget(self.lbl_test_status)
         return w
 
@@ -883,7 +883,7 @@ class ZonesMixin:
             "R₀ from 250 ms voltage step · R₁/C₁ from RC-tail fit · "
             "Max observable: ~2 Hz  (SCPI limit) · pulse ≥ 3×τ recommended"
         )
-        note.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        theme.style(note, lambda: f"color:{theme.MUTED}; font-size:10px;")
         note.setWordWrap(True)
         lay.addWidget(note)
         lay.addWidget(_hline())
@@ -938,16 +938,16 @@ class ZonesMixin:
         self.lbl_hppc_phase = QLabel("IDLE")
         self.lbl_hppc_phase.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_hppc_phase.setStyleSheet(
-            f"background:{PANEL2}; color:{MUTED}; border:1px solid {BORDER}; "
+            f"background:{theme.PANEL2}; color:{theme.MUTED}; border:1px solid {theme.BORDER}; "
             f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
         )
         lay.addWidget(self.lbl_hppc_phase)
 
         brow = QHBoxLayout()
-        self.btn_run_hppc = _btn("RUN HPPC", bg=INFO, fg="white", hover="#0d4a89")
+        self.btn_run_hppc = _btn("RUN HPPC", bg="INFO", fg="white", hover="#0d4a89")
         self.btn_run_hppc.clicked.connect(self._on_run_hppc)
         self._buttons["btn_run_hppc"] = self.btn_run_hppc
-        self.btn_stop_hppc = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_stop_hppc = _btn("STOP", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_stop_hppc.clicked.connect(self._on_stop_test)
         brow.addWidget(self.btn_run_hppc, 2)
         brow.addWidget(self.btn_stop_hppc, 1)
@@ -961,10 +961,7 @@ class ZonesMixin:
     def _zone_test_mode(self):
         tabs = QTabWidget()
         tabs.setDocumentMode(True)
-        tabs.setStyleSheet(
-            f"QTabBar::tab {{ padding:5px 18px; }} "
-            f"QTabBar::tab:selected {{ font-weight:700; }}"
-        )
+        theme.style(tabs, self._tabbar_style)
         tabs.addTab(self._zone_workflow(),     "AUTO")
         tabs.addTab(self._zone_run(),          "MANUAL")
         tabs.addTab(self._zone_characterize(), "CHARACTERIZE")
@@ -1001,8 +998,8 @@ class ZonesMixin:
         lay.setSpacing(6)
 
         # Hidden monitor buttons — triggered by toolbar actions, not shown directly.
-        self.btn_start_monitor = _btn("START MONITOR", bg=OK, fg="white", hover="#266a2a")
-        self.btn_stop_monitor  = _btn("STOP", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_start_monitor = _btn("START MONITOR", bg="OK", fg="white", hover="#266a2a")
+        self.btn_stop_monitor  = _btn("STOP", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_start_monitor.clicked.connect(self._on_start_monitor)
         self.btn_stop_monitor.clicked.connect(
             lambda: self.controller and self.controller.stop_monitor())
@@ -1013,17 +1010,17 @@ class ZonesMixin:
         # ── Data / Reporting ────────────────────────────────────────────────
         lay.addWidget(self._subheader("DATA"))
         self.lbl_csv = QLabel("CSV: —")
-        self.lbl_csv.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+        theme.style(self.lbl_csv, lambda: f"color:{theme.MUTED}; font-size:11px;")
         self.lbl_csv.setWordWrap(True)
         lay.addWidget(self.lbl_csv)
 
-        self.btn_log = _btn("START DATA LOGGING", bg="#d0d4d7", hover="#c2c6ca")
+        self.btn_log = _btn("START DATA LOGGING", bg="PANEL", hover="PANEL2")
         self.btn_log.clicked.connect(self._on_toggle_logging)
         lay.addWidget(self.btn_log)
-        self.btn_pdf = _btn("Generate PDF Report", bg=PANEL2, hover=FIELD)
+        self.btn_pdf = _btn("Generate PDF Report", bg="PANEL", hover="PANEL2")
         self.btn_pdf.clicked.connect(self._on_pdf_report)
         lay.addWidget(self.btn_pdf)
-        btn_dash = _btn("Open Cloud Dashboard", bg="#d0d4d7", hover="#c2c6ca")
+        btn_dash = _btn("Open Cloud Dashboard", bg="PANEL", hover="PANEL2")
         btn_dash.clicked.connect(self._on_open_dashboard)
         lay.addWidget(btn_dash)
 
@@ -1048,12 +1045,10 @@ class ZonesMixin:
 
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("APPEARANCE"))
-        self.chk_dark_theme = QCheckBox("Dark theme (restart required)")
+        self.chk_dark_theme = QCheckBox("Dark theme")
         self.chk_dark_theme.setChecked(
             getattr(self.config.system, "ui_theme", "light") == "dark")
-        self.chk_dark_theme.setToolTip(
-            "สลับโทนสีหน้าจอ — ต้องปิดแล้วเปิดโปรแกรมใหม่ถึงจะมีผล\n"
-            "(สีถูกฝังใน stylesheet ตอนสร้างหน้าจอ เปลี่ยนระหว่างรันไม่ได้)")
+        self.chk_dark_theme.setToolTip("สลับโทนสีหน้าจอ — มีผลทันทีโดยไม่ต้องรีสตาร์ท")
         self.chk_dark_theme.stateChanged.connect(self._on_theme_toggle)
         lay.addWidget(self.chk_dark_theme)
 
@@ -1067,6 +1062,7 @@ class ZonesMixin:
         lay.setContentsMargins(0, 0, 0, 0)
 
         self._right_tabs = QTabWidget()
+        theme.style(self._right_tabs, self._tabbar_style)
         # Alarm Log first — it's now the primary/default tab (operators should see
         # live safety events immediately, not the historical Analytics view) —
         # QTabWidget defaults to whichever tab is added first.
@@ -1085,36 +1081,76 @@ class ZonesMixin:
         w = QWidget()
         lay = QHBoxLayout(w)
         self.plot_ica = pg.PlotWidget()
-        self.plot_ica.setBackground(PANEL2)
+        self.plot_ica.setBackground(theme.PANEL2)
         self.plot_ica.setLabel("bottom", "Voltage", units="V")
         self.plot_ica.setLabel("left", "dQ/dV")
         self.plot_ica.setTitle("ICA (Incremental Capacity)")
         lay.addWidget(self.plot_ica, 1)
+        # Standalone pyqtgraph widget outside TrendContainer's own retheme() —
+        # background would otherwise stay frozen at whichever theme was active
+        # at construction (see the curve itself, plotted fresh from theme.INFO
+        # each time a new analysis is shown, which needs no such hook).
+        theme.on_retheme(lambda: self.plot_ica.setBackground(theme.PANEL2))
         return w
+
+    @staticmethod
+    def _tabbar_style():
+        """Shared QTabWidget/QTabBar look for every tab group in the app
+        (left-panel SETUP/TEST MODE/TOOLS, nested AUTO/MANUAL/CHARACTERIZE,
+        right-panel Alarm Log/Analytics/Diagnostics) — qt-material's own
+        default tab styling left unselected tabs with no background at all,
+        reading as washed-out/near-invisible against the grey ISA-101 shell.
+        The selected tab gets a raised PANEL2 look (same elevation language as
+        _btn()'s hover state) instead of just a thin underline."""
+        return (
+            f"QTabWidget::pane {{ border:1px solid {theme.BORDER}; background:{theme.PANEL2}; }}"
+            f"QTabBar::tab {{ background:{theme.PANEL}; color:{theme.MUTED}; padding:6px 14px; "
+            f"border:1px solid {theme.BORDER}; border-bottom:0; }}"
+            f"QTabBar::tab:selected {{ background:{theme.PANEL2}; color:{theme.TEXT}; font-weight:700; }}"
+        )
+
+    @staticmethod
+    def _metric_accent_color(name):
+        """Top-border accent per metric card — matches that metric's curve
+        color in the main trend graph (widgets.py: Voltage=INFO, Current=WARN,
+        Temp=CRIT) so the card row visually maps to the graph below it. SoC/Rin
+        aren't plotted there, so they get a distinct unused semantic color
+        instead (OK=green "charge state", NEUTRAL=gray "informational")."""
+        return {
+            "Voltage": theme.INFO, "Current": theme.WARN, "Temp": theme.CRIT,
+            "SoC": theme.OK, "Rin": theme.NEUTRAL,
+        }.get(name, theme.INFO)
 
     def _metric_card(self, name, unit, store=None):
         if store is None:
             store = self.metric_labels
         card = QFrame()
-        card.setStyleSheet(
-            f"QFrame {{ background:{PANEL2}; border:1px solid {BORDER}; border-top:2px solid {INFO}; border-radius:6px; }}"
-        )
+        theme.style(card, lambda: (
+            f"QFrame {{ background:{theme.PANEL2}; border:1px solid {theme.BORDER}; "
+            f"border-top:2px solid {self._metric_accent_color(name)}; border-radius:6px; }}"))
         lay = QVBoxLayout(card)
         lay.setContentsMargins(12, 9, 12, 9)
         lay.setSpacing(2)
         t = QLabel(name.upper())
-        t.setStyleSheet(f"color:{MUTED}; font-size:10px; font-weight:700; letter-spacing:1px; border:0;")
+        theme.style(t, lambda: (
+            f"color:{theme.MUTED}; font-size:10px; font-weight:700; letter-spacing:1px; border:0;"))
         # SoH/Rin(final)/Grade are only ever set once a test's analysis completes
         # (never live) — start "pending" so a placeholder number is never mistaken
         # for a reading. Rin in the live row is only valid under load. Styled in
         # MUTED (not TEXT) while pending so a "—" placeholder is visually distinct
         # from an actual reading at a glance, not just distinguishable by re-reading
         # the digits — callers restore color:{TEXT} when they set a real value (see
-        # _slot_display's Rin update).
+        # _slot_display's Rin update). Registered via theme.style() as a baseline —
+        # state-dependent callers (Current/Temp) re-apply their own color on top
+        # after every retheme (see BatteryQtWindow._on_retheme()), but without this
+        # baseline a value that's NEVER been touched since construction (Voltage,
+        # SoC, or any pending placeholder) would keep showing whatever color was
+        # picked under the theme active at startup — invisible if that happens to
+        # land on white-on-white after a light/dark switch.
         is_pending = name in ("SoH", "Rin", "Grade")
         val = QLabel("—" if is_pending else f"0.0 {unit}")
         val.setFont(QFont("Consolas", 19, QFont.Weight.Bold))
-        val.setStyleSheet(f"color:{MUTED if is_pending else TEXT}; border:0;")
+        theme.style(val, lambda: f"color:{theme.MUTED if is_pending else theme.TEXT}; border:0;")
         lay.addWidget(t)
         lay.addWidget(val)
         store[name] = (val, unit)
@@ -1122,7 +1158,7 @@ class ZonesMixin:
         if name == "Current":
             self._lbl_i_dir = QLabel("—")
             self._lbl_i_dir.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-            self._lbl_i_dir.setStyleSheet(f"color:{MUTED}; border:0;")
+            theme.style(self._lbl_i_dir, lambda: f"color:{theme.MUTED}; border:0;")
             lay.addWidget(self._lbl_i_dir)
         # SoC card: same sub-label pattern as Current's CHG/DSG/REST badge — shows
         # "Topping off ≤X.XXXA" right where the operator is looking at "100%" and
@@ -1132,9 +1168,47 @@ class ZonesMixin:
         if name == "SoC":
             self._lbl_soc_note = QLabel("")
             self._lbl_soc_note.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-            self._lbl_soc_note.setStyleSheet(f"color:{MUTED}; border:0;")
+            theme.style(self._lbl_soc_note, lambda: f"color:{theme.MUTED}; border:0;")
             lay.addWidget(self._lbl_soc_note)
         return card
+
+    # ---- Analytics styling helpers ------------------------------------------
+    # Single source of truth for widgets whose color depends on BOTH the theme
+    # AND analysis state: the theme.style() registry replays these on retheme(),
+    # and _slot_analysis_done re-applies the same fn after updating the cached
+    # state — so neither path can stomp the other (see the CHARACTERIZE status
+    # labels for the same pattern).
+
+    def _grade_color(self, grade):
+        return {"A": theme.OK, "B": theme.INFO, "C": theme.WARN,
+                "REJECT": theme.CRIT, "REVIEW": theme.NEUTRAL}.get(grade, theme.NEUTRAL)
+
+    def _grade_bar_style(self):
+        grade = getattr(self, "_last_grade", None)
+        if grade is None:   # never analyzed — neutral placeholder bar
+            return (f"background:{theme.PANEL}; color:{theme.TEXT}; "
+                    f"border:1px solid {theme.BORDER}; border-radius:6px; padding:10px;")
+        return (f"background:{self._grade_color(grade)}; color:white; "
+                f"border:1px solid {theme.BORDER}; border-radius:6px; padding:10px;")
+
+    def _ecm_toggle_style(self):
+        # None = never analyzed (button still disabled), True = 1-RC ECM was
+        # identified (HPPC — accent border), False = analyzed but no ECM fit.
+        identified = getattr(self, "_ecm_identified", None)
+        border = theme.INFO if identified else theme.MUTED
+        fg = theme.MUTED if identified is None else theme.TEXT
+        return (f"QPushButton{{background:{theme.PANEL2};color:{fg};border:1px solid {border};"
+                f"border-radius:4px;padding:3px 8px;text-align:left;}}"
+                f"QPushButton:checked{{background:{theme.PANEL};color:{theme.TEXT};border-color:{border};}}"
+                f"QPushButton:enabled:hover{{border-color:#aaa;}}")
+
+    def _psu_trip_style(self):
+        # None = not checked yet ("Trip: —"), True = tripped, False = OK —
+        # set by _on_check_psu_trip, which re-applies this same fn.
+        tripped = getattr(self, "_psu_tripped", None)
+        if tripped is None:
+            return f"color:{theme.MUTED};"
+        return f"color:{theme.CRIT if tripped else theme.OK}; font-weight:600;"
 
     def _tab_analytics(self):
         w = QWidget()
@@ -1181,19 +1255,14 @@ class ZonesMixin:
 
         # ผลวิเคราะห์
         self.lbl_analytics = QLabel("Select a session above to analyze.")
-        self.lbl_analytics.setStyleSheet(f"color:{MUTED};")
+        theme.style(self.lbl_analytics, lambda: f"color:{theme.MUTED};")
         lay.addWidget(self.lbl_analytics)
 
         # วงจร Thevenin ECM
         self.btn_ecm_toggle = QPushButton("▶ Show Equivalent Circuit")
         self.btn_ecm_toggle.setCheckable(True)
         self.btn_ecm_toggle.setEnabled(False)
-        self.btn_ecm_toggle.setStyleSheet(
-            f"QPushButton{{background:{PANEL2};color:{MUTED};border:1px solid {MUTED};"
-            f"border-radius:4px;padding:3px 8px;text-align:left;}}"
-            f"QPushButton:checked{{background:{PANEL};color:{TEXT};border-color:{INFO};}}"
-            f"QPushButton:enabled:hover{{border-color:#aaa;}}"
-        )
+        theme.style(self.btn_ecm_toggle, self._ecm_toggle_style)
         self.btn_ecm_toggle.clicked.connect(
             lambda checked: (
                 self.lbl_ecm_diagram.setVisible(checked),
@@ -1215,18 +1284,18 @@ class ZonesMixin:
         self.lbl_grade = QLabel("—")
         self.lbl_grade.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_grade.setFont(QFont("Segoe UI", 30, QFont.Weight.Bold))
-        self.lbl_grade.setStyleSheet(f"background:{PANEL}; color:{TEXT}; border:1px solid {BORDER}; border-radius:6px; padding:10px;")
+        theme.style(self.lbl_grade, self._grade_bar_style)
         lay.addWidget(self.lbl_grade)
-        btn = _btn("Analyze Last CSV", bg=INFO, fg="white", hover="#0d4a89")
+        btn = _btn("Analyze Last CSV", bg="INFO", fg="white", hover="#0d4a89")
         btn.clicked.connect(self._on_analyze_csv)
         lay.addWidget(btn)
 
         # ── SoH trend + capacity fade charts ─────────────────────────────
         trend_row = QHBoxLayout()
-        btn_trend = _btn("SoH Trend", bg=PANEL2, hover=FIELD)
+        btn_trend = _btn("SoH Trend", bg="PANEL", hover="PANEL2")
         btn_trend.setToolTip("Plot SoH history across all sessions")
         btn_trend.clicked.connect(self._on_soh_trend)
-        btn_fade = _btn("Capacity Fade", bg=PANEL2, hover=FIELD)
+        btn_fade = _btn("Capacity Fade", bg="PANEL", hover="PANEL2")
         btn_fade.setToolTip("Plot capacity fade from Cycle Life sessions")
         btn_fade.clicked.connect(self._on_capacity_fade)
         trend_row.addWidget(btn_trend)
@@ -1394,16 +1463,17 @@ class ZonesMixin:
 
         # ── Header bar ────────────────────────────────────────────────
         hdr = QFrame()
-        hdr.setStyleSheet(f"background:{PANEL}; border-bottom:1px solid #888;")
+        theme.style(hdr, lambda: f"background:{theme.PANEL}; border-bottom:1px solid #888;")
         hdr_lay = QHBoxLayout(hdr)
         hdr_lay.setContentsMargins(8, 5, 8, 5)
         lbl_title = QLabel("⚡  EVENT / ALARM LOG")
-        lbl_title.setStyleSheet(f"font-weight:700; font-size:12px; color:{TEXT}; border:0; background:transparent;")
+        theme.style(lbl_title, lambda: (
+            f"font-weight:700; font-size:12px; color:{theme.TEXT}; border:0; background:transparent;"))
         hdr_lay.addWidget(lbl_title)
         hdr_lay.addStretch()
         lbl_count = QLabel("0 events")
         lbl_count.setObjectName("alarm_count")
-        lbl_count.setStyleSheet(f"color:{MUTED}; font-size:10px; border:0; background:transparent;")
+        theme.style(lbl_count, lambda: f"color:{theme.MUTED}; font-size:10px; border:0; background:transparent;")
         self._alarm_count_lbl = lbl_count
         hdr_lay.addWidget(lbl_count)
         hdr_lay.addSpacing(12)
@@ -1423,8 +1493,8 @@ class ZonesMixin:
         btn_clear = QPushButton("Clear")
         btn_clear.setFixedSize(60, 24)
         btn_clear.setStyleSheet(
-            f"QPushButton{{background:{PANEL2};border:1px solid #999;border-radius:3px;font-size:10px;}}"
-            f"QPushButton:hover{{background:{FIELD};}}"
+            f"QPushButton{{background:{theme.PANEL2};border:1px solid #999;border-radius:3px;font-size:10px;}}"
+            f"QPushButton:hover{{background:{theme.FIELD};}}"
         )
         btn_clear.clicked.connect(self._alarm_clear)
         hdr_lay.addWidget(btn_clear)

@@ -7,6 +7,13 @@
       "runtimeArgs": ["cloud_dashboard/server.py"],
       "port": 8001,
       "autoPort": false
+    },
+    {
+      "name": "dashboard-sim",
+      "runtimeExecutable": "C:/Users/theer/AppData/Local/Python/bin/python.exe",
+      "runtimeArgs": ["dashboard_sim/start_local.py"],
+      "port": 8891,
+      "autoPort": false
     }
   ]
 }

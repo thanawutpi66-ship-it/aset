@@ -64,9 +64,7 @@ import aset_batt.core.battery_profiles as battery_profiles
 from aset_batt.core.analysis_module import ChemistryDetector
 from aset_batt.core.iec61960_standard import IEC61960Standard
 
-from aset_batt.ui.theme import (
-    BG, PANEL, PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
-)
+from aset_batt.ui import theme
 from aset_batt.ui.widgets import (
     _btn, _hline, QtRootShim,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
@@ -75,6 +73,19 @@ from aset_batt.ui.widgets import (
 from aset_batt.ui.report_html import format_seq_result, build_results_html
 
 logger = logging.getLogger(__name__)
+
+
+def _char_status_color(msg: str) -> str:
+    """Color for a Peukert/ETA/GITT/CCA status message: green for done (✓), red
+    for failed (✗), amber for in-progress. Factored out of _slot_char_update so
+    _on_retheme() can recompute the same color from a cached message — the
+    status label is otherwise only ever styled from that one event-driven slot,
+    so it would stay frozen at the OLD theme's color after a live toggle."""
+    if msg.startswith("✓"):
+        return theme.OK
+    elif msg.startswith("✗"):
+        return theme.CRIT
+    return theme.WARN
 
 
 class _FalseEvent:
@@ -99,7 +110,7 @@ class CharacterizeMixin:
             "แต่ละการทดสอบต้องใช้เวลาหลายชั่วโมง — เชื่อมต่อฮาร์ดแวร์ก่อนเริ่ม"
         )
         note.setWordWrap(True)
-        note.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        theme.style(note, lambda: f"color:{theme.MUTED}; font-size:10px;")
         lay.addWidget(note)
 
         # ── Card 1 · Peukert k ────────────────────────────────────────────
@@ -110,16 +121,16 @@ class CharacterizeMixin:
             "4 discharge runs (0.1C · 0.2C · 0.5C · 1C) → log-log fit → k\n"
             "ใช้เวลา: ~8–12 ชั่วโมง (ชาร์จ + discharge × 4)")
         self.lbl_char_pk.setWordWrap(True)
-        self.lbl_char_pk.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        theme.style(self.lbl_char_pk, lambda: f"color:{theme.MUTED}; font-size:10px;")
         lay.addWidget(self.lbl_char_pk)
 
         self.lbl_char_pk_status = QLabel("● ยังไม่ได้ทดสอบ")
-        self.lbl_char_pk_status.setStyleSheet(f"color:{MUTED}; font-size:11px; font-weight:600;")
+        self.lbl_char_pk_status.setStyleSheet(f"color:{theme.MUTED}; font-size:11px; font-weight:600;")
         lay.addWidget(self.lbl_char_pk_status)
 
         row_pk = QHBoxLayout()
-        self.btn_char_pk_start  = _btn("START Peukert", bg=OK, fg="white", hover="#266a2a")
-        self.btn_char_pk_cancel = _btn("CANCEL", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_char_pk_start  = _btn("START Peukert", bg="OK", fg="white", hover="#266a2a")
+        self.btn_char_pk_cancel = _btn("CANCEL", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_char_pk_cancel.setEnabled(False)
         self.btn_char_pk_start.clicked.connect(self._on_char_pk_start)
         self.btn_char_pk_cancel.clicked.connect(self._on_char_pk_cancel)
@@ -135,16 +146,16 @@ class CharacterizeMixin:
             "Discharge → full charge (count Ah_in/band) → discharge 0.1C (count Ah_out)\n"
             "ใช้เวลา: ~6–8 ชั่วโมง (ชาร์จ + discharge 0.1C)")
         self.lbl_char_eta.setWordWrap(True)
-        self.lbl_char_eta.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        theme.style(self.lbl_char_eta, lambda: f"color:{theme.MUTED}; font-size:10px;")
         lay.addWidget(self.lbl_char_eta)
 
         self.lbl_char_eta_status = QLabel("● ยังไม่ได้ทดสอบ")
-        self.lbl_char_eta_status.setStyleSheet(f"color:{MUTED}; font-size:11px; font-weight:600;")
+        self.lbl_char_eta_status.setStyleSheet(f"color:{theme.MUTED}; font-size:11px; font-weight:600;")
         lay.addWidget(self.lbl_char_eta_status)
 
         row_eta = QHBoxLayout()
-        self.btn_char_eta_start  = _btn("START η", bg=OK, fg="white", hover="#266a2a")
-        self.btn_char_eta_cancel = _btn("CANCEL", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_char_eta_start  = _btn("START η", bg="OK", fg="white", hover="#266a2a")
+        self.btn_char_eta_cancel = _btn("CANCEL", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_char_eta_cancel.setEnabled(False)
         self.btn_char_eta_start.clicked.connect(self._on_char_eta_start)
         self.btn_char_eta_cancel.clicked.connect(self._on_char_eta_cancel)
@@ -160,11 +171,11 @@ class CharacterizeMixin:
             "Discharge 5% SoC × 20 → rest จน ΔV/Δt < 2 mV/60s → V_rest = OCV\n"
             "ใช้เวลา: ~22 ชั่วโมง (discharge 36 min + rest ≥30 min × 20 จุด)")
         self.lbl_char_gitt.setWordWrap(True)
-        self.lbl_char_gitt.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        theme.style(self.lbl_char_gitt, lambda: f"color:{theme.MUTED}; font-size:10px;")
         lay.addWidget(self.lbl_char_gitt)
 
         self.lbl_char_gitt_status = QLabel("● ยังไม่ได้ทดสอบ")
-        self.lbl_char_gitt_status.setStyleSheet(f"color:{MUTED}; font-size:11px; font-weight:600;")
+        self.lbl_char_gitt_status.setStyleSheet(f"color:{theme.MUTED}; font-size:11px; font-weight:600;")
         lay.addWidget(self.lbl_char_gitt_status)
 
         self.pgb_char_gitt = QProgressBar()
@@ -175,8 +186,8 @@ class CharacterizeMixin:
         lay.addWidget(self.pgb_char_gitt)
 
         row_gitt = QHBoxLayout()
-        self.btn_char_gitt_start  = _btn("START GITT", bg=OK, fg="white", hover="#266a2a")
-        self.btn_char_gitt_cancel = _btn("CANCEL", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_char_gitt_start  = _btn("START GITT", bg="OK", fg="white", hover="#266a2a")
+        self.btn_char_gitt_cancel = _btn("CANCEL", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_char_gitt_cancel.setEnabled(False)
         self.btn_char_gitt_start.clicked.connect(self._on_char_gitt_start)
         self.btn_char_gitt_cancel.clicked.connect(self._on_char_gitt_cancel)
@@ -193,16 +204,16 @@ class CharacterizeMixin:
             "ต่ำกว่า 1.2V/cell — ⚠ ไม่ใช่ CCA มาตรฐาน (ไม่มีคุม 0°C, กระแสอาจถูก clamp ตาม "
             "max_current ของ rig) ใช้เป็นตัวเทียบสุขภาพแบตเทียบกับตัวเองเท่านั้น")
         self.lbl_char_cca.setWordWrap(True)
-        self.lbl_char_cca.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+        theme.style(self.lbl_char_cca, lambda: f"color:{theme.MUTED}; font-size:10px;")
         lay.addWidget(self.lbl_char_cca)
 
         self.lbl_char_cca_status = QLabel("● ยังไม่ได้ทดสอบ")
-        self.lbl_char_cca_status.setStyleSheet(f"color:{MUTED}; font-size:11px; font-weight:600;")
+        self.lbl_char_cca_status.setStyleSheet(f"color:{theme.MUTED}; font-size:11px; font-weight:600;")
         lay.addWidget(self.lbl_char_cca_status)
 
         row_cca = QHBoxLayout()
-        self.btn_char_cca_start  = _btn("START CCA", bg=OK, fg="white", hover="#266a2a")
-        self.btn_char_cca_cancel = _btn("CANCEL", bg=CRIT, fg="white", hover="#9b2020")
+        self.btn_char_cca_start  = _btn("START CCA", bg="OK", fg="white", hover="#266a2a")
+        self.btn_char_cca_cancel = _btn("CANCEL", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_char_cca_cancel.setEnabled(False)
         self.btn_char_cca_start.clicked.connect(self._on_char_cca_start)
         self.btn_char_cca_cancel.clicked.connect(self._on_char_cca_cancel)
@@ -220,7 +231,7 @@ class CharacterizeMixin:
         self.txt_char_params.setFixedHeight(130)
         lay.addWidget(self.txt_char_params)
 
-        self.btn_char_save = _btn("SAVE TO PROFILE", bg=INFO, fg="white", hover="#0d4a89")
+        self.btn_char_save = _btn("SAVE TO PROFILE", bg="INFO", fg="white", hover="#0d4a89")
         self.btn_char_save.setEnabled(False)
         self.btn_char_save.setToolTip(
             "เขียนค่าที่วัดได้ลง battery_profiles.json ของ profile ที่เลือกอยู่")
@@ -971,13 +982,31 @@ class CharacterizeMixin:
 
         if lbl is not None:
             lbl.setText(msg)
-            # colour: green for ✓, red for ✗, yellow for running
-            if msg.startswith("✓"):
-                lbl.setStyleSheet(f"color:{OK}; font-size:11px; font-weight:600;")
-            elif msg.startswith("✗"):
-                lbl.setStyleSheet(f"color:{CRIT}; font-size:11px; font-weight:600;")
-            else:
-                lbl.setStyleSheet(f"color:{WARN}; font-size:11px; font-weight:600;")
+            if not hasattr(self, "_char_status_msgs"):
+                self._char_status_msgs = {}
+            self._char_status_msgs[test_id] = msg
+            lbl.setStyleSheet(f"color:{_char_status_color(msg)}; font-size:11px; font-weight:600;")
+
+    def _refresh_char_status_colors(self):
+        """Called from _on_retheme(): re-picks each Peukert/ETA/GITT/CCA status
+        label's color for the CURRENT theme, using the last message
+        _slot_char_update saw (or the construction-time MUTED placeholder if
+        that sub-test has never run) — otherwise a live theme toggle leaves a
+        completed ✓/✗ result frozen at whatever color was picked under the OLD
+        theme, since these labels are only ever styled from that one slot."""
+        msgs = getattr(self, "_char_status_msgs", {})
+        label_map = {
+            "pk": getattr(self, "lbl_char_pk_status", None),
+            "eta": getattr(self, "lbl_char_eta_status", None),
+            "gitt": getattr(self, "lbl_char_gitt_status", None),
+            "cca": getattr(self, "lbl_char_cca_status", None),
+        }
+        for test_id, lbl in label_map.items():
+            if lbl is None:
+                continue
+            msg = msgs.get(test_id)
+            color = _char_status_color(msg) if msg is not None else theme.MUTED
+            lbl.setStyleSheet(f"color:{color}; font-size:11px; font-weight:600;")
 
     def _refresh_char_params(self):
         """Refresh the 'Profile Parameters' text panel from profile defaults + _char_results."""

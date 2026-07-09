@@ -65,9 +65,7 @@ import aset_batt.core.battery_profiles as battery_profiles
 from aset_batt.core.analysis_module import ChemistryDetector
 from aset_batt.core.iec61960_standard import IEC61960Standard
 
-from aset_batt.ui.theme import (
-    BG, PANEL, PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO, NEUTRAL,
-)
+from aset_batt.ui import theme
 from aset_batt.ui.widgets import (
     _btn, _hline, QtRootShim,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
@@ -176,7 +174,7 @@ class SequencesMixin:
         self._current_test_name = ""
         self.lbl_phase_banner.setText("● IDLE — เลือก workflow แล้วกด RUN")
         self.lbl_phase_banner.setStyleSheet(
-            f"background:{PANEL2}; color:{MUTED}; border:1px solid {BORDER}; "
+            f"background:{theme.PANEL2}; color:{theme.MUTED}; border:1px solid {theme.BORDER}; "
             f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
 
     def _seq_reset_step_leds(self):
@@ -203,22 +201,22 @@ class SequencesMixin:
             test = self._current_test_name or "TEST"
             self.lbl_phase_banner.setText(f"▶  {test}  ·  {phase}")
             self.lbl_phase_banner.setStyleSheet(
-                f"background:{PANEL2}; color:{color}; border:1px solid {color}; "
+                f"background:{theme.PANEL2}; color:{color}; border:1px solid {color}; "
                 f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
 
     def _slot_workflow(self, step: int, state: str):
         """Update a step indicator.  state: idle/active/done/skip."""
         if state == "active":
-            self._banner_active(self._wf_leds, step, INFO)
+            self._banner_active(self._wf_leds, step, theme.INFO)
         _styles = {
-            "idle":   (f"color:{NEUTRAL}; font-size:16px; min-width:22px;",
-                       f"color:{MUTED}; font-weight:700; min-width:65px;",   "○"),
-            "active": (f"color:{INFO};    font-size:16px; min-width:22px;",
-                       f"color:{INFO};    font-weight:700; min-width:65px;",  "●"),
-            "done":   (f"color:{OK};      font-size:13px; min-width:22px; font-weight:700;",
-                       f"color:{OK};      font-weight:700; min-width:65px;",  "✓"),
-            "skip":   (f"color:{NEUTRAL}; font-size:13px; min-width:22px;",
-                       f"color:{NEUTRAL}; font-weight:700; min-width:65px;",  "—"),
+            "idle":   (f"color:{theme.NEUTRAL}; font-size:16px; min-width:22px;",
+                       f"color:{theme.MUTED}; font-weight:700; min-width:65px;",   "○"),
+            "active": (f"color:{theme.INFO};    font-size:16px; min-width:22px;",
+                       f"color:{theme.INFO};    font-weight:700; min-width:65px;",  "●"),
+            "done":   (f"color:{theme.OK};      font-size:13px; min-width:22px; font-weight:700;",
+                       f"color:{theme.OK};      font-weight:700; min-width:65px;",  "✓"),
+            "skip":   (f"color:{theme.NEUTRAL}; font-size:13px; min-width:22px;",
+                       f"color:{theme.NEUTRAL}; font-weight:700; min-width:65px;",  "—"),
         }
         dot_style, name_style, symbol = _styles.get(state, _styles["idle"])
         if 0 <= step < len(self._wf_leds):
@@ -234,12 +232,12 @@ class SequencesMixin:
         _styles = {
             "active": (f"color:#e67e22; font-size:16px; min-width:22px; font-weight:700;",
                        f"color:#e67e22; font-weight:700; min-width:75px;", "●"),
-            "done":   (f"color:{OK}; font-size:13px; min-width:22px; font-weight:700;",
-                       f"color:{OK}; font-weight:700; min-width:75px;", "✓"),
-            "skip":   (f"color:{NEUTRAL}; font-size:14px; min-width:22px;",
-                       f"color:{MUTED}; font-weight:700; min-width:75px;", "—"),
-            "idle":   (f"color:{NEUTRAL}; font-size:16px; min-width:22px;",
-                       f"color:{MUTED}; font-weight:700; min-width:75px;", "○"),
+            "done":   (f"color:{theme.OK}; font-size:13px; min-width:22px; font-weight:700;",
+                       f"color:{theme.OK}; font-weight:700; min-width:75px;", "✓"),
+            "skip":   (f"color:{theme.NEUTRAL}; font-size:14px; min-width:22px;",
+                       f"color:{theme.MUTED}; font-weight:700; min-width:75px;", "—"),
+            "idle":   (f"color:{theme.NEUTRAL}; font-size:16px; min-width:22px;",
+                       f"color:{theme.MUTED}; font-weight:700; min-width:75px;", "○"),
         }
         dot_style, name_style, symbol = _styles.get(state, _styles["idle"])
         if 0 <= phase < len(self._qs_leds):
@@ -258,14 +256,14 @@ class SequencesMixin:
         if state == "active":
             self._banner_active(self._hppc_seq_leds, step, "#7b2d8b")
         _styles = {
-            "idle":   (f"color:{NEUTRAL}; font-size:16px; min-width:22px;",
-                       f"color:{MUTED}; font-weight:700; min-width:65px;", "○"),
+            "idle":   (f"color:{theme.NEUTRAL}; font-size:16px; min-width:22px;",
+                       f"color:{theme.MUTED}; font-weight:700; min-width:65px;", "○"),
             "active": (f"color:#7b2d8b; font-size:16px; min-width:22px;",
                        f"color:#7b2d8b; font-weight:700; min-width:65px;", "●"),
-            "done":   (f"color:{OK}; font-size:13px; min-width:22px; font-weight:700;",
-                       f"color:{OK}; font-weight:700; min-width:65px;", "✓"),
-            "skip":   (f"color:{NEUTRAL}; font-size:13px; min-width:22px;",
-                       f"color:{NEUTRAL}; font-weight:700; min-width:65px;", "—"),
+            "done":   (f"color:{theme.OK}; font-size:13px; min-width:22px; font-weight:700;",
+                       f"color:{theme.OK}; font-weight:700; min-width:65px;", "✓"),
+            "skip":   (f"color:{theme.NEUTRAL}; font-size:13px; min-width:22px;",
+                       f"color:{theme.NEUTRAL}; font-weight:700; min-width:65px;", "—"),
         }
         dot_style, name_style, symbol = _styles.get(state, _styles["idle"])
         if 0 <= step < len(self._hppc_seq_leds):
@@ -278,14 +276,14 @@ class SequencesMixin:
         if state == "active":
             self._banner_active(self._cycle_leds, step, "#6c3483")
         _styles = {
-            "idle":   (f"color:{NEUTRAL}; font-size:16px; min-width:22px;",
-                       f"color:{MUTED}; font-weight:700; min-width:75px;", "○"),
+            "idle":   (f"color:{theme.NEUTRAL}; font-size:16px; min-width:22px;",
+                       f"color:{theme.MUTED}; font-weight:700; min-width:75px;", "○"),
             "active": (f"color:#6c3483; font-size:16px; min-width:22px;",
                        f"color:#6c3483; font-weight:700; min-width:75px;", "●"),
-            "done":   (f"color:{OK}; font-size:13px; min-width:22px; font-weight:700;",
-                       f"color:{OK}; font-weight:700; min-width:75px;", "✓"),
-            "skip":   (f"color:{NEUTRAL}; font-size:13px; min-width:22px;",
-                       f"color:{NEUTRAL}; font-weight:700; min-width:75px;", "—"),
+            "done":   (f"color:{theme.OK}; font-size:13px; min-width:22px; font-weight:700;",
+                       f"color:{theme.OK}; font-weight:700; min-width:75px;", "✓"),
+            "skip":   (f"color:{theme.NEUTRAL}; font-size:13px; min-width:22px;",
+                       f"color:{theme.NEUTRAL}; font-weight:700; min-width:75px;", "—"),
         }
         dot_style, name_style, symbol = _styles.get(state, _styles["idle"])
         if 0 <= step < len(self._cycle_leds):
@@ -332,7 +330,7 @@ class SequencesMixin:
         """Sound + popup notification when a sequence finishes."""
         self.lbl_phase_banner.setText(f"✓  {self._current_test_name or 'TEST'}  ·  เสร็จสิ้น")
         self.lbl_phase_banner.setStyleSheet(
-            f"background:{PANEL2}; color:{OK}; border:1px solid {OK}; "
+            f"background:{theme.PANEL2}; color:{theme.OK}; border:1px solid {theme.OK}; "
             f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
         try:
             import winsound
@@ -361,26 +359,26 @@ class SequencesMixin:
         # Battery / plan card
         card = QFrame()
         card.setStyleSheet(
-            f"QFrame{{background:{PANEL2};border:1px solid {BORDER};"
+            f"QFrame{{background:{theme.PANEL2};border:1px solid {theme.BORDER};"
             f"border-radius:5px;padding:6px 10px;}}"
         )
         card_lay = QVBoxLayout(card)
         card_lay.setSpacing(3)
         for line in plan_lines:
             lbl = QLabel(line)
-            lbl.setStyleSheet(f"color:{TEXT}; font-size:12px;")
+            lbl.setStyleSheet(f"color:{theme.TEXT}; font-size:12px;")
             card_lay.addWidget(lbl)
         lay.addWidget(card)
 
         # ETA row
         eta_lbl = QLabel(f"Estimated duration: ~{eta_min} min  ({eta_min//60}h {eta_min%60:02d}m)")
-        eta_lbl.setStyleSheet(f"color:{INFO}; font-weight:600;")
+        eta_lbl.setStyleSheet(f"color:{theme.INFO}; font-weight:600;")
         lay.addWidget(eta_lbl)
 
         # Confirm / Cancel
         btn_row = QHBoxLayout()
-        btn_conf = _btn("▶  CONFIRM START", bg=INFO, fg="white", hover="#0d4a89")
-        btn_canc = _btn("Cancel", bg="#d0d4d7", hover="#c2c6ca")
+        btn_conf = _btn("▶  CONFIRM START", bg="INFO", fg="white", hover="#0d4a89")
+        btn_canc = _btn("Cancel", bg="PANEL", hover="PANEL2")
         btn_conf.clicked.connect(dlg.accept)
         btn_canc.clicked.connect(dlg.reject)
         btn_row.addWidget(btn_conf, 2); btn_row.addWidget(btn_canc, 1)
@@ -417,7 +415,7 @@ class SequencesMixin:
         self._current_test_name = self.cb_workflow_type.currentText().split("(")[0].strip()
         self.lbl_phase_banner.setText(f"▶  {self._current_test_name}  ·  เริ่ม...")
         self.lbl_phase_banner.setStyleSheet(
-            f"background:{PANEL2}; color:{INFO}; border:1px solid {INFO}; "
+            f"background:{theme.PANEL2}; color:{theme.INFO}; border:1px solid {theme.INFO}; "
             f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
         self._seq_reset_step_leds()
         for buf in (self.buf_t, self.buf_v, self.buf_i,

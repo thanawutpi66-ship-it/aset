@@ -4,11 +4,15 @@ the Qt root shim, and the background PDF task. None of these touch
 BatteryQtWindow state — they are extracted from isa101_views.py so the main
 window file stays focused on layout and behavior.
 
-Like isa101_views, this module bakes the active theme palette into
-stylesheets at import/construction time, so it must only be imported after
-theme.set_theme() has run (isa101_views imports it, preserving that order).
+The app-wide qt-material stylesheet (applied once in aset_batt/app/run.py)
+owns the base look of standard widgets (QPushButton shape/padding/hover
+ripple, QComboBox, etc.); this module only layers semantic accent colors
+(OK/WARN/CRIT/INFO) on top where needed. Colors are read from aset_batt.ui.
+theme live (via theme.style()/theme.PANEL2/etc., not baked in at import
+time), so retheme() can update everything built here without recreating it.
 """
 
+import bisect
 import logging
 import math
 
@@ -27,28 +31,52 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from aset_batt.ui.theme import (
-    PANEL2, FIELD, BORDER, TEXT, MUTED, OK, WARN, CRIT, INFO,
-)
+from aset_batt.ui import theme
 
 logger = logging.getLogger(__name__)
 
+pg.setConfigOptions(antialias=True)
 
-def _btn(text, bg=PANEL2, fg=TEXT, hover=FIELD):
+_THEME_ATTR_NAMES = {"BG", "PANEL", "PANEL2", "FIELD", "BORDER", "TEXT", "MUTED",
+                      "OK", "WARN", "CRIT", "INFO", "NEUTRAL"}
+
+
+def _resolve_color(value):
+    """bg/fg/hover may be a theme.* attribute name (e.g. "OK") to keep tracking
+    that semantic color across retheme(), or a literal CSS color string."""
+    if isinstance(value, str) and value in _THEME_ATTR_NAMES:
+        return getattr(theme, value)
+    return value
+
+
+def _btn(text, bg=None, fg=None, hover=None):
+    """QPushButton styled by the app-wide qt-material stylesheet; bg
+    optionally layers a semantic accent color on top (pass a theme.* name
+    like "OK"/"CRIT"/"INFO"/"WARN" to track that color across retheme(), or a
+    literal hex string for a one-off, non-themed color). fg defaults to an
+    auto-computed contrast color from the resolved bg (see
+    theme.contrast_text()) — pass it explicitly only to override that choice;
+    leaving it out is what you want for a neutral/surface bg like "PANEL2"
+    that's light in one theme and dark in the other."""
     b = QPushButton(text)
     b.setCursor(Qt.PointingHandCursor)
-    b.setStyleSheet(
-        "QPushButton {{ background:{0}; color:{1}; border:1px solid {2}; "
-        "border-radius:4px; padding:7px 10px; font-weight:600; }}"
-        "QPushButton:hover {{ background:{3}; }}".format(bg, fg, BORDER, hover)
-    )
+    if bg is None:
+        return b
+
+    def _style():
+        bg_resolved = _resolve_color(bg)
+        fg_resolved = _resolve_color(fg) if fg is not None else theme.contrast_text(bg_resolved)
+        return (f"QPushButton {{ background:{bg_resolved}; color:{fg_resolved}; }}"
+                f"QPushButton:hover {{ background:{_resolve_color(hover or bg)}; }}")
+
+    theme.style(b, _style)
     return b
 
 
 def _hline():
     line = QFrame()
     line.setFrameShape(QFrame.HLine)
-    line.setStyleSheet(f"color:{BORDER}; background:{BORDER}; max-height:1px;")
+    theme.style(line, lambda: f"color:{theme.BORDER}; background:{theme.BORDER}; max-height:1px;")
     return line
 
 
@@ -87,12 +115,12 @@ class MultiAxisTrend(pg.GraphicsLayoutWidget):
 
     def __init__(self):
         super().__init__()
-        self.setBackground(PANEL2)
+        self.setBackground(theme.PANEL2)
         self.p = self.addPlot()
         self.p.setLabel("bottom", "Elapsed", units="s")
-        self.p.setLabel("left", "Voltage", units="V", color=INFO)
+        self.p.setLabel("left", "Voltage", units="V", color=theme.INFO)
         self.p.showGrid(x=True, y=True, alpha=0.2)
-        self.p.getAxis("left").setPen(INFO)
+        self.p.getAxis("left").setPen(theme.INFO)
         # Lock to a plain-seconds display — with no data yet (idle) pyqtgraph's
         # SI-prefix auto-scaling can pick ms/µs based on a near-zero default range,
         # which looks like a bug (and did not match the sibling Temp plot's own
@@ -103,8 +131,8 @@ class MultiAxisTrend(pg.GraphicsLayoutWidget):
         self.p.showAxis("right")
         self.p.scene().addItem(self.vb_i)
         self.p.getAxis("right").linkToView(self.vb_i)
-        self.p.getAxis("right").setLabel("Current", units="A", color=WARN)
-        self.p.getAxis("right").setPen(WARN)
+        self.p.getAxis("right").setLabel("Current", units="A", color=theme.WARN)
+        self.p.getAxis("right").setPen(theme.WARN)
         self.vb_i.setXLink(self.p)
 
         self.ax_t = pg.AxisItem("right")
@@ -112,13 +140,13 @@ class MultiAxisTrend(pg.GraphicsLayoutWidget):
         self.vb_t = pg.ViewBox()
         self.p.scene().addItem(self.vb_t)
         self.ax_t.linkToView(self.vb_t)
-        self.ax_t.setLabel("Temp", units="°C", color=CRIT)
-        self.ax_t.setPen(CRIT)
+        self.ax_t.setLabel("Temp", units="°C", color=theme.CRIT)
+        self.ax_t.setPen(theme.CRIT)
         self.vb_t.setXLink(self.p)
 
-        self.c_v = self.p.plot(pen=pg.mkPen(INFO, width=2))
-        self.c_i = pg.PlotCurveItem(pen=pg.mkPen(WARN, width=2))
-        self.c_t = pg.PlotCurveItem(pen=pg.mkPen(CRIT, width=2, style=Qt.PenStyle.DashLine))
+        self.c_v = self.p.plot(pen=pg.mkPen(theme.INFO, width=2))
+        self.c_i = pg.PlotCurveItem(pen=pg.mkPen(theme.WARN, width=2))
+        self.c_t = pg.PlotCurveItem(pen=pg.mkPen(theme.CRIT, width=2, style=Qt.PenStyle.DashLine))
         self.vb_i.addItem(self.c_i)
         self.vb_t.addItem(self.c_t)
 
@@ -139,6 +167,18 @@ class MultiAxisTrend(pg.GraphicsLayoutWidget):
         self.vb_i.setYRange(-i_max, i_max, padding=0.05)
         self.vb_t.setYRange(0, t_max, padding=0.05)
 
+    def retheme(self):
+        self.setBackground(theme.PANEL2)
+        self.p.setLabel("left", "Voltage", units="V", color=theme.INFO)
+        self.p.getAxis("left").setPen(theme.INFO)
+        self.p.getAxis("right").setLabel("Current", units="A", color=theme.WARN)
+        self.p.getAxis("right").setPen(theme.WARN)
+        self.ax_t.setLabel("Temp", units="°C", color=theme.CRIT)
+        self.ax_t.setPen(theme.CRIT)
+        self.c_v.setPen(pg.mkPen(theme.INFO, width=2))
+        self.c_i.setPen(pg.mkPen(theme.WARN, width=2))
+        self.c_t.setPen(pg.mkPen(theme.CRIT, width=2, style=Qt.PenStyle.DashLine))
+
     def update(self, t, v, i, temp):
         self.c_v.setData(t, v)
         self.c_i.setData(t, i)
@@ -155,32 +195,32 @@ class SplitTrend(QWidget):
         lay.setSpacing(2)
 
         self._vi = pg.PlotWidget()
-        self._vi.setBackground(PANEL2)
+        self._vi.setBackground(theme.PANEL2)
         self._vi.setLabel("bottom", "Elapsed", units="s")
-        self._vi.setLabel("left", "Voltage", units="V", color=INFO)
+        self._vi.setLabel("left", "Voltage", units="V", color=theme.INFO)
         self._vi.showGrid(x=True, y=True, alpha=0.2)
-        self._vi.getAxis("left").setPen(INFO)
+        self._vi.getAxis("left").setPen(theme.INFO)
         self._vi.getAxis("bottom").enableAutoSIPrefix(False)
         self._vi.showAxis("right")
         self._vb_i = pg.ViewBox()
         self._vi.scene().addItem(self._vb_i)
         self._vi.getAxis("right").linkToView(self._vb_i)
-        self._vi.getAxis("right").setLabel("Current", units="A", color=WARN)
-        self._vi.getAxis("right").setPen(WARN)
+        self._vi.getAxis("right").setLabel("Current", units="A", color=theme.WARN)
+        self._vi.getAxis("right").setPen(theme.WARN)
         self._vb_i.setXLink(self._vi.getPlotItem())
-        self._c_v = self._vi.plot(pen=pg.mkPen(INFO, width=2))
-        self._c_i = pg.PlotCurveItem(pen=pg.mkPen(WARN, width=2))
+        self._c_v = self._vi.plot(pen=pg.mkPen(theme.INFO, width=2))
+        self._c_i = pg.PlotCurveItem(pen=pg.mkPen(theme.WARN, width=2))
         self._vb_i.addItem(self._c_i)
         self._vi.getPlotItem().vb.sigResized.connect(self._sync_vi)
 
         self._tp = pg.PlotWidget()
-        self._tp.setBackground(PANEL2)
+        self._tp.setBackground(theme.PANEL2)
         self._tp.setLabel("bottom", "Elapsed", units="s")
-        self._tp.setLabel("left", "Temp", units="°C", color=CRIT)
+        self._tp.setLabel("left", "Temp", units="°C", color=theme.CRIT)
         self._tp.showGrid(x=True, y=True, alpha=0.2)
-        self._tp.getAxis("left").setPen(CRIT)
+        self._tp.getAxis("left").setPen(theme.CRIT)
         self._tp.getAxis("bottom").enableAutoSIPrefix(False)
-        self._c_t = self._tp.plot(pen=pg.mkPen(CRIT, width=2, style=Qt.PenStyle.DashLine))
+        self._c_t = self._tp.plot(pen=pg.mkPen(theme.CRIT, width=2, style=Qt.PenStyle.DashLine))
 
         lay.addWidget(self._vi, 3)
         lay.addWidget(self._tp, 1)
@@ -196,10 +236,31 @@ class SplitTrend(QWidget):
         self._tp.setXRange(0, x_max, padding=0.02)
         self._tp.setYRange(0, t_max, padding=0.05)
 
+    def retheme(self):
+        self._vi.setBackground(theme.PANEL2)
+        self._vi.setLabel("left", "Voltage", units="V", color=theme.INFO)
+        self._vi.getAxis("left").setPen(theme.INFO)
+        self._vi.getAxis("right").setLabel("Current", units="A", color=theme.WARN)
+        self._vi.getAxis("right").setPen(theme.WARN)
+        self._c_v.setPen(pg.mkPen(theme.INFO, width=2))
+        self._c_i.setPen(pg.mkPen(theme.WARN, width=2))
+        self._tp.setBackground(theme.PANEL2)
+        self._tp.setLabel("left", "Temp", units="°C", color=theme.CRIT)
+        self._tp.getAxis("left").setPen(theme.CRIT)
+        self._c_t.setPen(pg.mkPen(theme.CRIT, width=2, style=Qt.PenStyle.DashLine))
+
     def update(self, t, v, i, temp):
         self._c_v.setData(t, v)
         self._c_i.setData(t, i)
         self._c_t.setData(t, temp)
+
+
+def _triple_specs():
+    return [
+        ("Voltage", "V", theme.INFO, Qt.PenStyle.SolidLine),
+        ("Current", "A", theme.WARN, Qt.PenStyle.SolidLine),
+        ("Temp",    "°C", theme.CRIT, Qt.PenStyle.DashLine),
+    ]
 
 
 class TripleTrend(QWidget):
@@ -211,16 +272,11 @@ class TripleTrend(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
 
-        specs = [
-            ("Voltage", "V", INFO, Qt.PenStyle.SolidLine),
-            ("Current", "A", WARN, Qt.PenStyle.SolidLine),
-            ("Temp",    "°C", CRIT, Qt.PenStyle.DashLine),
-        ]
         self._curves = []
         self._plots = []
-        for label, unit, color, style in specs:
+        for label, unit, color, style in _triple_specs():
             pw = pg.PlotWidget()
-            pw.setBackground(PANEL2)
+            pw.setBackground(theme.PANEL2)
             pw.setLabel("bottom", "Elapsed", units="s")
             pw.setLabel("left", label, units=unit, color=color)
             pw.showGrid(x=True, y=True, alpha=0.2)
@@ -236,9 +292,139 @@ class TripleTrend(QWidget):
             pw.setXRange(0, x_max, padding=0.02)
             pw.setYRange(lo, hi, padding=0.05)
 
+    def retheme(self):
+        for pw, curve, (label, unit, color, style) in zip(self._plots, self._curves, _triple_specs()):
+            pw.setBackground(theme.PANEL2)
+            pw.setLabel("left", label, units=unit, color=color)
+            pw.getAxis("left").setPen(color)
+            curve.setPen(pg.mkPen(color, width=2, style=style))
+
     def update(self, t, v, i, temp):
         for curve, data in zip(self._curves, [v, i, temp]):
             curve.setData(t, data)
+
+
+class TrendCrosshair:
+    """Shared crosshair for a TrendContainer: a vertical dashed line synced
+    across every subplot of the currently-visible graph mode, plus one HTML
+    tooltip (t/V/I/Temp sampled at the nearest cached point) anchored to
+    whichever subplot the mouse is over. Re-wired on every mode switch since
+    Combined/Split2/Split3 expose a different set of PlotItems."""
+
+    def __init__(self, container: "TrendContainer"):
+        self._container = container
+        self._lines = {}    # PlotItem -> InfiniteLine
+        self._labels = {}   # PlotItem -> TextItem
+        self._wired = set()  # PlotItems whose sigMouseMoved is already connected
+        self._active_plots = []
+        self._last_idx = None
+        self._last_origin = None
+        self.rewire()
+
+    def _line_pen(self):
+        return pg.mkPen(theme.MUTED, width=1, style=Qt.PenStyle.DashLine)
+
+    def rewire(self):
+        """Call after the visible graph mode changes — attaches a line+label
+        to every currently-visible PlotItem (idempotent: skips ones already
+        wired, so switching back to a previously-seen mode doesn't double up)."""
+        self._active_plots = self._container._all_plots()
+        for p in self._active_plots:
+            if p in self._lines:
+                continue
+            line = pg.InfiniteLine(angle=90, pen=self._line_pen(), movable=False)
+            line.setVisible(False)
+            p.addItem(line, ignoreBounds=True)
+            self._lines[p] = line
+
+            label = pg.TextItem(html="", anchor=(0, 1))
+            label.setVisible(False)
+            label.setZValue(100)
+            p.addItem(label, ignoreBounds=True)
+            self._labels[p] = label
+
+            p.scene().sigMouseMoved.connect(self._make_handler(p))
+            self._wired.add(p)
+        self._hide_all()
+
+    def retheme(self):
+        pen = self._line_pen()
+        for line in self._lines.values():
+            line.setPen(pen)
+
+    def _make_handler(self, origin_plot):
+        def handler(scene_pos):
+            self._on_mouse_moved(origin_plot, scene_pos)
+        return handler
+
+    def _hide_all(self):
+        for line in self._lines.values():
+            line.setVisible(False)
+        for label in self._labels.values():
+            label.setVisible(False)
+        self._last_idx = None
+        self._last_origin = None
+
+    def _on_mouse_moved(self, origin_plot, scene_pos):
+        # Signals from plots that belong to a no-longer-visible mode can still
+        # arrive briefly (queued before the mode switch) — ignore them.
+        if origin_plot not in self._active_plots or origin_plot not in self._lines:
+            return
+        vb = origin_plot.vb
+        if not vb.sceneBoundingRect().contains(scene_pos):
+            self._hide_all()
+            return
+
+        t = self._container._last_t
+        if not t:
+            self._hide_all()
+            return
+
+        x = vb.mapSceneToView(scene_pos).x()
+        idx = bisect.bisect_left(t, x)
+        if idx >= len(t):
+            idx = len(t) - 1
+        elif idx > 0 and (x - t[idx - 1]) < (t[idx] - x):
+            idx -= 1
+        x_snap = t[idx]
+
+        for p in self._active_plots:
+            line = self._lines[p]
+            line.setPos(x_snap)
+            line.setVisible(True)
+
+        # Rebuilding the HTML tooltip re-triggers Qt's rich-text layout, which is
+        # too expensive to redo on every single mouse-move event (many per second
+        # while the pointer is moving) — only do it when the snapped sample
+        # actually changed, so tiny sub-pixel jitter is nearly free.
+        if idx == self._last_idx and origin_plot is self._last_origin:
+            return
+        self._last_idx = idx
+        self._last_origin = origin_plot
+
+        v = self._container._last_v[idx]
+        i = self._container._last_i[idx]
+        temp = self._container._last_temp[idx]
+        html = (
+            f'<div style="background:{theme.PANEL2}; border:1px solid {theme.BORDER}; '
+            f'padding:4px 6px; font-size:10px; white-space:nowrap;">'
+            f'<div style="color:{theme.MUTED};">t = {x_snap:.1f} s</div>'
+            f'<div style="color:{theme.INFO};">&#9679; V: {v:.3f} V</div>'
+            f'<div style="color:{theme.WARN};">&#9679; I: {i:.3f} A</div>'
+            f'<div style="color:{theme.CRIT};">&#9679; Temp: {temp:.1f} &#176;C</div>'
+            f'</div>'
+        )
+        for p, label in self._labels.items():
+            label.setVisible(p is origin_plot)
+        label = self._labels[origin_plot]
+        label.setHtml(html)
+
+        (x0, x1), (_, y1) = vb.viewRange()
+        near_right = (x1 - x_snap) < (x1 - x0) * 0.25
+        # anchor y=0 (top of the box at pos) so it hangs down from the top of
+        # the visible range into the plot, instead of extending upward off-screen.
+        label.setAnchor((1, 0) if near_right else (0, 0))
+        label.setPos(x_snap, y1)
 
 
 class TrendContainer(QWidget):
@@ -269,11 +455,7 @@ class TrendContainer(QWidget):
         self._zoom_btn.setCheckable(True)
         self._zoom_btn.setFixedSize(24, 22)
         self._zoom_btn.setToolTip("Toggle 10s zoom")
-        self._zoom_btn.setStyleSheet(
-            f"QPushButton{{background:{PANEL2};color:{MUTED};border:1px solid {MUTED};border-radius:3px;font-weight:bold;}}"
-            f"QPushButton:checked{{background:{INFO};color:#000;border:1px solid {INFO};}}"
-            f"QPushButton:hover{{border-color:#aaa;}}"
-        )
+        theme.style(self._zoom_btn, self._zoom_btn_style)
         self._zoom_btn.clicked.connect(self._on_zoom_btn)
         bar.addWidget(self._zoom_btn)
 
@@ -281,7 +463,7 @@ class TrendContainer(QWidget):
         self._y_zoom_btn.setCheckable(True)
         self._y_zoom_btn.setFixedHeight(22)
         self._y_zoom_btn.setToolTip("Toggle Y-Axis Auto-Scale")
-        self._y_zoom_btn.setStyleSheet(self._zoom_btn.styleSheet())
+        theme.style(self._y_zoom_btn, self._zoom_btn_style)
         self._y_zoom_btn.clicked.connect(self._on_y_zoom_btn)
         bar.addWidget(self._y_zoom_btn)
 
@@ -312,6 +494,17 @@ class TrendContainer(QWidget):
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
+        self._crosshair = TrendCrosshair(self)
+        theme.on_retheme(self.retheme)
+
+    @staticmethod
+    def _zoom_btn_style():
+        return (
+            f"QPushButton{{background:{theme.PANEL2};color:{theme.MUTED};border:1px solid {theme.MUTED};border-radius:3px;font-weight:bold;}}"
+            f"QPushButton:checked{{background:{theme.INFO};color:#000;border:1px solid {theme.INFO};}}"
+            f"QPushButton:hover{{border-color:#aaa;}}"
+        )
+
     def set_default_ranges(self, v_max, i_max, t_max, x_max=60):
         """Sensible idle-state view for all 3 modes (not just the currently-visible
         one) so switching modes before any real data exists never lands on an
@@ -321,6 +514,12 @@ class TrendContainer(QWidget):
         self._split2.set_default_ranges(v_max, i_max, t_max, x_max)
         self._split3.set_default_ranges(v_max, i_max, t_max, x_max)
 
+    def retheme(self):
+        self._combined.retheme()
+        self._split2.retheme()
+        self._split3.retheme()
+        self._crosshair.retheme()
+
     def _on_mode_changed(self, idx: int):
         self._stack.setCurrentIndex(idx)
         # Back-fill the newly-visible trend from cache so it isn't blank (it was
@@ -329,6 +528,7 @@ class TrendContainer(QWidget):
             [self._combined, self._split2, self._split3][idx].update(
                 self._last_t, self._last_v, self._last_i, self._last_temp)
         self._apply_zoom()
+        self._crosshair.rewire()
 
     def _all_plots(self):
         """Return all PlotWidget/PlotItem x-axes currently visible."""
