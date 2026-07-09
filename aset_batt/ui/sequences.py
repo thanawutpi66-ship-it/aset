@@ -982,6 +982,17 @@ class SequencesMixin:
             # NTP/clock-jump and consistent with worker.py's own established convention.
             last_log = _t.perf_counter()
             _dis_t0 = _t.perf_counter()
+            # Capture one sample immediately after set_load() returns, before the loop
+            # below even reaches its first ~5s-paced iteration — identify_dcir()'s
+            # single-step method needs a post-edge sample within _DCIR_MAX_STEP_DT
+            # (0.5s) of the true current transition; this loop's own pacing is 10x
+            # that, so every discharge-start edge was guaranteed to be dropped as
+            # stale (same root cause already fixed for the HPPC sequence).
+            try:
+                v3_0, i3_0 = self.hw.read_measurements(prefer_load_v=True)
+                self.controller._log_sample(v3_0, i3_0)
+            except Exception:
+                pass
             # Estimate discharge duration from SoC and C-rate (seconds)
             rated2 = self.controller.config.battery.rated_capacity
             _dis_est = int(rated2 / max(i_dis, 0.01) * 3600)
@@ -1119,6 +1130,14 @@ class SequencesMixin:
             last_log = _t.perf_counter()
             _dis_t0 = _t.perf_counter()
             _dis_est = int(rated / max(i_dis, 0.01) * 3600)
+            # Same low-latency edge sample as _auto_sequence_thread's IEC discharge —
+            # this loop's own pacing (~5s) is 10x identify_dcir()'s staleness gate
+            # (0.5s), so every discharge-start edge was guaranteed dropped as stale.
+            try:
+                v3_0, i3_0 = self.hw.read_measurements(prefer_load_v=True)
+                self.controller._log_sample(v3_0, i3_0)
+            except Exception:
+                pass
             while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
@@ -1329,6 +1348,7 @@ class SequencesMixin:
             self.hw.psu_off()
             self.hw.load_off()
             _hppc_t0 = _t.time()
+            v_r = None   # rested voltage from the relax leg — voc for each cycle's ECM fit
             for cyc in range(1, n_cyc + 1):
                 if not self._seq_running.is_set():
                     break
@@ -1339,12 +1359,20 @@ class SequencesMixin:
                     set_cloud_meta(sub_phase="relax", cycle_index=cyc, cycle_total=n_cyc)
                 except Exception:
                     pass
+                # Trailing rest samples for the upcoming pulse's ECM fit —
+                # identify_ecm_fit() needs to see the actual rest->pulse edge to
+                # locate the step (fit_model._detect_step()), not just the pulse's
+                # own already-loaded current throughout.
+                _relax_tail_v = []
                 t_phase = _t.time() + relax_s
                 while self._seq_running.is_set() and _t.time() < t_phase:
                     _iter_t0 = _t.perf_counter()
                     try:
                         v_r, _, _ = self.hw.read_vi()
                         self.controller._log_sample(v_r, 0.0)
+                        _relax_tail_v.append(v_r)
+                        if len(_relax_tail_v) > 5:
+                            _relax_tail_v.pop(0)
                         # HPPC doesn't call estimator.update() per-sample (R0/R1/C1/τ are
                         # fit from the whole pulse/relax record afterwards), so reuse its
                         # last cached soc/rin here — same values _log_sample already used.
@@ -1386,6 +1414,18 @@ class SequencesMixin:
                     break
                 # Pulse leg
                 self.hw.set_load(True, str(i_pulse))
+                # Capture one sample immediately after the SCPI command returns, before
+                # the ~0.2s-paced while loop below even starts its first iteration —
+                # identify_dcir()'s single-step method needs a post-edge sample within
+                # _DCIR_MAX_STEP_DT (0.5s) of the true current transition, and waiting
+                # for the next full loop iteration stacks a whole pacing period on top
+                # of set_load()'s own serial round-trip, which was regularly pushing
+                # real pulses past the gate and dropping them as "stale" (n_stale).
+                try:
+                    v_p0, i_p0 = self.hw.read_measurements(prefer_load_v=True)
+                    self.controller._log_sample(v_p0, i_p0)
+                except Exception:
+                    pass
                 status(f"HPPC {cyc}/{n_cyc}: PULSE {pulse_s:.0f}s  {i_pulse:.3f} A")
                 try:
                     from aset_batt.storage.cloud_push import set_cloud_meta
@@ -1393,6 +1433,20 @@ class SequencesMixin:
                                    pulse_current_a=i_pulse)
                 except Exception:
                     pass
+                # Buffer this cycle's own pulse curve for a live per-cycle ECM fit
+                # once the pulse ends — see the fit-and-feed block after the loop.
+                # voc = the last relax-leg reading (v_r, still in scope from the loop
+                # above), i.e. the rested voltage right before this pulse started.
+                # Seed with the trailing rest samples (negative relative time, i=0)
+                # so identify_ecm_fit() can actually locate the rest->pulse edge —
+                # the pulse loop's own samples are ALL at i_pulse, with no edge in
+                # them by themselves.
+                _fit_t0 = _t.perf_counter()
+                _rest_n = len(_relax_tail_v)
+                _fit_t = [-(_rest_n - k) * 0.2 for k in range(_rest_n)]
+                _fit_i = [0.0] * _rest_n
+                _fit_v = list(_relax_tail_v)
+                voc_for_fit = v_r
                 t_phase = _t.time() + pulse_s
                 while self._seq_running.is_set() and _t.time() < t_phase:
                     _iter_t0 = _t.perf_counter()
@@ -1402,6 +1456,9 @@ class SequencesMixin:
                         # NOT negate i_p here, or the CSV's current sign is inverted and
                         # the 1-RC ECM fit never converges on this sequence's own data.
                         self.controller._log_sample(v_p, i_p)
+                        _fit_t.append(_t.perf_counter() - _fit_t0)
+                        _fit_i.append(i_p)
+                        _fit_v.append(v_p)
                         self.update_display(v_p, i_p, self.controller.estimator.soc,
                                             self.controller.estimator.rin)
                         self._seq_kick_watchdog()
@@ -1429,6 +1486,39 @@ class SequencesMixin:
                     if not self._seq_sleep(max(0.0, 0.2 - _elapsed_iter)):
                         break
                 self.hw.load_off()
+                # Same low-latency edge sample as the pulse-start above, for the
+                # pulse-end transition — otherwise this edge suffers the identical
+                # staleness gap and identify_dcir() sees no valid steps at all.
+                try:
+                    v_r0, i_r0 = self.hw.read_measurements(prefer_load_v=False)
+                    self.controller._log_sample(v_r0, i_r0)
+                except Exception:
+                    pass
+                # Feed this cycle's own real R0/R1/C1 into the live estimator — HPPC's
+                # pulse leg never calls estimator.update() per-sample (see the comment
+                # on the relax leg above), so without this the live SoC/Rin display
+                # never benefits from a real per-unit calibration despite 5 real
+                # pulses' worth of fittable data being collected every run. Reuses the
+                # exact same fit + harness-correction the post-hoc analysis (analyze_
+                # csv) already does, just applied live per cycle instead of once at
+                # the very end.
+                if voc_for_fit is not None and len(_fit_t) >= 10:
+                    try:
+                        from aset_batt.acquisition.analysis import (
+                            identify_ecm_fit, _correct_for_harness_r)
+                        ecm, _reason = identify_ecm_fit(_fit_t, _fit_i, _fit_v, voc_for_fit)
+                        if ecm is not None:
+                            r0 = float(ecm["R0_ohm"])
+                            harness_r = max(0.0, float(getattr(
+                                self.controller.config.battery, "harness_resistance_ohm", 0.0)))
+                            if harness_r > 0.0:
+                                r0, _warn = _correct_for_harness_r(r0, harness_r, "live ECM R0", [])
+                                if _warn:
+                                    self.sig_alarm.emit(f"[HPPC SEQ] {_warn[0]}")
+                            self.controller.estimator.update_ecm(
+                                r0, float(ecm["R1_ohm"]), float(ecm["C1_farad"]))
+                    except Exception as exc:
+                        logger.debug("Live per-cycle ECM fit failed (non-fatal): %s", exc)
                 if not self._seq_running.is_set():
                     break
             self.sig_phase_progress.emit(0, 0)
@@ -1626,6 +1716,13 @@ class SequencesMixin:
                 _dis_est = int(rated / max(i_dis, 0.01) * 3600)
                 ah_acc = 0.0
                 last_log = _t.perf_counter()
+                # Same low-latency edge sample as _auto_sequence_thread's IEC discharge —
+                # this loop's own pacing (~5s) is 10x identify_dcir()'s staleness gate.
+                try:
+                    v_d0, i_d0 = self.hw.read_measurements(prefer_load_v=True)
+                    self.controller._log_sample(v_d0, i_d0)
+                except Exception:
+                    pass
                 while self._seq_running.is_set():
                     try:
                         v_d, i_d = self.hw.read_measurements(prefer_load_v=True)

@@ -62,6 +62,23 @@ class StateEstimator:
         # reading, so the UI needs to know which one it's currently displaying.
         self._ecm_calibrated = False
 
+        # --- Universal single-step R0 detector ---
+        # update() is the one function EVERY mode routes through (manual charge/
+        # discharge via _monitor_loop, IEC/Quick Scan/Cycle Life's own discharge
+        # loops, HPPC's CHARGE phase) — so a real current-step edge detected HERE
+        # improves R0 accuracy everywhere, without wiring per-mode. The one
+        # exception is HPPC's own pulse/relax legs, which don't call update() per
+        # sample at all (R0/R1/C1/τ are fit from the whole pulse afterwards
+        # instead — see sequences.py) and so need their own full ECM fit on top
+        # of this. Deliberately R0-ONLY: a single step can't resolve R1/C1
+        # (needs the relaxation decay shape), so _r0_calibrated is a separate,
+        # easier-to-reach flag from the stricter _ecm_calibrated above (which
+        # stays reserved for a real full R0+R1+C1 fit, and is what the UI's
+        # "measured vs estimated" Rin label keys off — an R0-only step shouldn't
+        # claim the full Rin is a real measurement when R1/C1 are still guesses).
+        self._step_buf = []          # [(voltage, current), ...] short rolling history
+        self._r0_calibrated = False  # gates the EKF's uncalibrated-R0 runaway guard
+
         # --- Ablation flags (for replay.py study; all ON = full model) ---
         self.use_ocv = True             # OCV-based correction / EKF measurement update
         self.use_peukert = True         # Peukert discharge correction
@@ -281,6 +298,46 @@ class StateEstimator:
             self._ekf = SoCEKF(self.soc, r0, r1, c1, adaptive_r=self.use_adaptive_r)
         return self._ekf
 
+    # Minimum |Δcurrent| between the rolling-buffer reference and the new sample
+    # to count as a real step, not sensor jitter/noise.
+    _STEP_MIN_DI_A = 0.15
+    # Post-edge sample must arrive within this long of the edge, or the voltage
+    # has already relaxed into the RC region — same idea (and value) as
+    # acquisition.analysis._DCIR_MAX_STEP_DT for the batch/offline method.
+    _STEP_MAX_DT_S = 0.5
+    # The "before" reference itself must look like a genuine settled level, not
+    # already mid-transition — same order of magnitude as
+    # acquisition.analysis._VI_LEVEL_MAX_SPREAD_V's plateau-spread gate.
+    _STEP_REF_MAX_SPREAD_V = 0.15
+    _STEP_BUF_LEN = 3
+
+    def _detect_step_r0(self, voltage: float, current: float, dt: float, temp: float) -> None:
+        """Online counterpart to acquisition.analysis.identify_dcir's single-step
+        method (R = |ΔV/ΔI| across a clean current edge) — streamed sample-by-
+        sample instead of batch over a whole CSV, so it improves R0 in every mode
+        this estimator is used in without any per-mode wiring. See the _r0_calibrated
+        attribute's comment in __init__ for why this only ever touches R0."""
+        buf = self._step_buf
+        if len(buf) >= self._STEP_BUF_LEN:
+            vs = [v for v, i in buf]
+            ref_spread = max(vs) - min(vs)
+            if ref_spread <= self._STEP_REF_MAX_SPREAD_V:
+                v_ref = sorted(vs)[len(vs) // 2]
+                i_ref = sorted(i for v, i in buf)[len(buf) // 2]
+                di = current - i_ref
+                if abs(di) >= self._STEP_MIN_DI_A and dt <= self._STEP_MAX_DT_S:
+                    temp_mult = self.battery_model.temp_rin_multiplier(temp) if self.use_temp else 1.0
+                    r0 = abs((voltage - v_ref) / di) / max(1e-6, temp_mult)
+                    if 1e-4 < r0 < 5.0:      # sanity bounds — see battery_profiles
+                                             # .get_measured_params()'s own range check
+                        if self.use_ekf:
+                            ekf = self._ensure_ekf()
+                            ekf.set_rc(r0, ekf.R1, ekf.C1)
+                        self._r0_calibrated = True
+        buf.append((voltage, current))
+        if len(buf) > self._STEP_BUF_LEN:
+            buf.pop(0)
+
     def update_ecm(self, r0: float, r1: float, c1: float) -> None:
         """Feed a fresh single HPPC ECM fit into the EKF (R0/R1/C1 in Ohm/Ohm/Farad).
         Ignored while a SoC-dependent ECM table is active (the table takes precedence)."""
@@ -404,6 +461,11 @@ class StateEstimator:
         cur = current - self.current_offset
         # temperature compensation flag: feed 25°C when disabled (ablation studies)
         t_use = temp if self.use_temp else 25.0
+
+        # Universal single-step R0 detector — see its own docstring. Runs before
+        # the EKF section below so a freshly-detected R0 is already in effect for
+        # THIS sample's own voltage prediction, not just the next one.
+        self._detect_step_r0(voltage, cur, dt, t_use)
 
         # === 1. Coulomb Counting (SoH-adjusted capacity, #2) ===
         # current > 0 = discharge → SoC ลดลง ; current < 0 = charge → SoC เพิ่มขึ้น
@@ -541,8 +603,26 @@ class StateEstimator:
                 # real SoC error. See _reset_to_soc's start_settle_window.
                 still_settling = time.monotonic() < self._anchor_settle_until
                 r_override = ekf.R * self._anchor_settle_r_mult if still_settling else None
-                ekf.update(voltage, cur, ocv_pack, docv, r0_use, r_override=r_override)
-                self.soc = max(0.0, min(100.0, ekf.soc))
+                # Before a real R0 lands (either _detect_step_r0's own single-step
+                # detector, or a full HPPC ECM fit via update_ecm()), r0_use is
+                # _ekf_rc_defaults()'s generic ±_EKF_UNCALIBRATED_R0_MARGIN guess, not
+                # a measurement — its IR-drop term (cur*r0_use) in the voltage
+                # prediction above can be off by a comparable fraction. At any real
+                # charge/discharge current that model error dwarfs R's ~7 mV sensor-
+                # noise floor, so the filter was reading "R0 is an uncalibrated guess"
+                # as if it were a genuine, fast SoC swing (confirmed root cause of a
+                # real pack reading SoC 80%→100% within ~2 minutes of a 0.1C charge —
+                # physically needs ~25x that current). Near true rest this doesn't
+                # matter (cur≈0 makes the IR-drop term negligible regardless of how
+                # wrong R0 is) — same near-rest gate the non-EKF OCV-correction
+                # fallback below already uses — so only skip the voltage update away
+                # from rest, and only until a real R0 is calibrated.
+                r0_confirmed = self._r0_calibrated or self._ecm_calibrated
+                uncalibrated_and_active = (not r0_confirmed and
+                    abs(cur - self.standby_current) >= self.static_current_threshold)
+                if not uncalibrated_and_active:
+                    ekf.update(voltage, cur, ocv_pack, docv, r0_use, r_override=r_override)
+                    self.soc = max(0.0, min(100.0, ekf.soc))
             self.soc_filtered = self.soc
             # live 1σ SoC uncertainty from the filter covariance (large mid-plateau /
             # early, shrinks after an OCV/endpoint anchor) — lets the UI show ±%.

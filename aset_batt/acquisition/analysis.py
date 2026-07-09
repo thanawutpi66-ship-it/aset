@@ -188,21 +188,35 @@ def dcir_from_vi_slope(currents, voltages):
     return abs(float(slope)), float(r2)
 
 
+# A "level" is only a valid steady-state DCIR anchor if its own voltage samples
+# are tight — a genuine constant-current PLATEAU (HPPC pulse/rest) settles to
+# within tens of mV. A long continuous single-rate discharge (IEC capacity test)
+# also reads as one "level" by current alone, but its voltage sweeps across the
+# WHOLE SoC range (volts, not millivolts) as the pack discharges — the level's
+# median would then mix real IR-drop with SoC-dependent OCV decline, inflating
+# dcir_slope by an order of magnitude (a real case: 400 mΩ reported vs ~90-100 mΩ
+# from the same record's ECM fit). Reject a level whose spread looks like SoC
+# drift rather than noise.
+_VI_LEVEL_MAX_SPREAD_V = 0.15  # V
+
+
 def _vi_levels(current_a, voltage_v):
     """(current, terminal-voltage) points — one per distinct current level (rest + each
-    load level) — for the V–I slope DCIR. Rest gives the (0, OCV) anchor."""
+    load level) — for the V–I slope DCIR. Rest gives the (0, OCV) anchor. A level is
+    dropped (not just the whole record) if its voltage spread suggests it isn't a real
+    steady-state plateau — see _VI_LEVEL_MAX_SPREAD_V."""
     ia = np.asarray(current_a, float)
     va = np.asarray(voltage_v, float)
     pts = []
     rest = np.abs(ia - _I_STANDBY) < 0.15      # "rest" = |I| ≈ 0 (SSR fully disconnects load)
-    if rest.any():
+    if rest.any() and float(np.ptp(va[rest])) <= _VI_LEVEL_MAX_SPREAD_V:
         pts.append((_I_STANDBY, float(np.median(va[rest]))))
     loaded = np.abs(ia - _I_STANDBY) >= 0.2    # load on top of standby
     if loaded.any():
         keys = np.round(ia, 1)                       # cluster load into 0.1 A levels
         for lvl in np.unique(keys[loaded]):
             m = loaded & (keys == lvl)
-            if int(m.sum()) >= 3:
+            if int(m.sum()) >= 3 and float(np.ptp(va[m])) <= _VI_LEVEL_MAX_SPREAD_V:
                 pts.append((float(lvl), float(np.median(va[m]))))
     return pts
 
@@ -284,15 +298,35 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=
     return float(np.median(arr)), float(np.std(arr)), int(arr.size), True, n_stale
 
 
+# SAE J537's cranking end-voltage for a lead-acid CCA test: 1.2 V/cell. A crank pulse
+# is brief (30 s) and the pack is expected to recover right after, so the standard lets
+# terminal voltage sag much further than profile.cutoff_v (a deep-discharge protection
+# floor meant for a sustained, minutes-to-hours discharge — reusing it here shrank the
+# "voltage budget" (OCV - cutoff) the proxy divides by roughly in half, under-reporting
+# a healthy pack's cranking capability). No equivalent standard cutoff exists for other
+# chemistries in this rig's scope, so they keep using profile.cutoff_v as before.
+_CCA_CRANK_CUTOFF_V_PER_CELL = 1.2   # V/cell, SAE J537
+
+
+def _cca_cutoff_v(profile: BatteryProfile) -> float:
+    from aset_batt.core import battery_profiles
+    chem = battery_profiles.get_chemistry(profile.chemistry).name
+    if chem == "LeadAcid":
+        return _CCA_CRANK_CUTOFF_V_PER_CELL * profile.series
+    return profile.cutoff_v
+
+
 def _load_metrics(current_a, voltage_v, dcir_ohm, profile: BatteryProfile):
     """Lead-acid health features the rig CAN measure at 5 Hz (see project pivot §3,§8.5):
 
       * ``voltage_sag_v`` — rested OCV minus the lowest terminal voltage seen under
         load. A weak/sulfated battery sags much more for the same current.
-      * ``cca_est_a`` — cranking-capability proxy = (OCV − cutoff) / DCIR, i.e. the
-        current at which the terminal would sag to the discharge cutoff. Not a
-        standardised CCA (that needs a cold high-rate crank), but a repeatable,
-        physically grounded surrogate for sorting.
+      * ``cca_est_a`` — cranking-capability proxy = (OCV − cranking cutoff) / DCIR,
+        i.e. the current at which the terminal would sag to the cranking end-voltage
+        (see ``_cca_cutoff_v`` — NOT the deep-discharge cutoff). Not a standardised
+        CCA (that needs a cold high-rate crank; this is measured at ambient temp from
+        a small pulse, linearly extrapolated), but a repeatable, physically grounded
+        surrogate for sorting.
     """
     ia = np.asarray(current_a, float)
     va = np.asarray(voltage_v, float)
@@ -304,7 +338,7 @@ def _load_metrics(current_a, voltage_v, dcir_ohm, profile: BatteryProfile):
     under_load = np.abs(ia - _I_STANDBY) >= 0.2
     v_min_load = float(np.min(va[under_load])) if under_load.any() else ocv
     sag = max(0.0, ocv - v_min_load)
-    cca_est = (ocv - profile.cutoff_v) / dcir_ohm if dcir_ohm > 1e-6 else 0.0
+    cca_est = (ocv - _cca_cutoff_v(profile)) / dcir_ohm if dcir_ohm > 1e-6 else 0.0
     return sag, max(0.0, cca_est), ocv
 
 
@@ -517,6 +551,15 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         r0, r1, c1, tau, r2_ecm_fit = dcir, 0.0, 0.0, 0.0, 0.0
         r2_rc, c2, tau2 = 0.0, 0.0, 0.0
         ri_total = dcir
+
+    # cca_est above was derived from `dcir` alone, computed by _load_metrics() before
+    # the ECM fit even ran (ocv is needed as ECM fit input, so that call can't simply
+    # move later). When the single-step DCIR fails (measured=False, falls back to the
+    # profile's generic baseline) but the ECM fit succeeds, ri_total already carries
+    # the better, actually-measured resistance (see the if/else above — it equals
+    # dcir only when there's no ECM) — re-deriving cca_est from it instead avoids
+    # reporting a CCA proxy suppressed by a resistance the pack never actually showed.
+    cca_est = max(0.0, (ocv - _cca_cutoff_v(profile)) / ri_total) if ri_total > 1e-6 else 0.0
 
     gradeable = measured or bool(ecm) or not np.isnan(soh)
     if not gradeable:

@@ -176,6 +176,46 @@ class BatteryModel:
 
         return max(0.0, min(100.0, soc))
 
+    def ocv_out_of_range_mv(self, ocv_pack: float, temp: float = 25.0) -> float:
+        """How far (mV, pack-level) ``ocv_pack`` sits outside the calibrated OCV
+        curve's own defined range — positive above the 100% point, negative below
+        the 0% point, 0.0 if within range.
+
+        get_soc_from_ocv() silently clamps an out-of-range reading to 0/100 %
+        (np.interp's normal behaviour) with no signal that it happened. A rested
+        terminal voltage genuinely ABOVE the curve's own 100% point is not
+        physically a "more than full" charge — for lead-acid specifically it is
+        the classic *surface charge* symptom (a temporary post-charge voltage
+        elevation from concentrated electrolyte near the plates that has not yet
+        diffused into the bulk, taking hours to relax — far longer than a rest
+        window sized for coulomb-counting drift). Caught on a real pack: a 300 s
+        rest read 13.15 V, 260 mV above this chemistry's own calibrated 100 %
+        point (12.888 V for a 6S pack) — flat/stable within the settle window,
+        but not actually at equilibrium.
+        """
+        temp = self._clamp_temperature(temp)
+        cell_ocv = ocv_pack / self.series_cells
+        # Same temperature-blend as get_soc_from_ocv/get_ocv_from_soc — using only
+        # self.temp_range[temp_idx] (no blend) picks the WRONG table whenever temp
+        # lands exactly on a grid point other than the first (_find_temp_index
+        # returns i-1, meant to be paired with i, not used alone).
+        temp_idx = self._find_temp_index(temp)
+        if temp_idx >= len(self.temp_range) - 1:
+            data = self._interp_data[self.temp_range[-1]]
+            v_min, v_max = min(data['ocv_vals']), max(data['ocv_vals'])
+        else:
+            t1, t2 = self.temp_range[temp_idx], self.temp_range[temp_idx + 1]
+            w2 = (temp - t1) / (t2 - t1)
+            w1 = 1.0 - w2
+            d1, d2 = self._interp_data[t1], self._interp_data[t2]
+            v_min = w1 * min(d1['ocv_vals']) + w2 * min(d2['ocv_vals'])
+            v_max = w1 * max(d1['ocv_vals']) + w2 * max(d2['ocv_vals'])
+        if cell_ocv > v_max:
+            return (cell_ocv - v_max) * self.series_cells * 1000.0
+        if cell_ocv < v_min:
+            return (cell_ocv - v_min) * self.series_cells * 1000.0
+        return 0.0
+
     def _clamp_temperature(self, temp: float) -> float:
         """จำกัดอุณหภูมิให้อยู่ใน range ที่มีข้อมูล"""
         return max(self.temp_range[0], min(self.temp_range[-1], temp))

@@ -2648,11 +2648,27 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             return
         self.lbl_analytics.setText(f"Analyzing {os.path.basename(csv_path)}...")
         prof = self._acq_profile()
+        # analyze_csv()'s own Mode-column auto-detection is dead in practice — the
+        # CSV writer (DataHandler.log_row) never writes a Mode column, so without an
+        # explicit force_hppc hint every re-analysis default-classifies as a plain
+        # capacity/discharge test. An HPPC record read that way "never reaches
+        # cut-off" (it isn't supposed to) and comes back ungradeable (grade REVIEW,
+        # shown as N/A) even though the same file grades correctly right after the
+        # sequence finishes (sequences.py calls _auto_analyze(force_hppc=True) then).
+        # self._current_test_name (set by _seq_common_start, persists after the
+        # sequence completes) is the best in-session signal. Fall back to
+        # _detect_session_type()'s filename/Mode-column sniffing — the same
+        # classifier that labels this file in the session list — so re-analysing
+        # an older, properly test_HPPC_*-labelled file still works after an app
+        # restart even though _current_test_name is gone by then.
+        force_hppc = "hppc" in getattr(self, "_current_test_name", "").lower()
+        if not force_hppc:
+            force_hppc = self._detect_session_type(csv_path).lower() == "hppc"
 
         def work():
             from aset_batt.acquisition.analysis import analyze_csv_mp
             try:
-                res = analyze_csv_mp(csv_path, prof)
+                res = analyze_csv_mp(csv_path, prof, force_hppc=force_hppc)
             except Exception as e:
                 res = {"error": str(e)}
             self.sig_analysis_done.emit(res)   # → _slot_analysis_done → _on_test_finished
