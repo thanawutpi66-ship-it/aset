@@ -33,7 +33,10 @@ class TestSetLoadProtection(unittest.TestCase):
         hw.load_inst.write.assert_any_call(":CONFigure:OCP LOFF")
         hw.load_inst.write.assert_any_call(":CONFigure:OCP 12.5")
         hw.load_inst.write.assert_any_call(":CONFigure:UVP 10.0")
-        hw.load_inst.write.assert_any_call(":CONFigure:OVP 15.5")
+        # PEL-3111 does not support :CONFigure:OVP (throws -113 Undefined header) —
+        # set_load_protection() intentionally skips writing it.
+        calls = [c.args[0] for c in hw.load_inst.write.call_args_list]
+        self.assertFalse(any("OVP" in c for c in calls))
 
     def test_skips_none_values(self):
         hw = _make_hw()
@@ -72,6 +75,19 @@ class TestSetPsuProtection(unittest.TestCase):
         hw.psu_inst.write.assert_any_call(":CURR:PROT:LEV 8.0")
         hw.psu_inst.write.assert_any_call(":CURR:PROT:STAT ON")
         hw.psu_inst.write.assert_any_call(":VOLT:PROT:LEV 16.0")
+
+    def test_clamps_ocp_to_psu_rated_max(self):
+        # A battery's discharge-side max_current * 1.25 margin (computed for the
+        # Load) can exceed the PSW80-40.5's own 40.5 A rated output — must be
+        # clamped down, or the write triggers -222 "Data out of range" every
+        # single connect (real bug seen in the field, 2026-07-09).
+        hw = _make_hw()
+        hw.psu_inst = MagicMock()
+        hw.psu_inst.query.return_value = "0,\"No error\""
+
+        hw.set_psu_protection(ocp_a=62.5, ovp_v=16.17)
+
+        hw.psu_inst.write.assert_any_call(":CURR:PROT:LEV 40.5")
 
     def test_noop_when_not_connected(self):
         hw = _make_hw()
@@ -291,10 +307,11 @@ class TestApplyDefaultSafetyProtection(unittest.TestCase):
         load_writes = [c.args[0] for c in hw.load_inst.write.call_args_list]
         self.assertTrue(any(":CRANge" in w for w in load_writes))
         self.assertTrue(any(":VRANge" in w for w in load_writes))
-        # Load protection: OCP = 5.0*1.25, OVP = 14.7*1.1, UVP = 10.5
+        # Load protection: OCP = 5.0*1.25, UVP = 10.5 (OVP skipped — PEL-3111
+        # doesn't support :CONFigure:OVP, see set_load_protection())
         self.assertTrue(any(":CONFigure:OCP 6.25" == w for w in load_writes))
         self.assertTrue(any(":CONFigure:UVP 10.5" == w for w in load_writes))
-        self.assertTrue(any(":CONFigure:OVP 16.17" == w for w in load_writes))
+        self.assertFalse(any("OVP" in w for w in load_writes))
         # PSU protection
         psu_writes = [c.args[0] for c in hw.psu_inst.write.call_args_list]
         self.assertTrue(any(":CURR:PROT:LEV 6.25" == w for w in psu_writes))

@@ -13,8 +13,9 @@ class BatteryModel:
     """Advanced battery electrical model ด้วย temperature compensation"""
 
     def __init__(self, battery_type: str = "LiPO", nominal_voltage: float = 3.7,
-                 series_cells: int = 1, parallel_cells: int = 1):
+                 series_cells: int = 1, parallel_cells: int = 1, product_name: str = ""):
         self.battery_type = battery_type
+        self.product_name = product_name
         self.nominal_voltage = nominal_voltage  # per-cell (V)
         # โครงสร้างแพ็ค: series คูณแรงดัน+ความต้านทาน, parallel คูณความจุ/หารความต้านทาน
         self.series_cells = max(1, int(series_cells))

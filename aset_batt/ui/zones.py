@@ -110,6 +110,14 @@ class ZonesMixin:
         btn_edit_profile.clicked.connect(self._on_edit_battery_profile)
         lay.addWidget(btn_edit_profile)
 
+        sn_row = QHBoxLayout()
+        sn_row.addWidget(QLabel("S/N:"))
+        self.ed_sn = QLineEdit()
+        self.ed_sn.setPlaceholderText("Optional: Battery Serial / Batch ID")
+        self.ed_sn.textChanged.connect(self._on_sn_changed)
+        sn_row.addWidget(self.ed_sn)
+        lay.addLayout(sn_row)
+
         # Connections — each port row has a status LED (● gray=idle, ✓ green=ok, ✗ red=fail)
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("CONNECTIONS"))
@@ -603,6 +611,9 @@ class ZonesMixin:
         self.lbl_seq_result.setStyleSheet(f"color:{TEXT}; font-size:11px; font-weight:600;")
         self.lbl_seq_result.setWordWrap(True)
         result_lay.addWidget(self.lbl_seq_result)
+        self.btn_seq_export = _btn("EXPORT PDF", bg=INFO, fg="white", hover="#0d4a89")
+        self.btn_seq_export.clicked.connect(self._on_seq_export)
+        result_lay.addWidget(self.btn_seq_export)
         self.frm_seq_result.hide()
         outer_lay.addWidget(self.frm_seq_result)
 
@@ -631,6 +642,10 @@ class ZonesMixin:
         outer_lay.addWidget(self.lbl_profile_status)
 
         return outer
+
+    def _on_seq_export(self):
+        if hasattr(self, '_on_pdf_report'):
+            self._on_pdf_report()
 
     def _on_wf_stack_changed(self, idx: int):
         """ปรับให้เฉพาะหน้าที่กำลังแสดงดันความสูงของ stack — หน้าที่ซ่อนตั้งเป็น

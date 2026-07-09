@@ -26,7 +26,7 @@ from aset_batt.acquisition.worker import AcquisitionWorker
 import re
 from PySide6.QtGui import QColor, QDoubleValidator, QFont, QPixmap
 from PySide6.QtWidgets import (
-    QApplication,
+    QApplication, QToolBar,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -229,6 +229,11 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self._tick.timeout.connect(self._on_heartbeat_tick)
         self._tick.start(1000)
 
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.timeout.connect(self._on_pulse_tick)
+        self._pulse_timer.start(500)
+        self._pulse_state = False
+
         self._updating = False
         self._start_update_check()
 
@@ -412,6 +417,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         m.addAction("Stop Test", self._on_stop_test)
 
         m = bar.addMenu("View")
+        m.addAction("Toggle Dark Mode", self._on_toggle_dark_mode)
+        m.addSeparator()
         g = m.addMenu("Graph Mode")
         for _lbl in ("Combined", "Split 2", "Split 3"):
             g.addAction(_lbl, lambda l=_lbl: self._set_graph_mode(l))
@@ -439,53 +446,39 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         m.addAction("About ASET Battery Tester", self._on_about)
 
     def _build_toolbar(self):
-        # We replace the default MenuBar placement with a custom MenuWidget
-        # that holds BOTH the QMenuBar and our badges to ensure they render reliably
-        # on the same top row on all operating systems.
-        
-        container = QWidget()
-        # Ensure the container has the same background as the menu bar
-        container.setStyleSheet(f"QWidget {{ background:{PANEL}; border-bottom:1px solid {BORDER}; }}")
-        
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 10, 0)
-        layout.setSpacing(10)
-
-        # Grab the menu bar we built and put it on the left
-        bar = self.menuBar()
-        bar.setNativeMenuBar(False)
-        bar.setStyleSheet("QMenuBar { border: none; }") # avoid double border
-        layout.addWidget(bar)
+        toolbar = QToolBar("Main")
+        toolbar.setMovable(False)
+        toolbar.setStyleSheet(f"QToolBar {{ background:{PANEL}; border-bottom:1px solid {BORDER}; }}")
         
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         spacer.setStyleSheet("border: none; background: transparent;")
-        layout.addWidget(spacer)
+        toolbar.addWidget(spacer)
 
         mode = "SIMULATION" if self.config.system.simulation_mode else "HARDWARE"
         color = WARN if self.config.system.simulation_mode else OK
         self.mode_badge = QLabel(f"  {mode}  ")
         self.mode_badge.setStyleSheet(
             f"background:transparent; color:{color}; border:1px solid {color}; "
-            f"border-radius:4px; padding:3px 8px; font-weight:700; letter-spacing:1px;"
+            f"border-radius:4px; padding:3px 8px; font-weight:700; letter-spacing:1px; margin-right: 10px;"
         )
-        layout.addWidget(self.mode_badge)
+        toolbar.addWidget(self.mode_badge)
 
         self.state_pill = QLabel("  IDLE  ")
-        self.state_pill.setStyleSheet(self._pill(NEUTRAL) + " border: none;")
-        layout.addWidget(self.state_pill)
+        self.state_pill.setStyleSheet(self._pill(NEUTRAL) + " border: none; margin-right: 10px;")
+        toolbar.addWidget(self.state_pill)
 
         self.btn_estop = QPushButton("⛔ E-STOP")
         self.btn_estop.setStyleSheet(
             f"QPushButton {{ background:{CRIT}; color:white; border:none; border-radius:5px; "
-            f"padding:4px 14px; font-size:13px; font-weight:800; }}"
+            f"padding:4px 14px; font-size:13px; font-weight:800; margin-right: 10px; }}"
             f"QPushButton:hover {{ background:#9b2020; }}"
         )
         self.btn_estop.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_estop.clicked.connect(self._on_estop)
-        layout.addWidget(self.btn_estop)
+        toolbar.addWidget(self.btn_estop)
         
-        self.setMenuWidget(container)
+        self.addToolBar(toolbar)
 
     def _build_statusbar(self):
         sb = self.statusBar()
@@ -580,6 +573,34 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 "มหาวิทยาลัยอุบลราชธานี  Faculty of Engineering — ASET Lab\n\n"
                 "Built with PySide6 · Python",
             )
+
+    def _on_toggle_dark_mode(self):
+        from PySide6.QtGui import QPalette, QColor
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import Qt
+        app = QApplication.instance()
+        is_dark = getattr(self, '_is_dark_mode', False)
+        self._is_dark_mode = not is_dark
+        if self._is_dark_mode:
+            palette = QPalette()
+            palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
+            palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)
+            palette.setColor(QPalette.ColorRole.Base, QColor(25, 25, 25))
+            palette.setColor(QPalette.ColorRole.AlternateBase, QColor(53, 53, 53))
+            palette.setColor(QPalette.ColorRole.ToolTipBase, Qt.GlobalColor.black)
+            palette.setColor(QPalette.ColorRole.ToolTipText, Qt.GlobalColor.white)
+            palette.setColor(QPalette.ColorRole.Text, Qt.GlobalColor.white)
+            palette.setColor(QPalette.ColorRole.Button, QColor(53, 53, 53))
+            palette.setColor(QPalette.ColorRole.ButtonText, Qt.GlobalColor.white)
+            palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.red)
+            palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
+            palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
+            palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.black)
+            app.setStyle("Fusion")
+            app.setPalette(palette)
+        else:
+            app.setStyle("Fusion")
+            app.setPalette(self.style().standardPalette())
 
     def _build_left_panel(self):
         """Left column: three top-level tabs (SETUP / TEST MODE / TOOLS) that
@@ -850,6 +871,20 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             self._lbl_i_dir.setText("—  REST")
             self._lbl_i_dir.setStyleSheet(f"color:{MUTED}; border:0;")
 
+    def _on_pulse_tick(self):
+        self._pulse_state = not getattr(self, '_pulse_state', False)
+        # Pulse state_pill border if active
+        if hasattr(self, 'state_pill'):
+            text = self.state_pill.text().upper()
+            if "CHARGE" in text or "DISCHARGE" in text or "RUN" in text:
+                color = OK if self._pulse_state else "#1A2E1A"
+                if "DISCHARGE" in text:
+                    color = WARN if self._pulse_state else "#3D3010"
+                self.state_pill.setStyleSheet(self._pill(color))
+            elif "STOP" in text or "FAIL" in text or "ESTOP" in text:
+                color = CRIT if self._pulse_state else "#3D1A1A"
+                self.state_pill.setStyleSheet(self._pill(color))
+
     @Slot(float, float, float, float, float, float)
     def _slot_display(self, v, i, soc, rin, temp, soh):
         import time
@@ -937,6 +972,14 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self.state_pill.setText(f"  {text.upper()}  ")
         pill_color = INFO if "RUN" in text.upper() else CRIT if "STOP" in text.upper() or "FAIL" in text.upper() else NEUTRAL
         self.state_pill.setStyleSheet(self._pill(pill_color))
+        # Lock hardware disconnect during active test runs
+        is_idle = any(x in text.upper() for x in ["IDLE", "STOP", "FAIL", "DONE", "REVIEW"])
+        if hasattr(self, 'btn_disconnect'):
+            self.btn_disconnect.setEnabled(is_idle)
+            self.btn_connect.setEnabled(is_idle)
+            self.cb_psu.setEnabled(is_idle)
+            self.cb_load.setEnabled(is_idle)
+            self.cb_esp.setEnabled(is_idle)
 
     @Slot(str)
     def _slot_charge_status(self, text):
@@ -1071,6 +1114,12 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                                       "overtemp", "otp"]):
             event, state = "ALARM",   "ACTIVE"
             row_bg, row_fg, evt_fg = "#3D1A1A", "#E0E3E6", "#FF5555"
+            try:
+                import winsound
+                import threading
+                threading.Thread(target=winsound.Beep, args=(1000, 800), daemon=True).start()
+            except Exception:
+                pass
         elif any(x in m_low for x in ["warn", "⚠", "timeout", "timeout"]):
             event, state = "WARNING", "ACTIVE"
             row_bg, row_fg, evt_fg = "#3D3010", "#E0E3E6", "#FFB700"
@@ -1310,6 +1359,10 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self.lbl_battery_readout.setText(
             f"{b.battery_type} · {b.cells_series}S{b.cells_parallel}P · {b.pack_nominal_voltage:.1f}V · {b.rated_capacity:.1f}Ah"
         )
+
+    def _on_sn_changed(self, text):
+        if getattr(self, "config", None):
+            self.config.battery.serial_number = text.strip()
 
     def _on_product_changed(self, name):
         prod = battery_profiles.get_product(name)

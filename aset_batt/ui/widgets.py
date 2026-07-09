@@ -250,6 +250,7 @@ class TrendContainer(QWidget):
     def __init__(self):
         super().__init__()
         self._zoom_active = False
+        self._y_zoom_active = False
         self._last_t: list = []
         # Cache the latest series so a mode we switch INTO can be back-filled
         # immediately — otherwise the two hidden trend widgets never receive data
@@ -275,6 +276,15 @@ class TrendContainer(QWidget):
         )
         self._zoom_btn.clicked.connect(self._on_zoom_btn)
         bar.addWidget(self._zoom_btn)
+
+        self._y_zoom_btn = QPushButton("Y-Auto")
+        self._y_zoom_btn.setCheckable(True)
+        self._y_zoom_btn.setFixedHeight(22)
+        self._y_zoom_btn.setToolTip("Toggle Y-Axis Auto-Scale")
+        self._y_zoom_btn.setStyleSheet(self._zoom_btn.styleSheet())
+        self._y_zoom_btn.clicked.connect(self._on_y_zoom_btn)
+        bar.addWidget(self._y_zoom_btn)
+
         bar.addStretch()
         bar.addWidget(QLabel("Graph mode:"))
         self._btn_group = QButtonGroup(self)
@@ -306,6 +316,7 @@ class TrendContainer(QWidget):
         """Sensible idle-state view for all 3 modes (not just the currently-visible
         one) so switching modes before any real data exists never lands on an
         auto-ranged-on-nothing, seemingly-broken graph."""
+        self._default_ranges = (v_max, i_max, t_max, x_max)
         self._combined.set_default_ranges(v_max, i_max, t_max, x_max)
         self._split2.set_default_ranges(v_max, i_max, t_max, x_max)
         self._split3.set_default_ranges(v_max, i_max, t_max, x_max)
@@ -339,6 +350,8 @@ class TrendContainer(QWidget):
         if not self._last_t:
             return
         plots = self._all_plots()
+        
+        # X-Axis
         if self._zoom_active and len(self._last_t) >= 2:
             t_end = self._last_t[-1]
             t_start = max(self._last_t[0], t_end - self._ZOOM_WINDOW)
@@ -348,8 +361,30 @@ class TrendContainer(QWidget):
             for p in plots:
                 p.enableAutoRange(axis='x')
 
+        # Y-Axis
+        if self._y_zoom_active:
+            for p in plots:
+                p.enableAutoRange(axis='y')
+            # For ViewBoxes not directly in plots list (like vb_i, vb_t)
+            self._combined.vb_i.enableAutoRange(axis='y')
+            self._combined.vb_t.enableAutoRange(axis='y')
+            self._split2._vb_i.enableAutoRange(axis='y')
+        else:
+            for p in plots:
+                p.disableAutoRange(axis='y')
+            self._combined.vb_i.disableAutoRange(axis='y')
+            self._combined.vb_t.disableAutoRange(axis='y')
+            self._split2._vb_i.disableAutoRange(axis='y')
+            if hasattr(self, '_default_ranges'):
+                v_max, i_max, t_max, x_max = self._default_ranges
+                self.set_default_ranges(v_max, i_max, t_max, x_max=self._last_t[-1] if not self._zoom_active else x_max)
+
     def _on_zoom_btn(self, checked: bool):
         self._zoom_active = checked
+        self._apply_zoom()
+
+    def _on_y_zoom_btn(self, checked: bool):
+        self._y_zoom_active = checked
         self._apply_zoom()
 
     def update(self, t, v, i, temp):

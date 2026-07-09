@@ -145,6 +145,13 @@ class HardwareController:
         self.load_inst = load
         self.is_connected = True
 
+        # Flush any stale entries left in each instrument's SCPI error queue from a
+        # previous run/session (see _drain_error_queue docstring) — must happen
+        # before apply_default_safety_protection()'s SYST:ERR? checks, or old
+        # errors get misattributed to this session's protection writes.
+        self._drain_error_queue(self.psu_inst, "PSU")
+        self._drain_error_queue(self.load_inst, "Load")
+
         # Safe idle state after connect: ensure PSU output and Load input are OFF.
         try:
             self.psu_inst.write(":OUTP OFF")
@@ -257,10 +264,31 @@ class HardwareController:
         except Exception as e:
             return f"({label} error-queue check itself failed: {e})"
 
+    def _drain_error_queue(self, inst, label: str, max_entries: int = 20) -> None:
+        """Pop every pending entry out of the instrument's SCPI error queue.
+
+        The queue is FIFO and persists on the instrument itself for as long as it
+        stays powered — it is NOT reset by opening a new VISA session, so leftover
+        errors from a previous run (e.g. before a protection-setup bug was fixed)
+        keep surfacing on the *next* connect's SYST:ERR? check and get misread as
+        freshly caused by the current session's writes. Call this once right after
+        connect, before any protection/config writes, so later _check_scpi_error()
+        calls only ever see errors this session actually caused."""
+        if inst is None:
+            return
+        try:
+            for _ in range(max_entries):
+                resp = inst.query("SYST:ERR?").strip()
+                if resp.startswith("0,") or resp.startswith("+0,"):
+                    return
+                logger.info("%s stale error-queue entry drained: %s", label, resp)
+        except Exception as e:
+            logger.debug("%s error-queue drain failed (non-fatal): %s", label, e)
+
     def set_load_protection(self, ocp_a: float = None, uvp_v: float = None,
                             ovp_v: float = None) -> str:
         """Set PEL-3111 hardware trip points — verified syntax:
-        [:CONFigure]:OCP {<NRf>|LIMit|LOFF}, [:CONFigure]:UVP/OVP {<NRf>}.
+        [:CONFigure]:OCP {<NRf>|LIMit|LOFF}, [:CONFigure]:UVP {<NRf>}.
         A backstop independent of the PC's own software safety_limits checks: this
         trips at the *instrument* even if the PC hangs/crashes. OCP mode is forced
         to LOFF (shut the load off) rather than LIMit (clamp and keep going) — a
@@ -277,9 +305,10 @@ class HardwareController:
                     self.load_inst.write(f":CONFigure:OCP {ocp_a}")
                 if uvp_v is not None:
                     self.load_inst.write(f":CONFigure:UVP {uvp_v}")
-                if ovp_v is not None:
-                    self.load_inst.write(f":CONFigure:OVP {ovp_v}")
-                logger.info("Load protection set: OCP=%s UVP=%s OVP=%s", ocp_a, uvp_v, ovp_v)
+                # Note: PEL-3111 does not support :CONFigure:OVP (throws -113 Undefined header)
+                # if ovp_v is not None:
+                #     self.load_inst.write(f":CONFigure:OVP {ovp_v}")
+                logger.info("Load protection set: OCP=%s UVP=%s", ocp_a, uvp_v)
             except Exception as e:
                 logger.warning("set_load_protection failed (non-fatal): %s", e)
                 return str(e)
@@ -294,11 +323,19 @@ class HardwareController:
             return ""
         with self.inst_lock:
             try:
+                # GW Instek PSW series requires OVP/OCP to be >= 10% of rated max.
+                # For PSW80-40.5 (80V/40.5A), min OVP is 8.0V and min OCP is 4.05A.
+                # OCP also cannot exceed the unit's own 40.5 A rated max output —
+                # a battery's discharge-side max_current * 1.25 margin (meant for
+                # the Load) can easily be higher than that and was previously sent
+                # unclamped, tripping -222 "Data out of range" on every connect.
                 if ocp_a is not None:
-                    self.psu_inst.write(f":CURR:PROT:LEV {ocp_a}")
+                    safe_ocp = min(max(ocp_a, 4.05), 40.5)
+                    self.psu_inst.write(f":CURR:PROT:LEV {safe_ocp}")
                     self.psu_inst.write(":CURR:PROT:STAT ON")
                 if ovp_v is not None:
-                    self.psu_inst.write(f":VOLT:PROT:LEV {ovp_v}")
+                    safe_ovp = max(ovp_v, 8.0)
+                    self.psu_inst.write(f":VOLT:PROT:LEV {safe_ovp}")
                 logger.info("PSU protection set: OCP=%s OVP=%s", ocp_a, ovp_v)
             except Exception as e:
                 logger.warning("set_psu_protection failed (non-fatal): %s", e)
