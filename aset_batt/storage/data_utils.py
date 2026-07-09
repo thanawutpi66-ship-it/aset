@@ -35,8 +35,9 @@ def get_app_version() -> str:
         if result.returncode == 0 and result.stdout.strip():
             _app_version_cache = result.stdout.strip()
             return _app_version_cache
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
     _app_version_cache = "unknown"
     return _app_version_cache
 
@@ -77,8 +78,9 @@ def write_session_metadata(csv_path: str, config: Any) -> None:
             try:
                 from aset_batt.core import battery_profiles
                 measured_params = battery_profiles.get_measured_params(product_name)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
         meta = {
             "operator": operator,
@@ -267,8 +269,9 @@ class DataHandler:
         if self.csv_file:
             try:
                 self.csv_file.close()
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             self.csv_file = None
             # R4 (industrial-grade audit): a SHA-256 sidecar (<path>.sha256) lets
             # anyone later verify a session CSV hasn't been edited since the test

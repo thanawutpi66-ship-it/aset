@@ -283,15 +283,7 @@ class StateEstimator:
             self._ecm_calibrated = False
             self._ecm_fit_soc = 50.0
 
-    def set_self_discharge(self, pct_per_day: float) -> None:
-        with self._lock:
-            self.self_discharge_pct_per_day = max(0.0, float(pct_per_day))
 
-    def set_current_offset(self, offset_a: float) -> None:
-        """Manually set the current-sensor zero offset (A, discharge-positive)."""
-        with self._lock:
-            self.current_offset = float(offset_a)
-            self._auto_tare = False
 
     # Un-calibrated packs (before a real HPPC fit) run noticeably higher than the
     # idealized per-cell datasheet r0: connector/contact resistance, cabling, and
@@ -400,41 +392,7 @@ class StateEstimator:
                 # SoC-shape anchor for live rin
                 self._ecm_fit_soc = self.soc if fit_soc is None else float(fit_soc)
 
-    def set_ecm_table(self, table) -> None:
-        """Provide R0/R1/C1 vs SoC (from characterization.build_ecm_table) so the EKF
-        uses SoC-appropriate RC dynamics instead of one fixed fit. Pass None/empty to
-        revert to the single-fit behaviour."""
-        with self._lock:
-            if not table:
-                self.ecm_table = None
-                self._ecm_grid = None
-                return
-            import numpy as np
-            socs = sorted(table.keys())
-            self.ecm_table = table
-            self._ecm_grid = (
-                np.asarray(socs, float),
-                np.asarray([table[s]["r0"] for s in socs], float),
-                np.asarray([table[s]["r1"] for s in socs], float),
-                np.asarray([table[s]["c1"] for s in socs], float),
-            )
-            self._ecm_calibrated = True
-            logger.info("ECM table active: %d SoC points (R0/R1/C1 now SoC-dependent)", len(socs))
 
-    def _ecm_at_soc(self, soc: float):
-        """Interpolate (R0, R1, C1) at the given SoC from the active table."""
-        import numpy as np
-        g = self._ecm_grid
-        return (float(np.interp(soc, g[0], g[1])),
-                float(np.interp(soc, g[0], g[2])),
-                float(np.interp(soc, g[0], g[3])))
-
-    def set_standby_current(self, standby_a: float) -> None:
-        """Set a known idle/rest current offset (A). Default is 0 since the SSR
-        physically disconnects the PSU when not charging — only needed if a
-        specific instrument has a known residual leakage current at rest."""
-        with self._lock:
-            self.standby_current = max(0.0, float(standby_a))
 
     def _ocv_init_var(self, soc: float, temp: float) -> float:
         """SoC covariance to seed an OCV-derived anchor with. On a flat plateau (low
@@ -442,19 +400,6 @@ class StateEstimator:
         correctable; near a knee (steep slope) it is trustworthy → small (±~3%)."""
         slope = self.battery_model.ocv_slope(soc, temp)
         return 225.0 if slope < self.min_ocv_slope else 9.0
-
-    def init_from_voltage(self, voltage: float, temp: float = 25.0) -> None:
-        """Initialize SoC จาก measured OCV (voltage) หลัง rest"""
-        with self._lock:
-            soc = self.battery_model.get_soc_from_ocv(voltage, temp)
-            self._reset_to_soc(soc, soc_var=self._ocv_init_var(soc, temp))
-            logger.info(f"SoC initialized from voltage: {voltage:.3f}V -> {self.soc:.1f}%")
-
-    def set_initial_soc(self, soc: float) -> None:
-        """Set initial SoC ด้วยตนเอง"""
-        with self._lock:
-            self._reset_to_soc(max(0.0, min(100.0, soc)))
-            logger.info(f"Initial SoC set to {self.soc:.1f}%")
 
     def sync_with_ocv(self, voltage: float, temp: float = 25.0) -> float:
         """Force synchronize SoC กับ OCV (ใช้หลัง rest period)"""

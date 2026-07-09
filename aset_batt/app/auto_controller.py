@@ -633,8 +633,9 @@ class AutoController:
         try:
             with self.hw.inst_lock:
                 self.hw.load_inst.write(":INP OFF")
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
         # auto-analyze หลังจบโปรไฟล์ (ถ้าไม่ได้ถูกสั่งหยุดกลางคัน)
         if not self.safety_triggered:
@@ -900,8 +901,9 @@ class AutoController:
         try:
             v0, i0 = self.hw.read_measurements(prefer_load_v=True)
             self._log_sample(v0, i0)   # log-only (cached soc/rin) — no estimator.update()
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
         # Monitor จนกระทั่ง voltage ตกลงถึง cutoff
         start_time = time.time()
@@ -949,8 +951,9 @@ class AutoController:
         try:
             v_end, i_end = self.hw.read_measurements(prefer_load_v=False)
             self._log_sample(v_end, i_end)
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         self._ocv_reset_after_rest("discharge")
 
         # บันทึก test data

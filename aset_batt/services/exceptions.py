@@ -13,14 +13,6 @@ class HardwareError(ASETError):
         self.device = device
         super().__init__(f"Hardware error ({device or 'unknown'}): {message}")
 
-class ConnectionError(HardwareError):
-    """Connection-related errors"""
-    pass
-
-class MeasurementError(HardwareError):
-    """Measurement-related errors"""
-    pass
-
 class SafetyError(ASETError):
     """Safety limit violations"""
     def __init__(self, message: str, parameter: Optional[str] = None, value: Optional[float] = None):
@@ -32,11 +24,4 @@ class SafetyError(ASETError):
 class ConfigurationError(ASETError):
     """Configuration-related errors"""
     pass
-
-class ValidationError(ASETError):
-    """Data validation errors"""
-    pass
-
-class FileOperationError(ASETError):
-    """File operation errors"""
-    pass
+

@@ -304,13 +304,15 @@ class CharacterizeMixin:
         try:
             if self.controller:
                 self.controller.stop_charge()
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         try:
             self.hw.load_off()
             self.hw.psu_off()
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     # ── Peukert k ─────────────────────────────────────────────────────────────
 
@@ -749,8 +751,9 @@ class CharacterizeMixin:
                             if dv_mv < DV_MV_THRESH and elapsed_r >= 300:
                                 v_rest = v_now
                                 break
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                     if not self._char_sleep(ev, 15.0):
                         break
 

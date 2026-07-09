@@ -156,8 +156,9 @@ class SequencesMixin:
                         "[EN 50342-1] selected battery chemistry is "
                         f"{chem.name} — this standard applies to lead-acid only; "
                         "the run will be reported as IEC 61960 instead")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     @Slot(int, str)
     def _slot_cloud_phase(self, step: int, state: str,
@@ -169,8 +170,9 @@ class SequencesMixin:
                 set_cloud_meta(phase=phases[step], test_mode=test_mode, workflow=workflow)
             elif state in ("done", "skip") and step == len(phases) - 1:
                 set_cloud_meta(phase="complete", total_s=0, sub_phase="")
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     def _set_phase_banner_idle(self):
         self._current_test_name = ""
@@ -298,8 +300,9 @@ class SequencesMixin:
         try:
             from aset_batt.storage.cloud_push import set_cloud_meta
             set_cloud_meta(elapsed_s=elapsed_s, total_s=total_s)
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         # G3 (industrial-grade audit): status_progress (status bar, isa101_views.py)
         # mirrors wf_progress so test progress stays visible no matter which tab is
         # active — see its own comment for why.
@@ -733,8 +736,9 @@ class SequencesMixin:
                 self.controller.end_session()   # ปิด session ให้รอบถัดไปเริ่มไฟล์ใหม่แน่ๆ
             self.hw.load_off()
             self.hw.psu_off()
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         self.lbl_wf_status.setText("ยกเลิก")
         self._set_phase_banner_idle()
         self.btn_seq_cancel.setEnabled(False)
@@ -1009,8 +1013,9 @@ class SequencesMixin:
                                 elapsed_ch, _ch_est)
                         # estimated total so the bar/ETA show; clamp so it never reverses past 99%
                         self.sig_phase_progress.emit(elapsed_ch, max(_ch_est, elapsed_ch + 30))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                     if not self._seq_sleep(30.0):
                         break
                 if not self._seq_running.is_set():
@@ -1052,8 +1057,9 @@ class SequencesMixin:
                         self.controller._log_sample(v_r, i_r)
                         self.update_display(v_r, i_r, self.controller.estimator.soc,
                                             self.controller.estimator.rin, self.hw.current_temp)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                     if not self._seq_sleep(10.0):
                         return
                 self.sig_phase_progress.emit(0, 0)
@@ -1091,8 +1097,9 @@ class SequencesMixin:
             try:
                 v3_0, i3_0 = self.hw.read_measurements(prefer_load_v=True)
                 self.controller._log_sample(v3_0, i3_0)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             # Estimate discharge duration from SoC and C-rate (seconds)
             rated2 = self.controller.config.battery.rated_capacity
             _dis_est = int(rated2 / max(i_dis, 0.01) * 3600)
@@ -1238,8 +1245,9 @@ class SequencesMixin:
                     self.controller._log_sample(v_r, 0.0)
                     self.update_display(v_r, 0.0, self.controller.estimator.soc,
                                         self.controller.estimator.rin)
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 if not self._seq_sleep(10.0):
                     break
             self.sig_phase_progress.emit(0, 0)
@@ -1270,8 +1278,9 @@ class SequencesMixin:
             try:
                 v3_0, i3_0 = self.hw.read_measurements(prefer_load_v=True)
                 self.controller._log_sample(v3_0, i3_0)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
@@ -1413,8 +1422,9 @@ class SequencesMixin:
                             _tail_t_hist, _tail_i_hist, ctrl.params.tail_current_a,
                             elapsed_ch, _ch_est)
                     self.sig_phase_progress.emit(elapsed_ch, max(_ch_est, elapsed_ch + 30))
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 if not self._seq_sleep(30.0):
                     break
             if self.controller.monitor_running:   # see the same comment in _auto_sequence_thread
@@ -1448,8 +1458,9 @@ class SequencesMixin:
                     self.controller._log_sample(v_r, i_r)
                     self.update_display(v_r, i_r, self.controller.estimator.soc,
                                         self.controller.estimator.rin, self.hw.current_temp)
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 if not self._seq_sleep(10.0):
                     break
             self.sig_phase_progress.emit(0, 0)
@@ -1510,8 +1521,9 @@ class SequencesMixin:
                 try:
                     from aset_batt.storage.cloud_push import set_cloud_meta
                     set_cloud_meta(sub_phase="relax", cycle_index=cyc, cycle_total=n_cyc)
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 # Trailing rest samples for the upcoming pulse's ECM fit —
                 # identify_ecm_fit() needs to see the actual rest->pulse edge to
                 # locate the step (fit_model._detect_step()), not just the pulse's
@@ -1569,8 +1581,9 @@ class SequencesMixin:
                             self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
                             self.sig_wf_status.emit(f"⛔ {reason}")
                             break
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                     # _seq_sleep (not a bare sleep) so the 5-min "no measurement"
                     # watchdog actually gets checked — a hung hw.read_vi() call used
                     # to freeze this whole loop forever with no way out.
@@ -1600,15 +1613,17 @@ class SequencesMixin:
                 try:
                     v_p0, i_p0 = self.hw.read_measurements(prefer_load_v=True)
                     self.controller._log_sample(v_p0, i_p0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 status(f"HPPC {cyc}/{n_cyc}: PULSE {pulse_s:.0f}s  {i_pulse:.3f} A")
                 try:
                     from aset_batt.storage.cloud_push import set_cloud_meta
                     set_cloud_meta(sub_phase="pulse", cycle_index=cyc, cycle_total=n_cyc,
                                    pulse_current_a=i_pulse)
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 # Buffer this cycle's own pulse curve for a live per-cycle ECM fit
                 # once the pulse ends — see the fit-and-feed block after the loop.
                 # voc = MEDIAN of the trailing relax samples, not just the single last
@@ -1676,8 +1691,9 @@ class SequencesMixin:
                             self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
                             self.sig_wf_status.emit(f"⛔ {reason}")
                             break
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                     # Same ~5 Hz pacing as the relax leg above — see its comment.
                     # Extra important here: R0's t=0 extrapolation depends on having
                     # enough points densely sampled right at the pulse edge, which
@@ -1692,8 +1708,9 @@ class SequencesMixin:
                 try:
                     v_r0, i_r0 = self.hw.read_measurements(prefer_load_v=False)
                     self.controller._log_sample(v_r0, i_r0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 # Achieved-sample-rate instrumentation: on the real rig a pulse leg
                 # designed for 5 Hz (0.2s pacing) measured only ~0.7 Hz — each
                 # iteration's real cost (SCPI round-trip + display + log + cloud) was
@@ -1774,8 +1791,9 @@ class SequencesMixin:
             try:
                 from aset_batt.storage.cloud_push import set_cloud_meta
                 set_cloud_meta(sub_phase="")  # done with pulse/relax cycling
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             self.sig_hppc_seq_wf.emit(3, "done")
             if hppc_safety_tripped:
                 self.sig_alarm.emit(
@@ -1912,8 +1930,9 @@ class SequencesMixin:
                                 _tail_t_hist, _tail_i_hist, ctrl.params.tail_current_a,
                                 elapsed_c, _ch_est)
                         self.sig_phase_progress.emit(elapsed_c, max(_ch_est, elapsed_c + 30))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                     if not self._seq_sleep(30.0):
                         break
                 if self.controller.monitor_running:   # see the same comment in _auto_sequence_thread
@@ -1943,8 +1962,9 @@ class SequencesMixin:
                         self.controller._log_sample(v_r, i_r)
                         self.update_display(v_r, i_r, self.controller.estimator.soc,
                                             self.controller.estimator.rin, self.hw.current_temp)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                     if not self._seq_sleep(10.0):
                         break
                 self.sig_phase_progress.emit(0, 0)
@@ -1966,8 +1986,9 @@ class SequencesMixin:
                 try:
                     v_d0, i_d0 = self.hw.read_measurements(prefer_load_v=True)
                     self.controller._log_sample(v_d0, i_d0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 while self._seq_running.is_set():
                     try:
                         v_d, i_d = self.hw.read_measurements(prefer_load_v=True)

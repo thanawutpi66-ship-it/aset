@@ -383,13 +383,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         splitter.setSizes([350, 830, 360])
         self.setCentralWidget(splitter)
 
-    def _logo(self, filename, h=40):
-        lbl = QLabel()
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
-        pix = QPixmap(path)
-        if not pix.isNull():
-            lbl.setPixmap(pix.scaledToHeight(h, Qt.TransformationMode.SmoothTransformation))
-        return lbl
+
 
     def _pill(self, color):
         return f"background:{color}; color:white; border-radius:3px; padding:5px 12px; font-weight:700; letter-spacing:1px;"
@@ -782,8 +776,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         if getattr(self.hw, "is_esp_connected", False):
             try:
                 self.hw.feed_watchdog()
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         # Direct control (raw PSU/Load jog) has no test/monitor loop of its own by
         # design (see _direct_page's warning — no SoC, no CSV) so nothing else feeds
         # the graph while it's active; piggyback on this 1s tick instead. Read-only —
@@ -803,8 +798,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 soc = getattr(self.estimator, "soc", 0.0) if self.estimator else 0.0
                 rin = getattr(self.estimator, "rin", 0.0) if self.estimator else 0.0
                 self.update_display(v, i_net, soc, rin, self.hw.current_temp)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     def update_status_bar(self):
         self._update_connection_status()
@@ -1118,8 +1114,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 import winsound
                 import threading
                 threading.Thread(target=winsound.Beep, args=(1000, 800), daemon=True).start()
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         elif any(x in m_low for x in ["warn", "⚠", "timeout", "timeout"]):
             event, state = "WARNING", "ACTIVE"
             row_bg, row_fg, evt_fg = "#3D3010", "#E0E3E6", "#FFB700"
@@ -1236,8 +1233,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         try:
             from aset_batt.storage.cloud_push import push_alarm
             push_alarm(event, point)
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
         # Determine if this event needs ACK (ALARM or WARNING only) — GUI-side
         # flash/acknowledge behavior only, independent of the cloud push above.
@@ -1248,8 +1246,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         if event == "ALARM" and hasattr(self.hw, "beep"):
             try:
                 self.hw.beep(1)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         # For SCADA flash: bright = saturated alert, dim = muted background
         if event == "ALARM":
             bright_bg, dim_bg = "#8B0000", "#3D1A1A"
@@ -1670,8 +1669,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             if hasattr(self.hw, "release_instrument_config"):
                 try:
                     self.hw.release_instrument_config()
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             if hasattr(self.hw, "disconnect_instruments"):
                 self.hw.disconnect_instruments()
             if hasattr(self.hw, "disconnect_esp32"):
@@ -1751,8 +1751,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             if self._cloud_svc:
                 self._cloud_svc.stop()
                 self._cloud_svc = None
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     def _on_direct_toggled(self, on: bool):
         if not on:
@@ -1825,8 +1826,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                     set_cloud_meta(phase="discharge", test_mode="MANUAL", workflow="Manual — Direct Load", total_s=0)
                 else:
                     set_cloud_meta(phase="", test_mode="", workflow="")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         except ValueError:
             if not self._headless:
                 QMessageBox.warning(self, "Load", "Invalid current")
@@ -1887,8 +1889,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             try:
                 from aset_batt.storage.cloud_push import set_cloud_meta
                 set_cloud_meta(phase="charge", test_mode="MANUAL", workflow=f"Manual — {mode}", total_s=0)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     def _on_stop_charge(self):
         if self.controller:
@@ -1897,8 +1900,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             try:
                 from aset_batt.storage.cloud_push import set_cloud_meta
                 set_cloud_meta(phase="", test_mode="", workflow="")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     def _on_ocv_calibrate(self):
         """ปิด PSU+Load แล้วรอให้แรงดันนิ่ง (ΔV/Δt criterion) ก่อนคำนวณ SoC"""
@@ -2040,8 +2044,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         self.buf_t.clear(); self.buf_v.clear(); self.buf_i.clear()
         self.buf_soc.clear(); self.buf_rin.clear(); self.buf_temp.clear()
         self._elapsed_t0 = None
-        os.makedirs("sessions", exist_ok=True)
-        csv_path = os.path.join("sessions", f"test_{datetime.now():%Y%m%d_%H%M%S}.csv")
+        from aset_batt.storage.data_utils import DataHandler
+        csv_path = DataHandler.make_session_path()
         self._last_csv = csv_path
         self.lbl_csv.setText(f"CSV: {csv_path}")
 
@@ -2119,8 +2123,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
                 f"background:{bg}; color:{fg}; border:1px solid {BORDER}; "
                 f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     def _on_test_finished(self, results: dict):
         # Final unthrottled redraw — _slot_display's redraw is rate-limited to ~5 Hz
@@ -2361,13 +2366,15 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         m = re.match(r"test_(.+?)_\d{8}_\d{6}\.csv$", fname)
         return m.group(1) if m else ""
 
-    # ── Session metadata (rename / tag) ──────────────────────────────────
-    _SESSION_META_FILE = os.path.join("sessions", ".session_meta.json")
+    @property
+    def _session_meta_file(self) -> str:
+        from aset_batt.storage.data_utils import DataHandler
+        return os.path.join(os.path.dirname(DataHandler.make_session_path()), ".session_meta.json")
 
     def _load_session_meta(self) -> dict:
         try:
             import json as _json
-            with open(self._SESSION_META_FILE, encoding="utf-8") as f:
+            with open(self._session_meta_file, encoding="utf-8") as f:
                 return _json.load(f)
         except Exception:
             return {}
@@ -2375,8 +2382,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
     def _save_session_meta(self, meta: dict):
         try:
             import json as _json
-            os.makedirs("sessions", exist_ok=True)
-            with open(self._SESSION_META_FILE, "w", encoding="utf-8") as f:
+            from aset_batt.storage.data_utils import DataHandler
+            os.makedirs(os.path.dirname(DataHandler.make_session_path()), exist_ok=True)
+            with open(self._session_meta_file, "w", encoding="utf-8") as f:
                 _json.dump(meta, f, indent=2, ensure_ascii=False)
         except Exception as e:
             self._log_alarm(f"session meta save failed: {e}")
@@ -2422,7 +2430,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
         if not hasattr(self, "lst_sessions"):
             return
         self.lst_sessions.clear()
-        logs_dir = "sessions"
+        from aset_batt.storage.data_utils import DataHandler
+        logs_dir = os.path.dirname(DataHandler.make_session_path())
         if not os.path.isdir(logs_dir):
             return
         meta = self._load_session_meta()
@@ -2458,23 +2467,27 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             self._on_analyze_csv()
 
     def _on_toggle_logging(self):
-        if self.data is None:
+        if self.controller is None:
             return
-        if self.data.is_recording:
-            self.data.stop_logging()
+        if getattr(self.controller, "monitor_running", False):
+            self.controller.stop_monitor()
+            if self.data and self.data.is_recording:
+                self.data.stop_logging()
+            self.controller.start_live_readback()
             self.btn_log.setText("START DATA LOGGING")
             self._refresh_session_list()
         else:
-            from aset_batt.storage.data_utils import DataHandler, write_session_metadata
-            csv_path = DataHandler.make_session_path()
-            ok, msg = self.data.start_logging(csv_path)
-            if ok:
-                write_session_metadata(csv_path, self.config)   # R3: audit trail
-                self.btn_log.setText("STOP DATA LOGGING")
-                self._last_csv = csv_path
-                self.lbl_csv.setText(f"CSV: {os.path.basename(csv_path)}")
-            elif not self._headless:
-                QMessageBox.critical(self, "Logging", msg)
+            if not getattr(self.hw, "is_connected", False):
+                if not self._headless:
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self, "Logging", "Connect hardware first")
+                return
+            self._ensure_battery_sn()
+            self.controller.start_monitor(reuse_session=False)
+            self.btn_log.setText("STOP DATA LOGGING")
+            if self.data and self.data.current_path:
+                self._last_csv = self.data.current_path
+                self.lbl_csv.setText(f"CSV: {os.path.basename(self.data.current_path)}")
 
     def _on_pdf_report(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save PDF Report", "battery_report.pdf", "PDF (*.pdf)")
@@ -2511,7 +2524,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             import matplotlib.pyplot as plt
             from aset_batt.acquisition.analysis import analyze_csv_mp, profile_from_config
 
-            logs_dir = "sessions"
+            from aset_batt.storage.data_utils import DataHandler
+            logs_dir = os.path.dirname(DataHandler.make_session_path())
             if not os.path.isdir(logs_dir):
                 return
             files = sorted(
@@ -2567,8 +2581,9 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, QMainWindow
             matplotlib.use("Qt5Agg")
             import matplotlib.pyplot as plt
             import csv as _csv
+            from aset_batt.storage.data_utils import DataHandler
 
-            logs_dir = "sessions"
+            logs_dir = os.path.dirname(DataHandler.make_session_path())
             if not os.path.isdir(logs_dir):
                 return
             files = sorted(

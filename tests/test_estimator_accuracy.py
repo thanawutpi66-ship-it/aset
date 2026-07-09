@@ -24,11 +24,11 @@ class TestEffectiveCapacity(unittest.TestCase):
         # Same Ah removed → an aged cell (lower SoH) loses a larger SoC fraction.
         e_new = StateEstimator(10.0, BatteryModel("LiFePO4"))
         e_new.use_ekf = False               # isolate coulomb counting
-        e_new.set_initial_soc(100.0)
+        e_new._reset_to_soc(100.0)
         e_aged = StateEstimator(10.0, BatteryModel("LiFePO4"))
         e_aged.use_ekf = False
         e_aged.set_soh(80.0)
-        e_aged.set_initial_soc(100.0)
+        e_aged._reset_to_soc(100.0)
         # discharge 1A for 1h = 1 Ah on a steep-ish voltage (avoid OCV correction noise)
         e_new.update(3.30, 1.0, dt=3600)
         e_aged.update(3.30, 1.0, dt=3600)
@@ -40,8 +40,8 @@ class TestCurrentTare(unittest.TestCase):
     def test_manual_offset_applied(self):
         e = StateEstimator(10.0, BatteryModel("LiFePO4"))
         e.use_ekf = False
-        e.set_current_offset(0.5)           # sensor reads 0.5 A high
-        e.set_initial_soc(50.0)
+        e.current_offset = 0.5           # sensor reads 0.5 A high
+        e._reset_to_soc(50.0)
         # true current 0 (reads 0.5); offset removes it → near-zero coulomb movement
         e.update(3.28, 0.5, dt=3600)
         self.assertAlmostEqual(e.ah_accumulated, 0.0, delta=0.05)
@@ -51,7 +51,7 @@ class TestLiveSoH(unittest.TestCase):
     def test_soh_from_full_to_empty_sweep(self):
         m = BatteryModel("LeadAcid", 2.0, 6, 1)
         e = StateEstimator(rated_capacity=5.3, battery_model=m)
-        e.set_initial_soc(100.0)
+        e._reset_to_soc(100.0)
         e._cap_counting = True               # simulate a 100% anchor just fired
         e._cap_counter_ah = 4.0              # ~4.0 Ah delivered over the full sweep
         # now force the empty anchor by feeding a low voltage at small current —
@@ -85,7 +85,7 @@ class TestAblationFlags(unittest.TestCase):
         # ramped current: trapezoid ≠ rectangular. First step seeds with no history.
         e = StateEstimator(10.0, BatteryModel("LiFePO4"))
         e.use_ekf = False
-        e.set_initial_soc(50.0)
+        e._reset_to_soc(50.0)
         e.update(3.30, 0.0, dt=10.0)     # seed _last_current = 0
         before = e.ah_accumulated
         e.update(3.30, 2.0, dt=3600.0)   # trapezoid: (0+2)/2*1h = 1 Ah, not 2
@@ -113,7 +113,7 @@ class TestEKF(unittest.TestCase):
             e = StateEstimator(5.3, m)
             e.use_peukert = use_peukert
             e.use_ocv = False           # isolate the coulomb/Peukert path in the EKF
-            e.set_initial_soc(90.0)
+            e._reset_to_soc(90.0)
             for _ in range(60):         # high-rate discharge where Peukert bites
                 e.update(12.0, 5.3, dt=10.0, temp=25.0)
             return e.soc

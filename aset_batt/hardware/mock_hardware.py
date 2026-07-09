@@ -170,8 +170,7 @@ class MockHardwareController:
         ripple = 0.005 * math.sin(time.time() - self._t_start)
         return round(self._sim_v + ripple, 4), round(psu_i, 4), round(load_i, 4)
 
-    def read_load_current(self):
-        return self._load_current
+
 
     def transient_dcir_measure(self, current_target, delta_I):
         return 0.05  # mock DCIR (Ohm)

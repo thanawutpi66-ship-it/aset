@@ -94,8 +94,9 @@ class HardwareController:
             if inst is not None:
                 try:
                     inst.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 setattr(self, attr, None)
         self.is_connected = False
         self.connect_error = ""
@@ -122,8 +123,9 @@ class HardwareController:
             try:
                 psu.close()
                 load.close()
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             msg = f"PSU ที่พอร์ต {psu_port} ไม่ตอบสนอง — เลือกพอร์ตผิดหรืออุปกรณ์ไม่พร้อม\n({e})"
             self.connect_error = msg
             raise RuntimeError(msg)
@@ -135,8 +137,9 @@ class HardwareController:
             try:
                 psu.close()
                 load.close()
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             msg = f"Load ที่พอร์ต {load_port} ไม่ตอบสนอง — เลือกพอร์ตผิดหรืออุปกรณ์ไม่พร้อม\n({e})"
             self.connect_error = msg
             raise RuntimeError(msg)
@@ -155,12 +158,14 @@ class HardwareController:
         # Safe idle state after connect: ensure PSU output and Load input are OFF.
         try:
             self.psu_inst.write(":OUTP OFF")
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         try:
             self.load_inst.write(":INP OFF")
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         self._psu_output_on = False
 
         # NOTE: calibrate_psu_zero() is NOT called here because at this point the
@@ -527,45 +532,7 @@ class HardwareController:
             except Exception as e:
                 logger.warning("beep() failed (non-fatal): %s", e)
 
-    def set_psu_resistance_emulation(self, ohms: float) -> str:
-        """Make the PSW's CV output sag under load as V = V_set - I*ohms, i.e.
-        emulate a "battery" with a precisely known internal resistance — verified
-        syntax: [SOURce:]RESistance[:LEVel][:IMMediate][:AMPLitude] {<NRf>}, range
-        0.000-1.975Ω on the PSW 80-40.5. This is a *modifier* on the CV output, not
-        a separate mode (OUTPut:MODE only selects CV/CC response-speed variants) —
-        setting 0.000 restores an ideal low-impedance source.
 
-        Intended use: a self-calibration check — dial in a known ohms value, pulse
-        it with the e-Load, and run the SAME analyze_series()/identify_ecm_fit()
-        pipeline used on real batteries; the measured R0/DCIR should land on the
-        known value, which validates harness correction + sense wiring + the ECM
-        fit against ground truth without needing an external bench ACIR meter.
-        See scripts/self_calibration_test.py. Returns the SCPI error-queue message
-        on rejection (e.g. out of range), else ""."""
-        if self.psu_inst is None:
-            return ""
-        with self.inst_lock:
-            try:
-                self.psu_inst.write(f":RES {ohms}")
-            except Exception as e:
-                logger.warning("set_psu_resistance_emulation failed (non-fatal): %s", e)
-                return str(e)
-            return self._check_scpi_error(self.psu_inst, "PSU")
-
-    def set_psu_averaging(self, level: str = "LOW") -> None:
-        """PSU measurement smoothing — verified syntax: SENSe:AVERage:COUNt
-        {LOW|MIDDle|HIGH}. Deliberately PSU-only: the PSU is only the active
-        source during CHARGE (steady-state, not transient-critical), whereas the
-        Load drives HPPC pulses where extra smoothing would blur exactly the fast
-        edge R0's t=0 extrapolation depends on — so this is never applied to the
-        Load. Non-fatal."""
-        if self.psu_inst is None:
-            return
-        with self.inst_lock:
-            try:
-                self.psu_inst.write(f"SENS:AVER:COUN {level}")
-            except Exception as e:
-                logger.warning("set_psu_averaging failed (non-fatal): %s", e)
 
     def load_on(self):
         with self.inst_lock:
@@ -603,8 +570,9 @@ class HardwareController:
                     try:
                         i = float(self.psu_inst.query("MEAS:CURR?").strip())
                         samples.append(i)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                     time.sleep(0.1)
             except Exception as e:
                 logger.error(f"calibrate_psu_zero error: {e}")
@@ -668,12 +636,7 @@ class HardwareController:
                 v = v_psu
             return v, i_psu, i_load
 
-    def read_load_current(self):
-        with self.inst_lock:
-            try:
-                return float(self.load_inst.query("MEAS:CURR?").strip())
-            except Exception:
-                return 0.0
+
 
     def transient_dcir_measure(self, current_target, delta_I):
         """วัด DCIR จาก transient voltage step"""
@@ -724,8 +687,9 @@ class HardwareController:
         if self.esp_serial:
             try:
                 self.esp_serial.close()
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     def set_ssr(self, state: bool) -> bool:
         """Switch the SSR safety-cutoff relay on ESP32 GPIO16 ON/OFF.
@@ -838,14 +802,16 @@ class HardwareController:
                 if self.psu_inst:
                     self.psu_inst.write(":OUTP OFF")
                     self.psu_inst.close()
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             try:
                 if self.load_inst:
                     self.load_inst.write(":INP OFF")
                     self.load_inst.close()
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             self.psu_inst = None
             self.load_inst = None
 

@@ -93,6 +93,7 @@ class AcquisitionWorker(QObject):
             # coulomb integral. Timestamp is captured AT the measurement, not before it.
             t0 = time.perf_counter()
             last_t = t0
+            last_flush_t = t0
             last_i = 0.0                               # discharge-positive
             while True:
                 with QMutexLocker(self._ctrl):
@@ -147,6 +148,11 @@ class AcquisitionWorker(QObject):
                                  f"{soc:.2f}", f"{temp:.2f}", f"{self.cap_ah:.5f}",
                                  self.cfg.mode.value])
                 self.telemetry.emit(row)
+                
+                now = time.perf_counter()
+                if now - last_flush_t >= 1.0:
+                    f.flush()
+                    last_flush_t = now
 
                 if self.cfg.mode == OperationMode.CC_DISCHARGE and v <= p.cutoff_v:
                     self.alarm.emit("INFO", "Discharge reached cut-off voltage — test complete")
@@ -163,8 +169,9 @@ class AcquisitionWorker(QObject):
             with QMutexLocker(self._io):
                 try:
                     self.backend.safe_shutdown()
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             f.close()
 
         results = self._post_process(time_hist, i_hist, v_hist, q_hist, t_hist, p)
