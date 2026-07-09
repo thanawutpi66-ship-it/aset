@@ -546,11 +546,19 @@ class BaseSequenceMixin:
     def _seq_sleep(self, seconds: float) -> bool:
         """Sleep แบบ interruptible — คืน True ถ้าครบเวลา, False ถ้า cancel หรือ watchdog หมดเวลา"""
         import time
+        from PySide6.QtCore import QEventLoop, QTimer
+
         t_end = time.time() + seconds
+        loop = QEventLoop()
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(loop.quit)
+        
         while self._seq_running.is_set():
             left = t_end - time.time()
             if left <= 0:
                 return True
+                
             # watchdog: abort if no measurement update for _WATCHDOG_TIMEOUT_S
             last = getattr(self, "_seq_last_meas_time", 0.0)
             if last and (time.time() - last) > self._WATCHDOG_TIMEOUT_S:
@@ -559,7 +567,13 @@ class BaseSequenceMixin:
                 self.sig_alarm.emit(f"[SAFETY] {reason} — sequence ถูกยกเลิก")
                 self.sig_wf_status.emit(f"⛔ {reason}")
                 return False
-            time.sleep(min(0.3, left))
+                
+            # Sleep for at most 300ms using QEventLoop, to allow cancellation checks
+            sleep_ms = int(min(0.3, left) * 1000)
+            if sleep_ms > 0:
+                timer.start(sleep_ms)
+                loop.exec()
+                
         return False
 
     def _on_seq_cancel(self):

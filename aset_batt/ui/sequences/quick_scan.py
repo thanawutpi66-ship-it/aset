@@ -75,7 +75,6 @@ from aset_batt.ui.report_html import format_seq_result, build_results_html
 
 logger = logging.getLogger(__name__)
 
-
 # EN 50342-1 (SLI lead-acid) Cn capacity-test conditions this rig can verify.
 # The standard defines capacity at the n-hour reference rate In = Cn/n (this
 # project's lead-acid ratings are C10 — see ChemistryProfile.peukert_hr), with a
@@ -86,7 +85,6 @@ logger = logging.getLogger(__name__)
 _EN50342_END_V_PER_CELL = 1.75
 _EN50342_RATE_TOL = 0.15       # ±15% around In still counts as the reference rate
 _EN50342_END_V_TOL = 0.06      # V/cell tolerance on the configured cutoff
-
 
 def en50342_capacity_conditions(chemistry: str, c_test: float, pack_min_v: float,
                                 cells_series: int, skip_charge: bool,
@@ -122,7 +120,6 @@ def en50342_capacity_conditions(chemistry: str, c_test: float, pack_min_v: float
                           "battery before discharge")
     return True, violations
 
-
 class QuickScanMixin:
     # ---- Workflow guide slots -----------------------------------------------
 
@@ -132,31 +129,14 @@ class QuickScanMixin:
     _WF_PAGE_MAP = {0: 0, 1: 1, 2: 2, 3: 3, 4: 0}
     _WF_EN50342_INDEX = 4
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    # G8 (industrial-grade audit): a momentary staleness blip only warns — a hard
-    # stop on that alone would be its own false-trip hazard. Sustained staleness
-    # beyond this means OTP protection has genuinely been blind for real time, not
-    # a glitch — see the escalation branch below. Mirrors AutoController's own
-    # _TEMP_STALE_TRIP_S.
-    _SEQ_TEMP_STALE_TRIP_S = 60.0
-
-
+    # _SEQ_TEMP_STALE_TRIP_S and _WATCHDOG_TIMEOUT_S are declared once, on
+    # BaseSequenceMixin (base.py) — it's listed first in SequencesMixin's MRO
+    # (see sequences/__init__.py), so self._SEQ_TEMP_STALE_TRIP_S/
+    # self._WATCHDOG_TIMEOUT_S always resolve there regardless of which
+    # mixin's method does the lookup. This mixin used to re-declare its own
+    # copies of both constants — never actually read (shadowed by
+    # BaseSequenceMixin's earlier MRO position), just a silent trap for
+    # anyone who edited one copy expecting it to take effect.
 
     def _on_quick_scan(self):
         if self.controller is None or not getattr(self.hw, "is_connected", False):
@@ -186,23 +166,6 @@ class QuickScanMixin:
         self._seq_common_start("btn_quick_scan", "Scanning…")
         import threading
         threading.Thread(target=self._quick_scan_thread, daemon=True).start()
-
-
-
-    # ── Safety helpers ───────────────────────────────────────────────────────
-    _WATCHDOG_TIMEOUT_S: int = 300   # 5 min without a measurement → abort
-
-
-
-
-
-
-
-
-
-
-
-
 
     def _quick_scan_thread(self):
         """Quick Scan: OCV → REST 5min → Discharge 1C → Analyze  (~1.5h)
@@ -358,5 +321,4 @@ class QuickScanMixin:
     # ---- HPPC full-sequence thread ----------------------------------------
 
     # ---- Cycle Life test thread -------------------------------------------
-
 

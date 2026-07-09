@@ -242,6 +242,22 @@ class UiUpdaterMixin:
         self._update_connection_status()
     def handle_safety_trigger(self, reason):
         self.sig_safety.emit(str(reason))
+    def show_message(self, title: str, message: str, msg_type: str = "info"):
+        """Wired onto UIEventHandler (see app_bootstrapper._wire_runtime) as the
+        real handler for EventType.SHOW_MESSAGE — replaces a leftover tkinter
+        messagebox call that silently swallowed operator-facing safety warnings
+        (OCV out-of-range, sustained ESP32 temp-stale trip, monitor loop fatal
+        error) in this PySide6-only app: QtRootShim._run caught the tkinter
+        exception and only logged it, so the popup never appeared."""
+        self._log_alarm(f"[{msg_type.upper()}] {title}: {message}")
+        if self._headless:
+            return
+        if msg_type == "error":
+            QMessageBox.critical(self, title, message)
+        elif msg_type == "warning":
+            QMessageBox.warning(self, title, message)
+        else:
+            QMessageBox.information(self, title, message)
     def handle_profile_completed(self, data):
         self.sig_profile_done.emit(data)
     def handle_analysis_completed(self, result):

@@ -5,9 +5,7 @@ Advanced State Estimation: SoC estimation ด้วย Coulomb counting + OCV co
 import time
 import threading
 from functools import wraps
-from aset_batt.core.battery_model import (
-    BatteryModel, is_plausible_r0, MAX_STEP_EDGE_LATENCY_S, STEADY_STATE_MAX_SPREAD_V,
-)
+from aset_batt.core.battery_model import BatteryModel
 from aset_batt.core.soc_ekf import SoCEKF
 import logging
 
@@ -170,16 +168,10 @@ class StateEstimator:
     def _default_min_rest_s(self) -> float:
         """Minimum seconds the current must be near standby before OCV correction fires.
         LFP plateau relaxation is slow; firing too early anchors on polarized voltage."""
-        # battery_model.chemistry is already canonically resolved (via
-        # battery_profiles.get_chemistry() in BatteryModel.__init__), so this
-        # reads the resolved name directly instead of re-deriving it with an
-        # ad-hoc substring match on the raw battery_type string — the same
-        # inconsistency analysis.py's _cca_cutoff_v() and sequences/*.py's
-        # en50342_capacity_conditions() had already moved away from.
-        chem = getattr(self.battery_model.chemistry, "name", "")
-        if chem == "LiFePO4":
+        chem = getattr(self.battery_model, "battery_type", "").lower()
+        if "lifepo" in chem or "lfp" in chem:
             return 120.0    # 2 minutes: partial relaxation OK for periodic correction
-        if chem == "LeadAcid":
+        if "lead" in chem:
             return 60.0
         return 30.0         # Li-ion / LiPO: faster kinetics
 
@@ -201,8 +193,8 @@ class StateEstimator:
         """
         if current >= 0 or not self.use_eta:
             return 1.0
-        chem = getattr(self.battery_model.chemistry, "name", "")
-        if chem == "LeadAcid":
+        chem = getattr(self.battery_model, "battery_type", "").lower()
+        if "lead" in chem:
             if soc < 75.0:
                 return 0.97
             if soc < 90.0:
@@ -328,15 +320,13 @@ class StateEstimator:
     # to count as a real step, not sensor jitter/noise.
     _STEP_MIN_DI_A = 0.15
     # Post-edge sample must arrive within this long of the edge, or the voltage
-    # has already relaxed into the RC region. Shared with
-    # acquisition.analysis._DCIR_MAX_STEP_DT (the batch/offline method reading
-    # the same physical rig) via battery_model.MAX_STEP_EDGE_LATENCY_S.
-    _STEP_MAX_DT_S = MAX_STEP_EDGE_LATENCY_S
+    # has already relaxed into the RC region — same idea (and value) as
+    # acquisition.analysis._DCIR_MAX_STEP_DT for the batch/offline method.
+    _STEP_MAX_DT_S = 0.5
     # The "before" reference itself must look like a genuine settled level, not
-    # already mid-transition. Shared with
-    # acquisition.analysis._VI_LEVEL_MAX_SPREAD_V via
-    # battery_model.STEADY_STATE_MAX_SPREAD_V.
-    _STEP_REF_MAX_SPREAD_V = STEADY_STATE_MAX_SPREAD_V
+    # already mid-transition — same order of magnitude as
+    # acquisition.analysis._VI_LEVEL_MAX_SPREAD_V's plateau-spread gate.
+    _STEP_REF_MAX_SPREAD_V = 0.15
     _STEP_BUF_LEN = 3
 
     def _detect_step_r0(self, voltage: float, current: float, dt: float, temp: float) -> None:
@@ -356,13 +346,26 @@ class StateEstimator:
                 if abs(di) >= self._STEP_MIN_DI_A and dt <= self._STEP_MAX_DT_S:
                     temp_mult = self.battery_model.temp_rin_multiplier(temp) if self.use_temp else 1.0
                     r0 = abs((voltage - v_ref) / di) / max(1e-6, temp_mult)
-                    # Sanity band RELATIVE to the chemistry's own baseline, not a
-                    # bare absolute one — see battery_model.is_plausible_r0()'s
-                    # docstring for the two real failure modes this guards
-                    # against (a fixed ceiling alone accepted a CV-taper
-                    # polarisation edge; a bare relative band alone accepted a
-                    # stale-voltage-readback ΔV=0 edge).
-                    if is_plausible_r0(r0, self.battery_model.base_rin):
+                    # Sanity band RELATIVE to the chemistry's own baseline, not an
+                    # absolute one. A fixed <5.0 Ω ceiling accepted real garbage:
+                    # replaying an actual charge log, the charge-END edge (CV hold
+                    # 14.4 V → PSU off) computed "R0 = 4.83 Ω" — ΔI was only the
+                    # 0.16 A tail current while ΔV was ~0.78 V of collapsing CV
+                    # overpotential/surface charge, i.e. polarisation relaxation,
+                    # not an ohmic drop at all — and poisoned the EKF with it. Any
+                    # step whose implied R0 is far outside [0.2×, 6×] of base_rin
+                    # is physically a polarisation artifact or quantisation noise,
+                    # not a resistance measurement (6× still admits a REJECT-grade
+                    # pack at 2.5× baseline with margin).
+                    base = max(1e-4, float(self.battery_model.base_rin))
+                    # Absolute 5.0 Ω ceiling mirrors battery_profiles.
+                    # get_measured_params()'s own plausible-pack-resistance bound —
+                    # without it, a future chemistry/pack with an unusually large
+                    # base_rin could let 6×base_rin exceed 5 Ω here while that
+                    # static validator would still reject the same value, silently
+                    # decoupling the two layers this comment used to say were
+                    # intentionally mirrored.
+                    if 0.2 * base <= r0 <= min(6.0 * base, 5.0):
                         if self.use_ekf:
                             ekf = self._ensure_ekf()
                             ekf.set_rc(r0, ekf.R1, ekf.C1)
@@ -431,214 +434,317 @@ class StateEstimator:
     # Main update
     # ------------------------------------------------------------------
 
-    def _tare_current(self, current: float) -> float:
-        if self._auto_tare and abs(current - self.standby_current) < self.static_current_threshold:
-            self._tare_sum += (current - self.standby_current)
-            self._tare_n += 1
-            if self._tare_n >= 20:
-                self.current_offset = max(-0.5, min(0.5, self._tare_sum / self._tare_n))
-                self._tare_sum = 0.0
-                self._tare_n = 0
-        return current - self.current_offset
-
-    def _update_coulomb_counting_and_rest(self, cur: float, dt: float) -> tuple[float, float, float]:
-        i_eff = cur if self._last_current is None else 0.5 * (cur + self._last_current)
-        self._last_current = cur
-        eta = self._coulomb_eta(self.soc, i_eff)
-        dah = i_eff * (dt / 3600.0)
-
-        if cur > 0.05:
-            self._peukert_sustain_s += dt
-        else:
-            self._peukert_sustain_s = 0.0
-
-        if i_eff < 0:
-            dah *= eta
-        else:
-            if self._peukert_sustain_s >= self._peukert_min_sustain_s:
-                dah = self._peukert_dah(i_eff, dah)
-
-        if self.self_discharge_pct_per_day > 0.0:
-            dah += (self.self_discharge_pct_per_day / 100.0) * self.effective_capacity() * (dt / 86400.0)
-        self.ah_accumulated += dah
-
-        if abs(cur - self.standby_current) < self.static_current_threshold:
-            self._rested_s += dt
-        else:
-            self._rested_s = 0.0
-
-        if self._cap_counting and i_eff > 0:
-            self._cap_counter_ah += i_eff * (dt / 3600.0)
-
-        cap = self.effective_capacity()
-        soc_cc = self.soc_initial - (self.ah_accumulated / cap) * 100.0
-        return i_eff, dah, max(0.0, min(100.0, soc_cc))
-
-    def _apply_endpoint_anchors(self, voltage: float, cur: float, dt: float) -> float:
-        cp = self.battery_model.charge_profile
-        s  = self.battery_model.series_cells
-        full_v_cell = cp.cv_voltage_per_cell or cp.absorption_voltage_per_cell
-        
-        # 100% anchor
-        if full_v_cell > 0:
-            anchor_v_full = full_v_cell * s * 0.986
-            anchor_i_tail = max(0.25, self.rated_capacity * cp.tail_current_c_rate * 1.5)
-            full_anchor_cond = (cur < 0 and voltage >= anchor_v_full and abs(cur) <= anchor_i_tail and self.soc < 98.0)
-            self._full_anchor_sustain_s = self._full_anchor_sustain_s + dt if full_anchor_cond else 0.0
-            if full_anchor_cond and self._full_anchor_sustain_s >= self._anchor_min_sustain_s:
-                logger.info("Endpoint anchor -> 100%%: %.3fV (>=%.3f) I=%.3fA tail=%.3fA", voltage, anchor_v_full, cur, anchor_i_tail)
-                self._reset_to_soc(100.0, start_settle_window=True)
-                self._cap_counting = True
-                self._cap_counter_ah = 0.0
-                return 100.0
-
-        # 0% anchor
-        anchor_v_empty = self.battery_model.get_ocv_from_soc(0.0)
-        anchor_i_max = self.rated_capacity * 2.0
-        ocv_est = voltage + cur * self.rin if cur > 0 else voltage
-        zero_anchor_cond = (cur > 0 and cur <= anchor_i_max and ocv_est <= anchor_v_empty * 1.01 and self.soc > 2.0)
-        self._zero_anchor_sustain_s = self._zero_anchor_sustain_s + dt if zero_anchor_cond else 0.0
-        if zero_anchor_cond and self._zero_anchor_sustain_s >= self._anchor_min_sustain_s:
-            logger.info("Endpoint anchor -> 0%%: est.OCV %.3fV (<=%.3f) meas=%.3fV I=%.3fA", ocv_est, anchor_v_empty, voltage, cur)
-            if self._cap_counting and self._cap_counter_ah > 0.30 * self.rated_capacity:
-                self.measured_capacity_ah = self._cap_counter_ah
-                self.soh = max(0.0, min(120.0, self._cap_counter_ah / self.rated_capacity * 100.0))
-                self.battery_model.set_aging_from_soh(self.soh)
-                logger.info("Live SoH <- full->empty sweep: %.3f Ah / %.3f rated = %.1f%%", self._cap_counter_ah, self.rated_capacity, self.soh)
-            self._cap_counting = False
-            self._reset_to_soc(0.0, start_settle_window=True)
-            return 0.0
-            
-        return None
-
-    def _fuse_ekf(self, voltage: float, cur: float, i_eff: float, dah: float, dt: float, t_use: float, soc_cc: float) -> dict:
-        ekf = self._ensure_ekf()
-        s = self.battery_model.series_cells
-        r0_use = ekf.R0
-        if self.ecm_table is not None:
-            r0s, r1s, c1s = self._ecm_at_soc(ekf.soc)
-            ekf.set_rc(r0s, r1s, c1s)
-            r0_use = r0s
-            
-        cap = self.effective_capacity()
-        soc_delta = dah / cap * 100.0 if cap > 0 else 0.0
-        ekf.predict(i_eff, dt, soc_delta)
-        self.soc = max(0.0, min(100.0, ekf.soc))
-        
-        if self.use_ocv:
-            direction = 0 if abs(cur) < 0.05 else (-1 if cur > 0 else 1)
-            ocv_pack = self.battery_model.get_ocv_from_soc(ekf.soc, t_use, direction)
-            docv = self.battery_model.ocv_slope(ekf.soc, t_use) * s
-            
-            import time
-            still_settling = time.monotonic() < self._anchor_settle_until
-            r_override = ekf.R * self._anchor_settle_r_mult if still_settling else None
-            
-            r0_confirmed = self._r0_calibrated or self._ecm_calibrated
-            uncalibrated_and_active = (not r0_confirmed and abs(cur - self.standby_current) >= self.static_current_threshold)
-            near_rest = abs(cur - self.standby_current) < self.static_current_threshold
-            surface_charged = (near_rest and self.battery_model.ocv_out_of_range_mv(voltage, t_use) > 0.0)
-            still_polarised = near_rest and self._rested_s < self._min_rest_s
-            
-            if not uncalibrated_and_active and not surface_charged and not still_polarised:
-                ekf.update(voltage, cur, ocv_pack, docv, r0_use, r_override=r_override)
-                self.soc = max(0.0, min(100.0, ekf.soc))
-                
-        self.soc_filtered = self.soc
-        self.soc_std = float(max(0.0, float(ekf.P[0, 0])) ** 0.5)
-        
-        temp_mult = self.battery_model.temp_rin_multiplier(t_use) if self.use_temp else 1.0
-        if self.ecm_table is None:
-            soc_coeff = float(self.battery_model.rin_params.get("soc_coeff", 0.0))
-            shape_now = 1.0 + soc_coeff * abs(self.soc - 50.0)
-            shape_fit = 1.0 + soc_coeff * abs(self._ecm_fit_soc - 50.0)
-            temp_mult *= shape_now / max(1e-6, shape_fit)
-        self.rin = (ekf.R0 + ekf.R1) * temp_mult
-        
-        return {
-            "soc": self.soc,
-            "soc_std": self.soc_std,
-            "soh": self.soh,
-            "rin": self.rin,
-            "rin_calibrated": self._ecm_calibrated,
-            "ah_accumulated": self.ah_accumulated,
-        }
-
-    def _fallback_ocv_correction(self, voltage: float, cur: float, t_use: float, soc_cc: float) -> dict:
-        import time
-        now = time.monotonic()
-        if self.use_ocv and abs(cur - self.standby_current) < self.static_current_threshold:
-            self.last_static_voltage = voltage
-            ocv_voltage = voltage + self.standby_current * self.rin
-            ocv_soc = self.battery_model.get_soc_from_ocv(ocv_voltage, t_use)
-            slope = self.battery_model.ocv_slope(ocv_soc, t_use)
-            drift = abs(self.soc_filtered - ocv_soc)
-            steep = slope >= 2.0 * self.min_ocv_slope
-            periodic = (now - self.last_ocv_correction_time) >= self.ocv_correction_interval
-            
-            if (self._rested_s >= self._min_rest_s and slope >= self.min_ocv_slope
-                    and self.battery_model.ocv_out_of_range_mv(ocv_voltage, t_use) <= 0.0
-                    and (steep or (periodic and drift > 3.0))):
-                w = 0.9 if steep else 0.8
-                corrected = w * ocv_soc + (1.0 - w) * soc_cc
-                logger.info("OCV %s: CC=%.1f%% OCV=%.1f%% slope=%.4f -> %.1f%%",
-                            "endpoint-reset" if steep else "correction",
-                            soc_cc, ocv_soc, slope, corrected)
-                self.soc_filtered = corrected
-                self.soc_initial = corrected
-                self.ah_accumulated = 0.0
-                soc_cc = corrected
-                self.last_ocv_correction_time = now
-                self._rested_s = 0.0
-        else:
-            self.last_static_voltage = None
-
-        self.soc_filtered = (1 - self.alpha) * self.soc_filtered + self.alpha * soc_cc
-        self.soc = max(0.0, min(100.0, self.soc_filtered))
-
-        return {
-            "soc": self.soc,
-            "soh": self.soh,
-            "rin": self.rin,
-            "rin_calibrated": True,
-            "ah_accumulated": self.ah_accumulated
-        }
-
     def update(self, voltage: float, current: float, dt: float,
                temp: float = 25.0, measured_dcir: float = 0.0) -> dict:
         """
         Update state estimation
-        
+
         Args:
             voltage: Terminal voltage (V)
             current: Net current (A, positive = discharge)
             dt: Time step (seconds)
             temp: Temperature (°C)
             measured_dcir: Measured DCIR จาก transient test (Ohm)
-            
+
         Returns:
             dict: {soc, soh, rin, ah_accumulated}
         """
         with self._lock:
-            cur = self._tare_current(current)
+            # === 0. Current-offset tare (#4) ===
+            # Remove sensor bias estimated during rest so coulomb counting doesn't drift.
+            # During genuine rest the true current equals the known standby current
+            # (default 0); any deviation is sensor offset. Auto-tare only — never
+            # perturbs an active step.
+            if self._auto_tare and abs(current - self.standby_current) < self.static_current_threshold:
+                self._tare_sum += (current - self.standby_current)
+                self._tare_n += 1
+                if self._tare_n >= 20:
+                    # bounded offset update (±0.5 A guard against a wild reading)
+                    self.current_offset = max(-0.5, min(0.5, self._tare_sum / self._tare_n))
+                    self._tare_sum = 0.0
+                    self._tare_n = 0
+            cur = current - self.current_offset
+            # temperature compensation flag: feed 25°C when disabled (ablation studies)
             t_use = temp if self.use_temp else 25.0
 
+            # Universal single-step R0 detector — see its own docstring. Runs before
+            # the EKF section below so a freshly-detected R0 is already in effect for
+            # THIS sample's own voltage prediction, not just the next one.
             self._detect_step_r0(voltage, cur, dt, t_use)
 
-            i_eff, dah, soc_cc = self._update_coulomb_counting_and_rest(cur, dt)
+            # === 1. Coulomb Counting (SoH-adjusted capacity, #2) ===
+            # current > 0 = discharge → SoC ลดลง ; current < 0 = charge → SoC เพิ่มขึ้น
+            # Trapezoidal integration: ΔQ = (I_k + I_{k-1})/2 · Δt — lower drift than the
+            # rectangular rule at the rig's slow ~5 Hz readback (Nature s41598-026-38281-5).
+            i_eff = cur if self._last_current is None else 0.5 * (cur + self._last_current)
+            self._last_current = cur
+            eta = self._coulomb_eta(self.soc, i_eff)        # 1.0 on discharge
+            dah = i_eff * (dt / 3600.0)
+            # Track continuous-discharge duration for the Peukert sustain gate: resets on
+            # rest or a switch to charging, so an HPPC test's pulse/rest cycles never
+            # accumulate toward it — only a genuinely sustained discharge does. Uses the
+            # RAW tared current (``cur``), not the trapezoidal-smoothed ``i_eff`` — i_eff
+            # takes one extra sample to reflect a current drop to zero, which would delay
+            # detecting "rest" by a sample; the OCV rest-check elsewhere in this method
+            # uses the same raw ``cur`` for the same reason.
+            if cur > 0.05:
+                self._peukert_sustain_s += dt
+            else:
+                self._peukert_sustain_s = 0.0
+            if i_eff < 0:
+                dah *= eta
+            else:
+                # Discharging: Peukert correction (lead-acid), gated on sustained-discharge
+                # duration — an HPPC/DCIR pulse (far shorter than _peukert_min_sustain_s)
+                # never engages it, only a genuinely sustained discharge does. Capacity
+                # counter (raw) below.
+                if self._peukert_sustain_s >= self._peukert_min_sustain_s:
+                    dah = self._peukert_dah(i_eff, dah)
+            # Self-discharge leak (off by default) — acts like a tiny discharge.
+            if self.self_discharge_pct_per_day > 0.0:
+                dah += (self.self_discharge_pct_per_day / 100.0) * \
+                       self.effective_capacity() * (dt / 86400.0)
+            self.ah_accumulated += dah
 
-            anchor_soc = self._apply_endpoint_anchors(voltage, cur, dt)
-            if anchor_soc is not None:
-                soc_cc = anchor_soc
+            # Rest-duration tracking, shared by BOTH estimation paths below. This used
+            # to live only inside the non-EKF fallback branch, so the EKF path had no
+            # polarization gate at all: right after a discharge pulse ends, the model's
+            # V_RC decays with the (possibly default, τ=30 s vs a real ~5 s) time
+            # constant while the real battery recovers faster — every early-relax
+            # sample then reads as a fake positive innovation that ratchets SoC back
+            # up (a real HPPC replay: the pulses' −4.3% coulomb subtraction was erased
+            # back to −1.3% purely by the first minute of each relax leg). The fallback
+            # path always knew to wait _min_rest_s before trusting rest voltage; now
+            # the EKF measurement update honours the same gate.
+            if abs(cur - self.standby_current) < self.static_current_threshold:
+                self._rested_s += dt
+            else:
+                self._rested_s = 0.0
 
+            # live-SoH capacity counter: raw |discharge Ah| since the last 100% anchor
+            if self._cap_counting and i_eff > 0:
+                self._cap_counter_ah += i_eff * (dt / 3600.0)
+
+            # SoC from coulomb counting — divide by *effective* (SoH-adjusted) capacity
+            cap = self.effective_capacity()
+            soc_cc = self.soc_initial - (self.ah_accumulated / cap) * 100.0
+            soc_cc = max(0.0, min(100.0, soc_cc))
+
+            # === 1b. Endpoint Anchors (SoC Restoring Points) ===
+            # Hard reset ที่ขอบบน/ล่าง — แก้ Coulomb counting drift บน flat LFP plateau
+            # ทำงานระหว่าง active charge/discharge (ต่างจาก OCV correction ที่ต้องการกระแส ≈ 0)
+            cp = self.battery_model.charge_profile
+            s  = self.battery_model.series_cells
+            # 100% anchor: ชาร์จ + V ≥ 98.6% ของ CV (~3.60V/cell × 8 = 28.8V สำหรับ LFP 8S)
+            #              AND กระแสชาร์จ taper ถึง tail threshold (แบตใกล้เต็มแล้ว)
+            full_v_cell = cp.cv_voltage_per_cell or cp.absorption_voltage_per_cell
+            if full_v_cell > 0:
+                anchor_v_full = full_v_cell * s * 0.986      # 3.65 × 0.986 × 8 = 28.8V (LFP 8S)
+                # 1.5× headroom + 0.25 A floor so small C-rate rounding never blocks the anchor.
+                anchor_i_tail = max(0.25, self.rated_capacity * cp.tail_current_c_rate * 1.5)
+                full_anchor_cond = (cur < 0 and voltage >= anchor_v_full
+                                   and abs(cur) <= anchor_i_tail and self.soc < 98.0)
+                self._full_anchor_sustain_s = self._full_anchor_sustain_s + dt if full_anchor_cond else 0.0
+                if full_anchor_cond and self._full_anchor_sustain_s >= self._anchor_min_sustain_s:
+                    logger.info("Endpoint anchor → 100%%: %.3fV (≥%.3f) I=%.3fA tail=%.3fA",
+                                voltage, anchor_v_full, cur, anchor_i_tail)
+                    self._reset_to_soc(100.0, start_settle_window=True)
+                    soc_cc = 100.0
+                    # start a fresh full→empty capacity sweep for live SoH
+                    self._cap_counting = True
+                    self._cap_counter_ah = 0.0
+            # 0% anchor: discharge + estimated OCV ≤ OCV ที่ 0% ของแพ็ค (+ 1% hysteresis)
+            #            2.50V/cell × 8 = 20.0V สำหรับ LFP 8S
+            # ชดเชย I·R ก่อนเทียบ: ระหว่างมีโหลด V = OCV − I·R ต่ำกว่า OCV จริงตามธรรมชาติ
+            # (ดู _uvp_floor ใน sequences.py) — เทียบ voltage ดิบตรงๆ เคยทำให้ HPPC pulse
+            # 5A บนแบตที่เพิ่งชาร์จเต็มโดน anchor เป็น 0% ทันที (แรงดันยุบจาก I·R ไม่ใช่
+            # เพราะแบตหมด) ใช้ self.rin (ค่าจากรอบก่อนหน้า — ยังไม่ถูกอัปเดตในรอบนี้ ดู
+            # "=== 2." ด้านล่าง) ประมาณ OCV กลับ และจำกัดไว้แค่กระแส ≤ 2C กัน edge case ที่
+            # Rin ใต้โหลดจริงเพี้ยนไปจากค่าตอนพัก
+            anchor_v_empty = self.battery_model.get_ocv_from_soc(0.0)
+            anchor_i_max = self.rated_capacity * 2.0
+            ocv_est = voltage + cur * self.rin if cur > 0 else voltage
+            zero_anchor_cond = (cur > 0 and cur <= anchor_i_max
+                                and ocv_est <= anchor_v_empty * 1.01 and self.soc > 2.0)
+            self._zero_anchor_sustain_s = self._zero_anchor_sustain_s + dt if zero_anchor_cond else 0.0
+            if zero_anchor_cond and self._zero_anchor_sustain_s >= self._anchor_min_sustain_s:
+                logger.info("Endpoint anchor → 0%%: est.OCV %.3fV (≤%.3f) meas=%.3fV I=%.3fA",
+                            ocv_est, anchor_v_empty, voltage, cur)
+                # live SoH from a full→empty sweep (#1): measured capacity ÷ rated.
+                # Require a near-full sweep (> 30% rated) so partial discharges don't corrupt SoH.
+                if self._cap_counting and self._cap_counter_ah > 0.30 * self.rated_capacity:
+                    self.measured_capacity_ah = self._cap_counter_ah
+                    self.soh = max(0.0, min(120.0,
+                                            self._cap_counter_ah / self.rated_capacity * 100.0))
+                    self.battery_model.set_aging_from_soh(self.soh)  # D3: sync Rin aging term
+                    logger.info("Live SoH ← full→empty sweep: %.3f Ah / %.3f rated = %.1f%%",
+                                self._cap_counter_ah, self.rated_capacity, self.soh)
+                self._cap_counting = False
+                self._reset_to_soc(0.0, start_settle_window=True)
+                soc_cc = 0.0
+
+            # === 2. Update Internal Resistance (forward temp + measured_dcir ให้ถูก) ===
             self.rin = self.battery_model.estimate_rin(
                 voltage, cur, self.soc, temp=t_use, measured_dcir=measured_dcir
             )
 
+            # === 3-EKF. 2-state EKF fusion (primary path) ===
+            # The EKF fuses the coulomb prediction with the terminal-voltage measurement
+            # using a covariance-weighted gain; dOCV/dSoC (its Jacobian) is naturally tiny
+            # on a flat plateau, so it trusts CC there and OCV near the knees automatically.
             if self.use_ekf:
-                return self._fuse_ekf(voltage, cur, i_eff, dah, dt, t_use, soc_cc)
+                ekf = self._ensure_ekf()
+                s = self.battery_model.series_cells
+                # SoC-dependent ECM: feed the RC dynamics (and R0 for the update) that match
+                # the current SoC, so voltage prediction stays accurate toward empty.
+                # R0 for the measurement update MUST be the *ohmic* resistance (ekf.R0, from
+                # the extrapolated ECM fit) — NOT self.rin, which is a full DCIR that already
+                # contains the RC polarisation. Using self.rin would double-count polarisation
+                # against the EKF's own V_RC state and bias the voltage residual (worst at
+                # high current), pulling SoC off. Fix: default to the ohmic ekf.R0.
+                r0_use = ekf.R0
+                if self.ecm_table is not None:
+                    r0s, r1s, c1s = self._ecm_at_soc(ekf.soc)
+                    ekf.set_rc(r0s, r1s, c1s)
+                    r0_use = r0s
+                # ΔSoC from the SAME coulomb increment (η + Peukert + trapezoid + SoH-cap)
+                # so Peukert/η actually affect the EKF output, not just the unused soc_cc.
+                soc_delta = dah / cap * 100.0 if cap > 0 else 0.0
+                ekf.predict(i_eff, dt, soc_delta)
+                self.soc = max(0.0, min(100.0, ekf.soc))
+                if self.use_ocv:
+                    # direction for OCV hysteresis: discharge (cur>0)→−1, charge→+1, rest→0
+                    direction = 0 if abs(cur) < 0.05 else (-1 if cur > 0 else 1)
+                    ocv_pack = self.battery_model.get_ocv_from_soc(ekf.soc, t_use, direction)
+                    docv = self.battery_model.ocv_slope(ekf.soc, t_use) * s   # V/%SoC pack
+                    # Still settling from the last 100%/0% anchor (surface charge / fresh
+                    # polarisation) — inflate the measurement variance so this update barely
+                    # moves SoC, instead of the filter reading the settling transient as a
+                    # real SoC error. See _reset_to_soc's start_settle_window.
+                    still_settling = time.monotonic() < self._anchor_settle_until
+                    r_override = ekf.R * self._anchor_settle_r_mult if still_settling else None
+                    # Before a real R0 lands (either _detect_step_r0's own single-step
+                    # detector, or a full HPPC ECM fit via update_ecm()), r0_use is
+                    # _ekf_rc_defaults()'s generic ±_EKF_UNCALIBRATED_R0_MARGIN guess, not
+                    # a measurement — its IR-drop term (cur*r0_use) in the voltage
+                    # prediction above can be off by a comparable fraction. At any real
+                    # charge/discharge current that model error dwarfs R's ~7 mV sensor-
+                    # noise floor, so the filter was reading "R0 is an uncalibrated guess"
+                    # as if it were a genuine, fast SoC swing (confirmed root cause of a
+                    # real pack reading SoC 80%→100% within ~2 minutes of a 0.1C charge —
+                    # physically needs ~25x that current). Near true rest this doesn't
+                    # matter (cur≈0 makes the IR-drop term negligible regardless of how
+                    # wrong R0 is) — same near-rest gate the non-EKF OCV-correction
+                    # fallback below already uses — so only skip the voltage update away
+                    # from rest, and only until a real R0 is calibrated.
+                    r0_confirmed = self._r0_calibrated or self._ecm_calibrated
+                    uncalibrated_and_active = (not r0_confirmed and
+                        abs(cur - self.standby_current) >= self.static_current_threshold)
+                    # Surface-charge skip: a NEAR-REST voltage sitting above the OCV
+                    # curve's own 100% point is not "extra full" — it's undissipated
+                    # surface charge (lead-acid: hours to relax), and it carries ZERO
+                    # usable SoC information: OCV(soc) is capped at the table max, so a
+                    # measurement above it produces a positive innovation no matter what
+                    # the true SoC is (100%, 96%, 90% — all indistinguishable), dragging
+                    # SoC toward 100 on every rest sample. Replaying a real HPPC log, the
+                    # pulse legs' coulomb subtraction (−4.3%) was almost entirely ERASED
+                    # by the intervening relax legs doing exactly this (net −0.84%); even
+                    # a ×200 variance de-weight only cut it to −1.1% across ~600 rest
+                    # samples, so the update is skipped outright — an uninformative
+                    # measurement deserves zero weight, not merely a small one. Gated
+                    # strictly to near-rest: under charge the terminal sits above OCV by
+                    # design and must stay trusted; BELOW-range at rest (empty knee) is
+                    # genuine information and stays trusted too.
+                    near_rest = abs(cur - self.standby_current) < self.static_current_threshold
+                    surface_charged = (near_rest and
+                        self.battery_model.ocv_out_of_range_mv(voltage, t_use) > 0.0)
+                    # Polarization gate — same _min_rest_s wait the fallback path has
+                    # always used before trusting a rest voltage (see the _rested_s
+                    # tracking comment above for the real HPPC failure this closes).
+                    still_polarised = near_rest and self._rested_s < self._min_rest_s
+                    if not uncalibrated_and_active and not surface_charged \
+                            and not still_polarised:
+                        ekf.update(voltage, cur, ocv_pack, docv, r0_use, r_override=r_override)
+                        self.soc = max(0.0, min(100.0, ekf.soc))
+                self.soc_filtered = self.soc
+                # live 1σ SoC uncertainty from the filter covariance (large mid-plateau /
+                # early, shrinks after an OCV/endpoint anchor) — lets the UI show ±%.
+                self.soc_std = float(max(0.0, float(ekf.P[0, 0])) ** 0.5)
+                # Live internal resistance = the IDENTIFIED DC resistance R0+R1 (ohmic +
+                # polarisation, SoC-dependent via the ECM table, and stable) rescaled by the
+                # Arrhenius temperature multiplier — so it is SoC-aware, temperature-aware,
+                # AND stable, instead of the noisy per-sample (OCV−V)/I from estimate_rin.
+                temp_mult = self.battery_model.temp_rin_multiplier(t_use) if self.use_temp else 1.0
+                # SoC U-shape (chemistry soc_coeff, same one _calculate_base_rin uses),
+                # RELATIVE to the SoC where the current R0/R1 were established
+                # (_ecm_fit_soc) so the fit point itself is unchanged and only the trend
+                # away from it follows the chemistry shape. Skipped when an ECM table is
+                # active — the table already carries real per-SoC values.
+                if self.ecm_table is None:
+                    soc_coeff = float(self.battery_model.rin_params.get('soc_coeff', 0.0))
+                    shape_now = 1.0 + soc_coeff * abs(self.soc - 50.0)
+                    shape_fit = 1.0 + soc_coeff * abs(self._ecm_fit_soc - 50.0)
+                    temp_mult *= shape_now / max(1e-6, shape_fit)
+                self.rin = (ekf.R0 + ekf.R1) * temp_mult
+                return {
+                    "soc": self.soc,
+                    "soc_std": self.soc_std,
+                    "soh": self.soh,
+                    "rin": self.rin,
+                    "rin_calibrated": self._ecm_calibrated,
+                    "ah_accumulated": self.ah_accumulated,
+                }
+
+            # === 3. OCV-Based Correction + ENDPOINT RESET (เมื่อกระแสน้อย) — fallback ===
+            # หลักการ (จาก literature ของ LFP): coulomb counting drift ได้ → ต้อง re-anchor
+            # ด้วย OCV "เฉพาะตรงที่ OCV เชื่อถือได้" คือบริเวณ knee/ปลาย (slope ชัน) หลัง full
+            # charge / full discharge. ตรง plateau ที่ flat (slope ต่ำ) ห้ามแก้ (V คลาดนิด SoC
+            # เพี้ยนมาก). ปลายที่ steep → anchor ทันที (ไม่รอ 300s) และ re-anchor coulomb counter.
+            now = time.monotonic()   # duration check only — see the comment in __init__
+            if self.use_ocv and abs(cur - self.standby_current) < self.static_current_threshold:
+                # _rested_s accumulation moved up top (shared with the EKF branch) —
+                # this block only consumes/resets it after a fired correction now.
+                self.last_static_voltage = voltage
+                ocv_voltage = voltage + self.standby_current * self.rin
+                ocv_soc = self.battery_model.get_soc_from_ocv(ocv_voltage, t_use)
+                slope = self.battery_model.ocv_slope(ocv_soc, t_use)
+                drift = abs(self.soc_filtered - ocv_soc)
+                steep = slope >= 2.0 * self.min_ocv_slope          # ปลาย/knee ที่ OCV เชื่อได้มาก
+                periodic = (now - self.last_ocv_correction_time) >= self.ocv_correction_interval
+                # เงื่อนไข: พักนานพอ (กัน transient) + ไม่ใช่ plateau แบน + (อยู่ปลาย หรือ ถึงรอบ+drift)
+                # + แรงดันต้องไม่ทะลุเพดาน 100% ของตาราง (surface charge — ดู comment
+                # เดียวกันใน EKF branch ด้านบน: ค่าที่เกินตารางถูก clamp เป็น 100% แล้ว
+                # จะลาก SoC กลับขึ้นทั้งที่ coulomb เพิ่งหักออกจริง)
+                if (self._rested_s >= self._min_rest_s and slope >= self.min_ocv_slope
+                        and self.battery_model.ocv_out_of_range_mv(ocv_voltage, t_use) <= 0.0
+                        and (steep or (periodic and drift > 3.0))):
+                    w = 0.9 if steep else 0.8                       # ปลาย anchor หนักกว่า
+                    corrected = w * ocv_soc + (1.0 - w) * soc_cc
+                    logger.info("OCV %s: CC=%.1f%% OCV=%.1f%% slope=%.4f -> %.1f%%",
+                                "endpoint-reset" if steep else "correction",
+                                soc_cc, ocv_soc, slope, corrected)
+                    self.soc_filtered = corrected
+                    # re-anchor coulomb counting to the corrected SoC (ไม่งั้น smoothing ดึงกลับ)
+                    self.soc_initial = corrected
+                    self.ah_accumulated = 0.0
+                    soc_cc = corrected
+                    self.last_ocv_correction_time = now
+                    self._rested_s = 0.0
             else:
-                return self._fallback_ocv_correction(voltage, cur, t_use, soc_cc)
+                self.last_static_voltage = None
+
+            # === 4. Exponential Smoothing ===
+            self.soc_filtered = (1 - self.alpha) * self.soc_filtered + self.alpha * soc_cc
+            self.soc = max(0.0, min(100.0, self.soc_filtered))
+
+            return {
+                "soc": self.soc,
+                "soh": self.soh,
+                "rin": self.rin,
+                "rin_calibrated": True,   # non-EKF fallback path doesn't use the uncalibrated
+                                          # EKF-default mechanism this flag is about
+                "ah_accumulated": self.ah_accumulated
+            }
 
     # ------------------------------------------------------------------
     # Getters

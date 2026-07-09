@@ -441,12 +441,18 @@ def get_measured_params(product_name: str) -> dict:
     except Exception:
         return {}
 
+    # Function-local import: battery_model imports THIS module at module level
+    # (get_chemistry), so importing it back at module level here would be
+    # circular. ABS_R0_CEILING_OHM is the same constant is_plausible_r0() (used
+    # by the live step detector and identify_dcir) checks against, so this
+    # static registration-time validator can't silently drift from those.
+    from aset_batt.core.battery_model import ABS_R0_CEILING_OHM
     r0_ohm = mp.get("internal_r_ohm")
-    if r0_ohm is not None and not (0.0 < float(r0_ohm) < 5.0):
+    if r0_ohm is not None and not (0.0 < float(r0_ohm) < ABS_R0_CEILING_OHM):
         logger.error(
             "measured_params.internal_r_ohm (%s Ω) for '%s' is out of the plausible "
-            "pack-level range (0-5 Ω) — ignoring measured_params, falling back to the "
-            "chemistry-generic baseline", r0_ohm, product_name)
+            "pack-level range (0-%.1f Ω) — ignoring measured_params, falling back to "
+            "the chemistry-generic baseline", r0_ohm, product_name, ABS_R0_CEILING_OHM)
         return {}
     r0_frac = mp.get("r0_fraction")
     if r0_frac is not None and not (0.0 <= float(r0_frac) <= 1.0):

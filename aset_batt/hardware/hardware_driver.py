@@ -564,18 +564,17 @@ class HardwareController:
         ต้องเรียกหลัง connect (OUTPUT OFF อยู่แล้ว) หรือเมื่อรู้ว่าไม่มีกระแสไหลจริง
         คืนค่า offset ที่วัดได้ (A)"""
         samples = []
-        with self.inst_lock:
-            try:
-                for _ in range(5):
+        for attempt in range(5):
+            with self.inst_lock:
+                if self.psu_inst:
                     try:
                         i = float(self.psu_inst.query("MEAS:CURR?").strip())
                         samples.append(i)
                     except Exception as e:
                         import logging
                         logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
-                    time.sleep(0.1)
-            except Exception as e:
-                logger.error(f"calibrate_psu_zero error: {e}")
+            # Sleep outside the lock to prevent starving background telemetry
+            time.sleep(0.1)
         offset = sum(samples) / len(samples) if samples else 0.0
         self._psu_current_offset = offset
         logger.info("PSU current zero-offset calibrated: %.4f A", offset)

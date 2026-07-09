@@ -252,12 +252,24 @@ class CharacterizeMixin:
         """Interruptible sleep for characterize threads.  Returns True if time elapsed,
         False if the event was cleared (cancelled)."""
         import time
+        from PySide6.QtCore import QEventLoop, QTimer
+
         t_end = time.time() + seconds
+        loop = QEventLoop()
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(loop.quit)
+        
         while ev.is_set():
             left = t_end - time.time()
             if left <= 0:
                 return True
-            time.sleep(min(0.5, left))
+                
+            sleep_ms = int(min(0.5, left) * 1000)
+            if sleep_ms > 0:
+                timer.start(sleep_ms)
+                loop.exec()
+                
         return False
 
     def _char_any_running(self) -> bool:

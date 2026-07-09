@@ -256,6 +256,7 @@ class DataHandler:
                     "SoC_pct", "Resistance_mOhm", "Temperature_C",
                     "Rin_Calibrated",
                 ])
+                self.csv_file.flush()  # FIX: Prevent 0-byte file on early crash
             self.current_path = filepath
             self.is_recording = True
             self._last_row_vals = None       # new session — first row always writes

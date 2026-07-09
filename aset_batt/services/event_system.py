@@ -104,7 +104,10 @@ class EventBus:
                 logging.getLogger(__name__).error(f"Event processing error: {e}")
 
 class UIEventHandler:
-    """UI event handler that integrates with tkinter"""
+    """Thread-safe event handler bridging AutoController (background threads)
+    to the PySide6 UI. Handler methods (update_display, show_message, etc.) are
+    monkey-patched onto instances of this class from the real Qt window — see
+    app_bootstrapper._wire_runtime."""
 
     def __init__(self, root):
         self.root = root
@@ -148,14 +151,15 @@ class UIEventHandler:
             self.root.after(0, self.update_status_bar)
 
     def _handle_show_message(self, event: Event):
-        """Handle message display events"""
+        """Handle message display events — routed to the real UI's show_message
+        (wired in app_bootstrapper._wire_runtime), same hasattr-guarded pattern
+        as the other handlers above. No fallback: this app is PySide6-only, and
+        a fallback that "shows something anyway" (e.g. tkinter) previously
+        masked the fact that safety-relevant messages weren't reaching the
+        operator at all — better to be visibly unwired than silently swallowed."""
         title, message, msg_type = event.data
-        if msg_type == "error":
-            self.root.after(0, lambda: self._show_error_message(title, message))
-        elif msg_type == "info":
-            self.root.after(0, lambda: self._show_info_message(title, message))
-        elif msg_type == "warning":
-            self.root.after(0, lambda: self._show_warning_message(title, message))
+        if hasattr(self, 'show_message'):
+            self.root.after(0, self.show_message, title, message, msg_type)
 
     def _handle_safety_triggered(self, event: Event):
         """Handle safety trigger events"""
@@ -171,21 +175,6 @@ class UIEventHandler:
         """Handle analysis (AI grading) completion events"""
         if hasattr(self, 'handle_analysis_completed'):
             self.root.after(0, self.handle_analysis_completed, event.data)
-
-    def _show_error_message(self, title: str, message: str):
-        """Show error message dialog"""
-        from tkinter import messagebox
-        messagebox.showerror(title, message)
-
-    def _show_info_message(self, title: str, message: str):
-        """Show info message dialog"""
-        from tkinter import messagebox
-        messagebox.showinfo(title, message)
-
-    def _show_warning_message(self, title: str, message: str):
-        """Show warning message dialog"""
-        from tkinter import messagebox
-        messagebox.showwarning(title, message)
 
     def start(self):
         """Start the event bus"""

@@ -638,8 +638,11 @@ class AutoController:
             with self.hw.inst_lock:
                 self.hw.load_inst.write(":INP OFF")
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
+            logger.error(f"Error stopping load: {e}")
+            
+        # FIX: Ensure CSV is flushed and closed when profile test ends
+        if self.data.is_recording:
+            self.data.stop_logging()
 
         # auto-analyze หลังจบโปรไฟล์ (ถ้าไม่ได้ถูกสั่งหยุดกลางคัน)
         if not self.safety_triggered:
@@ -675,7 +678,7 @@ class AutoController:
                      bulk_c_rate_override: float = None, reuse_session: bool = False):
         """เริ่มชาร์จ; strategy=None → เลือกตามเคมีของแบตอัตโนมัติ
         (LeadAcid → 3-stage, Lithium → CC-CV). ส่ง strategy เพื่อ override จาก dropdown:
-        "three_stage" หรือ "cc_cv". รันใน thread แยก; monitor loop ยัง log+safety ระหว่างชาร์จ
+        "three_stage" 또는 "cc_cv". રันใน thread แยก; monitor loop ยัง log+safety ระหว่างชาร์จ
 
         reuse_session: ส่งเป็น True เมื่อเรียกจากกลาง auto-sequence (session เปิดไว้
         แล้วตั้งแต่ PREPARE) — ดู start_monitor()'s docstring. ปุ่มมือ Start Charge

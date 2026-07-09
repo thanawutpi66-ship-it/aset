@@ -920,7 +920,12 @@ class ZonesMixin:
         # gets a long pre-test rest instead). 180 s doesn't fully settle it either
         # (that took ~27 min after charge) but meaningfully reduces the bias; raise
         # further (up to 600 s) if precision matters more than test duration.
-        is_lead_acid = "lead" in (self.config.battery.battery_type or "").lower()
+        # Canonical chemistry resolution (same registry en50342_capacity_conditions()
+        # and _cca_cutoff_v() use), not an ad-hoc substring match on the raw
+        # battery_type string — an alias not containing "lead" would otherwise be
+        # silently misclassified as fast-relaxing lithium.
+        is_lead_acid = battery_profiles.get_chemistry(
+            self.config.battery.battery_type).name == "LeadAcid"
         default_relax = "180" if is_lead_acid else "30"
         self.ed_hppc_relax = QLineEdit(default_relax)
         self.ed_hppc_relax.setValidator(QDoubleValidator(1.0, 600.0, 1))

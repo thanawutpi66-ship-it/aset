@@ -132,32 +132,14 @@ class HppcMixin:
     _WF_PAGE_MAP = {0: 0, 1: 1, 2: 2, 3: 3, 4: 0}
     _WF_EN50342_INDEX = 4
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    # G8 (industrial-grade audit): a momentary staleness blip only warns — a hard
-    # stop on that alone would be its own false-trip hazard. Sustained staleness
-    # beyond this means OTP protection has genuinely been blind for real time, not
-    # a glitch — see the escalation branch below. Mirrors AutoController's own
-    # _TEMP_STALE_TRIP_S.
-    _SEQ_TEMP_STALE_TRIP_S = 60.0
-
-
-
+    # _SEQ_TEMP_STALE_TRIP_S and _WATCHDOG_TIMEOUT_S are declared once, on
+    # BaseSequenceMixin (base.py) — it's listed first in SequencesMixin's MRO
+    # (see sequences/__init__.py), so self._SEQ_TEMP_STALE_TRIP_S/
+    # self._WATCHDOG_TIMEOUT_S always resolve there regardless of which
+    # mixin's method does the lookup. This mixin used to re-declare its own
+    # copies of both constants — never actually read (shadowed by
+    # BaseSequenceMixin's earlier MRO position), just a silent trap for
+    # anyone who edited one copy expecting it to take effect.
 
     def _on_hppc_sequence(self):
         if self.controller is None or not getattr(self.hw, "is_connected", False):
@@ -201,23 +183,6 @@ class HppcMixin:
         }
         import threading
         threading.Thread(target=self._hppc_seq_thread, args=(opts,), daemon=True).start()
-
-
-    # ── Safety helpers ───────────────────────────────────────────────────────
-    _WATCHDOG_TIMEOUT_S: int = 300   # 5 min without a measurement → abort
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     # ---- result formatting: see aset_batt/ui/report_html.py ---------------
 

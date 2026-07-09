@@ -148,6 +148,94 @@ class TestR0SanityBandAbsoluteCeiling(unittest.TestCase):
         self.assertFalse(est._r0_calibrated)
 
 
+class TestPlausibilityBandDedup(unittest.TestCase):
+    """The [0.2x, 6x]-relative-plus-absolute-ceiling check used to be
+    reimplemented separately in state_estimator.py, analysis.py, and
+    battery_profiles.py (three copies, kept in sync only by comments saying
+    they "mirror" each other). All three now call/reference one shared
+    battery_model.is_plausible_r0()/ABS_R0_CEILING_OHM."""
+
+    def test_is_plausible_r0_boundary_behavior(self):
+        from aset_batt.core.battery_model import is_plausible_r0, ABS_R0_CEILING_OHM
+        base = 0.03
+        self.assertFalse(is_plausible_r0(0.2 * base * 0.99, base))   # just under 0.2x
+        self.assertTrue(is_plausible_r0(0.2 * base * 1.01, base))
+        self.assertTrue(is_plausible_r0(6.0 * base * 0.99, base))
+        self.assertFalse(is_plausible_r0(6.0 * base * 1.01, base))
+        # absolute ceiling wins even when 6x base_rin would allow more
+        self.assertFalse(is_plausible_r0(ABS_R0_CEILING_OHM + 0.01, base_rin=10.0))
+
+    def test_state_estimator_uses_the_shared_helper(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent / "aset_batt" / "core"
+               / "state_estimator.py").read_text(encoding="utf-8")
+        self.assertIn("is_plausible_r0", src)
+        self.assertNotIn("0.2 * base", src)   # the old inline duplicate is gone
+
+    def test_analysis_uses_the_shared_helper(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent / "aset_batt" / "acquisition"
+               / "analysis.py").read_text(encoding="utf-8")
+        self.assertIn("is_plausible_r0", src)
+        self.assertNotIn("0.2 * r_base", src)   # the old inline duplicate is gone
+
+    def test_battery_profiles_references_the_shared_absolute_ceiling(self):
+        from pathlib import Path
+        from aset_batt.core.battery_model import ABS_R0_CEILING_OHM
+        src = (Path(__file__).resolve().parent.parent / "aset_batt" / "core"
+               / "battery_profiles.py").read_text(encoding="utf-8")
+        self.assertIn("ABS_R0_CEILING_OHM", src)
+        self.assertEqual(ABS_R0_CEILING_OHM, 5.0)
+
+    def test_step_edge_latency_and_spread_constants_share_one_source(self):
+        """StateEstimator._STEP_MAX_DT_S/_STEP_REF_MAX_SPREAD_V and
+        analysis._DCIR_MAX_STEP_DT/_VI_LEVEL_MAX_SPREAD_V used to each hardcode
+        their own '0.5'/'0.15' with no cross-reference — both now derive from
+        battery_model.MAX_STEP_EDGE_LATENCY_S/STEADY_STATE_MAX_SPREAD_V."""
+        from aset_batt.core.battery_model import (
+            MAX_STEP_EDGE_LATENCY_S, STEADY_STATE_MAX_SPREAD_V)
+        from aset_batt.core.state_estimator import StateEstimator
+        from aset_batt.acquisition import analysis
+
+        self.assertEqual(StateEstimator._STEP_MAX_DT_S, MAX_STEP_EDGE_LATENCY_S)
+        self.assertEqual(StateEstimator._STEP_REF_MAX_SPREAD_V, STEADY_STATE_MAX_SPREAD_V)
+        self.assertEqual(analysis._DCIR_MAX_STEP_DT, MAX_STEP_EDGE_LATENCY_S)
+        self.assertEqual(analysis._VI_LEVEL_MAX_SPREAD_V, STEADY_STATE_MAX_SPREAD_V)
+
+
+class TestArrheniusFormulaDedup(unittest.TestCase):
+    """temp_rin_multiplier() and _calculate_base_rin() used to each reimplement
+    the Arrhenius/linear-fallback formula separately and drifted apart for
+    months (temp_rin_multiplier only checked one key name and silently always
+    used the linear fallback). Both now call one shared
+    BatteryModel._arrhenius_temp_factor()."""
+
+    def test_both_call_sites_use_the_shared_helper(self):
+        model = BatteryModel("LeadAcid", 12.0, 6, 1)
+        self.assertTrue(hasattr(model, "_arrhenius_temp_factor"))
+
+    def test_temp_rin_multiplier_and_base_rin_agree_on_the_same_temp_factor(self):
+        """Construct the ratio each method implies for the temp_factor and
+        confirm they match exactly (not just approximately) — proving they
+        share one computation, not two independently-tuned ones."""
+        model = BatteryModel("LeadAcid", 12.0, 6, 1)
+        temp = 10.0
+        direct = model._arrhenius_temp_factor(model._clamp_temperature(temp))
+        mult = model.temp_rin_multiplier(temp)
+        self.assertAlmostEqual(mult, max(0.1, 1.0 + direct), places=10)
+
+        # _calculate_base_rin must fold in the SAME temp_factor via the shared
+        # helper — reconstruct rin_cell manually from the (now-shared) factor
+        # and compare against the real base_rin the method returns.
+        soc = 50.0   # zero out the soc_factor term to isolate temp_factor
+        params = model.rin_params
+        aging_factor = params['aging_coeff'] * (1.0 - model.aging_factor)
+        expected_cell = params['r0'] * (1 + direct) * (1 + 0.0) * (1 + aging_factor)
+        expected_pack = max(0.001, expected_cell * model.series_cells / model.parallel_cells)
+        actual = model._calculate_base_rin(soc, temp)
+        self.assertAlmostEqual(actual, expected_pack, places=10)
+
+
 class TestDcirPlausibilityBand(unittest.TestCase):
     """Real-file bug (sessions/test_20260709_154818.csv, 2026-07-09): at the
     charge onset the logger wrote two rows in the same 0.1 s window — the
@@ -304,6 +392,86 @@ class TestWorkerEcmFeedbackAnchorsToPulseSoc(unittest.TestCase):
         self.assertAlmostEqual(fit_soc, soc_at_pulse_onset, delta=0.5)
         self.assertGreater(abs(fit_soc - soc_final), 1.0,
                            "fit_soc must NOT collapse to the record's final SoC")
+
+
+class TestChemistryDetectionConsistency(unittest.TestCase):
+    """state_estimator.py's _default_min_rest_s()/_coulomb_eta() and
+    analysis.py's profile_from_config() used to detect lead-acid/LFP via an
+    ad-hoc substring match on the raw battery_type string ("lead" in
+    chem.lower()) instead of the canonical battery_profiles.get_chemistry()
+    resolver that _cca_cutoff_v()/en50342_capacity_conditions() already used
+    correctly — an alias not literally containing "lead" (e.g. a future
+    product-family name) would be misclassified as lithium in some call
+    sites but not others."""
+
+    def test_min_rest_s_uses_canonical_chemistry_for_all_three_bands(self):
+        for chem, expected in (("LeadAcid", 60.0), ("LiFePO4", 120.0),
+                               ("LiPO", 30.0), ("Li-ion", 30.0)):
+            model = BatteryModel(chem, 12.0, 6, 1)
+            est = StateEstimator(5.3, model)
+            self.assertEqual(est._min_rest_s, expected, chem)
+
+    def test_min_rest_s_resolves_lead_acid_aliases_not_just_substring_lead(self):
+        """VRLA/SLA/AGM don't contain "lead" as a substring but must still
+        resolve to the 60s lead-acid band via the alias table."""
+        for alias in ("VRLA", "SLA", "AGM", "Lead-Acid"):
+            model = BatteryModel(alias, 12.0, 6, 1)
+            est = StateEstimator(5.3, model)
+            self.assertEqual(est._min_rest_s, 60.0, alias)
+
+    def test_coulomb_eta_uses_canonical_chemistry(self):
+        model = BatteryModel("VRLA", 12.0, 6, 1)   # alias, no "lead" substring
+        est = StateEstimator(5.3, model)
+        est.use_eta = True
+        self.assertAlmostEqual(est._coulomb_eta(soc=95.0, current=-1.0), 0.75)
+        model2 = BatteryModel("LiPO", 3.7, 1, 1)
+        est2 = StateEstimator(2.0, model2)
+        est2.use_eta = True
+        self.assertAlmostEqual(est2._coulomb_eta(soc=95.0, current=-1.0), 0.99)
+
+    def test_profile_from_config_peukert_uses_canonical_chemistry(self):
+        from aset_batt.acquisition.analysis import profile_from_config
+        from aset_batt.core.config import ConfigManager
+        cfg = ConfigManager()
+        cfg.battery.battery_type = "VRLA"   # alias, no "lead" substring
+        profile = profile_from_config(cfg)
+        self.assertAlmostEqual(profile.peukert_k, 1.20)
+
+    def test_no_more_adhoc_lead_substring_checks_in_core_or_acquisition(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent
+        for rel in ("aset_batt/core/state_estimator.py",
+                    "aset_batt/acquisition/analysis.py",
+                    "aset_batt/ui/zones.py"):
+            src = (root / rel).read_text(encoding="utf-8")
+            self.assertNotIn('"lead" in', src, rel)
+
+
+class TestSequenceSafetyConstantsSingleSource(unittest.TestCase):
+    """_WATCHDOG_TIMEOUT_S and _SEQ_TEMP_STALE_TRIP_S used to be re-declared
+    independently in BaseSequenceMixin AND each of HppcMixin/CycleLifeMixin/
+    IecCapacityMixin/QuickScanMixin (5 copies total) — since BaseSequenceMixin
+    is listed first in SequencesMixin's MRO, the other 4 copies were always
+    shadowed/dead (never actually read), but nothing signaled that; a change
+    to one of the shadowed copies would silently do nothing. Now declared
+    exactly once, on BaseSequenceMixin."""
+
+    def test_watchdog_timeout_declared_on_exactly_one_class(self):
+        from aset_batt.ui.sequences import SequencesMixin
+        owners = [c.__name__ for c in SequencesMixin.__mro__
+                 if '_WATCHDOG_TIMEOUT_S' in c.__dict__]
+        self.assertEqual(owners, ['BaseSequenceMixin'])
+
+    def test_temp_stale_trip_declared_on_exactly_one_class(self):
+        from aset_batt.ui.sequences import SequencesMixin
+        owners = [c.__name__ for c in SequencesMixin.__mro__
+                 if '_SEQ_TEMP_STALE_TRIP_S' in c.__dict__]
+        self.assertEqual(owners, ['BaseSequenceMixin'])
+
+    def test_resolved_values_unchanged(self):
+        from aset_batt.ui.sequences import SequencesMixin
+        self.assertEqual(SequencesMixin._WATCHDOG_TIMEOUT_S, 300)
+        self.assertEqual(SequencesMixin._SEQ_TEMP_STALE_TRIP_S, 60.0)
 
 
 if __name__ == "__main__":

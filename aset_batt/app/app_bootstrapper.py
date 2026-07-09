@@ -97,7 +97,7 @@ class ApplicationBootstrapper:
         """Wiring ที่ใช้ร่วมกัน: event callbacks, analyzer, auto-connect mock
         hardware, web server, cloud push. UI ต้องมี method ชื่อ update_display,
         _update_connection_status, handle_safety_trigger, handle_profile_completed,
-        handle_analysis_completed
+        handle_analysis_completed, show_message
         """
         # Attach UI callbacks to the event handler so events route to the UI
         try:
@@ -105,6 +105,7 @@ class ApplicationBootstrapper:
             self.event_handler.update_status = app_ui._update_connection_status
             self.event_handler.handle_safety_trigger = app_ui.handle_safety_trigger
             self.event_handler.handle_profile_completed = app_ui.handle_profile_completed
+            self.event_handler.show_message = app_ui.show_message
         except Exception:
             logger.debug("Could not attach UI callbacks to event handler")
 

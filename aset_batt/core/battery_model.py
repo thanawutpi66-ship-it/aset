@@ -9,6 +9,45 @@ from typing import Optional, Dict, Tuple, List
 import aset_batt.core.battery_profiles as battery_profiles
 logger = logging.getLogger(__name__)
 
+# Absolute plausible-pack-resistance ceiling — battery_profiles.get_measured_params()
+# enforces the same bound independently on manually-entered internal_r_ohm values;
+# kept as one named constant so the two checks can't silently drift apart (they
+# used to share a bare "5.0" literal in three separate files with no cross-reference).
+ABS_R0_CEILING_OHM = 5.0
+
+# Rig-level SCPI/USB latency budget: the max time between a real current-step
+# edge and the voltage sample used to compute R=|ΔV/ΔI| before that sample is
+# considered relaxed/stale (carrying R1, not just ohmic R0) rather than a clean
+# reading. Both the live online step detector (StateEstimator._detect_step_r0,
+# via _STEP_MAX_DT_S) and the post-hoc single-step DCIR
+# (acquisition.analysis.identify_dcir, via _DCIR_MAX_STEP_DT) read the same
+# physical rig, so this budget must be identical for both — they used to each
+# hardcode their own "0.5" with no cross-reference.
+MAX_STEP_EDGE_LATENCY_S = 0.5
+
+# Max voltage spread (V) to treat a run of samples as a flat/steady rest-or-load
+# plateau rather than still settling. Shared by the step detector's rolling
+# reference buffer (StateEstimator._STEP_REF_MAX_SPREAD_V) and
+# acquisition.analysis._vi_levels' plateau detection (_VI_LEVEL_MAX_SPREAD_V).
+STEADY_STATE_MAX_SPREAD_V = 0.15
+
+
+def is_plausible_r0(r0: float, base_rin: float,
+                    abs_ceiling: float = ABS_R0_CEILING_OHM) -> bool:
+    """True if ``r0`` sits within [0.2x, 6x] of ``base_rin`` AND under
+    ``abs_ceiling`` — the same relative-plausibility test used by both the live
+    online step detector (StateEstimator._detect_step_r0) and the post-hoc
+    single-step DCIR (acquisition.analysis.identify_dcir) to reject a ΔV/ΔI
+    reading that is a polarisation/quantisation/stale-readback artifact, not a
+    real ohmic measurement. A fixed absolute ceiling alone once accepted a
+    charge-CV-taper edge as "R0 = 4.83 Ω" (ΔI was just tail current, ΔV was
+    collapsing overpotential); a bare relative band alone let a stale-voltage
+    readback compute "R0 = 0.00 Ω" (ΔV=0 across a real current edge) — both
+    bounds are needed together."""
+    base = max(1e-4, float(base_rin))
+    return 0.2 * base <= r0 <= min(6.0 * base, abs_ceiling)
+
+
 class BatteryModel:
     """Advanced battery electrical model ด้วย temperature compensation"""
 
@@ -264,43 +303,45 @@ class BatteryModel:
         r_max = 0.5 * self.series_cells / self.parallel_cells
         return max(0.001, min(r_max, rin))
 
+    def _arrhenius_temp_factor(self, temp: float) -> float:
+        """Shared temperature factor for BOTH temp_rin_multiplier() (a pure
+        temperature ratio, used to normalize a resistance fitted elsewhere —
+        e.g. an ECM pulse fit that's already SoC-dependent but temperature-
+        blind) and _calculate_base_rin() (the full temp×SoC×aging model).
+
+        Arrhenius (physically correct) when an Ea/R value is present in the
+        chemistry profile — accepts both 'arrhenius_ea_r' (our convention) and
+        'arrhenius_ea_k' key names for compatibility:
+            R(T) = R0 x exp(Ea/R x (1/T_K - 1/T_ref))
+        Falls back to a linear approximation (only valid within +-10 C of
+        25 C) if no Ea/R is configured.
+
+        These two call sites used to each reimplement this formula separately
+        and drifted apart for months — temp_rin_multiplier() only checked the
+        'arrhenius_ea_k' key (which no chemistry profile actually sets) and so
+        silently ALWAYS fell back to the linear approximation while
+        _calculate_base_rin() (checking both names) correctly used Arrhenius;
+        at 10 degC for lead-acid (Ea/R=4000 K) that's x1.075 (linear) vs the
+        correct x2.04 (Arrhenius) — nearly 2x off."""
+        params = self.rin_params
+        ea = params.get('arrhenius_ea_r', 0.0) or params.get('arrhenius_ea_k', 0.0)
+        if ea > 0.0:
+            t_k, t_ref = temp + 273.15, 298.15
+            return float(np.exp(ea * (1.0 / t_k - 1.0 / t_ref))) - 1.0
+        return params['temp_coeff'] * (25.0 - temp)
+
     def temp_rin_multiplier(self, temp: float) -> float:
         """ตัวคูณความต้านทานจากอุณหภูมิล้วน (อ้างอิง 25°C = 1.0) แยกจาก SoC/aging factor
         เพื่อเอาไปคูณกับความต้านทานที่ได้จากแหล่งอื่น (เช่น ECM fit ที่ SoC-dependent
         อยู่แล้วแต่ไม่รู้เรื่องอุณหภูมิ) — ใช้สูตร Arrhenius เดียวกับ _calculate_base_rin"""
         temp = self._clamp_temperature(temp)
-        params = self.rin_params
-        # BUG FIX: this used to look up only 'arrhenius_ea_k', a key no chemistry
-        # profile actually sets (battery_profiles.py sets 'arrhenius_ea_r') — so this
-        # method silently ALWAYS fell back to the linear approximation, while
-        # _calculate_base_rin (which checks both names) correctly used Arrhenius. The
-        # discrepancy was large: at 10°C for lead-acid (Ea/R=4000 K) the linear model
-        # gives ×1.075 vs the correct Arrhenius ×2.04 — nearly 2× off. Check both key
-        # names, same as _calculate_base_rin, so the two stay consistent.
-        ea_k = params.get('arrhenius_ea_r', 0.0) or params.get('arrhenius_ea_k', 0.0)
-        if ea_k > 0:
-            t_k, t_ref = temp + 273.15, 298.15
-            temp_factor = float(np.exp(ea_k * (1.0 / t_k - 1.0 / t_ref))) - 1.0
-        else:
-            temp_factor = params['temp_coeff'] * (25.0 - temp)
+        temp_factor = self._arrhenius_temp_factor(temp)
         return max(0.1, 1.0 + temp_factor)
 
     def _calculate_base_rin(self, soc: float, temp: float) -> float:
         """คำนวณ base internal resistance (ระดับแพ็ค) จาก temperature และ SoC"""
         params = self.rin_params
-
-        # Temperature compensation: Arrhenius (physically correct) when an Ea/R value
-        # is present in the chemistry profile. Accepts both key names for compatibility:
-        #   'arrhenius_ea_r' (Ea/R in K, our convention) or 'arrhenius_ea_k' (same).
-        # R(T) = R₀ × exp(Ea/R × (1/T_K − 1/T_ref)); falls back to linear if unset.
-        ea_r = params.get('arrhenius_ea_r', 0.0) or params.get('arrhenius_ea_k', 0.0)
-        if ea_r > 0.0:
-            t_k = temp + 273.15
-            t_ref = 298.15
-            temp_factor = float(np.exp(ea_r * (1.0 / t_k - 1.0 / t_ref))) - 1.0
-        else:
-            # Legacy linear: only valid within ±10 °C of 25 °C
-            temp_factor = params['temp_coeff'] * (25.0 - temp)
+        temp_factor = self._arrhenius_temp_factor(temp)
 
         # SoC factor (สูงขึ้นเมื่อ SoC ต่ำหรือสูง)
         soc_factor = params['soc_coeff'] * abs(soc - 50.0)
