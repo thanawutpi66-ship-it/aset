@@ -18,8 +18,12 @@ class AutoController:
     # HardwareController.temp_is_stale()'s own 10s default so a momentary serial
     # glitch only warns, not trips.
     _TEMP_STALE_TRIP_S = 60.0
+    _LOAD_NOISE_FLOOR_A = 0.02
+    _DEFAULT_MAX_TEMP_C = 60.0
+    _DEFAULT_MAX_CURRENT_A = 30.0
+    _DEFAULT_MONITOR_DT = 0.1
 
-    def __init__(self, root, hw, data, estimator, config):
+    def __init__(self, root: Any, hw: Any, data: Any, estimator: Any, config: Any):
         self.root = root
         self.hw = hw
         self.data = data
@@ -188,7 +192,7 @@ class AutoController:
             if self.hw.is_connected:
                 try:
                     v, psu_i, load_i = self.hw.read_vi()
-                    if load_i > 0.02:
+                    if load_i > self._LOAD_NOISE_FLOOR_A:
                         i_net = load_i
                     elif getattr(self.hw, "_psu_output_on", False):
                         i_net = -psu_i
@@ -444,7 +448,7 @@ class AutoController:
                     # time.time() (wall-clock, vulnerable to NTP/clock-jump corrupting
                     # coulomb counting with a negative or oversized dt).
                     now = time.perf_counter()
-                    if load_i > 0.02:
+                    if load_i > self._LOAD_NOISE_FLOOR_A:
                         # Discharge via e-load: battery → load (positive by convention).
                         i_net = load_i
                     elif getattr(self.hw, "_psu_output_on", False):
@@ -496,18 +500,18 @@ class AutoController:
                     else:
                         self._temp_stale_warned = False
                     limits = self.config.system.safety_limits
-                    if temp > limits.get("max_temperature", 60.0):
+                    if temp > limits.get("max_temperature", self._DEFAULT_MAX_TEMP_C):
                         self._trigger_safety(
                             f"Temperature {temp:.1f}°C exceeds limit {limits['max_temperature']}°C")
                         break
-                    if abs(i_net) > limits.get("max_current", 30.0):
+                    if abs(i_net) > limits.get("max_current", self._DEFAULT_MAX_CURRENT_A):
                         self._trigger_safety(
                             f"Current {i_net:.2f}A exceeds limit {limits['max_current']}A")
                         break
 
-                    # อัปเดต State Estimator ด้วย dt จริงต่อรอบ (ไม่ hardcode 0.1)
+                    # อัปเดต State Estimator ด้วย dt จริงต่อรอบ
                     # `now` was already stamped right after read_vi() above.
-                    dt = (now - self._last_update_time) if self._last_update_time else 0.1
+                    dt = (now - self._last_update_time) if self._last_update_time else self._DEFAULT_MONITOR_DT
                     self._last_update_time = now
                     state = self.estimator.update(
                         v, i_net, dt=dt, temp=self.hw.current_temp
