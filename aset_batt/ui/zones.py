@@ -102,6 +102,9 @@ class ZonesMixin:
         self.btn_detect = _btn("Detect Chemistry", bg="PANEL", hover="PANEL2")
         self.btn_detect.clicked.connect(self._on_detect_chemistry)
         actions.addWidget(self.btn_detect)
+        self.btn_edit_safety_limits = _btn("Edit Safety Limits…", bg="PANEL", hover="PANEL2")
+        self.btn_edit_safety_limits.clicked.connect(self._on_edit_safety_limits)
+        actions.addWidget(self.btn_edit_safety_limits)
         lay.addLayout(actions)
 
 
