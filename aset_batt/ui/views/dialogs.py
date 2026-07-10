@@ -115,33 +115,10 @@ class DialogsMixin:
                 "มหาวิทยาลัยอุบลราชธานี  Faculty of Engineering — ASET Lab\n\n"
                 "Built with PySide6 · Python",
             )
-    def _on_toggle_dark_mode(self):
-        from PySide6.QtGui import QPalette, QColor
-        from PySide6.QtWidgets import QApplication
-        from PySide6.QtCore import Qt
-        app = QApplication.instance()
-        is_dark = getattr(self, '_is_dark_mode', False)
-        self._is_dark_mode = not is_dark
-        if self._is_dark_mode:
-            palette = QPalette()
-            palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
-            palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)
-            palette.setColor(QPalette.ColorRole.Base, QColor(25, 25, 25))
-            palette.setColor(QPalette.ColorRole.AlternateBase, QColor(53, 53, 53))
-            palette.setColor(QPalette.ColorRole.ToolTipBase, Qt.GlobalColor.black)
-            palette.setColor(QPalette.ColorRole.ToolTipText, Qt.GlobalColor.white)
-            palette.setColor(QPalette.ColorRole.Text, Qt.GlobalColor.white)
-            palette.setColor(QPalette.ColorRole.Button, QColor(53, 53, 53))
-            palette.setColor(QPalette.ColorRole.ButtonText, Qt.GlobalColor.white)
-            palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.red)
-            palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
-            palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
-            palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.black)
-            app.setStyle("Fusion")
-            app.setPalette(palette)
-        else:
-            app.setStyle("Fusion")
-            app.setPalette(self.style().standardPalette())
+    # NOTE: no QPalette-based dark mode here — theming is owned end-to-end by
+    # qt-material + aset_batt/ui/theme.py (Tools → APPEARANCE checkbox →
+    # _on_theme_toggle). A resurrected _on_toggle_dark_mode would fight that
+    # system's app-wide stylesheet; it was removed deliberately (ก.ค. 2026).
     def _on_sn_changed(self, text):
         if getattr(self, "config", None):
             self.config.battery.serial_number = text.strip()

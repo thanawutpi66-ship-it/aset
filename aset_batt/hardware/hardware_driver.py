@@ -792,27 +792,59 @@ class HardwareController:
         self.disconnect_instruments()
         self.disconnect_esp32()
 
+    def _write_off_verified(self, inst, off_cmd: str, query_cmd: str, label: str) -> bool:
+        """Write an output-off command and VERIFY the instrument actually turned
+        off (query echoes 0/OFF), retrying once. A single unverified write used
+        to be the only thing standing between app-exit and a PSU/load left
+        sourcing power on the bench: if that one write timed out (instrument
+        busy mid-measurement, USB hiccup), the exception was swallowed, the log
+        still said "Hardware shutdown completed", and the output stayed ON with
+        nobody attached to notice. Returns True only when OFF is confirmed."""
+        for attempt in (1, 2):
+            try:
+                inst.write(off_cmd)
+                state = inst.query(query_cmd).strip().upper()
+                if state in ("0", "OFF"):
+                    return True
+                logger.error("%s still reports %r after %s (attempt %d)",
+                             label, state, off_cmd, attempt)
+            except Exception as exc:
+                logger.error("%s %s failed (attempt %d): %s",
+                             label, off_cmd, attempt, exc)
+        return False
+
     def disconnect_instruments(self):
         self.is_connected = False
         self._psu_output_on = False
         self.set_ssr(False)   # defense in depth if ESP32 stays connected independently
         with self.inst_lock:
+            psu_off = load_off = True
             try:
                 if self.psu_inst:
-                    self.psu_inst.write(":OUTP OFF")
+                    psu_off = self._write_off_verified(
+                        self.psu_inst, ":OUTP OFF", ":OUTP?", "PSU")
                     self.psu_inst.close()
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             try:
                 if self.load_inst:
-                    self.load_inst.write(":INP OFF")
+                    load_off = self._write_off_verified(
+                        self.load_inst, ":INP OFF", ":INP?", "Load")
                     self.load_inst.close()
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             self.psu_inst = None
             self.load_inst = None
+        if not (psu_off and load_off):
+            # SSR OFF above is the physical backstop (needs ESP32 wired); scream
+            # anyway so a bench operator looking at the log knows the SCPI relay
+            # state could NOT be confirmed and the instrument may still be live.
+            logger.critical(
+                "OUTPUT-OFF NOT CONFIRMED on disconnect (PSU ok=%s, Load ok=%s) — "
+                "check the bench: instrument outputs may still be enabled!",
+                psu_off, load_off)
 
     def read_measurements(self, prefer_load_v=False):
         """Return (terminal_voltage, current). Convention: discharge = positive.

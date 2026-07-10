@@ -1215,25 +1215,41 @@ class AutoController:
 
     def shutdown(self):
         """Graceful shutdown of all systems (idempotent — เรียกซ้ำได้ปลอดภัย:
-        closeEvent ของ Qt เรียกตัดไฟทันที + bootstrapper.cleanup() เรียกอีกครั้ง)"""
+        closeEvent ของ Qt เรียกตัดไฟทันที + bootstrapper.cleanup() เรียกอีกครั้ง)
+
+        ลำดับสำคัญ: ตัด output ทันทีเป็นอย่างแรก (_emergency_shutdown → psu_off/
+        load_off/SSR OFF) ก่อนไปยุ่งกับ flag/loop ใดๆ — เดิมตัดไฟเป็นขั้นตอนท้ายๆ
+        ผ่าน hw.shutdown_all() เท่านั้น ถ้าอะไรก่อนหน้า raise หรือ write ล้มเหลว
+        เครื่องจ่ายไฟจะค้าง ON ทั้งที่โปรแกรมปิดไปแล้ว"""
         if self._shutdown_done:
             logger.debug("Controller shutdown ทำไปแล้ว — ข้าม")
             return
-        self._shutdown_done = True
         logger.info("Starting controller shutdown")
+
+        # ตัดไฟก่อนเป็นอันดับแรก — ภายในกัน exception เองอยู่แล้ว
+        self._emergency_shutdown()
 
         self.monitor_running = False
         self.is_profile_running = False
         self.is_charging = False
-        if self._charge_ctrl is not None:
-            self._charge_ctrl.stop()
+        try:
+            if self._charge_ctrl is not None:
+                self._charge_ctrl.stop()
+        except Exception as e:
+            logger.error(f"Error stopping charge controller: {e}")
         time.sleep(0.2)
 
+        hw_ok = False
         try:
             self.hw.shutdown_all()
+            hw_ok = True
             logger.info("Hardware shutdown completed")
         except Exception as e:
             logger.error(f"Error during hardware shutdown: {e}")
+        # latch idempotency เฉพาะเมื่อขั้นตัดไฟ/ตัดการเชื่อมต่อสำเร็จจริง — ถ้า fail
+        # ให้การเรียกซ้ำครั้งถัดไป (เช่น bootstrapper.cleanup) ได้ลองตัดไฟใหม่
+        # แทนที่จะโดนข้ามเพราะ flag ถูกตั้งไว้ตั้งแต่บรรทัดแรกแบบเดิม
+        self._shutdown_done = hw_ok
 
         try:
             self.data.stop_logging()
