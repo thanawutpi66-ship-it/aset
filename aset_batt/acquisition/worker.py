@@ -101,7 +101,7 @@ class AcquisitionWorker(QObject):
             # sequence and didn't have any rate diagnostics at all. Logged every
             # _RATE_LOG_EVERY samples so a slow rig is visible without waiting for
             # the whole test to finish.
-            _t_scpi = _t_log = 0.0
+            _t_scpi = _t_log = _t_est = 0.0
             _rate_n = 0
             _rate_t0 = t0
             _RATE_LOG_EVERY = 25
@@ -142,11 +142,13 @@ class AcquisitionWorker(QObject):
                 # live quantities — they come from the final analysis, not per-sample.
                 soc = float("nan")
                 if self.estimator is not None and dt > 0:
+                    _s2 = time.perf_counter()
                     try:
                         st = self.estimator.update(v, i, dt=dt, temp=temp)
                         soc = st.get("soc", float("nan"))
                     except Exception as e:
                         logger.debug("estimator update skipped: %s", e)
+                    _t_est += time.perf_counter() - _s2
 
                 v_hist.append(v); q_hist.append(self.cap_ah); t_hist.append(temp)
                 time_hist.append(elapsed); i_hist.append(i); soc_hist.append(soc)
@@ -174,16 +176,17 @@ class AcquisitionWorker(QObject):
                     _rate_span = now - _rate_t0
                     if _rate_span > 0.5:
                         _hz = _rate_n / _rate_span
-                        _t_total = max(_t_scpi + _t_log, _rate_span)
-                        _t_other = max(0.0, _t_total - _t_scpi - _t_log)
+                        _t_accounted = _t_scpi + _t_log + _t_est
+                        _t_total = max(_t_accounted, _rate_span)
+                        _t_other = max(0.0, _t_total - _t_accounted)
                         logger.info(
                             "%s worker sampled at %.1f Hz (%d samples / %.1fs, target %.1f Hz) — "
-                            "breakdown: SCPI %.0f%%  log %.0f%%  other %.0f%%",
+                            "breakdown: SCPI %.0f%%  estimator %.0f%%  log %.0f%%  other %.0f%%",
                             self.cfg.mode.value, _hz, _rate_n, _rate_span, 1.0 / period,
-                            100 * _t_scpi / _t_total, 100 * _t_log / _t_total,
-                            100 * _t_other / _t_total)
+                            100 * _t_scpi / _t_total, 100 * _t_est / _t_total,
+                            100 * _t_log / _t_total, 100 * _t_other / _t_total)
                     _rate_n = 0
-                    _t_scpi = _t_log = 0.0
+                    _t_scpi = _t_log = _t_est = 0.0
                     _rate_t0 = now
 
                 if self.cfg.mode == OperationMode.CC_DISCHARGE and v <= p.cutoff_v:
