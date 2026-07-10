@@ -104,13 +104,7 @@ class ZonesMixin:
         actions.addWidget(self.btn_detect)
         lay.addLayout(actions)
 
-        sn_row = QHBoxLayout()
-        sn_row.addWidget(QLabel("S/N:"))
-        self.ed_sn = QLineEdit()
-        self.ed_sn.setPlaceholderText("Optional: Battery Serial / Batch ID")
-        self.ed_sn.textChanged.connect(self._on_sn_changed)
-        sn_row.addWidget(self.ed_sn)
-        lay.addLayout(sn_row)
+
 
         # Connections — each port row has a status LED (● gray=idle, ✓ green=ok, ✗ red=fail)
         lay.addWidget(_hline())

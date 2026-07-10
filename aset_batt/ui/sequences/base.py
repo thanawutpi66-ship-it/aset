@@ -373,6 +373,24 @@ class BaseSequenceMixin:
             card_lay.addWidget(lbl)
         lay.addWidget(card)
 
+        # SN Input
+        sn_lay = QHBoxLayout()
+        sn_lay.addWidget(QLabel("Battery S/N:"))
+        sn_input = QLineEdit()
+        curr_sn = str(self.config.battery.serial_number or "")
+        if "UNSPECIFIED" not in curr_sn:
+            sn_input.setText(curr_sn)
+        sn_input.setPlaceholderText("REQUIRED: Enter Battery S/N or Batch ID")
+        sn_lay.addWidget(sn_input, 1)
+        lay.addLayout(sn_lay)
+
+        # File location preview
+        import datetime
+        ts = datetime.datetime.now().strftime("%Y%m%d")
+        file_lbl = QLabel(f"💾 Data will be saved to: logs/aset_{ts}_[TIME].csv")
+        file_lbl.setStyleSheet(f"color:{theme.MUTED}; font-size:11px;")
+        lay.addWidget(file_lbl)
+
         # ETA row
         eta_lbl = QLabel(f"Estimated duration: ~{eta_min} min  ({eta_min//60}h {eta_min%60:02d}m)")
         eta_lbl.setStyleSheet(f"color:{theme.INFO}; font-weight:600;")
@@ -382,7 +400,18 @@ class BaseSequenceMixin:
         btn_row = QHBoxLayout()
         btn_conf = _btn("▶  CONFIRM START", bg="INFO", fg="white", hover="#0d4a89")
         btn_canc = _btn("Cancel", bg="PANEL", hover="PANEL2")
-        btn_conf.clicked.connect(dlg.accept)
+        
+        def on_confirm():
+            sn = sn_input.text().strip()
+            if not sn:
+                QMessageBox.warning(dlg, "Missing S/N", "Please enter a Battery S/N to continue.")
+                return
+            self.config.battery.serial_number = sn
+            if hasattr(self, "ed_sn"):
+                self.ed_sn.setText(sn)
+            dlg.accept()
+            
+        btn_conf.clicked.connect(on_confirm)
         btn_canc.clicked.connect(dlg.reject)
         btn_row.addWidget(btn_conf, 2); btn_row.addWidget(btn_canc, 1)
         lay.addLayout(btn_row)

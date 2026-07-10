@@ -156,13 +156,35 @@ class IecCapacityMixin:
             soc_now = getattr(self.controller.estimator, "soc", 0.0)
             rated = self.controller.config.battery.rated_capacity
             crate = self.cb_seq_crate.currentText()
+            test_crate_str = self.cb_test_crate.currentText()
             plan = [
                 f"Battery: {self.controller.config.battery.battery_type}",
-                f"OCV: {v_now:.3f} V  ·  SoC: {soc_now:.0f}%  ·  Temp: {temp_now:.1f} °C",
+                f"OCV: {v_now:.3f} V  ·  Temp: {temp_now:.1f} °C",
                 f"Charge: {crate} ({float(crate.rstrip('C'))*rated:.3f} A)  →  "
                 f"REST {self.spn_rest_min.value()} min  →  "
-                f"Discharge {self.cb_test_crate.currentText()}",
+                f"Discharge {test_crate_str}",
             ]
+            
+            # Check EN 50342-1 conditions BEFORE starting
+            if "EN 50342-1" in self._capacity_standard_name():
+                try:
+                    test_c_rate = float(test_crate_str.rstrip('C'))
+                    applicable, violations = en50342_capacity_conditions(
+                        chemistry=self.controller.config.battery.battery_type,
+                        c_test=test_c_rate,
+                        pack_min_v=self.controller.config.battery.pack_min_voltage,
+                        cells_series=self.controller.config.battery.cells_series,
+                        skip_charge=self.chk_skip_charge.isChecked(),
+                        skip_rest=self.chk_skip_rest.isChecked()
+                    )
+                    if applicable and violations:
+                        plan.append("")
+                        plan.append("⚠️ NON-STANDARD RUN WARNING:")
+                        for v in violations:
+                            plan.append(f"  • {v}")
+                except Exception as e:
+                    logger.warning(f"Failed to check EN 50342-1 conditions pre-test: {e}")
+                    
         except Exception:
             plan = ["(hardware not ready — values unavailable)"]
         if not self._show_pretest_dialog(

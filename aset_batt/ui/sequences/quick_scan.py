@@ -156,7 +156,7 @@ class QuickScanMixin:
             rated = self.controller.config.battery.rated_capacity
             plan = [
                 f"Battery: {self.controller.config.battery.battery_type}",
-                f"OCV: {v_now:.3f} V  ·  SoC: {soc_now:.0f}%",
+                f"OCV: {v_now:.3f} V  ·  Temp: {self.hw.current_temp:.1f} °C",
                 f"OCV → REST 5 min → Discharge 1C ({rated:.3f} A) → Peukert SoH",
             ]
         except Exception:
