@@ -322,6 +322,38 @@ class CharacterizeMixin:
             self.controller.stop_monitor()
         return True
 
+    def _char_check_safety(self, ev, temp) -> bool:
+        """OTP + temperature-staleness abort for CHARACTERIZE threads. Returns
+        True if safe to continue; on a trip it clears ``ev`` (ของเทสต์นั้นเอง)
+        and alarms, then the caller's loop breaks → set_load(False)/finally ตัดไฟ
+
+        แยกจาก _seq_check_temp_stale()/_seq_check_otp() (sequences/base.py) เพราะ
+        สองตัวนั้น clear self._seq_running ซึ่งเป็นแฟล็กของ sequence — CHARACTERIZE
+        ใช้ threading.Event ของตัวเองใน self._char_running ต่อเทสต์ เดิมทีลูปพวกนี้
+        เรียก _seq_check_temp_stale() แล้วทิ้งค่า return → OTP-blind ไม่เคยหยุดเทสต์
+        และไม่มีการเช็ค OTP เลยด้วยซ้ำ (ดู docstring เดิมของ _seq_check_temp_stale
+        ที่บันทึกว่า "needs its own wiring — out of scope") — นี่คือ wiring นั้น"""
+        limit = self._otp_limit()
+        if temp is not None and not math.isnan(temp) and temp > limit:
+            ev.clear()
+            self.sig_alarm.emit(
+                f"[SAFETY] OTP: {temp:.1f}°C > {limit:.0f}°C — CHARACTERIZE test aborted")
+            return False
+        if getattr(self.hw, "temp_is_stale", None) and \
+                self.hw.temp_is_stale(self._SEQ_TEMP_STALE_TRIP_S):
+            ev.clear()
+            self.sig_alarm.emit(
+                f"[SAFETY] ESP32 temperature stale for {self._SEQ_TEMP_STALE_TRIP_S:.0f}s+ "
+                "— OTP protection is blind, CHARACTERIZE test aborted")
+            return False
+        if not getattr(self, "_seq_temp_stale_warned", False) and \
+                getattr(self.hw, "temp_is_stale", None) and self.hw.temp_is_stale():
+            self._seq_temp_stale_warned = True
+            self.sig_alarm.emit(
+                "[WARNING] ESP32 temperature reading is stale — Rin/OCV temperature "
+                "compensation and OTP protection may not reflect the real battery.")
+        return True
+
     def _char_hw_stop(self):
         """Best-effort hardware stop called from cancel handlers."""
         try:
@@ -425,7 +457,8 @@ class CharacterizeMixin:
                         v, i_meas = self.hw.read_measurements(prefer_load_v=True)
                         now  = time.perf_counter()   # stamp AT the measurement
                         temp = self.hw.current_temp
-                        self._seq_check_temp_stale()
+                        if not self._char_check_safety(ev, temp):
+                            break
                         dt   = now - last_log
                         last_log = now
                         self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
@@ -479,6 +512,7 @@ class CharacterizeMixin:
             self.sig_char_update.emit("pk", f"✗ Error: {exc}")
             logger.exception("Peukert thread error")
         finally:
+            self._char_hw_stop()
             ev.clear()
             self.sig_char_update.emit("pk", "__DONE__")
 
@@ -552,7 +586,8 @@ class CharacterizeMixin:
                     v, i_ch = self.hw.read_measurements(prefer_load_v=False)
                     now = time.perf_counter()   # stamp AT the measurement
                     temp = self.hw.current_temp
-                    self._seq_check_temp_stale()
+                    if not self._char_check_safety(ev, temp):
+                        break
                     dt  = now - last
                     last = now
                     state = self.controller.estimator.update(v, i_ch, dt=dt, temp=temp)
@@ -596,7 +631,8 @@ class CharacterizeMixin:
                     v, i_meas = self.hw.read_measurements(prefer_load_v=True)
                     now  = time.perf_counter()   # stamp AT the measurement
                     temp = self.hw.current_temp
-                    self._seq_check_temp_stale()
+                    if not self._char_check_safety(ev, temp):
+                        break
                     dt   = now - last
                     last = now
                     state = self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
@@ -641,6 +677,7 @@ class CharacterizeMixin:
             self.sig_char_update.emit("eta", f"✗ Error: {exc}")
             logger.exception("Eta thread error")
         finally:
+            self._char_hw_stop()
             ev.clear()
             self.sig_char_update.emit("eta", "__DONE__")
 
@@ -723,7 +760,8 @@ class CharacterizeMixin:
                         v, i_meas = self.hw.read_measurements(prefer_load_v=True)
                         now  = time.perf_counter()   # stamp AT the measurement
                         temp = self.hw.current_temp
-                        self._seq_check_temp_stale()
+                        if not self._char_check_safety(ev, temp):
+                            break
                         dt   = now - last
                         last = now
                         state = self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
@@ -821,6 +859,7 @@ class CharacterizeMixin:
             self.sig_char_update.emit("gitt", f"✗ Error: {exc}")
             logger.exception("GITT thread error")
         finally:
+            self._char_hw_stop()
             ev.clear()
             self.sig_char_update.emit("gitt", "__DONE__")
 
@@ -911,7 +950,8 @@ class CharacterizeMixin:
                     v, i_meas = self.hw.read_measurements(prefer_load_v=True)
                     now = time.perf_counter()
                     temp = self.hw.current_temp
-                    self._seq_check_temp_stale()
+                    if not self._char_check_safety(ev, temp):
+                        break
                     dt = now - last
                     last = now
                     state = self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
@@ -951,6 +991,7 @@ class CharacterizeMixin:
             self.sig_char_update.emit("cca", f"✗ Error: {exc}")
             logger.exception("CCA thread error")
         finally:
+            self._char_hw_stop()
             ev.clear()
             self.sig_char_update.emit("cca", "__DONE__")
 

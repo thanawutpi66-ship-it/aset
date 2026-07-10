@@ -43,6 +43,16 @@ def run() -> int:
     app = QApplication(sys.argv)
     QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
 
+    # Signal-delivery wake-up: ระหว่าง app.exec() คอนโทรลอยู่ที่ event loop ฝั่ง C++
+    # ของ Qt — Python จะประมวลผล SIGINT/SIGBREAK ที่ค้างอยู่ได้ก็ต่อเมื่อได้กลับมารัน
+    # bytecode ของตัวเอง ถ้าไม่มี timer นี้ การกด Ctrl+C หรือปุ่ม Stop ของ IDE
+    # (Thonny/VS Code) จะไปไม่ถึง handler ใน app_bootstrapper เลย → IDE รอไม่ไหว
+    # แล้ว force-kill โปรเซส → PSU/Load ค้างสถานะเดิมโดยไม่มีการตัดไฟ
+    from PySide6.QtCore import QTimer
+    _signal_wakeup = QTimer()
+    _signal_wakeup.timeout.connect(lambda: None)   # no-op — แค่ปลุก interpreter
+    _signal_wakeup.start(200)
+
     try:
         # Routed through theme.get_material_stylesheet() (not qt_material.apply_
         # stylesheet() directly) so the built CSS is cached — if the user later

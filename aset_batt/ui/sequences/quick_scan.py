@@ -307,6 +307,7 @@ class QuickScanMixin:
             self.sig_alarm.emit(f"[QUICK] Error: {exc}")
             status(f"QUICK Error: {exc}")
         finally:
+            self._seq_hw_safe_off()
             self._seq_running.clear()
             if self.controller:
                 self.controller.end_session()

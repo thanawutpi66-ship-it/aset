@@ -449,6 +449,7 @@ class IecCapacityMixin:
             self.sig_alarm.emit(f"[AUTO] Error: {exc}")
             status(f"Error: {exc}")
         finally:
+            self._seq_hw_safe_off()
             self._seq_running.clear()
             if self.controller:
                 self.controller.end_session()

@@ -513,6 +513,25 @@ class BaseSequenceMixin:
         import time as _t
         self._seq_last_meas_time = _t.time()
 
+    def _seq_hw_safe_off(self):
+        """Best-effort ตัดไฟทั้งหมด — ต้องเป็นบรรทัดแรกใน ``finally`` ของทุก
+        sequence thread. ก่อนหน้านี้แต่ละ thread ตัดไฟใน finally ไม่เท่ากัน
+        (IEC/QuickScan ไม่ตัดเลย, HPPC/CycleLife ตัดแค่ load) — exception กลางเฟส
+        CHARGE จึงทิ้ง charge loop (thread แยกของ controller ที่เช็คแค่
+        is_charging/safety_triggered) ให้ชาร์จต่อทั้งที่ sequence ตายไปแล้ว
+        ทุกคำสั่งเป็น idempotent: จบงานปกติที่ output ปิดอยู่แล้วก็เรียกซ้ำได้
+        (psu_off ตัด SSR ตามด้วย ซึ่งคือ end-state ที่ถูกต้องของทุกเทสต์)"""
+        try:
+            if self.controller:
+                self.controller.stop_charge()
+        except Exception:
+            logger.exception("sequence finally: stop_charge failed")
+        for fn_name in ("load_off", "psu_off"):
+            try:
+                getattr(self.hw, fn_name)()
+            except Exception:
+                logger.exception("sequence finally: %s failed", fn_name)
+
     def _hw_retry(self, fn, *args, retries: int = 3, delay: float = 0.5, **kwargs):
         """Call ``fn(*args, **kwargs)``, retrying a transient exception with a short
         delay. The sequence threads' per-sample loops already tolerate a single failed

@@ -33,6 +33,10 @@ def _make_bound_window():
     cfg = ConfigManager()
     cfg.battery.product_name = "YTZ6V (12V 5.3Ah VRLA)"   # cca_a=95.0 in battery_profiles.json
     hw = MockHardwareController()
+    # _char_check_safety (safety audit ก.ค. 2026) aborts CHARACTERIZE tests when the
+    # temperature link is down (OTP would be blind) — connect the mock ESP32 the same
+    # way the real app flow does before any test can start.
+    hw.connect_esp32("MOCK")
     model = BatteryModel(cfg.battery.battery_type, cfg.battery.rated_capacity,
                           cfg.battery.cells_series, cfg.battery.cells_parallel)
     estimator = StateEstimator(cfg.battery.rated_capacity, model)

@@ -668,11 +668,11 @@ class HppcMixin:
             self.sig_alarm.emit(f"[HPPC SEQ] Error: {exc}")
             status(f"HPPC SEQ Error: {exc}")
         finally:
+            self._seq_hw_safe_off()
             self._seq_running.clear()
             if self.controller:
                 self.controller.end_session()
             self.sig_phase_progress.emit(0, 0)
-            self.hw.load_off()
             if not completed_ok:
                 self.sig_seq_aborted.emit()
             self.sig_loading.emit("btn_hppc_seq", False, "")

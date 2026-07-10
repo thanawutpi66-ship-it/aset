@@ -636,6 +636,18 @@ class DialogsMixin:
             timer = getattr(self, timer_attr, None)
             if timer is not None:
                 timer.stop()
+        # หยุดเธรดทดสอบทุกตัวก่อนตัดไฟ — ไม่งั้นเธรด daemon ที่ยังวิ่งอยู่อาจสั่ง
+        # output กลับมาเปิดหลัง controller.shutdown() ตัดไฟไปแล้ว หรือค้างวน error
+        # จนโปรเซสจบ (sequence 4 ตัวใช้ _seq_running, CHARACTERIZE ใช้ event
+        # ราย-เทสต์ใน _char_running, RUN TEST ใช้ AcquisitionWorker ใน _test_worker)
+        try:
+            self._seq_running.clear()
+            for char_ev in getattr(self, "_char_running", {}).values():
+                char_ev.clear()
+            if getattr(self, "_test_worker", None) is not None:
+                self._test_worker.stop()
+        except Exception as exc:
+            logger.error("stopping test threads on close: %s", exc)
         try:
             if self.controller:
                 self.controller.shutdown()

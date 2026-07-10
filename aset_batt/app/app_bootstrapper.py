@@ -25,6 +25,7 @@ class ApplicationBootstrapper:
         self.service_provider: Optional[ServiceProvider] = None
         self.logger: Optional[ASETLogger] = None
         self._initialized = False
+        self._cleanup_done = False
 
     def initialize(self) -> bool:
         """Initialize the application with proper error handling"""
@@ -37,6 +38,14 @@ class ApplicationBootstrapper:
 
             # Setup signal handlers
             self._setup_signal_handlers()
+
+            # Last-resort safety net: ถ้าโปรเซสจบด้วยเส้นทางไหนก็ตามที่ไม่ผ่าน
+            # run()'s finally (unhandled exception, sys.exit จากที่อื่น) ให้
+            # cleanup() — ซึ่งตัดไฟฮาร์ดแวร์ — ยังถูกเรียกตอน interpreter exit
+            # (cleanup มี _cleanup_done guard จึงเรียกซ้ำได้; force-kill ระดับ OS
+            # เท่านั้นที่ข้ามตรงนี้ได้ — ตรงนั้นเป็นหน้าที่ของ MCB)
+            import atexit
+            atexit.register(self.cleanup)
 
             # Initialize service locator
             self._initialize_services()
@@ -71,11 +80,32 @@ class ApplicationBootstrapper:
         logger.info("Configuration loaded and validated")
 
     def _setup_signal_handlers(self):
-        """Setup signal handlers for graceful shutdown"""
+        """Setup signal handlers for graceful shutdown.
+
+        ตัดไฟฮาร์ดแวร์ก่อนเป็นอันดับแรก (best-effort, idempotent) แล้วค่อยสั่ง Qt
+        event loop ให้จบ — run() จะเรียก cleanup() เต็มรูปแบบใน finally เอง
+        การเรียก cleanup()+sys.exit(0) ตรงๆ จากใน handler แบบเดิมไม่น่าเชื่อถือ:
+        SystemExit ที่ถูก raise กลางเฟรม C++ ของ Qt อาจถูกกลืน ทำให้แอปวิ่งต่อ
+        ทั้งที่ services ถูก cleanup ไปครึ่งเดียวแล้ว
+
+        NOTE: handler นี้ทำงานได้ก็ต่อเมื่อ interpreter ได้รันโค้ด Python เป็นระยะ —
+        ระหว่าง app.exec() ต้องมี wake-up QTimer ใน run.py คอยปลุก (ดูที่นั่น)
+        และถ้าโปรเซสถูก force-kill (Task Manager / Thonny ฆ่าโปรเซสตรงๆ)
+        ไม่มีโค้ดไหนช่วยได้ — MCB passive backstop คือด่านสุดท้ายของกรณีนั้น
+        """
         def signal_handler(signum, frame):
             logger.info(f"Received signal {signum}, initiating shutdown")
-            self.cleanup()
-            sys.exit(0)
+            self._emergency_hw_off()
+            try:
+                from PySide6.QtWidgets import QApplication
+                app = QApplication.instance()
+            except Exception:
+                app = None
+            if app is not None:
+                app.quit()   # app.exec() คืน → run() finally → cleanup() เต็มรูปแบบ
+            else:
+                self.cleanup()
+                sys.exit(0)
 
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
@@ -83,6 +113,16 @@ class ApplicationBootstrapper:
         # Handle SIGBREAK on Windows
         if hasattr(signal, 'SIGBREAK'):
             signal.signal(signal.SIGBREAK, signal_handler)
+
+    def _emergency_hw_off(self):
+        """ตัด PSU/Load/SSR ทันทีแบบ best-effort — เรียกได้หลายครั้ง ปลอดภัยเสมอ
+        (เส้นทางเดียวกับ E-STOP: load_off + psu_off ซึ่งตัด SSR ด้วย)"""
+        try:
+            from aset_batt.app.auto_controller import AutoController
+            if ServiceLocator.has(AutoController):
+                ServiceLocator.get(AutoController)._emergency_shutdown()
+        except Exception as exc:
+            logger.error("emergency hardware off failed: %s", exc, exc_info=True)
 
     def _initialize_services(self):
         """Initialize service locator with core services"""
@@ -203,7 +243,11 @@ class ApplicationBootstrapper:
         self.service_provider.register(AutoController, controller)
 
     def cleanup(self):
-        """Cleanup application resources"""
+        """Cleanup application resources (idempotent — ถูก register กับ atexit ด้วย
+        จึงอาจถูกเรียกซ้ำหลังเส้นทางปกติ; รอบสองต้องเป็น no-op)"""
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
         logger.info("Starting application cleanup")
 
         try:
