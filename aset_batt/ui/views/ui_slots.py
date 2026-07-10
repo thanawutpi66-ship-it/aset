@@ -348,7 +348,7 @@ class UiSlotsMixin:
             # Simple passcode prompt
             from PySide6.QtWidgets import QInputDialog, QLineEdit
             text, ok = QInputDialog.getText(self, "Admin Login", "Enter Admin PIN:", QLineEdit.EchoMode.Password)
-            if ok and text == "admin":
+            if ok and text == "2547":
                 self.btn_admin.setText("Admin 🔒")
                 self.btn_admin.setStyleSheet(
                     f"QPushButton {{ background:{theme.INFO}; color:white; border:1px solid {theme.INFO}; border-radius:4px; padding:4px 10px; font-size:12px; font-weight:700; margin-right: 10px; }}"
