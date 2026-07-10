@@ -462,9 +462,6 @@ function updateChargeStatus(current, meta, summary) {
   const isCV = subPhase === 'cv' || phase === 'cv' || phase === 'absorption' || phase === 'float';
   const isChargePhase = ['charge','bulk','absorption','float','cc','cv'].includes(phase);
 
-  if (ccBadge) ccBadge.classList.toggle('active', isCC);
-  if (cvBadge) cvBadge.classList.toggle('active', isCV);
-
   // Charge elapsed time — use elapsed_s from meta during charging phases
   if (chargeElEl) {
     if (isChargePhase || state === 'charging') {
