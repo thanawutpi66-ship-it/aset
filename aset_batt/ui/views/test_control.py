@@ -238,12 +238,26 @@ class TestControlMixin:
                     self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} {_u}')
             self.metric_labels["Temp"][0].setText(f'{row["temp"]:.1f} {self.metric_labels["Temp"][1]}')
         self._set_temp_label_color(row["temp"])
-        # Throttled the same way as _slot_display — see its comment.
+        # Throttled the same way as _slot_display — see its comment. NOTE: the
+        # 0.2s window matches the worker's own 5 Hz TARGET exactly, so at any
+        # achieved rate AT or BELOW 5 Hz (the common case per the real-rig
+        # breakdown logs) this throttle provides no headroom at all — it fires
+        # on every single sample, not "1 in N". Timed here (logged only when it
+        # actually redraws, at most every ~5s to avoid spamming) to test the
+        # hypothesis that this full-buffer pyqtgraph redraw running on the GUI
+        # thread is the real source of the worker breakdown's "other" bucket
+        # via GIL contention, now that the msleep pacing bug is fixed.
         import time as _time
         _now_redraw = _time.perf_counter()
         if _now_redraw - self._last_trend_redraw >= 0.2:
             self._last_trend_redraw = _now_redraw
+            _rd0 = _time.perf_counter()
             self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
+            _rd_cost = _time.perf_counter() - _rd0
+            if not hasattr(self, "_last_redraw_log") or _now_redraw - self._last_redraw_log >= 5.0:
+                self._last_redraw_log = _now_redraw
+                logger.info("trend.update() redraw cost: %.1f ms (buffer=%d points)",
+                           _rd_cost * 1000, len(self.buf_t))
     def _on_hppc_telemetry(self, row: dict):
         """Update the HPPC phase indicator (REST / PULSE / cycle count) from elapsed time.
 
