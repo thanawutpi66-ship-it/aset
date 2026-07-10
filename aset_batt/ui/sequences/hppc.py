@@ -501,14 +501,23 @@ class HppcMixin:
                 voc_for_fit = (sorted(_relax_tail_v)[_rest_n // 2]
                                if _rest_n else v_r)
                 t_phase = _t.time() + pulse_s
+                # Per-substep timing breakdown for the achieved-rate alarm below —
+                # "sampling only 0.7 Hz" alone doesn't say WHERE the ~1.4s/iteration
+                # went (SCPI round-trip vs CSV/cloud log vs Qt display paint), so a
+                # slow rig couldn't be diagnosed without adding print statements by
+                # hand. Wall-clock, not CPU time — this is exactly the real latency
+                # budget the pacing loop below is fighting.
+                _t_scpi = _t_log = _t_display = 0.0
                 while self._seq_running.is_set() and _t.time() < t_phase:
                     _iter_t0 = _t.perf_counter()
                     try:
+                        _s0 = _t.perf_counter()
                         v_p, i_p = self.hw.read_measurements(prefer_load_v=True)
+                        temp_h = self.hw.current_temp
+                        _t_scpi += _t.perf_counter() - _s0
                         # discharge-positive convention (matches AUTO/QUICK SCAN) — do
                         # NOT negate i_p here, or the CSV's current sign is inverted and
                         # the 1-RC ECM fit never converges on this sequence's own data.
-                        temp_h = self.hw.current_temp
                         # Stale-temp escalation (G8) — IEC/Quick Scan discharge loops
                         # have had this since the industrial-grade audit; checked BEFORE
                         # feeding the estimator/CSV (same check-then-feed order as those
@@ -531,11 +540,15 @@ class HppcMixin:
                             v_p, i_p, dt=max(1e-3, _upd_now - _upd_last),
                             temp=temp_h)
                         _upd_last = _upd_now
+                        _s1 = _t.perf_counter()
                         self.controller._log_sample(v_p, i_p)
+                        _t_log += _t.perf_counter() - _s1
                         _fit_t.append(_t.perf_counter() - _fit_t0)
                         _fit_i.append(i_p)
                         _fit_v.append(v_p)
+                        _s2 = _t.perf_counter()
                         self.update_display(v_p, i_p, state_p["soc"], state_p["rin"])
+                        _t_display += _t.perf_counter() - _s2
                         self._seq_kick_watchdog()
                         elapsed_h = int(_t.time() - _hppc_t0)
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
@@ -578,14 +591,28 @@ class HppcMixin:
                 _pulse_span = (_fit_t[-1] - max(0.0, _fit_t[_rest_n])) if _n_pulse_samples > 1 else 0.0
                 if _pulse_span > 1.0:
                     _hz = _n_pulse_samples / _pulse_span
-                    logger.info("HPPC pulse %d/%d sampled at %.1f Hz (%d samples / %.1fs)",
-                                cyc, n_cyc, _hz, _n_pulse_samples, _pulse_span)
+                    # Breakdown as % of the accounted-for time — the gap between
+                    # (scpi+log+display) and the real per-iteration wall-clock is
+                    # unaccounted overhead (Python/Qt event-loop scheduling, GIL
+                    # contention with other threads, etc.), reported too so "the
+                    # three measured substeps only added up to 60%" is visible
+                    # instead of silently attributed to whichever substep is listed.
+                    _t_accounted = _t_scpi + _t_log + _t_display
+                    _t_total = max(_t_accounted, _pulse_span)
+                    _t_other = max(0.0, _t_total - _t_accounted)
+                    logger.info(
+                        "HPPC pulse %d/%d sampled at %.1f Hz (%d samples / %.1fs) — "
+                        "breakdown: SCPI %.0f%%  log %.0f%%  display %.0f%%  other %.0f%%",
+                        cyc, n_cyc, _hz, _n_pulse_samples, _pulse_span,
+                        100 * _t_scpi / _t_total, 100 * _t_log / _t_total,
+                        100 * _t_display / _t_total, 100 * _t_other / _t_total)
                     if _hz < 2.0 and not _rate_warned:
                         _rate_warned = True
                         self.sig_alarm.emit(
                             f"[HPPC SEQ] Sampling only {_hz:.1f} Hz during pulses "
-                            f"(target ~5 Hz) — SCPI/system overhead is eating the "
-                            f"budget; R1/C1 fit quality degraded")
+                            f"(target ~5 Hz) — breakdown: SCPI {100*_t_scpi/_t_total:.0f}% "
+                            f"log {100*_t_log/_t_total:.0f}% display {100*_t_display/_t_total:.0f}% "
+                            f"other {100*_t_other/_t_total:.0f}% — R1/C1 fit quality degraded")
                 # Feed this cycle's own real R0/R1/C1 into the live estimator — HPPC's
                 # pulse leg used to never feed the estimator at all, so without this
                 # the live SoC/Rin display never benefited from a real per-unit
