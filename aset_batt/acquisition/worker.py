@@ -95,6 +95,16 @@ class AcquisitionWorker(QObject):
             last_t = t0
             last_flush_t = t0
             last_i = 0.0                               # discharge-positive
+            # Per-substep timing breakdown, same idea as sequences/hppc.py's HPPC
+            # Full Sequence pulse-rate alarm — this manual TEST MODE run (including
+            # HPPC via "Run Test") is a SEPARATE code path from that automated
+            # sequence and didn't have any rate diagnostics at all. Logged every
+            # _RATE_LOG_EVERY samples so a slow rig is visible without waiting for
+            # the whole test to finish.
+            _t_scpi = _t_log = 0.0
+            _rate_n = 0
+            _rate_t0 = t0
+            _RATE_LOG_EVERY = 25
             while True:
                 with QMutexLocker(self._ctrl):
                     if not self._running:
@@ -110,9 +120,11 @@ class AcquisitionWorker(QObject):
 
                 elapsed = time.perf_counter() - t0
 
+                _s0 = time.perf_counter()
                 with QMutexLocker(self._io):
                     v, i_raw = self.backend.step(elapsed - (last_t - t0), elapsed)
                     temp = self.backend.read_temperature()
+                _t_scpi += time.perf_counter() - _s0
                 t_meas = time.perf_counter()           # timestamp AT the sample
                 # Normalize sign ONCE at the backend boundary: backend returns charge +,
                 # discharge −; the whole worker + analysis speaks discharge-POSITIVE.
@@ -143,16 +155,36 @@ class AcquisitionWorker(QObject):
 
                 row = {"elapsed": elapsed, "v": v, "i": i, "cap": self.cap_ah,
                        "soc": soc, "temp": temp, "mode": self.cfg.mode.value}
+                _s1 = time.perf_counter()
                 writer.writerow([datetime.now().isoformat(timespec="milliseconds"),
                                  f"{elapsed:.3f}", f"{v:.4f}", f"{i:.4f}",  # discharge +
                                  f"{soc:.2f}", f"{temp:.2f}", f"{self.cap_ah:.5f}",
                                  self.cfg.mode.value])
-                self.telemetry.emit(row)
-                
+                self.telemetry.emit(row)   # async cross-thread signal — not timed
+                                           # separately, see hppc.py's equivalent note
+                _t_log += time.perf_counter() - _s1
+
                 now = time.perf_counter()
                 if now - last_flush_t >= 1.0:
                     f.flush()
                     last_flush_t = now
+
+                _rate_n += 1
+                if _rate_n >= _RATE_LOG_EVERY:
+                    _rate_span = now - _rate_t0
+                    if _rate_span > 0.5:
+                        _hz = _rate_n / _rate_span
+                        _t_total = max(_t_scpi + _t_log, _rate_span)
+                        _t_other = max(0.0, _t_total - _t_scpi - _t_log)
+                        logger.info(
+                            "%s worker sampled at %.1f Hz (%d samples / %.1fs, target %.1f Hz) — "
+                            "breakdown: SCPI %.0f%%  log %.0f%%  other %.0f%%",
+                            self.cfg.mode.value, _hz, _rate_n, _rate_span, 1.0 / period,
+                            100 * _t_scpi / _t_total, 100 * _t_log / _t_total,
+                            100 * _t_other / _t_total)
+                    _rate_n = 0
+                    _t_scpi = _t_log = 0.0
+                    _rate_t0 = now
 
                 if self.cfg.mode == OperationMode.CC_DISCHARGE and v <= p.cutoff_v:
                     self.alarm.emit("INFO", "Discharge reached cut-off voltage — test complete")
