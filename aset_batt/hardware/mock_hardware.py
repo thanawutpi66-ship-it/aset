@@ -10,6 +10,8 @@ import time
 class MockHardwareController:
     def __init__(self):
         self.is_connected = True
+        self.is_psu_connected = True
+        self.is_load_connected = True
         self.is_esp_connected = False
         self.current_temp = 25.0         # °C จำลอง
         self.last_esp_heartbeat = time.time()   # parity with HardwareController

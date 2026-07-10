@@ -95,18 +95,14 @@ class ZonesMixin:
         self.lbl_battery_readout = QLabel("—")
         theme.style(self.lbl_battery_readout, lambda: f"color:{theme.MUTED};")
         lay.addWidget(self.lbl_battery_readout)
+        self.lbl_safety_limits = QLabel("—")
+        theme.style(self.lbl_safety_limits, lambda: f"color:{theme.CRIT}; font-size:11px; font-weight:600;")
+        lay.addWidget(self.lbl_safety_limits)
         actions = QHBoxLayout()
         self.btn_detect = _btn("Detect Chemistry", bg="PANEL", hover="PANEL2")
         self.btn_detect.clicked.connect(self._on_detect_chemistry)
-        self.btn_save_default = _btn("Save as Default", bg="PANEL", hover="PANEL2")
-        self.btn_save_default.clicked.connect(self._on_save_default)
-        actions.addWidget(self.btn_detect, 2)
-        actions.addWidget(self.btn_save_default, 1)
+        actions.addWidget(self.btn_detect)
         lay.addLayout(actions)
-        btn_edit_profile = _btn("Edit Battery Profile…", bg="PANEL", hover="PANEL2")
-        btn_edit_profile.setToolTip("แก้ไขค่า BatteryConfig ในแอพโดยตรง")
-        btn_edit_profile.clicked.connect(self._on_edit_battery_profile)
-        lay.addWidget(btn_edit_profile)
 
         sn_row = QHBoxLayout()
         sn_row.addWidget(QLabel("S/N:"))
@@ -157,42 +153,7 @@ class ZonesMixin:
         btn_refresh.clicked.connect(self._refresh_ports)
         lay.addWidget(btn_refresh)
 
-        # SSR safety-cutoff relay (ESP32 GPIO16) — physically gates power to
-        # PSU + load. Normally automatic: ON the instant charging starts (any
-        # test mode), OFF the instant it stops. Manual ON/OFF below is for
-        # diagnostics/recovery (e.g. verifying the relay itself, or an extra
-        # cutoff without a full Disconnect) — it does not start/stop a test.
-        lay.addWidget(_hline())
-        lay.addWidget(self._subheader("SSR POWER RELAY (GPIO16)"))
-        ssr_row = QHBoxLayout()
-        lbl_ssr = QLabel("Relay:")
-        lbl_ssr.setMinimumWidth(78)
-        ssr_row.addWidget(lbl_ssr)
-        self.led_ssr = _led()
-        ssr_row.addWidget(self.led_ssr)
-        self.lbl_ssr_state = QLabel("—")
-        self.lbl_ssr_state.setStyleSheet(f"color:{theme.MUTED}; font-weight:600;")
-        ssr_row.addWidget(self.lbl_ssr_state)
-        ssr_row.addStretch(1)
-        lay.addLayout(ssr_row)
-        ssr_btn_row = QHBoxLayout()
-        self.btn_ssr_on = _btn("Manual ON", bg="OK", fg="white", hover="#266a2a")
-        self.btn_ssr_off = _btn("Manual OFF", bg="CRIT", fg="white", hover="#9b2020")
-        self.btn_ssr_on.clicked.connect(self._on_ssr_manual_on)
-        self.btn_ssr_off.clicked.connect(self._on_ssr_manual_off)
-        self.btn_ssr_on.setEnabled(False)
-        self.btn_ssr_off.setEnabled(False)
-        ssr_btn_row.addWidget(self.btn_ssr_on)
-        ssr_btn_row.addWidget(self.btn_ssr_off)
-        lay.addLayout(ssr_btn_row)
-        lbl_ssr_hint = QLabel(
-            "ⓘ ตัดไฟ PSU/Load ทางกายภาพผ่าน SSR ที่ ESP32 GPIO16 — ปกติทำงานอัตโนมัติ: "
-            "ON ทันทีที่เริ่มชาร์จ (ทุกโหมดเทสต์), OFF ทันทีที่หยุดชาร์จ/E-STOP\n"
-            "ปุ่ม Manual ด้านบนไว้สั่งตรงสำหรับ diagnostic/recovery เท่านั้น "
-            "(ต้องต่อ ESP32 ก่อนถึงจะกดได้) — ไม่ได้ไปเริ่ม/หยุดการทดสอบ")
-        theme.style(lbl_ssr_hint, lambda: f"color:{theme.MUTED}; font-size:10px;")
-        lbl_ssr_hint.setWordWrap(True)
-        lay.addWidget(lbl_ssr_hint)
+
 
         return w
 
@@ -316,6 +277,15 @@ class ZonesMixin:
         theme.style(_sep, lambda: f"color:{theme.BORDER}; margin:2px 0;")
         iec_lay.addWidget(_sep)
 
+        # Advanced Parameters Group
+        from PySide6.QtWidgets import QGroupBox
+        self.grp_advanced = QGroupBox("Advanced Test Parameters")
+        self.grp_advanced.setEnabled(False)
+        theme.style(self.grp_advanced, lambda: f"QGroupBox {{ color:{theme.MUTED}; font-weight:bold; font-size:11px; border:1px solid {theme.BORDER}; border-radius:4px; margin-top:6px; }} QGroupBox::title {{ subcontrol-origin: margin; left: 8px; padding: 0 3px 0 3px; }}")
+        adv_lay = QVBoxLayout(self.grp_advanced)
+        adv_lay.setContentsMargins(8, 12, 8, 8)
+        adv_lay.setSpacing(4)
+        
         # Charge mode
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Charge mode:"))
@@ -325,7 +295,7 @@ class ZonesMixin:
             "Auto — ใช้ strategy ของเคมีแบต  |  CC-CV — Lithium  |  3-Stage — Lead-Acid"
         )
         mode_row.addWidget(self.cb_charge_mode, 1)
-        iec_lay.addLayout(mode_row)
+        adv_lay.addLayout(mode_row)
 
         # Charge C-rate
         crate_row = QHBoxLayout()
@@ -340,7 +310,7 @@ class ZonesMixin:
         crate_row.addWidget(self.cb_seq_crate)
         crate_row.addWidget(self.lbl_seq_crate_a)
         crate_row.addStretch(1)
-        iec_lay.addLayout(crate_row)
+        adv_lay.addLayout(crate_row)
         self.cb_seq_crate.currentTextChanged.connect(self._on_seq_crate_changed)
 
         # Stage breakdown
@@ -349,7 +319,7 @@ class ZonesMixin:
             f"color:{theme.MUTED}; font-size:10px; padding-left:24px; padding-bottom:2px;"
         )
         self.lbl_charge_crate.setWordWrap(True)
-        iec_lay.addWidget(self.lbl_charge_crate)
+        adv_lay.addWidget(self.lbl_charge_crate)
 
         # REST duration
         rest_row = QHBoxLayout()
@@ -363,7 +333,7 @@ class ZonesMixin:
         self.spn_rest_min.valueChanged.connect(lambda _v: self._refresh_step_time_estimates())
         rest_row.addWidget(self.spn_rest_min)
         rest_row.addStretch(1)
-        iec_lay.addLayout(rest_row)
+        adv_lay.addLayout(rest_row)
 
         # Test discharge C-rate
         test_row = QHBoxLayout()
@@ -382,7 +352,7 @@ class ZonesMixin:
         test_row.addWidget(self.cb_test_crate)
         test_row.addWidget(self.lbl_test_crate_a)
         test_row.addStretch(1)
-        iec_lay.addLayout(test_row)
+        adv_lay.addLayout(test_row)
         self.cb_test_crate.currentTextChanged.connect(self._on_test_crate_changed)
 
         # Skip-phase toggles
@@ -394,7 +364,7 @@ class ZonesMixin:
         skip_row.addWidget(self.chk_skip_charge)
         skip_row.addWidget(self.chk_skip_rest)
         skip_row.addStretch(1)
-        iec_lay.addLayout(skip_row)
+        adv_lay.addLayout(skip_row)
 
         # SoC charge threshold
         soc_row = QHBoxLayout()
@@ -406,7 +376,11 @@ class ZonesMixin:
         self.spn_soc_threshold.setToolTip("Skip CHARGE when battery SoC is at or above this level")
         soc_row.addWidget(self.spn_soc_threshold)
         soc_row.addStretch(1)
-        iec_lay.addLayout(soc_row)
+        adv_lay.addLayout(soc_row)
+        
+        iec_lay.addWidget(self.grp_advanced)
+        
+        # Start button
 
         self.btn_auto_seq = _btn("▶  AUTO SEQUENCE", bg="INFO", fg="white", hover="#0d4a89")
         self.btn_auto_seq.setToolTip(
@@ -625,33 +599,6 @@ class ZonesMixin:
         result_lay.addWidget(self.btn_seq_export)
         self.frm_seq_result.hide()
         outer_lay.addWidget(self.frm_seq_result)
-
-        # ── IEC Profiles (moved from 3·TOOLS → Profile tab) ──────────────
-        outer_lay.addWidget(_hline())
-        outer_lay.addWidget(self._subheader("IEC PROFILES"))
-        prow_sel = QHBoxLayout()
-        prow_sel.addWidget(QLabel("Profile:"))
-        self.cb_profiles = QComboBox()
-        self._populate_profiles()
-        self._combo_shrink(self.cb_profiles, 10)
-        prow_sel.addWidget(self.cb_profiles, 1)
-        outer_lay.addLayout(prow_sel)
-        prow = QHBoxLayout()
-        self.btn_start_profile = _btn("RUN", bg="INFO", fg="white", hover="#0d4a89")
-        self.btn_start_profile.clicked.connect(self._on_run_profile)
-        self.btn_stop_profile = _btn("STOP", bg="CRIT", fg="white", hover="#9b2020")
-        self.btn_stop_profile.clicked.connect(
-            lambda: self.controller and self.controller.stop_profile())
-        self._buttons["btn_start_profile"] = self.btn_start_profile
-        prow.addWidget(self.btn_start_profile)
-        prow.addWidget(self.btn_stop_profile)
-        outer_lay.addLayout(prow)
-        self.lbl_profile_status = QLabel("No profile selected")
-        # Baseline only — _slot_profile_status overwrites with each status
-        # event's own color; after a retheme the baseline wins until the next
-        # event, which is fine (the text itself carries the state).
-        theme.style(self.lbl_profile_status, lambda: f"color:{theme.MUTED};")
-        outer_lay.addWidget(self.lbl_profile_status)
 
         return outer
 
@@ -1019,15 +966,103 @@ class ZonesMixin:
         self.lbl_csv.setWordWrap(True)
         lay.addWidget(self.lbl_csv)
 
-        self.btn_log = _btn("START DATA LOGGING", bg="PANEL", hover="PANEL2")
-        self.btn_log.clicked.connect(self._on_toggle_logging)
-        lay.addWidget(self.btn_log)
+        self.btn_open_logs = _btn("Open Logs Folder", bg="PANEL", hover="PANEL2")
+        self.btn_open_logs.clicked.connect(self._on_open_logs_folder)
+        lay.addWidget(self.btn_open_logs)
         self.btn_pdf = _btn("Generate PDF Report", bg="PANEL", hover="PANEL2")
         self.btn_pdf.clicked.connect(self._on_pdf_report)
         lay.addWidget(self.btn_pdf)
         btn_dash = _btn("Open Cloud Dashboard", bg="PANEL", hover="PANEL2")
         btn_dash.clicked.connect(self._on_open_dashboard)
         lay.addWidget(btn_dash)
+
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("BATTERY CONFIGURATION"))
+        self.btn_edit_profile = _btn("Edit Battery Profile…", bg="PANEL", hover="PANEL2")
+        self.btn_edit_profile.setToolTip("แก้ไขค่า BatteryConfig ในแอพโดยตรง")
+        self.btn_edit_profile.clicked.connect(self._on_edit_battery_profile)
+        self.btn_edit_profile.setVisible(False)
+        lay.addWidget(self.btn_edit_profile)
+        
+        # Hardware Calibration Group
+        from PySide6.QtWidgets import QGroupBox, QDoubleSpinBox, QFormLayout
+        self.grp_calibration = QGroupBox("Hardware Calibration (Offsets)")
+        self.grp_calibration.setVisible(False)
+        theme.style(self.grp_calibration, lambda: f"QGroupBox {{ color:{theme.MUTED}; font-weight:bold; font-size:11px; border:1px solid {theme.BORDER}; border-radius:4px; margin-top:6px; }} QGroupBox::title {{ subcontrol-origin: margin; left: 8px; padding: 0 3px 0 3px; }}")
+        cal_lay = QFormLayout(self.grp_calibration)
+        cal_lay.setContentsMargins(8, 12, 8, 8)
+        
+        self.spn_psu_v_offset = QDoubleSpinBox()
+        self.spn_psu_v_offset.setRange(-1.0, 1.0)
+        self.spn_psu_v_offset.setSingleStep(0.01)
+        self.spn_psu_v_offset.setDecimals(3)
+        
+        self.spn_psu_i_offset = QDoubleSpinBox()
+        self.spn_psu_i_offset.setRange(-1.0, 1.0)
+        self.spn_psu_i_offset.setSingleStep(0.01)
+        self.spn_psu_i_offset.setDecimals(3)
+        
+        self.spn_load_v_offset = QDoubleSpinBox()
+        self.spn_load_v_offset.setRange(-1.0, 1.0)
+        self.spn_load_v_offset.setSingleStep(0.01)
+        self.spn_load_v_offset.setDecimals(3)
+        
+        self.spn_load_i_offset = QDoubleSpinBox()
+        self.spn_load_i_offset.setRange(-1.0, 1.0)
+        self.spn_load_i_offset.setSingleStep(0.01)
+        self.spn_load_i_offset.setDecimals(3)
+        
+        cal_lay.addRow("PSU Voltage Offset (V):", self.spn_psu_v_offset)
+        cal_lay.addRow("PSU Current Offset (A):", self.spn_psu_i_offset)
+        cal_lay.addRow("Load Voltage Offset (V):", self.spn_load_v_offset)
+        cal_lay.addRow("Load Current Offset (A):", self.spn_load_i_offset)
+        
+        self.btn_save_cal = _btn("Save Calibration", bg="PANEL", hover="PANEL2")
+        self.btn_save_cal.clicked.connect(self._on_save_calibration)
+        cal_lay.addRow(self.btn_save_cal)
+        
+        lay.addWidget(self.grp_calibration)
+        
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("SSR POWER RELAY (GPIO16)"))
+        ssr_row = QHBoxLayout()
+        lbl_ssr = QLabel("Relay:")
+        lbl_ssr.setMinimumWidth(78)
+        ssr_row.addWidget(lbl_ssr)
+        
+        def _led():
+            lbl = QLabel("●")
+            lbl.setStyleSheet(f"color:{theme.NEUTRAL}; font-size:15px; min-width:18px;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            return lbl
+
+        self.led_ssr = _led()
+        ssr_row.addWidget(self.led_ssr)
+        self.lbl_ssr_state = QLabel("—")
+        self.lbl_ssr_state.setStyleSheet(f"color:{theme.MUTED}; font-weight:600;")
+        ssr_row.addWidget(self.lbl_ssr_state)
+        ssr_row.addStretch(1)
+        lay.addLayout(ssr_row)
+        ssr_btn_row = QHBoxLayout()
+        self.btn_ssr_on = _btn("Manual ON", bg="OK", fg="white", hover="#266a2a")
+        self.btn_ssr_off = _btn("Manual OFF", bg="CRIT", fg="white", hover="#9b2020")
+        self.btn_ssr_on.clicked.connect(self._on_ssr_manual_on)
+        self.btn_ssr_off.clicked.connect(self._on_ssr_manual_off)
+        self.btn_ssr_on.setEnabled(False)
+        self.btn_ssr_off.setEnabled(False)
+        self.btn_ssr_on.setVisible(False)
+        self.btn_ssr_off.setVisible(False)
+        ssr_btn_row.addWidget(self.btn_ssr_on)
+        ssr_btn_row.addWidget(self.btn_ssr_off)
+        lay.addLayout(ssr_btn_row)
+        lbl_ssr_hint = QLabel(
+            "ⓘ ตัดไฟ PSU/Load ทางกายภาพผ่าน SSR ที่ ESP32 GPIO16 — ปกติทำงานอัตโนมัติ: "
+            "ON ทันทีที่เริ่มชาร์จ (ทุกโหมดเทสต์), OFF ทันทีที่หยุดชาร์จ/E-STOP\n"
+            "ปุ่ม Manual ด้านบนไว้สั่งตรงสำหรับ diagnostic/recovery เท่านั้น "
+            "(ต้องต่อ ESP32 ก่อนถึงจะกดได้) — ไม่ได้ไปเริ่ม/หยุดการทดสอบ")
+        theme.style(lbl_ssr_hint, lambda: f"color:{theme.MUTED}; font-size:10px;")
+        lbl_ssr_hint.setWordWrap(True)
+        lay.addWidget(lbl_ssr_hint)
 
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("CLOUD PUSH"))
@@ -1135,6 +1170,15 @@ class ZonesMixin:
             f"border-top:2px solid {self._metric_accent_color(name)}; border-radius:6px; }}"))
         lay = QVBoxLayout(card)
         lay.setContentsMargins(12, 9, 12, 9)
+        tooltips = {
+            "Voltage": "Terminal Voltage (แรงดันไฟฟ้า)",
+            "Current": "Charge/Discharge Current (กระแส)",
+            "SoC": "State of Charge (เปอร์เซ็นต์แบตเตอรี่)",
+            "Rin": "Internal Resistance (ความต้านทานภายใน)",
+            "Temp": "Battery Case Temperature (อุณหภูมิ)"
+        }
+        if name in tooltips:
+            card.setToolTip(tooltips[name])
         lay.setSpacing(2)
         t = QLabel(name.upper())
         theme.style(t, lambda: (

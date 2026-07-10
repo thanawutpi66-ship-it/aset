@@ -55,7 +55,46 @@ class AutoController:
         # Get event handler from service locator (registered after UI bootstrap)
         self.event_handler = None
 
+        self.event_handler = None
+        
+        # Crash recovery persistence
+        self._recovery_file = "recovery.json"
+
         logger.info("AutoController initialized")
+
+    def save_recovery_state(self, state: Dict[str, Any]):
+        """Persist current execution state to disk for crash recovery"""
+        try:
+            import json
+            import os
+            
+            # Merge with existing state if any
+            current_state = {}
+            if os.path.exists(self._recovery_file):
+                try:
+                    with open(self._recovery_file, "r") as f:
+                        current_state = json.load(f)
+                except Exception:
+                    pass
+                    
+            current_state.update(state)
+            current_state["last_updated"] = time.time()
+            
+            with open(self._recovery_file, "w") as f:
+                json.dump(current_state, f, indent=2)
+            logger.debug("Recovery state saved: %s", state)
+        except Exception as e:
+            logger.error("Failed to save recovery state: %s", e)
+            
+    def clear_recovery_state(self):
+        """Remove recovery state file after clean shutdown/completion"""
+        import os
+        try:
+            if os.path.exists(self._recovery_file):
+                os.remove(self._recovery_file)
+                logger.debug("Recovery state cleared")
+        except Exception as e:
+            logger.error("Failed to clear recovery state: %s", e)
 
     def check_safety_limits(self, voltage: float, current: float, temperature: float) -> bool:
         """Check if parameters are within safety limits"""
@@ -171,6 +210,7 @@ class AutoController:
             self.data.stop_logging()
         self._start_time = None
         self._start_mono = None
+        self.clear_recovery_state()
 
     # ------------------------------------------------------------------
     # Live readback — lightweight V/I/Temp display right after Connect, before
@@ -747,6 +787,7 @@ class AutoController:
                 getattr(self.ui, "set_profile_status", None)
             if setter is not None:
                 self.root.after(0, setter, txt)
+        self.save_recovery_state({"phase": "charge", "stage": stage, "voltage": voltage, "current": i_charge})
 
     def stop_charge(self):
         """หยุดชาร์จ + ปิด PSU"""

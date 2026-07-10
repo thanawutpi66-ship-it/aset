@@ -13,6 +13,7 @@ from aset_batt.services.logging_config import ASETLogger
 from aset_batt.services.service_locator import ServiceLocator, ServiceProvider
 from aset_batt.services.event_system import UIEventHandler
 from aset_batt.services.exceptions import ASETError, ConfigurationError
+from aset_batt.app.auto_controller import AutoController
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +189,6 @@ class ApplicationBootstrapper:
     def create_ui(self, root, window):
         """สร้าง event handler + core components + wire Qt window เข้ากับ controller
         (root = QtRootShim สำหรับ marshaling cross-thread แทน Tk root)"""
-        from aset_batt.app.auto_controller import AutoController
 
         self.event_handler = UIEventHandler(root)
         self.event_handler.start()
@@ -203,6 +203,37 @@ class ApplicationBootstrapper:
         controller.set_ui(window)
 
         self._wire_runtime(window, root, controller)
+        
+        # Crash recovery check
+        import os, json
+        if os.path.exists("recovery.json"):
+            try:
+                from PySide6.QtWidgets import QMessageBox
+                with open("recovery.json", "r") as f:
+                    state = json.load(f)
+                
+                # Check if it's recent (e.g. less than 24 hours ago)
+                import time
+                if time.time() - state.get("last_updated", 0) < 86400:
+                    ans = QMessageBox.question(
+                        window,
+                        "Crash Recovery",
+                        f"An interrupted test was detected (Phase: {state.get('phase', 'Unknown')}).\n"
+                        "Do you want to review the recovery data before clearing it?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    if ans == QMessageBox.StandardButton.Yes:
+                        QMessageBox.information(
+                            window,
+                            "Recovery Data",
+                            json.dumps(state, indent=2)
+                        )
+                # Currently we only clear it after prompting. Advanced resume logic goes here.
+                controller.clear_recovery_state()
+            except Exception as e:
+                logger.warning("Failed to read recovery state: %s", e)
+                controller.clear_recovery_state()
+
         return window
 
     def _create_core_components(self):

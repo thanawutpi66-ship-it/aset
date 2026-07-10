@@ -98,6 +98,10 @@ class HardwareConfig:
     esp_port: str = ""
     visa_timeout: int = 5000
     serial_baudrate: int = 9600
+    psu_v_offset: float = 0.0
+    psu_i_offset: float = 0.0
+    load_v_offset: float = 0.0
+    load_i_offset: float = 0.0
     auto_detect_ports: bool = True
 
 class ConfigManager:

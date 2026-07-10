@@ -66,10 +66,17 @@ class HardwareController:
         self._psu_all = None
         self._load_all = None
 
-        # PSU current zero-offset: some units (e.g. PSW 80-40.5) read ~0.6 A on
-        # MEAS:CURR? even with OUTPUT OFF.  calibrate_psu_zero() measures the offset
-        # with output off and stores it here; _meas_vi subtracts it automatically.
+        # Calibration offsets (from SystemConfig)
+        self._psu_voltage_offset: float = 0.0
         self._psu_current_offset: float = 0.0
+        self._load_voltage_offset: float = 0.0
+        self._load_current_offset: float = 0.0
+
+    def apply_calibration(self, psu_v, psu_i, load_v, load_i):
+        self._psu_voltage_offset = psu_v
+        self._psu_current_offset = psu_i
+        self._load_voltage_offset = load_v
+        self._load_current_offset = load_i
 
         # Tracks whether PSU OUTPUT is currently ON.  Used by the monitor loop to
         # distinguish CHARGE (OUTPUT ON → i_net = −psu_i) from REST (OUTPUT OFF, SSR
@@ -99,6 +106,8 @@ class HardwareController:
                     logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 setattr(self, attr, None)
         self.is_connected = False
+        self.is_psu_connected = False
+        self.is_load_connected = False
         self.connect_error = ""
 
         psu  = self.rm.open_resource(psu_port)
@@ -119,29 +128,33 @@ class HardwareController:
         try:
             psu_idn = psu.query("*IDN?").strip()
             logger.info("PSU IDN: %s", psu_idn)
+            self.is_psu_connected = True
         except Exception as e:
             try:
                 psu.close()
                 load.close()
-            except Exception as e:
+            except Exception as e2:
                 import logging
-                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
+                logging.getLogger(__name__).error('Ignored exception: %s', e2, exc_info=True)
             msg = f"PSU ที่พอร์ต {psu_port} ไม่ตอบสนอง — เลือกพอร์ตผิดหรืออุปกรณ์ไม่พร้อม\n({e})"
             self.connect_error = msg
+            self.is_connected = False
             raise RuntimeError(msg)
 
         try:
             load_idn = load.query("*IDN?").strip()
             logger.info("Load IDN: %s", load_idn)
+            self.is_load_connected = True
         except Exception as e:
             try:
                 psu.close()
                 load.close()
-            except Exception as e:
+            except Exception as e2:
                 import logging
-                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
+                logging.getLogger(__name__).error('Ignored exception: %s', e2, exc_info=True)
             msg = f"Load ที่พอร์ต {load_port} ไม่ตอบสนอง — เลือกพอร์ตผิดหรืออุปกรณ์ไม่พร้อม\n({e})"
             self.connect_error = msg
+            self.is_connected = False
             raise RuntimeError(msg)
 
         self.psu_inst  = psu
@@ -593,21 +606,18 @@ class HardwareController:
         if cap is not False:                       # None (unknown) or True → try combined
             try:
                 p = inst.query("MEAS:SCAL:ALL:DC?").strip().split(",")
-                v, i = float(p[0]), float(p[1])
+                v, i = float(p[0]) - (self._load_voltage_offset if "load" in which else self._psu_voltage_offset), \
+                       float(p[1]) - (self._load_current_offset if "load" in which else self._psu_current_offset)
                 if cap is None:
                     setattr(self, which, True)
-                if which == "_psu_all":
-                    i -= self._psu_current_offset
                 return v, i
             except Exception:
                 setattr(self, which, False)        # not supported → stop trying
         # Separate MEAS:VOLT? + MEAS:CURR? with one retry on transient VisaIOError.
         for attempt in range(2):
             try:
-                v = float(inst.query("MEAS:VOLT?").strip())
-                i = float(inst.query("MEAS:CURR?").strip())
-                if which == "_psu_all":
-                    i -= self._psu_current_offset
+                v = float(inst.query("MEAS:VOLT?").strip()) - (self._load_voltage_offset if "load" in which else self._psu_voltage_offset)
+                i = float(inst.query("MEAS:CURR?").strip()) - (self._load_current_offset if "load" in which else self._psu_current_offset)
                 return v, i
             except Exception as exc:
                 if attempt == 0:
@@ -641,10 +651,10 @@ class HardwareController:
         """วัด DCIR จาก transient voltage step"""
         with self.inst_lock:
             try:
-                v_before = float(self.psu_inst.query("MEAS:VOLT?").strip())
+                v_before = float(self.psu_inst.query("MEAS:VOLT?").strip()) - self._psu_voltage_offset
                 self.load_inst.write(f":CURR {abs(current_target)}")
                 time.sleep(0.02)
-                v_after = float(self.psu_inst.query("MEAS:VOLT?").strip())
+                v_after = float(self.psu_inst.query("MEAS:VOLT?").strip()) - self._psu_voltage_offset
                 dcir_mohm = (abs(v_before - v_after) / abs(delta_I)) * 1000.0
                 return dcir_mohm
             except Exception as e:

@@ -221,28 +221,19 @@ class SessionManagerMixin:
             self._last_csv = fpath
             self.lbl_csv.setText(f"CSV: {os.path.basename(fpath)}")
             self._on_analyze_csv()
-    def _on_toggle_logging(self):
-        if self.controller is None:
-            return
-        if getattr(self.controller, "monitor_running", False):
-            self.controller.stop_monitor()
-            if self.data and self.data.is_recording:
-                self.data.stop_logging()
-            self.controller.start_live_readback()
-            self.btn_log.setText("START DATA LOGGING")
-            self._refresh_session_list()
+    def _on_open_logs_folder(self):
+        logs_dir = os.path.abspath("logs")
+        if not os.path.exists(logs_dir):
+            os.makedirs(logs_dir)
+        # Open in file explorer
+        import subprocess
+        import sys
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", logs_dir])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", logs_dir])
         else:
-            if not getattr(self.hw, "is_connected", False):
-                if not self._headless:
-                    from PySide6.QtWidgets import QMessageBox
-                    QMessageBox.warning(self, "Logging", "Connect hardware first")
-                return
-            self._ensure_battery_sn()
-            self.controller.start_monitor(reuse_session=False)
-            self.btn_log.setText("STOP DATA LOGGING")
-            if self.data and self.data.current_path:
-                self._last_csv = self.data.current_path
-                self.lbl_csv.setText(f"CSV: {os.path.basename(self.data.current_path)}")
+            subprocess.Popen(["xdg-open", logs_dir])
     def _on_analyze_csv(self):
         csv_path = self._last_csv or self.config.system.csv_filepath
         if not csv_path or not os.path.exists(csv_path):

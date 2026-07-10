@@ -376,34 +376,7 @@ class TestControlMixin:
                 f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
             )
         self.lbl_test_status.setText("Test idle")
-    def _populate_profiles(self):
-        self.cb_profiles.clear()
-        self._profile_map.clear()
-        for tid in self.iec_standard.get_available_tests():
-            prof = self.iec_standard.get_test_profile(tid)
-            if not prof:
-                continue
-            disp = f"[IEC] {prof.name}"
-            self.cb_profiles.addItem(disp)
-            self._profile_map[disp] = ("iec", tid)
-    def _on_run_profile(self):
-        if not getattr(self.hw, "is_connected", False):
-            if not self._headless:
-                QMessageBox.warning(self, "Profile", "Connect hardware first")
-            return
-        sel = self.cb_profiles.currentText()
-        if not sel:
-            if not self._headless:
-                QMessageBox.warning(self, "Profile", "Select a profile first")
-            return
-        ptype, pid = self._profile_map.get(sel, (None, None))
-        try:
-            if ptype == "iec":
-                self._ensure_battery_sn()
-                self.controller.start_iec61960_test(pid, self.iec_standard)
-        except Exception as exc:
-            if not self._headless:
-                QMessageBox.critical(self, "Profile Error", str(exc))
+
     def _on_start_monitor(self):
         if not getattr(self.hw, "is_connected", False):
             if not self._headless:

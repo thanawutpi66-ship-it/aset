@@ -107,6 +107,11 @@ class HardwareControlMixin:
         self.lbl_battery_readout.setText(
             f"{b.battery_type} · {b.cells_series}S{b.cells_parallel}P · {b.pack_nominal_voltage:.1f}V · {b.rated_capacity:.1f}Ah"
         )
+        if hasattr(self, "lbl_safety_limits") and self.config.system.safety_limits:
+            limits = self.config.system.safety_limits
+            self.lbl_safety_limits.setText(
+                f"[SAFETY] Max V: {limits.get('max_voltage', 0):.2f}V | Min V: {limits.get('min_voltage', 0):.2f}V | Max Temp: {limits.get('max_temperature', 0):.1f}°C"
+            )
     def _on_connect(self):
         psu, load, esp = self.cb_psu.currentText(), self.cb_load.currentText(), self.cb_esp.currentText()
         if not psu or not load:
@@ -115,6 +120,7 @@ class HardwareControlMixin:
             return
         try:
             self.hw.connect_instruments(psu, load)
+            self._load_calibration()
             # G7 (industrial-grade audit): range-set + OVP/OCP/UVP protection +
             # instrument hardening now live in ONE HardwareController method
             # (apply_default_safety_protection) instead of being inlined here only

@@ -351,11 +351,17 @@ class DialogsMixin:
             res = ChemistryDetector().detect(v, s)
             self._log_alarm(f"Chemistry detect → {res.chemistry} ({res.confidence * 100:.0f}%)")
             if not self._headless:
-                QMessageBox.information(
+                ans = QMessageBox.question(
                     self,
                     "Chemistry Detection",
-                    f"Detected: {res.chemistry}\nConfidence: {res.confidence * 100:.0f}%",
+                    f"Detected: {res.chemistry}\nConfidence: {res.confidence * 100:.0f}%\n\nDo you want to apply a matching profile?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 )
+                if ans == QMessageBox.StandardButton.Yes:
+                    for p in battery_profiles.list_products():
+                        if battery_profiles.get_product(p).chemistry == res.chemistry:
+                            self.cb_product.setCurrentText(p)
+                            break
         except Exception as exc:
             if not self._headless:
                 QMessageBox.warning(self, "Chemistry Detection", str(exc))

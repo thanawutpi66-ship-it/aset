@@ -230,6 +230,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMi
 
         self._build_ui()
         self._connect_signals()
+        self._load_calibration()
 
         self._tick = QTimer(self)
         self._tick.timeout.connect(self._on_heartbeat_tick)

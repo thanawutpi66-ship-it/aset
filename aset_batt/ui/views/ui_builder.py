@@ -164,16 +164,9 @@ class UiBuilderMixin:
         toolbar.setMovable(False)
         theme.style(toolbar, lambda: f"QToolBar {{ background:{theme.PANEL}; border-bottom:1px solid {theme.BORDER}; }}")
 
-        # Put File/Run/View/Tools/Help on the same row as the badges below,
-        # instead of QMainWindow's default separate menu-bar row above it.
         bar = self.menuBar()
         bar.setNativeMenuBar(False)
-        # QMenuBar doesn't inherit the QToolBar's background it's embedded in —
-        # each widget class matches its own QSS selector — so without this it
-        # falls through to qt-material's own QMenuBar rule (white in the light
-        # theme), a visible seam against the toolbar's theme.PANEL grey.
         theme.style(bar, lambda: f"QMenuBar {{ background:{theme.PANEL}; border: none; }}")
-        toolbar.addWidget(bar)
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -189,6 +182,17 @@ class UiBuilderMixin:
         self.state_pill.setStyleSheet(self._pill(theme.NEUTRAL) + " border: none; margin-right: 10px;")
         toolbar.addWidget(self.state_pill)
 
+        self.btn_admin = QPushButton("Operator 🔓")
+        self.btn_admin.setCheckable(True)
+        self.btn_admin.setCursor(Qt.CursorShape.PointingHandCursor)
+        theme.style(self.btn_admin, lambda: (
+            f"QPushButton {{ background:{theme.PANEL2}; color:{theme.TEXT}; border:1px solid {theme.BORDER}; border-radius:4px; "
+            f"padding:4px 10px; font-size:12px; font-weight:700; margin-right: 10px; }}"
+            f"QPushButton:checked {{ background:{theme.INFO}; color:white; border-color:{theme.INFO}; }}"
+        ))
+        self.btn_admin.clicked.connect(self._on_admin_toggle)
+        toolbar.addWidget(self.btn_admin)
+
         self.btn_estop = QPushButton("⛔ E-STOP")
         theme.style(self.btn_estop, lambda: (
             f"QPushButton {{ background:{theme.CRIT}; color:white; border:none; border-radius:5px; "
@@ -198,6 +202,11 @@ class UiBuilderMixin:
         self.btn_estop.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_estop.clicked.connect(self._on_estop)
         toolbar.addWidget(self.btn_estop)
+
+        # Global E-STOP Shortcut (Esc)
+        from PySide6.QtGui import QKeySequence, QShortcut
+        shortcut_estop = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        shortcut_estop.activated.connect(self._on_estop)
 
         self.addToolBar(toolbar)
     def _build_statusbar(self):
@@ -232,6 +241,9 @@ class UiBuilderMixin:
             f"QPushButton:disabled{{background:{theme.MUTED};}}"))
         self.btn_update.clicked.connect(self._on_update_clicked)
         sb.addPermanentWidget(self.btn_update)
+        self.lbl_session = QLabel("")
+        self.lbl_session.setStyleSheet(f"color:{theme.MUTED}; font-size:11px; padding-right:10px;")
+        sb.addPermanentWidget(self.lbl_session)
         self.conn_led = QLabel("●")
         self.conn_led.setStyleSheet(f"color:{theme.NEUTRAL}; font-size:14px; padding:0 4px;")
         sb.addPermanentWidget(self.conn_led)

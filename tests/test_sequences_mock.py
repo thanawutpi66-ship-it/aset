@@ -104,7 +104,7 @@ class MockSequence(BaseSequenceMixin, HppcMixin, CycleLifeMixin, IecCapacityMixi
 from PySide6.QtCore import QEventLoop
 
 @patch.object(QEventLoop, 'exec')
-@patch('aset_batt.ui.sequences.hppc._t.time')
+@patch('time.time')
 def test_hppc_full_run(mock_time, mock_exec):
     mock_time.side_effect = range(0, 10000000, 1000)
     seq = MockSequence()
@@ -126,7 +126,7 @@ def test_hppc_full_run(mock_time, mock_exec):
     })
 
 @patch.object(QEventLoop, 'exec')
-@patch('aset_batt.ui.sequences.cycle_life._t.time')
+@patch('time.time')
 def test_cycle_life_full_run(mock_time, mock_exec):
     mock_time.side_effect = range(0, 10000000, 1000)
     seq = MockSequence()
@@ -146,7 +146,7 @@ def test_cycle_life_full_run(mock_time, mock_exec):
     })
 
 @patch.object(QEventLoop, 'exec')
-@patch('aset_batt.ui.sequences.iec_capacity._t.time')
+@patch('time.time')
 def test_iec_capacity_full_run(mock_time, mock_exec):
     mock_time.side_effect = range(0, 10000000, 1000)
     seq = MockSequence()
@@ -168,7 +168,7 @@ def test_iec_capacity_full_run(mock_time, mock_exec):
     })
 
 @patch.object(QEventLoop, 'exec')
-@patch('aset_batt.ui.sequences.quick_scan._t.time')
+@patch('time.time')
 def test_quick_scan_full_run(mock_time, mock_exec):
     mock_time.side_effect = range(0, 10000000, 1000)
     seq = MockSequence()

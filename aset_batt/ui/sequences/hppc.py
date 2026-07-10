@@ -305,6 +305,26 @@ class HppcMixin:
             soc_h = self._hw_retry(self.controller.calibrate_from_ocv)
             v_h, _, _ = self._hw_retry(self.hw.read_vi)
             self.sig_alarm.emit(f"[HPPC SEQ] Post-rest OCV: {v_h:.3f} V → SoC {soc_h:.1f}%")
+            # Surface-charge advisory before the pulses: a real run
+            # (test_HPPC_20260708_152502) started its pulses with the rest
+            # voltage still ABOVE the OCV curve's own 100% point, and the
+            # per-pulse rest anchor then drifted 13.34→13.15 V across the 5
+            # cycles — the raw edge R0 declined 41.5→30.2 mΩ (37%) purely from
+            # that anchor drift, not from the battery. The fit itself is
+            # protected (median-of-tail voc + voc-divergence warning), but the
+            # operator should know THIS run's R0 spread will be inflated.
+            try:
+                _over_mv = self.controller.estimator.battery_model.ocv_out_of_range_mv(
+                    v_h, self.hw.current_temp)
+                if _over_mv > 0.0:
+                    self.sig_alarm.emit(
+                        f"[HPPC SEQ] ⚠ rest voltage {v_h:.3f} V is still "
+                        f"{_over_mv:.0f} mV above the OCV curve's 100% point — "
+                        f"surface charge not fully dissipated; per-pulse R0 anchors "
+                        f"will drift downward across cycles (consider a bleed-off "
+                        f"or a longer post-charge rest for tighter R0 spread)")
+            except Exception:
+                pass
             self.sig_hppc_seq_wf.emit(2, "done")
 
             # ── PHASE 3: HPPC N cycles ────────────────────────────────────

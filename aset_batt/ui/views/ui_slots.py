@@ -208,6 +208,10 @@ class UiSlotsMixin:
             self.cb_psu.setEnabled(is_idle)
             self.cb_load.setEnabled(is_idle)
             self.cb_esp.setEnabled(is_idle)
+            if hasattr(self, 'cb_product'):
+                self.cb_product.setEnabled(is_idle)
+            if hasattr(self, 'ed_sn'):
+                self.ed_sn.setEnabled(is_idle)
     @Slot(str)
     def _slot_charge_status(self, text):
         self.lbl_charge.setText(text)
@@ -231,6 +235,8 @@ class UiSlotsMixin:
     @Slot()
     def _slot_conn(self):
         connected  = bool(getattr(self.hw, "is_connected", False))
+        psu_ok     = bool(getattr(self.hw, "is_psu_connected", False))
+        load_ok    = bool(getattr(self.hw, "is_load_connected", False))
         esp_ok     = bool(getattr(self.hw, "is_esp_connected", False))
         conn_err   = getattr(self.hw, "connect_error", "")
         esp_err    = getattr(self.hw, "esp_connect_error", "")
@@ -244,6 +250,19 @@ class UiSlotsMixin:
         self.conn_led.setStyleSheet(f"color:{led_color}; font-size:16px;")
         self.conn_text.setText(conn_label)
         self.conn_text.setStyleSheet(f"color:{led_color}; font-weight:600;")
+        
+        # Session ID update
+        import os
+        if getattr(self, "lbl_session", None):
+            csv_path = None
+            if getattr(self, "controller", None) and getattr(self.controller, "data", None):
+                csv_path = self.controller.data.current_path
+            if csv_path:
+                self.lbl_session.setText(f"Session: {os.path.basename(csv_path)}")
+                self.lbl_session.show()
+            else:
+                self.lbl_session.hide()
+
         if connected:
             self.status_label.setText("Hardware connected")
         elif conn_err:
@@ -264,8 +283,8 @@ class UiSlotsMixin:
                 lbl.setText("●")
                 lbl.setStyleSheet(f"color:{theme.NEUTRAL}; font-size:15px; min-width:18px;")
                 lbl.setToolTip(tip_no)
-        _set_led(self.led_psu,  connected, conn_err, "PSU connected",   conn_err,  "PSU: not connected")
-        _set_led(self.led_load, connected, conn_err, "Load connected",  conn_err,  "Load: not connected")
+        _set_led(self.led_psu,  psu_ok,   conn_err and not psu_ok,  "PSU connected",   conn_err,  "PSU: not connected")
+        _set_led(self.led_load, load_ok,  conn_err and not load_ok, "Load connected",  conn_err,  "Load: not connected")
         _set_led(self.led_esp,  esp_ok,    esp_err,  "ESP32 connected", esp_err,   "ESP32: not connected")
         # SSR relay LED — normally automatic (follows charge state); manual
         # ON/OFF buttons only enabled while ESP32 is actually connected.
@@ -321,3 +340,72 @@ class UiSlotsMixin:
             return
         self._last_analysis = result
         self._on_test_finished(result)
+
+    @Slot()
+    def _on_admin_toggle(self):
+        is_admin = self.btn_admin.isChecked()
+        if is_admin:
+            # Simple passcode prompt
+            from PySide6.QtWidgets import QInputDialog, QLineEdit
+            text, ok = QInputDialog.getText(self, "Admin Login", "Enter Admin PIN:", QLineEdit.EchoMode.Password)
+            if ok and text == "admin":
+                self.btn_admin.setText("Admin 🔒")
+                self.btn_admin.setStyleSheet(
+                    f"QPushButton {{ background:{theme.INFO}; color:white; border:1px solid {theme.INFO}; border-radius:4px; padding:4px 10px; font-size:12px; font-weight:700; margin-right: 10px; }}"
+                )
+                self.grp_advanced.setEnabled(True)
+                if hasattr(self, "btn_ssr_on"): self.btn_ssr_on.setVisible(True)
+                if hasattr(self, "btn_ssr_off"): self.btn_ssr_off.setVisible(True)
+                if hasattr(self, "btn_edit_profile"): self.btn_edit_profile.setVisible(True)
+                if hasattr(self, "grp_calibration"): self.grp_calibration.setVisible(True)
+            else:
+                self.btn_admin.setChecked(False)
+                if ok:
+                    QMessageBox.warning(self, "Error", "Incorrect PIN.")
+        else:
+            self.btn_admin.setText("Operator 🔓")
+            self.btn_admin.setStyleSheet(
+                f"QPushButton {{ background:{theme.PANEL2}; color:{theme.TEXT}; border:1px solid {theme.BORDER}; border-radius:4px; padding:4px 10px; font-size:12px; font-weight:700; margin-right: 10px; }}"
+            )
+            self.grp_advanced.setEnabled(False)
+            if hasattr(self, "btn_ssr_on"): self.btn_ssr_on.setVisible(False)
+            if hasattr(self, "btn_ssr_off"): self.btn_ssr_off.setVisible(False)
+            if hasattr(self, "btn_edit_profile"): self.btn_edit_profile.setVisible(False)
+            if hasattr(self, "grp_calibration"): self.grp_calibration.setVisible(False)
+
+    @Slot()
+    def _on_save_calibration(self):
+        # Read from spinboxes
+        psu_v = self.spn_psu_v_offset.value()
+        psu_i = self.spn_psu_i_offset.value()
+        load_v = self.spn_load_v_offset.value()
+        load_i = self.spn_load_i_offset.value()
+        
+        # Save to config
+        self.config.system.psu_v_offset = psu_v
+        self.config.system.psu_i_offset = psu_i
+        self.config.system.load_v_offset = load_v
+        self.config.system.load_i_offset = load_i
+        self.config.save_config()
+        
+        # Apply to hardware driver if running
+        if self.hw:
+            self.hw.apply_calibration(psu_v, psu_i, load_v, load_i)
+            
+        QMessageBox.information(self, "Calibration Saved", "Hardware calibration offsets saved successfully.")
+
+    def _load_calibration(self):
+        # Load from config to spinboxes
+        if hasattr(self.config.system, "psu_v_offset"):
+            self.spn_psu_v_offset.setValue(self.config.system.psu_v_offset)
+            self.spn_psu_i_offset.setValue(self.config.system.psu_i_offset)
+            self.spn_load_v_offset.setValue(self.config.system.load_v_offset)
+            self.spn_load_i_offset.setValue(self.config.system.load_i_offset)
+            # Apply to hardware driver immediately
+            if self.hw:
+                self.hw.apply_calibration(
+                    self.config.system.psu_v_offset,
+                    self.config.system.psu_i_offset,
+                    self.config.system.load_v_offset,
+                    self.config.system.load_i_offset
+                )

@@ -88,7 +88,14 @@ class TestUncalibratedR0DoesNotRunawaySoc(unittest.TestCase):
     def test_ekf_update_runs_normally_once_calibrated(self):
         """Once a real HPPC/ECM fit lands, the gate must not suppress the
         measurement update even at active current -- it only guards the
-        uncalibrated-guess window."""
+        uncalibrated-guess window.
+
+        The active-current probe uses a DISCHARGE current: CHARGE samples are
+        now (deliberately, separately) gated regardless of calibration —
+        charging terminal voltage carries no SoC information (see
+        test_charge_voltage_gate.py) — so a charge sample would test the
+        wrong gate. The probe voltage keeps the implied OCV (V + I*rin)
+        inside the curve so the loaded surface-charge gate stays open too."""
         est = _lead_acid_estimator()
         est.update(12.7, -0.533, dt=0.1, temp=25.0)    # lazily creates the EKF
         est.update_ecm(0.025, 0.068, 2000.0)           # a real ECM fit lands
@@ -99,7 +106,7 @@ class TestUncalibratedR0DoesNotRunawaySoc(unittest.TestCase):
             called["n"] += 1
             return real_update(*a, **k)
         est._ekf.update = spy
-        est.update(12.71, -0.533, dt=0.1, temp=25.0)   # active current, calibrated
+        est.update(12.40, 0.533, dt=0.1, temp=25.0)    # active DISCHARGE, calibrated
         self.assertEqual(called["n"], 1)
 
 

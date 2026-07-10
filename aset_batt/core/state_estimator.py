@@ -26,7 +26,17 @@ class StateEstimator:
         self.soc_std = 10.0      # % — 1σ SoC uncertainty from the EKF covariance (live)
         self.soc_initial = 50.0  # % ใช้เป็น reference ของ Coulomb counting
         self.soh = 100.0         # %
-        self.rin = self.battery_model.base_rin  # Ohm
+        # Initial displayed rin on the SAME basis the EKF branch will report from
+        # the first update() onward ((R0+R1) of _ekf_rc_defaults()) — not the bare
+        # chemistry base_rin. A real session CSV (test_IEC_20260708_203952) showed
+        # the display sitting at the generic 30 mΩ through the whole pre-test rest
+        # and then jumping to ~64 mΩ at the first sample: same battery, same
+        # session, two different uncalibrated-placeholder regimes purely from
+        # object-init order. (Both are still guesses until a fit lands — the
+        # _ecm_calibrated flag below is what the UI keys "measured vs estimated"
+        # off of — but at least the guess is now one continuous number.)
+        _r0_d, _r1_d, _ = self._ekf_rc_defaults()
+        self.rin = _r0_d + _r1_d  # Ohm
 
         # Coulomb counting
         self.ah_accumulated = 0.0   # Ah นับจาก initial SoC
@@ -537,10 +547,35 @@ class StateEstimator:
             r0_confirmed = self._r0_calibrated or self._ecm_calibrated
             uncalibrated_and_active = (not r0_confirmed and abs(cur - self.standby_current) >= self.static_current_threshold)
             near_rest = abs(cur - self.standby_current) < self.static_current_threshold
-            surface_charged = (near_rest and self.battery_model.ocv_out_of_range_mv(voltage, t_use) > 0.0)
+            # Surface-charge gate, evaluated on the IMPLIED OCV (terminal voltage
+            # with the ohmic sag added back for discharge-positive current), not
+            # just the raw rest voltage: right after a lead-acid charge the first
+            # minutes of DISCHARGE still read V + I*R above the curve's own 100%
+            # point — such a sample maps to "≥100%" no matter the true SoC, so it
+            # carries zero discriminating information under load exactly as it
+            # does at rest. Without the loaded form of this gate, a real replay
+            # (test_20260709_154818) showed the EKF pinning SoC at 100% for the
+            # first ~8 min of discharge (~0.37 Ah erased) before the voltage
+            # dropped back inside the curve.
+            v_ocv_est = voltage + max(0.0, cur) * self.rin
+            surface_charged = self.battery_model.ocv_out_of_range_mv(v_ocv_est, t_use) > 0.0
             still_polarised = near_rest and self._rested_s < self._min_rest_s
-            
-            if not uncalibrated_and_active and not surface_charged and not still_polarised:
+            # While CHARGING (convention: charge = negative current), the terminal
+            # voltage carries no usable SoC information: it sits at the charger's
+            # bulk/absorption setpoint plus gassing/CV overpotential the 1-RC model
+            # doesn't represent, so the innovation is systematically positive and
+            # drags SoC to 100% almost immediately. Three real sessions show it:
+            # SoC hit 100% after 142 s of a 242-min charge (test_HPPC_20260708) and
+            # after 28 s of a 102-min charge (test_20260709_154818) — 99% of the
+            # real Ah went in AFTER the display already read full. The near-rest
+            # gates above can't catch this (they only apply at ~zero current), so
+            # charging samples are skipped outright: SoC advances on coulomb
+            # counting + coulombic-efficiency only, and voltage-based correction
+            # resumes at the next rest (polarization-gated) or discharge.
+            charging = (cur - self.standby_current) < -self.static_current_threshold
+
+            if not uncalibrated_and_active and not surface_charged \
+                    and not still_polarised and not charging:
                 ekf.update(voltage, cur, ocv_pack, docv, r0_use, r_override=r_override)
                 self.soc = max(0.0, min(100.0, ekf.soc))
                 
