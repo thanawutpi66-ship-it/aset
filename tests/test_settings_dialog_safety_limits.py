@@ -2,13 +2,21 @@
 (auto_controller.py) already enforces all four on every monitor-loop sample,
 they just had no UI — only editable by hand-editing config.json.
 
-First pass put the fields in SettingsDialog (Tools -> Preferences), but that
-menu path was easy to miss and (separately) crashed with a NameError before
-ever reaching the dialog (dialogs.py's _on_open_settings referenced
-SettingsDialog with no import in scope — never exercised by a test that
-imports SettingsDialog directly instead of going through the menu action).
-Moved to a dedicated SafetyLimitsDialog opened via a button right on the
-SETUP tab, next to the [SAFETY] readout label, for direct visibility.
+Went through two prior designs before landing here:
+1. Fields in SettingsDialog (Tools -> Preferences) — too easy to miss, and
+   dialogs.py's _on_open_settings crashed with a NameError before the dialog
+   could even open (no import of SettingsDialog anywhere in that module —
+   never caught because earlier tests imported SettingsDialog directly
+   instead of going through the menu action).
+2. A "Edit Safety Limits…" button on the SETUP tab opening a popup dialog —
+   still an extra click/window the operator didn't want.
+
+Now: five QDoubleSpinBox fields live directly inline on the SETUP tab
+(zones.py._zone_setup), with a "Save Limits" button next to them
+(hardware_control.py._on_save_safety_limits). Product selection / Detect
+Chemistry can also update safety_limits programmatically (see
+_on_product_changed) — _refresh_battery_readout() pushes those values back
+into the same spinboxes so they never show stale numbers.
 """
 import os
 from unittest.mock import patch
@@ -21,7 +29,6 @@ theme.set_theme("light")
 from PySide6.QtWidgets import QApplication
 from aset_batt.core.config import ConfigManager
 from aset_batt.ui.isa101_views import BatteryQtWindow, SettingsDialog
-from aset_batt.ui.views.hardware_control import SafetyLimitsDialog
 
 _app = QApplication.instance() or QApplication([])
 
@@ -31,68 +38,76 @@ def _make_window():
 
 
 # ---------------------------------------------------------------------------
-# SafetyLimitsDialog — opened from the SETUP tab
+# Inline SETUP-tab fields
 # ---------------------------------------------------------------------------
 
-def test_dialog_opens_without_crashing_and_prefills_from_config():
-    w = _make_window()
+def test_setup_tab_prefills_spinboxes_from_config():
+    """Spinboxes are populated at _zone_setup() build time from self.config —
+    set safety_limits on the ConfigManager BEFORE the window is built."""
+    cfg = ConfigManager()
+    cfg.system.safety_limits = {
+        "max_voltage": 16.2, "min_voltage": 9.8, "max_current": 90.0,
+        "max_temperature": 55.0, "min_temperature": -8.0,
+    }
+    w = BatteryQtWindow(cfg)
     try:
-        w.config.system.safety_limits = {
-            "max_voltage": 15.0, "min_voltage": 10.0, "max_current": 100.0,
-            "max_temperature": 60.0, "min_temperature": -10.0,
-        }
-        dlg = SafetyLimitsDialog(w)
-        assert dlg.spn_ovp.value() == 15.0
-        assert dlg.spn_uvp.value() == 10.0
-        assert dlg.spn_max_current.value() == 100.0
-        assert dlg.spn_otp.value() == 60.0
-        assert dlg.spn_utp.value() == -10.0
+        assert w.spn_ovp.value() == 16.2
+        assert w.spn_uvp.value() == 9.8
+        assert w.spn_max_current.value() == 90.0
+        assert w.spn_otp.value() == 55.0
+        assert w.spn_utp.value() == -8.0
     finally:
         w.close()
 
 
-def test_accept_rejects_ovp_below_uvp_without_saving():
+def test_save_rejects_ovp_below_uvp_without_saving():
     w = _make_window()
     try:
-        dlg = SafetyLimitsDialog(w)
-        dlg.spn_ovp.setValue(5.0)
-        dlg.spn_uvp.setValue(10.0)
+        w.spn_ovp.setValue(5.0)
+        w.spn_uvp.setValue(10.0)
         before = dict(w.config.system.safety_limits)
+        # _headless (like _char_guard's pattern) suppresses the popup under
+        # offscreen pytest, but the rejection itself must still hold — force
+        # non-headless to also exercise the popup branch a real GUI takes.
+        w._headless = False
         with patch("aset_batt.ui.views.hardware_control.QMessageBox.warning") as mock_warn:
-            dlg.accept()
-        mock_warn.assert_called_once()
-        assert w.config.system.safety_limits == before
-        assert dlg.result() == 0   # not accepted — dialog stayed open
-    finally:
-        w.close()
-
-
-def test_accept_rejects_otp_below_utp_without_saving():
-    w = _make_window()
-    try:
-        dlg = SafetyLimitsDialog(w)
-        dlg.spn_otp.setValue(-20.0)
-        dlg.spn_utp.setValue(0.0)
-        before = dict(w.config.system.safety_limits)
-        with patch("aset_batt.ui.views.hardware_control.QMessageBox.warning") as mock_warn:
-            dlg.accept()
+            w._on_save_safety_limits()
         mock_warn.assert_called_once()
         assert w.config.system.safety_limits == before
     finally:
+        # _headless=False makes closeEvent() take the QMessageBox.question()
+        # confirm branch instead of its headless fast-path — unpatched, that
+        # blocks forever in a real modal loop. Reset before close().
+        w._headless = True
         w.close()
 
 
-def test_accept_saves_valid_limits_and_persists_to_disk():
+def test_save_rejects_otp_below_utp_without_saving():
     w = _make_window()
     try:
-        dlg = SafetyLimitsDialog(w)
-        dlg.spn_ovp.setValue(16.5)
-        dlg.spn_uvp.setValue(9.5)
-        dlg.spn_max_current.setValue(120.0)
-        dlg.spn_otp.setValue(65.0)
-        dlg.spn_utp.setValue(-5.0)
+        w.spn_otp.setValue(-20.0)
+        w.spn_utp.setValue(0.0)
+        before = dict(w.config.system.safety_limits)
+        w._headless = False
+        with patch("aset_batt.ui.views.hardware_control.QMessageBox.warning") as mock_warn:
+            w._on_save_safety_limits()
+        mock_warn.assert_called_once()
+        assert w.config.system.safety_limits == before
+    finally:
+        w._headless = True
+        w.close()
+
+
+def test_save_persists_valid_limits_to_disk():
+    w = _make_window()
+    try:
+        w.spn_ovp.setValue(16.5)
+        w.spn_uvp.setValue(9.5)
+        w.spn_max_current.setValue(120.0)
+        w.spn_otp.setValue(65.0)
+        w.spn_utp.setValue(-5.0)
         with patch.object(w.config, "save_config") as mock_save:
-            dlg.accept()
+            w._on_save_safety_limits()
         mock_save.assert_called_once()
         limits = w.config.system.safety_limits
         assert limits["max_voltage"] == 16.5
@@ -100,40 +115,52 @@ def test_accept_saves_valid_limits_and_persists_to_disk():
         assert limits["max_current"] == 120.0
         assert limits["max_temperature"] == 65.0
         assert limits["min_temperature"] == -5.0
-        assert dlg.result() == 1   # QDialog.Accepted
     finally:
         w.close()
 
 
-def test_accept_refreshes_the_live_safety_label():
+def test_save_logs_an_alarm_line_confirming_the_new_values():
     w = _make_window()
     try:
-        dlg = SafetyLimitsDialog(w)
-        dlg.spn_otp.setValue(72.0)
-        with patch.object(w.config, "save_config"):
-            dlg.accept()
-        assert "72.0" in w.lbl_safety_limits.text()
-        assert "OTP" in w.lbl_safety_limits.text()
-        assert "UTP" in w.lbl_safety_limits.text()
+        w.spn_otp.setValue(58.0)
+        with patch.object(w.config, "save_config"), \
+             patch.object(w, "_log_alarm") as mock_log:
+            w._on_save_safety_limits()
+        assert any("58.0" in str(c) for c in mock_log.call_args_list)
     finally:
         w.close()
 
 
-def test_setup_tab_has_edit_safety_limits_button_wired_to_dialog():
+def test_refresh_battery_readout_pushes_config_into_spinboxes():
+    """Simulates _on_product_changed's chemistry-based OVP/UVP override,
+    then confirms the SETUP-tab fields reflect it instead of showing stale
+    numbers the operator never touched."""
     w = _make_window()
     try:
-        assert hasattr(w, "btn_edit_safety_limits")
-        with patch("aset_batt.ui.views.hardware_control.SafetyLimitsDialog") as mock_dlg_cls:
-            mock_dlg_cls.return_value.exec.return_value = None
-            w.btn_edit_safety_limits.click()
-            mock_dlg_cls.assert_called_once_with(w)
-            mock_dlg_cls.return_value.exec.assert_called_once()
+        w.config.system.safety_limits["max_voltage"] = 14.7
+        w.config.system.safety_limits["min_voltage"] = 10.5
+        w._refresh_battery_readout()
+        assert w.spn_ovp.value() == 14.7
+        assert w.spn_uvp.value() == 10.5
+    finally:
+        w.close()
+
+
+def test_no_leftover_popup_dialog_or_button():
+    """Regression against reintroducing the popup design — the fields must
+    stay inline on SETUP, not behind another dialog/button."""
+    w = _make_window()
+    try:
+        assert not hasattr(w, "btn_edit_safety_limits")
+        assert not hasattr(w, "lbl_safety_limits")
+        import aset_batt.ui.views.hardware_control as hc
+        assert not hasattr(hc, "SafetyLimitsDialog")
     finally:
         w.close()
 
 
 # ---------------------------------------------------------------------------
-# SettingsDialog (Tools -> Preferences) — appearance/cloud only now; also
+# SettingsDialog (Tools -> Preferences) — appearance/cloud only; also
 # regression-covers the NameError that made this menu action unreachable.
 # ---------------------------------------------------------------------------
 
@@ -175,8 +202,8 @@ def test_appearance_and_cloud_fields_use_real_systemconfig_attrs():
 
 
 def test_settings_dialog_no_longer_has_safety_limit_fields():
-    """Safety limits moved to SafetyLimitsDialog (SETUP tab) — this dialog
-    should not carry duplicate spinboxes for the same config values."""
+    """Safety limits live inline on the SETUP tab now — this dialog should
+    not carry duplicate spinboxes for the same config values."""
     w = _make_window()
     try:
         dlg = SettingsDialog(w)

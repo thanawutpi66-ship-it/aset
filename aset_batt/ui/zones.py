@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -95,19 +96,68 @@ class ZonesMixin:
         self.lbl_battery_readout = QLabel("—")
         theme.style(self.lbl_battery_readout, lambda: f"color:{theme.MUTED};")
         lay.addWidget(self.lbl_battery_readout)
-        self.lbl_safety_limits = QLabel("—")
-        theme.style(self.lbl_safety_limits, lambda: f"color:{theme.CRIT}; font-size:11px; font-weight:600;")
-        lay.addWidget(self.lbl_safety_limits)
         actions = QHBoxLayout()
         self.btn_detect = _btn("Detect Chemistry", bg="PANEL", hover="PANEL2")
         self.btn_detect.clicked.connect(self._on_detect_chemistry)
         actions.addWidget(self.btn_detect)
-        self.btn_edit_safety_limits = _btn("Edit Safety Limits…", bg="PANEL", hover="PANEL2")
-        self.btn_edit_safety_limits.clicked.connect(self._on_edit_safety_limits)
-        actions.addWidget(self.btn_edit_safety_limits)
         lay.addLayout(actions)
 
+        # Safety limits — OVP/UVP/OTP/UTP as direct numeric fields right on the
+        # SETUP tab (not a popup — was Tools > Preferences, then a button that
+        # opened a dialog; both turned out too easy to miss/not worth the extra
+        # click). check_safety_limits() (auto_controller.py) enforces these on
+        # every monitor-loop sample; product selection / Detect Chemistry can
+        # also update them (see _on_product_changed), so _refresh_battery_readout()
+        # pushes the current config values back into these spinboxes too.
+        lay.addWidget(_hline())
+        lay.addWidget(self._subheader("SAFETY LIMITS"))
+        limits = (self.config.system.safety_limits if self.config and self.config.system.safety_limits else {})
+        safety_form = QFormLayout()
 
+        self.spn_ovp = QDoubleSpinBox()
+        self.spn_ovp.setRange(0.0, 100.0)
+        self.spn_ovp.setDecimals(2)
+        self.spn_ovp.setSingleStep(0.1)
+        self.spn_ovp.setSuffix(" V")
+        self.spn_ovp.setValue(float(limits.get("max_voltage", 15.0)))
+        safety_form.addRow("OVP — Max Voltage:", self.spn_ovp)
+
+        self.spn_uvp = QDoubleSpinBox()
+        self.spn_uvp.setRange(0.0, 100.0)
+        self.spn_uvp.setDecimals(2)
+        self.spn_uvp.setSingleStep(0.1)
+        self.spn_uvp.setSuffix(" V")
+        self.spn_uvp.setValue(float(limits.get("min_voltage", 10.0)))
+        safety_form.addRow("UVP — Min Voltage:", self.spn_uvp)
+
+        self.spn_max_current = QDoubleSpinBox()
+        self.spn_max_current.setRange(0.0, 300.0)
+        self.spn_max_current.setDecimals(1)
+        self.spn_max_current.setSingleStep(1.0)
+        self.spn_max_current.setSuffix(" A")
+        self.spn_max_current.setValue(float(limits.get("max_current", 100.0)))
+        safety_form.addRow("Max Current:", self.spn_max_current)
+
+        self.spn_otp = QDoubleSpinBox()
+        self.spn_otp.setRange(-40.0, 150.0)
+        self.spn_otp.setDecimals(1)
+        self.spn_otp.setSingleStep(1.0)
+        self.spn_otp.setSuffix(" °C")
+        self.spn_otp.setValue(float(limits.get("max_temperature", 60.0)))
+        safety_form.addRow("OTP — Max Temperature:", self.spn_otp)
+
+        self.spn_utp = QDoubleSpinBox()
+        self.spn_utp.setRange(-40.0, 150.0)
+        self.spn_utp.setDecimals(1)
+        self.spn_utp.setSingleStep(1.0)
+        self.spn_utp.setSuffix(" °C")
+        self.spn_utp.setValue(float(limits.get("min_temperature", -10.0)))
+        safety_form.addRow("UTP — Min Temperature:", self.spn_utp)
+
+        lay.addLayout(safety_form)
+        self.btn_save_safety_limits = _btn("Save Limits", bg="PANEL", hover="PANEL2")
+        self.btn_save_safety_limits.clicked.connect(self._on_save_safety_limits)
+        lay.addWidget(self.btn_save_safety_limits)
 
         # Connections — each port row has a status LED (● gray=idle, ✓ green=ok, ✗ red=fail)
         lay.addWidget(_hline())

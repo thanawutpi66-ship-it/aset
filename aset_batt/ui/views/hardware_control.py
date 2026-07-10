@@ -30,10 +30,8 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
-    QDialog,
     QDoubleSpinBox,
     QFileDialog,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -79,106 +77,6 @@ from aset_batt.ui.sequences import SequencesMixin
 from aset_batt.ui.characterize import CharacterizeMixin
 
 
-class SafetyLimitsDialog(QDialog):
-    """OVP/UVP/OTP/UTP + max-current editor, opened directly from the SETUP
-    tab's [SAFETY] label (next to Detect Chemistry) — this used to only be
-    reachable via Tools → Preferences, which was easy to miss entirely and
-    (separately) crashed with a NameError before it ever got there (Preferences
-    referenced SettingsDialog with no import in scope). check_safety_limits()
-    (auto_controller.py) already enforces these on every monitor-loop sample;
-    this dialog is the only place that writes them without hand-editing
-    config.json."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Safety Limits")
-        self.setMinimumWidth(320)
-        lay = QVBoxLayout(self)
-
-        limits = {}
-        if parent and hasattr(parent, 'config') and parent.config.system.safety_limits:
-            limits = parent.config.system.safety_limits
-
-        form = QFormLayout()
-        self.spn_ovp = QDoubleSpinBox()
-        self.spn_ovp.setRange(0.0, 100.0)
-        self.spn_ovp.setDecimals(2)
-        self.spn_ovp.setSingleStep(0.1)
-        self.spn_ovp.setSuffix(" V")
-        self.spn_ovp.setValue(float(limits.get("max_voltage", 15.0)))
-        form.addRow("OVP — Max Voltage:", self.spn_ovp)
-
-        self.spn_uvp = QDoubleSpinBox()
-        self.spn_uvp.setRange(0.0, 100.0)
-        self.spn_uvp.setDecimals(2)
-        self.spn_uvp.setSingleStep(0.1)
-        self.spn_uvp.setSuffix(" V")
-        self.spn_uvp.setValue(float(limits.get("min_voltage", 10.0)))
-        form.addRow("UVP — Min Voltage:", self.spn_uvp)
-
-        self.spn_max_current = QDoubleSpinBox()
-        self.spn_max_current.setRange(0.0, 300.0)
-        self.spn_max_current.setDecimals(1)
-        self.spn_max_current.setSingleStep(1.0)
-        self.spn_max_current.setSuffix(" A")
-        self.spn_max_current.setValue(float(limits.get("max_current", 100.0)))
-        form.addRow("Max Current:", self.spn_max_current)
-
-        self.spn_otp = QDoubleSpinBox()
-        self.spn_otp.setRange(-40.0, 150.0)
-        self.spn_otp.setDecimals(1)
-        self.spn_otp.setSingleStep(1.0)
-        self.spn_otp.setSuffix(" °C")
-        self.spn_otp.setValue(float(limits.get("max_temperature", 60.0)))
-        form.addRow("OTP — Max Temperature:", self.spn_otp)
-
-        self.spn_utp = QDoubleSpinBox()
-        self.spn_utp.setRange(-40.0, 150.0)
-        self.spn_utp.setDecimals(1)
-        self.spn_utp.setSingleStep(1.0)
-        self.spn_utp.setSuffix(" °C")
-        self.spn_utp.setValue(float(limits.get("min_temperature", -10.0)))
-        form.addRow("UTP — Min Temperature:", self.spn_utp)
-
-        lay.addLayout(form)
-
-        lay.addStretch(1)
-        btn_box = QHBoxLayout()
-        btn_cancel = QPushButton("Cancel")
-        btn_cancel.clicked.connect(self.reject)
-        btn_save = QPushButton("Save")
-        btn_save.clicked.connect(self.accept)
-        btn_box.addStretch(1)
-        btn_box.addWidget(btn_cancel)
-        btn_box.addWidget(btn_save)
-        lay.addLayout(btn_box)
-
-    def accept(self):
-        parent = self.parent()
-        if parent and hasattr(parent, 'config'):
-            ovp, uvp = self.spn_ovp.value(), self.spn_uvp.value()
-            otp, utp = self.spn_otp.value(), self.spn_utp.value()
-            if ovp <= uvp:
-                QMessageBox.warning(self, "Safety Limits",
-                    f"OVP ({ovp:.2f}V) ต้องมากกว่า UVP ({uvp:.2f}V)")
-                return
-            if otp <= utp:
-                QMessageBox.warning(self, "Safety Limits",
-                    f"OTP ({otp:.1f}°C) ต้องมากกว่า UTP ({utp:.1f}°C)")
-                return
-
-            if parent.config.system.safety_limits is None:
-                parent.config.system.safety_limits = {}
-            parent.config.system.safety_limits["max_voltage"] = ovp
-            parent.config.system.safety_limits["min_voltage"] = uvp
-            parent.config.system.safety_limits["max_current"] = self.spn_max_current.value()
-            parent.config.system.safety_limits["max_temperature"] = otp
-            parent.config.system.safety_limits["min_temperature"] = utp
-            parent.config.save_config()
-            if hasattr(parent, "_refresh_battery_readout"):
-                parent._refresh_battery_readout()
-        super().accept()
-
-
 class HardwareControlMixin:
     def _refresh_ports(self):
         if self.hw is None:
@@ -209,15 +107,48 @@ class HardwareControlMixin:
         self.lbl_battery_readout.setText(
             f"{b.battery_type} · {b.cells_series}S{b.cells_parallel}P · {b.pack_nominal_voltage:.1f}V · {b.rated_capacity:.1f}Ah"
         )
-        if hasattr(self, "lbl_safety_limits") and self.config.system.safety_limits:
+        # Product selection / Detect Chemistry can update safety_limits behind
+        # the operator's back (see _on_product_changed) — push those values
+        # into the SETUP-tab spinboxes too, or they'd show stale numbers until
+        # the next manual edit. blockSignals: these spinboxes have no
+        # valueChanged wiring today, but avoids surprises if that ever changes.
+        if hasattr(self, "spn_ovp") and self.config.system.safety_limits:
             limits = self.config.system.safety_limits
-            self.lbl_safety_limits.setText(
-                f"[SAFETY] OVP: {limits.get('max_voltage', 0):.2f}V | UVP: {limits.get('min_voltage', 0):.2f}V | "
-                f"OTP: {limits.get('max_temperature', 0):.1f}°C | UTP: {limits.get('min_temperature', 0):.1f}°C"
-            )
-    def _on_edit_safety_limits(self):
-        dlg = SafetyLimitsDialog(self)
-        dlg.exec()
+            for spn, key, default in (
+                (self.spn_ovp, "max_voltage", 15.0),
+                (self.spn_uvp, "min_voltage", 10.0),
+                (self.spn_max_current, "max_current", 100.0),
+                (self.spn_otp, "max_temperature", 60.0),
+                (self.spn_utp, "min_temperature", -10.0),
+            ):
+                spn.blockSignals(True)
+                spn.setValue(float(limits.get(key, default)))
+                spn.blockSignals(False)
+    def _on_save_safety_limits(self):
+        ovp, uvp = self.spn_ovp.value(), self.spn_uvp.value()
+        otp, utp = self.spn_otp.value(), self.spn_utp.value()
+        if ovp <= uvp:
+            if not self._headless:
+                QMessageBox.warning(self, "Safety Limits",
+                    f"OVP ({ovp:.2f}V) ต้องมากกว่า UVP ({uvp:.2f}V)")
+            return
+        if otp <= utp:
+            if not self._headless:
+                QMessageBox.warning(self, "Safety Limits",
+                    f"OTP ({otp:.1f}°C) ต้องมากกว่า UTP ({utp:.1f}°C)")
+            return
+
+        if self.config.system.safety_limits is None:
+            self.config.system.safety_limits = {}
+        self.config.system.safety_limits["max_voltage"] = ovp
+        self.config.system.safety_limits["min_voltage"] = uvp
+        self.config.system.safety_limits["max_current"] = self.spn_max_current.value()
+        self.config.system.safety_limits["max_temperature"] = otp
+        self.config.system.safety_limits["min_temperature"] = utp
+        self.config.save_config()
+        self._log_alarm(
+            f"Safety limits saved — OVP {ovp:.2f}V, UVP {uvp:.2f}V, "
+            f"OTP {otp:.1f}°C, UTP {utp:.1f}°C")
     def _on_connect(self):
         psu, load, esp = self.cb_psu.currentText(), self.cb_load.currentText(), self.cb_esp.currentText()
         if not psu or not load:
