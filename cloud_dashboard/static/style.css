@@ -473,7 +473,7 @@ b{font-weight:700}
 
 /* ---- telemetry strip — flat band above chart ----------------------------- */
 .telemetry{
-  display:grid;grid-template-columns:repeat(7,1fr);
+  display:grid;grid-template-columns:repeat(6,1fr);
   gap:0;margin-bottom:0;
   border-left:1px solid var(--border);border-right:1px solid var(--border);
   background:var(--bg2);
@@ -578,7 +578,7 @@ b{font-weight:700}
   .lptab{border-left:none;border-bottom:3px solid transparent;padding:8px 12px}
   .lptab.active{border-left:none;border-bottom-color:var(--soc)}
   .ica-wrap{min-height:220px}
-  .telemetry{grid-template-columns:repeat(4,1fr)}
+  .telemetry{grid-template-columns:repeat(3,1fr)}
 }
 @media(max-width:560px){
   .wrap{padding:12px 12px 28px}

@@ -461,26 +461,6 @@ function updateChargeStatus(current, meta, summary) {
   const isCC = subPhase === 'cc' || phase === 'cc' || phase === 'bulk';
   const isCV = subPhase === 'cv' || phase === 'cv' || phase === 'absorption' || phase === 'float';
   const isChargePhase = ['charge','bulk','absorption','float','cc','cv'].includes(phase);
-
-  // Charge elapsed time — use elapsed_s from meta during charging phases
-  if (chargeElEl) {
-    if (isChargePhase || state === 'charging') {
-      const el = num(meta, 'elapsed_s');
-      chargeElEl.textContent = fmtElapsed(el);
-    } else if (state === 'discharging') {
-      // Also show elapsed for discharge phase
-      const el = num(meta, 'elapsed_s');
-      chargeElEl.textContent = fmtElapsed(el);
-      // Update card label
-      const tkEl = chargeElEl.closest('.tcard');
-      if (tkEl) { const lbl = tkEl.querySelector('.tk'); if (lbl) lbl.textContent = 'ELAPSED'; }
-    } else {
-      chargeElEl.textContent = '--:--';
-      // Reset label
-      const tkEl = chargeElEl.closest('.tcard');
-      if (tkEl) { const lbl = tkEl.querySelector('.tk'); if (lbl) lbl.textContent = 'CHARGE TIME'; }
-    }
-  }
 }
 
 /* ---- test panel ---------------------------------------------------------- */
