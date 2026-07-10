@@ -523,6 +523,25 @@ function updateTestPanel(meta, summary) {
     }
   });
 
+  const stepBadge = $('stepCcvBadge');
+  if (stepBadge) {
+    if (activeIdx === 1) { // CHARGE phase
+      if (subPhase === 'cc' || phase === 'cc' || phase === 'bulk') {
+        stepBadge.textContent = 'CC';
+        stepBadge.className = 'step-ccv-badge mode-cc';
+      } else if (subPhase === 'cv' || phase === 'cv' || phase === 'absorption' || phase === 'float') {
+        stepBadge.textContent = 'CV';
+        stepBadge.className = 'step-ccv-badge mode-cv';
+      } else {
+        stepBadge.textContent = '';
+        stepBadge.className = 'step-ccv-badge';
+      }
+    } else {
+      stepBadge.textContent = '';
+      stepBadge.className = 'step-ccv-badge';
+    }
+  }
+
   const nom = num(meta,'nominal_ah') ?? num(summary,'nominal_ah');
   const cc  = num(meta,'charge_crate');
   const dc  = num(meta,'discharge_crate');

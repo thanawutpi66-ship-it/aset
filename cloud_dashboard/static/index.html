@@ -7,7 +7,7 @@
 <title>ASET Cloud Dashboard · Battery Health</title>
 <link rel="icon" type="image/png" href="asetlogo.png"/>
 <link rel="preconnect" href="https://cdn.jsdelivr.net"/>
-<link rel="stylesheet" href="style.css?v=12"/>
+<link rel="stylesheet" href="style.css?v=14"/>
 <script>
   (function(){
     var saved = localStorage.getItem('aset-theme');
@@ -15,7 +15,7 @@
   })();
 </script>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script defer src="app.js?v=13"></script>
+<script defer src="app.js?v=14"></script>
 </head>
 <body>
 
@@ -153,7 +153,7 @@
           <div class="tp-step" data-step="1">
             <span class="step-dot"></span>
             <div class="step-info">
-              <span class="step-name">CHARGE</span>
+              <span class="step-name">CHARGE <span class="step-ccv-badge" id="stepCcvBadge"></span></span>
               <span class="step-desc" id="tpChargeDesc">Bulk→Absorption→Float</span>
             </div>
           </div>

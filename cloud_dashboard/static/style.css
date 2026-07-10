@@ -259,6 +259,9 @@ b{font-weight:700}
 .step-name{font-size:10.5px;font-weight:700;color:var(--muted);letter-spacing:.25px}
 .tp-step.active .step-name{color:var(--soc)}
 .tp-step.complete .step-name{color:var(--ok)}
+.step-ccv-badge{margin-left:3px;transition:color .2s}
+.tp-step.active .step-ccv-badge.mode-cc{color:var(--i)}
+.tp-step.active .step-ccv-badge.mode-cv{color:var(--v)}
 .step-desc{font-size:9px;color:var(--faint);line-height:1.3}
 .tp-params{
   display:flex;flex-direction:column;
