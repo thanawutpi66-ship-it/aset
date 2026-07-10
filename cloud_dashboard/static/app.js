@@ -10,6 +10,13 @@ const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 function fmtR(mOhm){ if (mOhm == null) return '–'; return mOhm >= 1000 ? (mOhm/1000).toFixed(2)+' Ω' : mOhm.toFixed(2)+' mΩ'; }
 function fmtKB(bytes){ return bytes >= 1024 ? Math.round(bytes/1024)+' KB' : bytes+' B'; }
+function fmtElapsed(s){
+  if (s == null || isNaN(s) || s < 0) return '--:--';
+  s = Math.floor(s);
+  const hh = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60;
+  if (hh > 0) return hh + ':' + String(mm).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
+  return String(mm).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
+}
 // Escapes text pulled from an ingest payload (meta.battery, alarm ts/msg) before
 // it's interpolated into an innerHTML string — those fields come from whoever
 // holds the ingest token, not from this page, so they're untrusted input.
@@ -401,6 +408,75 @@ function renderPayload(p, received_at) {
     setConnected(live ? 'connected' : 'idle');
     if (s.row_count != null) $('rowInfo').textContent = s.row_count + ' samples · ' + f(s.energy_wh,2) + ' Wh logged';
   }
+
+  // Charge/Discharge status + CC/CV mode + elapsed time
+  updateChargeStatus(I, p.meta || {}, s);
+}
+
+/* ---- charge / discharge status + CC/CV mode ------------------------------ */
+function updateChargeStatus(current, meta, summary) {
+  const statusEl = $('currentStatus');
+  const iconEl = $('currentStatusIcon');
+  const textEl = $('currentStatusText');
+  const chargeElEl = $('chargeElapsed');
+  const ccBadge = $('ccBadge'), cvBadge = $('cvBadge');
+
+  const phase = (meta.phase || summary.phase || '').toLowerCase();
+  const subPhase = (meta.sub_phase || '').toLowerCase();
+
+  // Determine charge/discharge/rest state
+  let state = 'rest';
+  let icon = '\u2015';   // ― horizontal bar
+  let label = 'REST';
+
+  if (current != null && current > 0.01) {
+    state = 'charging'; icon = '\u25B2'; label = 'CHARGING';   // ▲
+  } else if (current != null && current < -0.01) {
+    state = 'discharging'; icon = '\u25BC'; label = 'DISCHARGING'; // ▼
+  }
+
+  // Override based on phase if current is near zero but phase says charge/discharge
+  if (state === 'rest') {
+    if (['charge','bulk','absorption','float','cc','cv'].includes(phase)) {
+      state = 'charging'; icon = '\u25B2'; label = 'CHARGING';
+    } else if (['test','discharge','dcir'].includes(phase)) {
+      state = 'discharging'; icon = '\u25BC'; label = 'DISCHARGING';
+    }
+  }
+
+  if (statusEl) {
+    statusEl.className = 'tcard-status ' + state;
+    if (iconEl) iconEl.textContent = icon;
+    if (textEl) textEl.textContent = label;
+  }
+
+  // CC/CV mode detection
+  const isCC = subPhase === 'cc' || phase === 'cc' || phase === 'bulk';
+  const isCV = subPhase === 'cv' || phase === 'cv' || phase === 'absorption' || phase === 'float';
+  const isChargePhase = ['charge','bulk','absorption','float','cc','cv'].includes(phase);
+
+  if (ccBadge) ccBadge.classList.toggle('active', isCC);
+  if (cvBadge) cvBadge.classList.toggle('active', isCV);
+
+  // Charge elapsed time — use elapsed_s from meta during charging phases
+  if (chargeElEl) {
+    if (isChargePhase || state === 'charging') {
+      const el = num(meta, 'elapsed_s');
+      chargeElEl.textContent = fmtElapsed(el);
+    } else if (state === 'discharging') {
+      // Also show elapsed for discharge phase
+      const el = num(meta, 'elapsed_s');
+      chargeElEl.textContent = fmtElapsed(el);
+      // Update card label
+      const tkEl = chargeElEl.closest('.tcard');
+      if (tkEl) { const lbl = tkEl.querySelector('.tk'); if (lbl) lbl.textContent = 'ELAPSED'; }
+    } else {
+      chargeElEl.textContent = '--:--';
+      // Reset label
+      const tkEl = chargeElEl.closest('.tcard');
+      if (tkEl) { const lbl = tkEl.querySelector('.tk'); if (lbl) lbl.textContent = 'CHARGE TIME'; }
+    }
+  }
 }
 
 /* ---- test panel ---------------------------------------------------------- */
@@ -503,6 +579,21 @@ function updateTestPanel(meta, summary) {
       actPhaseEl.textContent = PHASE_LABELS[activeIdx];
       const descEl = descEls[activeIdx];
       actDetailEl.textContent = (descEl && descEl.textContent) || DEFAULT_DETAILS[activeIdx];
+    }
+    // Show CC/CV sub-phase in the activity sub-line during charge
+    const actSubEl = $('tpActSub');
+    if (actSubEl) {
+      if (activeIdx === 1) {
+        // During charge step, show CC/CV mode
+        if (subPhase === 'cc' || phase === 'cc' || phase === 'bulk')
+          actSubEl.textContent = 'Mode: CC (Constant Current)';
+        else if (subPhase === 'cv' || phase === 'cv' || phase === 'absorption' || phase === 'float')
+          actSubEl.textContent = 'Mode: CV (Constant Voltage)';
+        else
+          actSubEl.textContent = '';
+      } else {
+        actSubEl.textContent = '';
+      }
     }
   }
 

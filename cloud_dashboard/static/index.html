@@ -7,7 +7,7 @@
 <title>ASET Cloud Dashboard · Battery Health</title>
 <link rel="icon" type="image/png" href="asetlogo.png"/>
 <link rel="preconnect" href="https://cdn.jsdelivr.net"/>
-<link rel="stylesheet" href="style.css?v=11"/>
+<link rel="stylesheet" href="style.css?v=12"/>
 <script>
   (function(){
     var saved = localStorage.getItem('aset-theme');
@@ -15,7 +15,7 @@
   })();
 </script>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script defer src="app.js?v=12"></script>
+<script defer src="app.js?v=13"></script>
 </head>
 <body>
 
@@ -70,6 +70,10 @@
       <div class="tcard" style="--accent:var(--i)">
         <span class="tk">CURRENT</span>
         <span class="tv"><b id="mI">0.0</b><span class="tu">A</span></span>
+        <span class="tcard-status" id="currentStatus">
+          <span class="status-icon" id="currentStatusIcon">―</span>
+          <span id="currentStatusText">REST</span>
+        </span>
       </div>
       <div class="tcard" style="--accent:var(--soc)">
         <span class="tk">SOC</span>
@@ -86,6 +90,14 @@
       <div class="tcard">
         <span class="tk">SOH</span>
         <span class="tv"><b id="mSoH">–</b></span>
+      </div>
+      <div class="tcard tcard-charge" style="--accent:var(--soc)" id="chargeInfoCard">
+        <span class="tk">CHARGE TIME</span>
+        <span class="tv"><b id="chargeElapsed">--:--</b></span>
+        <span class="tcard-ccv" id="chargeModeLabel">
+          <span class="ccv-badge" id="ccBadge">CC</span>
+          <span class="ccv-badge" id="cvBadge">CV</span>
+        </span>
       </div>
     </section>
 
