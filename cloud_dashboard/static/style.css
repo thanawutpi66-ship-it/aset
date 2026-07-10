@@ -261,7 +261,7 @@ b{font-weight:700}
 .tp-step.complete .step-name{color:var(--ok)}
 .step-ccv-badge{margin-left:3px;transition:color .2s}
 .tp-step.active .step-ccv-badge.mode-cc{color:var(--i)}
-.tp-step.active .step-ccv-badge.mode-cv{color:var(--v)}
+.tp-step.active .step-ccv-badge.mode-cv{color:var(--i)}
 .step-desc{font-size:9px;color:var(--faint);line-height:1.3}
 .tp-params{
   display:flex;flex-direction:column;
