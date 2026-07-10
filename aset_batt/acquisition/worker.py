@@ -118,7 +118,8 @@ class AcquisitionWorker(QObject):
                     last_i = 0.0
                     continue
 
-                elapsed = time.perf_counter() - t0
+                _iter_t0 = time.perf_counter()
+                elapsed = _iter_t0 - t0
 
                 _s0 = time.perf_counter()
                 with QMutexLocker(self._io):
@@ -196,7 +197,15 @@ class AcquisitionWorker(QObject):
                     self.alarm.emit("INFO", "Charge tapered to termination current — test complete")
                     break
 
-                QThread.msleep(int(period * 1000))
+                # Sleep only the time REMAINING in this period, not the full period —
+                # a flat msleep(200ms) here regardless of how long SCPI/estimator/log
+                # already took meant every iteration cost (real work) + 200ms, capping
+                # the achieved rate at ~4 Hz even when the real work was only 30-40ms
+                # (confirmed on the real rig: SCPI 9-15%, estimator/log ~0%, "other"
+                # 84-91% — "other" WAS this fixed sleep, not hidden overhead). Same
+                # self-correcting pacing sequences/hppc.py's pulse loop already uses.
+                _iter_elapsed = time.perf_counter() - _iter_t0
+                QThread.msleep(max(0, int((period - _iter_elapsed) * 1000)))
         except Exception as e:
             logger.exception("worker loop error")
             self.alarm.emit("CRITICAL", f"Acquisition fault: {e}")
