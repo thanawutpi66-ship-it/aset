@@ -571,11 +571,26 @@ class UiUpdaterMixin:
         return theme.NEUTRAL
     def _mode_badge_style(self):
         color = theme.WARN if self.config.system.simulation_mode else theme.OK
-        return (f"background:transparent; color:{color}; border:1px solid {color}; "
+        return (f"background:{theme.PANEL2}; color:{color}; border:1px solid {color}; "
                 f"border-radius:4px; padding:3px 8px; font-weight:700; letter-spacing:1px; margin-right: 10px;")
     def _update_window_title(self):
         self.setWindowTitle(
             f"ASET Battery Tester — ISA-101 Command Center  [{theme.current_theme()}]")
+    def _refresh_sn_badge(self):
+        """Single source of truth for the toolbar S/N badge, persistent like the
+        SIMULATION badge: visible whenever config.battery.serial_number is set,
+        from app start onward. Previously the badge logic was duplicated inline
+        in _on_ed_sn_changed and _slot_profile_status and never ran at
+        construction — an S/N already saved in config.json stayed hidden until
+        the first profile-status update, and confirming the pretest dialog with
+        the same S/N already in ed_sn emitted no textChanged, so nothing
+        refreshed the badge at all ("s/n ไม่ขึ้นเมื่อกรอกเสร็จ")."""
+        sn = str(getattr(self.config.battery, "serial_number", "") or "").strip()
+        if not hasattr(self, "lbl_active_sn"):
+            return
+        self.lbl_active_sn.setText(f"  S/N: {sn}  " if sn else "")
+        if hasattr(self, "_sn_action"):
+            self._sn_action.setVisible(bool(sn))
     def _on_retheme(self):
         """Refresh everything that isn't covered by theme.style()'s automatic
         registry: state-dependent widgets whose color depends on runtime state,

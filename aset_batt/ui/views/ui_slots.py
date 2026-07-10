@@ -204,6 +204,11 @@ class UiSlotsMixin:
         self.state_pill.setStyleSheet(self._pill(self._pill_color_for(text)))
         # Lock hardware disconnect during active test runs
         is_idle = any(x in text.upper() for x in ["IDLE", "STOP", "FAIL", "DONE", "REVIEW"])
+        
+        # Update active SN display
+        self._refresh_sn_badge()
+
+
         if hasattr(self, 'btn_disconnect'):
             self.btn_disconnect.setEnabled(is_idle)
             self.btn_connect.setEnabled(is_idle)

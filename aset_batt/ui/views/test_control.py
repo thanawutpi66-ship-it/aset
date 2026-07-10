@@ -100,6 +100,8 @@ class TestControlMixin:
         mode = self.cb_charge_mode.currentText()
         self._log_alarm(f"Charge started ({mode})." if ok else "Charge start failed.")
         if ok:
+            self._ensure_battery_sn()
+            self.sig_profile_status.emit("RUN", theme.INFO)
             try:
                 from aset_batt.storage.cloud_push import set_cloud_meta
                 set_cloud_meta(phase="charge", test_mode="MANUAL", workflow=f"Manual — {mode}", total_s=0)
@@ -109,6 +111,7 @@ class TestControlMixin:
     def _on_stop_charge(self):
         if self.controller:
             self.controller.stop_charge()
+            self.sig_profile_status.emit("IDLE", theme.NEUTRAL)
             self._log_alarm("Charge stopped.")
             try:
                 from aset_batt.storage.cloud_push import set_cloud_meta
@@ -142,6 +145,7 @@ class TestControlMixin:
             self.config.battery.serial_number = new_sn
             if hasattr(self, "ed_sn"):
                 self.ed_sn.setText(new_sn)
+            self._refresh_sn_badge()
             self._log_alarm(f"No SN provided, auto-generated: {new_sn}")
     def _on_run_hppc(self):
         self._on_run_test(mode=OperationMode.HPPC)
@@ -217,10 +221,12 @@ class TestControlMixin:
         else:
             self.btn_run_test.setEnabled(False)
         self._test_thread.start()
+        self.sig_profile_status.emit("RUN", theme.INFO)
         self._log_alarm(f"Characterization started: {cfg.mode.value}")
     def _on_stop_test(self):
         if self._test_worker:
             self._test_worker.stop()
+            self.sig_profile_status.emit("STOP", theme.WARN)
             self._log_alarm("Test stop requested.")
     def _on_test_telemetry(self, row: dict):
         self.buf_t.append(row["elapsed"]); self.buf_v.append(row["v"])
@@ -326,6 +332,7 @@ class TestControlMixin:
         grade = results["grade"]
         conf = results.get("confidence", 1.0)
         self.lbl_grade.setText(grade if grade == "REVIEW" else f"{grade}")
+        self.sig_profile_status.emit("DONE", theme.OK)
         grade_lbl, _ = self.metric_labels_final["Grade"]
         grade_lbl.setText(grade)
         # Colors for the whole final-analysis row are state+theme hybrids —

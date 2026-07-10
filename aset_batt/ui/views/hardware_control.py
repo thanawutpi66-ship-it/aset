@@ -273,9 +273,15 @@ class HardwareControlMixin:
             # G9 (industrial-grade audit): set_psu() now reports whether the SCPI
             # write actually succeeded — a failed command used to just be logged,
             # so the operator watching this exact button had no way to know the PSU
-            # didn't really change state.
             if not ok and not self._headless:
                 QMessageBox.warning(self, "PSU", "PSU command failed — see log for details")
+            elif ok:
+                if on or getattr(self.hw, "_psu_output_on", False) or getattr(self.hw, "_load_output_on", False):
+                    if hasattr(self, "_ensure_battery_sn"):
+                        self._ensure_battery_sn()
+                    self.sig_profile_status.emit("RUN", theme.INFO)
+                else:
+                    self.sig_profile_status.emit("IDLE", theme.NEUTRAL)
         except ValueError:
             if not self._headless:
                 QMessageBox.warning(self, "PSU", "Invalid voltage / current")
@@ -293,6 +299,13 @@ class HardwareControlMixin:
             # G9 (industrial-grade audit): see _psu_manual's comment — same fix.
             if not ok and not self._headless:
                 QMessageBox.warning(self, "Load", "Load command failed — see log for details")
+            elif ok:
+                if on or getattr(self.hw, "_psu_output_on", False) or getattr(self.hw, "_load_output_on", False):
+                    if hasattr(self, "_ensure_battery_sn"):
+                        self._ensure_battery_sn()
+                    self.sig_profile_status.emit("RUN", theme.INFO)
+                else:
+                    self.sig_profile_status.emit("IDLE", theme.NEUTRAL)
             try:
                 from aset_batt.storage.cloud_push import set_cloud_meta
                 if on:

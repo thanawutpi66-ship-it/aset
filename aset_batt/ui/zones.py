@@ -77,6 +77,11 @@ logger = logging.getLogger(__name__)
 
 class ZonesMixin:
     # ---- ZONE 1: SETUP (battery + connections) -----------------------------
+    def _on_ed_sn_changed(self, text):
+        if hasattr(self, "config") and self.config:
+            self.config.battery.serial_number = text.strip()
+        self._refresh_sn_badge()
+
     def _zone_setup(self):
         w = QWidget()
         lay = QVBoxLayout(w)
@@ -92,6 +97,14 @@ class ZonesMixin:
         self._combo_shrink(self.cb_product, 8)
         row.addWidget(self.cb_product, 1)
         lay.addLayout(row)
+        
+        sn_row = QHBoxLayout()
+        sn_row.addWidget(QLabel("S/N:"))
+        self.ed_sn = QLineEdit()
+        self.ed_sn.setPlaceholderText("Serial Number")
+        self.ed_sn.textChanged.connect(self._on_ed_sn_changed)
+        sn_row.addWidget(self.ed_sn, 1)
+        lay.addLayout(sn_row)
         self.lbl_battery_readout = QLabel("—")
         theme.style(self.lbl_battery_readout, lambda: f"color:{theme.MUTED};")
         lay.addWidget(self.lbl_battery_readout)
@@ -283,8 +296,8 @@ class ZonesMixin:
         # it doesn't touch disabled-state styling anywhere else in the app.
         theme.style(self.grp_advanced, lambda: (
             f"QGroupBox {{ color:{theme.MUTED}; font-weight:bold; font-size:11px; "
-            f"border:1px solid {theme.BORDER}; border-radius:4px; margin-top:6px; }} "
-            f"QGroupBox::title {{ subcontrol-origin: margin; left: 8px; padding: 0 3px 0 3px; }} "
+            f"border:1px solid {theme.BORDER}; border-radius:4px; margin-top:8px; padding-top:4px; }} "
+            f"QGroupBox::title {{ subcontrol-origin: margin; left: 8px; padding: 0 6px; background: {theme.BG}; }} "
             f"QGroupBox#grp_advanced:disabled QLabel {{ color:{theme.MUTED}; }} "
             f"QGroupBox#grp_advanced:disabled QCheckBox {{ color:{theme.MUTED}; }} "
             f"QGroupBox#grp_advanced:disabled QComboBox, "
@@ -571,9 +584,7 @@ class ZonesMixin:
         outer_lay.addWidget(self.btn_seq_cancel)
 
         self.lbl_wf_status = QLabel("เลือก workflow แล้วกดปุ่ม RUN")
-        self.lbl_wf_status.setStyleSheet(
-            f"color:{theme.MUTED}; font-size:11px; padding-top:2px;"
-        )
+        theme.style(self.lbl_wf_status, lambda: f"color:{theme.MUTED}; font-size:11px; padding-top:2px;")
         self.lbl_wf_status.setWordWrap(True)
         outer_lay.addWidget(self.lbl_wf_status)
 
