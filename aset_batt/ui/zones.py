@@ -1339,17 +1339,7 @@ class ZonesMixin:
         btn.clicked.connect(self._on_analyze_csv)
         lay.addWidget(btn)
 
-        # ── SoH trend + capacity fade charts ─────────────────────────────
-        trend_row = QHBoxLayout()
-        btn_trend = _btn("SoH Trend", bg="PANEL", hover="PANEL2")
-        btn_trend.setToolTip("Plot SoH history across all sessions")
-        btn_trend.clicked.connect(self._on_soh_trend)
-        btn_fade = _btn("Capacity Fade", bg="PANEL", hover="PANEL2")
-        btn_fade.setToolTip("Plot capacity fade from Cycle Life sessions")
-        btn_fade.clicked.connect(self._on_capacity_fade)
-        trend_row.addWidget(btn_trend)
-        trend_row.addWidget(btn_fade)
-        lay.addLayout(trend_row)
+        # ── SoH trend + capacity fade charts (Removed per user request) ──
         return w
 
     def _build_ecm_svg(self, r0=None, r1=None, c1=None, ocv=None, tau=None) -> str:
