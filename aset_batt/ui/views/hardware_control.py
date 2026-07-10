@@ -409,6 +409,30 @@ class HardwareControlMixin:
                 self.sig_loading.emit("btn_ocv", False, "")
         threading.Thread(target=_run, daemon=True).start()
     def _on_estop(self):
+        if hasattr(self, "_seq_running"):
+            self._seq_running.clear()
+        for char_ev in getattr(self, "_char_running", {}).values():
+            char_ev.clear()
+
+        try:
+            from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+            from PySide6.QtCore import QUrl
+            import os
+            
+            # Keep references so they aren't garbage collected
+            self._estop_player = QMediaPlayer()
+            self._estop_audio = QAudioOutput()
+            self._estop_player.setAudioOutput(self._estop_audio)
+            
+            pido_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "pido.mp3"))
+            if os.path.exists(pido_path):
+                self._estop_player.setSource(QUrl.fromLocalFile(pido_path))
+                self._estop_audio.setVolume(1.0)
+                self._estop_player.play()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to play pido.mp3: {e}")
+
         if self._test_worker:
             self._test_worker.emergency_stop()   # immediate instrument override
         if self.controller:

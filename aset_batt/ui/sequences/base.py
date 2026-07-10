@@ -342,6 +342,7 @@ class BaseSequenceMixin:
             winsound.MessageBeep(winsound.MB_ICONASTERISK)
         except Exception:
             QApplication.beep()
+
         if not self._headless:
             msg = QMessageBox(self)
             msg.setWindowTitle(title)

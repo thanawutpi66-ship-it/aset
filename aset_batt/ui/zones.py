@@ -112,7 +112,7 @@ class ZonesMixin:
         theme.style(self.lbl_safety_limits, lambda: f"color:{theme.CRIT}; font-size:11px; font-weight:600;")
         lay.addWidget(self.lbl_safety_limits)
         actions = QHBoxLayout()
-        self.btn_detect = _btn("Detect Chemistry", bg="PANEL", hover="PANEL2")
+        self.btn_detect = _btn("Detect Chemistry", bg="PANEL2", hover="FIELD")
         self.btn_detect.clicked.connect(self._on_detect_chemistry)
         actions.addWidget(self.btn_detect)
         lay.addLayout(actions)
@@ -156,7 +156,7 @@ class ZonesMixin:
         row.addWidget(self.btn_connect)
         row.addWidget(self.btn_disconnect)
         lay.addLayout(row)
-        btn_refresh = _btn("Refresh Ports", bg="PANEL", hover="PANEL2")
+        btn_refresh = _btn("Refresh Ports", bg="PANEL2", hover="FIELD")
         btn_refresh.clicked.connect(self._refresh_ports)
         lay.addWidget(btn_refresh)
 
@@ -708,7 +708,7 @@ class ZonesMixin:
         self.ed_psu_i.setToolTip("CC current limit (A)")
         psu_row.addWidget(self.ed_psu_i)
         psu_on  = _btn("ON",  bg="OK",       fg="white", hover="#266a2a")
-        psu_off = _btn("OFF", bg="PANEL", hover="PANEL2")
+        psu_off = _btn("OFF", bg="PANEL2", hover="FIELD")
         psu_on.clicked.connect( lambda: self._psu_manual(True))
         psu_off.clicked.connect(lambda: self._psu_manual(False))
         psu_row.addWidget(psu_on)
@@ -723,7 +723,7 @@ class ZonesMixin:
         self.ed_load_a.setToolTip("CC load current (A)")
         load_row.addWidget(self.ed_load_a)
         load_on  = _btn("ON",  bg="OK",       fg="white", hover="#266a2a")
-        load_off = _btn("OFF", bg="PANEL", hover="PANEL2")
+        load_off = _btn("OFF", bg="PANEL2", hover="FIELD")
         load_on.clicked.connect( lambda: self._load_manual(True))
         load_off.clicked.connect(lambda: self._load_manual(False))
         load_row.addWidget(load_on)
@@ -739,7 +739,7 @@ class ZonesMixin:
         self.lbl_psu_trip = QLabel("Trip: —")
         theme.style(self.lbl_psu_trip, self._psu_trip_style)
         prot_row.addWidget(self.lbl_psu_trip, 1)
-        self.btn_check_trip = _btn("Check", bg="PANEL", hover="PANEL2")
+        self.btn_check_trip = _btn("Check", bg="PANEL2", hover="FIELD")
         self.btn_clear_trip = _btn("Clear Trip", bg="WARN", fg="white", hover="#a06800")
         self.btn_check_trip.clicked.connect(self._on_check_psu_trip)
         self.btn_clear_trip.clicked.connect(self._on_clear_psu_trip)
@@ -994,19 +994,19 @@ class ZonesMixin:
         self.lbl_csv.setWordWrap(True)
         lay.addWidget(self.lbl_csv)
 
-        self.btn_open_logs = _btn("Open Logs Folder", bg="PANEL", hover="PANEL2")
+        self.btn_open_logs = _btn("Open Logs Folder", bg="PANEL2", hover="FIELD")
         self.btn_open_logs.clicked.connect(self._on_open_logs_folder)
         lay.addWidget(self.btn_open_logs)
-        self.btn_pdf = _btn("Generate PDF Report", bg="PANEL", hover="PANEL2")
+        self.btn_pdf = _btn("Generate PDF Report", bg="PANEL2", hover="FIELD")
         self.btn_pdf.clicked.connect(self._on_pdf_report)
         lay.addWidget(self.btn_pdf)
-        btn_dash = _btn("Open Cloud Dashboard", bg="PANEL", hover="PANEL2")
+        btn_dash = _btn("Open Cloud Dashboard", bg="PANEL2", hover="FIELD")
         btn_dash.clicked.connect(self._on_open_dashboard)
         lay.addWidget(btn_dash)
 
         lay.addWidget(_hline())
         lay.addWidget(self._subheader("BATTERY CONFIGURATION"))
-        self.btn_edit_profile = _btn("Edit Battery Profile…", bg="PANEL", hover="PANEL2")
+        self.btn_edit_profile = _btn("Edit Battery Profile…", bg="PANEL2", hover="FIELD")
         self.btn_edit_profile.setToolTip("แก้ไขค่า BatteryConfig ในแอพโดยตรง")
         self.btn_edit_profile.clicked.connect(self._on_edit_battery_profile)
         self.btn_edit_profile.setVisible(False)
@@ -1045,7 +1045,7 @@ class ZonesMixin:
         cal_lay.addRow("Load Voltage Offset (V):", self.spn_load_v_offset)
         cal_lay.addRow("Load Current Offset (A):", self.spn_load_i_offset)
         
-        self.btn_save_cal = _btn("Save Calibration", bg="PANEL", hover="PANEL2")
+        self.btn_save_cal = _btn("Save Calibration", bg="PANEL2", hover="FIELD")
         self.btn_save_cal.clicked.connect(self._on_save_calibration)
         cal_lay.addRow(self.btn_save_cal)
         
@@ -1187,6 +1187,7 @@ class ZonesMixin:
         return {
             "Voltage": theme.INFO, "Current": theme.WARN, "Temp": theme.CRIT,
             "SoC": theme.OK, "Rin": theme.NEUTRAL,
+            "Grade": "#e91e63", "SoH": "#9c27b0",
         }.get(name, theme.INFO)
 
     def _metric_card(self, name, unit, store=None):
@@ -1585,21 +1586,22 @@ class ZonesMixin:
         self.tbl_alarms.setSelectionBehavior(QTableWidget.SelectRows)
         self.tbl_alarms.setAlternatingRowColors(False)
         self.tbl_alarms.setShowGrid(True)
-        self.tbl_alarms.setStyleSheet(
-            f"QTableWidget{{background:#1C1F23; color:#E0E3E6; gridline-color:#333; border:0; font-size:11px;}}"
-            f"QHeaderView::section{{background:#2C3036; color:#A8B0B8; padding:4px 8px; border:0;"
-            f" border-bottom:1px solid #444; font-size:11px; font-weight:700;}}"
+        self.tbl_alarms.setShowGrid(True)
+        theme.style(self.tbl_alarms, lambda: (
+            f"QTableWidget{{background:{theme.BG}; color:{theme.TEXT}; gridline-color:{theme.BORDER}; border:0; font-size:11px;}}"
+            f"QHeaderView::section{{background:{theme.PANEL2}; color:{theme.TEXT}; padding:4px 8px; border:0;"
+            f" border-bottom:1px solid {theme.BORDER}; font-size:11px; font-weight:700;}}"
             f"QTableWidget::item{{padding:2px 8px; border:0;}}"
-            f"QTableWidget::item:selected{{background:#3A5080; color:white;}}"
-        )
+            f"QTableWidget::item:selected{{background:{theme.INFO}; color:white;}}"
+        ))
         lay.addWidget(self.tbl_alarms, 1)
 
         # ── Status bar ────────────────────────────────────────────────
         self._alarm_statusbar = QLabel("  SYSTEM READY")
-        self._alarm_statusbar.setStyleSheet(
-            "background:#1C1F23; color:#7A9A5A; padding:3px 10px; font-size:10px;"
-            " font-family:Consolas,monospace; border-top:1px solid #333;"
-        )
+        theme.style(self._alarm_statusbar, lambda: (
+            f"background:{theme.PANEL}; color:{theme.OK}; padding:3px 10px; font-size:10px;"
+            f" font-family:Consolas,monospace; border-top:1px solid {theme.BORDER};"
+        ))
         lay.addWidget(self._alarm_statusbar)
 
         self._log_alarm("System ready.")

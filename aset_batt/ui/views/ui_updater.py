@@ -342,7 +342,7 @@ class UiUpdaterMixin:
                                       "abort", "⛔", "alarm", "overvolt", "underv",
                                       "overtemp", "otp"]):
             event, state = "ALARM",   "ACTIVE"
-            row_bg, row_fg, evt_fg = "#3D1A1A", "#E0E3E6", "#FF5555"
+            row_bg, row_fg, evt_fg = "#3D1A1A" if theme.current_theme() == "dark" else "#fde0dc", None, theme.CRIT
             try:
                 import winsound
                 import threading
@@ -352,22 +352,22 @@ class UiUpdaterMixin:
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         elif any(x in m_low for x in ["warn", "⚠", "timeout", "timeout"]):
             event, state = "WARNING", "ACTIVE"
-            row_bg, row_fg, evt_fg = "#3D3010", "#E0E3E6", "#FFB700"
+            row_bg, row_fg, evt_fg = "#3D3010" if theme.current_theme() == "dark" else "#fff3e0", None, theme.WARN
         elif any(x in m_low for x in ["complete", "✓", "success", "connected",
                                         "ready", "done", "normal"]):
             event, state = "NORMAL",  "CLEARED"
-            row_bg, row_fg, evt_fg = "#1A2E1A", "#E0E3E6", "#55CC55"
+            row_bg, row_fg, evt_fg = None, None, theme.OK
         elif any(x in m_low for x in ["start", "started", "enable", "begin",
                                         "on ", "charge started", "discharge"]):
             event, state = "ON",      "ACTIVE"
-            row_bg, row_fg, evt_fg = "#1A2240", "#E0E3E6", "#5599FF"
+            row_bg, row_fg, evt_fg = None, None, theme.INFO
         elif any(x in m_low for x in ["stop", "stopped", "disable", "disconnected",
                                         "cancel", "off"]):
             event, state = "OFF",     "INACTIVE"
-            row_bg, row_fg, evt_fg = "#282828", "#A8A8A8", "#888888"
+            row_bg, row_fg, evt_fg = None, theme.MUTED, theme.MUTED
         else:
             event, state = "INFO",    ""
-            row_bg, row_fg, evt_fg = "#1C1F23", "#C0C4C8", "#7A9A5A"
+            row_bg, row_fg, evt_fg = None, None, theme.OK
 
         # ── Parse POINTNAME ────────────────────────────────────────
         prefix_m = re.match(r'^\[([^\]]+)\]\s*', m)
@@ -483,15 +483,16 @@ class UiUpdaterMixin:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
         # For SCADA flash: bright = saturated alert, dim = muted background
+        is_dark = theme.current_theme() == "dark"
         if event == "ALARM":
-            bright_bg, dim_bg = "#8B0000", "#3D1A1A"
+            bright_bg = "#8B0000" if is_dark else "#ff8a80"
+            dim_bg = "#3D1A1A" if is_dark else "#ffcdd2"
         elif event == "WARNING":
-            bright_bg, dim_bg = "#7A5500", "#3D3010"
+            bright_bg = "#7A5500" if is_dark else "#ffd180"
+            dim_bg = "#3D3010" if is_dark else "#ffecb3"
         else:
             bright_bg = dim_bg = row_bg
 
-        bg = QColor(row_bg)
-        fg = QColor(row_fg)
         ack_text = "UNACK" if needs_ack else ""
         for col, (text, bold, f_color) in enumerate([
             (ts,       False, row_fg),
@@ -501,8 +502,10 @@ class UiUpdaterMixin:
             (ack_text, True,  "#FF5555" if needs_ack else theme.MUTED),
         ]):
             item = QTableWidgetItem(text)
-            item.setBackground(bg)
-            item.setForeground(QColor(f_color))
+            if row_bg:
+                item.setBackground(QColor(row_bg))
+            if f_color:
+                item.setForeground(QColor(f_color))
             if bold:
                 fnt = item.font()
                 fnt.setBold(True)
