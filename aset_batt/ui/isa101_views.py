@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -71,29 +72,85 @@ class SettingsDialog(QDialog):
         lay.addWidget(lbl_app)
         self.cb_dark = QCheckBox("Dark Theme")
         if parent and hasattr(parent, 'config'):
-            self.cb_dark.setChecked(parent.config.system.dark_mode)
+            # SystemConfig จริงมี ui_theme ("light"/"dark") ไม่มี dark_mode — field เดิม
+            # ที่ dialog นี้อ้างถึงไม่เคยมีอยู่จริง เปิดกี่ครั้งก็ AttributeError ทันที
+            self.cb_dark.setChecked(parent.config.system.ui_theme == "dark")
         lay.addWidget(self.cb_dark)
 
         # 2. Cloud Integration
         lbl_cloud = QLabel("CLOUD INTEGRATION")
         lbl_cloud.setStyleSheet("font-weight: bold; color: #a1a6ab; margin-top: 10px;")
         lay.addWidget(lbl_cloud)
-        
+
         row1 = QHBoxLayout()
         self.cb_push = QCheckBox("Enable Cloud Push")
         if parent and hasattr(parent, 'config'):
-            self.cb_push.setChecked(parent.config.system.cloud_push)
+            self.cb_push.setChecked(parent.config.system.cloud_push_enabled)
         row1.addWidget(self.cb_push)
         lay.addLayout(row1)
 
         row2 = QHBoxLayout()
-        row2.addWidget(QLabel("InfluxDB / MQTT URL:"))
+        row2.addWidget(QLabel("Cloud Dashboard URL:"))
         self.ed_url = QLineEdit()
         self.ed_url.setPlaceholderText("https://...")
         if parent and hasattr(parent, 'config'):
-            self.ed_url.setText(parent.config.system.cloud_url)
+            self.ed_url.setText(parent.config.system.cloud_dashboard_url)
         row2.addWidget(self.ed_url, 1)
         lay.addLayout(row2)
+
+        # 2b. Safety Limits — OVP/UVP/OTP/UTP were only ever editable by hand-
+        # editing config.json's system.safety_limits; check_safety_limits()
+        # (auto_controller.py) already enforces all four, they just had no UI.
+        lbl_safety = QLabel("SAFETY LIMITS")
+        lbl_safety.setStyleSheet("font-weight: bold; color: #a1a6ab; margin-top: 10px;")
+        lay.addWidget(lbl_safety)
+
+        limits = {}
+        if parent and hasattr(parent, 'config') and parent.config.system.safety_limits:
+            limits = parent.config.system.safety_limits
+
+        safety_form = QFormLayout()
+        self.spn_ovp = QDoubleSpinBox()
+        self.spn_ovp.setRange(0.0, 100.0)
+        self.spn_ovp.setDecimals(2)
+        self.spn_ovp.setSingleStep(0.1)
+        self.spn_ovp.setSuffix(" V")
+        self.spn_ovp.setValue(float(limits.get("max_voltage", 15.0)))
+        safety_form.addRow("OVP — Max Voltage:", self.spn_ovp)
+
+        self.spn_uvp = QDoubleSpinBox()
+        self.spn_uvp.setRange(0.0, 100.0)
+        self.spn_uvp.setDecimals(2)
+        self.spn_uvp.setSingleStep(0.1)
+        self.spn_uvp.setSuffix(" V")
+        self.spn_uvp.setValue(float(limits.get("min_voltage", 10.0)))
+        safety_form.addRow("UVP — Min Voltage:", self.spn_uvp)
+
+        self.spn_max_current = QDoubleSpinBox()
+        self.spn_max_current.setRange(0.0, 300.0)
+        self.spn_max_current.setDecimals(1)
+        self.spn_max_current.setSingleStep(1.0)
+        self.spn_max_current.setSuffix(" A")
+        self.spn_max_current.setValue(float(limits.get("max_current", 100.0)))
+        safety_form.addRow("Max Current:", self.spn_max_current)
+
+        self.spn_otp = QDoubleSpinBox()
+        self.spn_otp.setRange(-40.0, 150.0)
+        self.spn_otp.setDecimals(1)
+        self.spn_otp.setSingleStep(1.0)
+        self.spn_otp.setSuffix(" °C")
+        self.spn_otp.setValue(float(limits.get("max_temperature", 60.0)))
+        safety_form.addRow("OTP — Max Temperature:", self.spn_otp)
+
+        self.spn_utp = QDoubleSpinBox()
+        self.spn_utp.setRange(-40.0, 150.0)
+        self.spn_utp.setDecimals(1)
+        self.spn_utp.setSingleStep(1.0)
+        self.spn_utp.setSuffix(" °C")
+        self.spn_utp.setValue(float(limits.get("min_temperature", -10.0)))
+        safety_form.addRow("UTP — Min Temperature:", self.spn_utp)
+
+        lay.addLayout(safety_form)
 
         # 3. PDF Reporting
         lbl_pdf = QLabel("REPORTS")
@@ -115,11 +172,32 @@ class SettingsDialog(QDialog):
     def accept(self):
         parent = self.parent()
         if parent and hasattr(parent, 'config'):
-            parent.config.system.dark_mode = self.cb_dark.isChecked()
-            parent.config.system.cloud_push = self.cb_push.isChecked()
-            parent.config.system.cloud_url = self.ed_url.text()
-            parent.config.save()
-            QMessageBox.information(self, "Restart Required", "Theme changes will take effect on next restart.")
+            ovp, uvp = self.spn_ovp.value(), self.spn_uvp.value()
+            otp, utp = self.spn_otp.value(), self.spn_utp.value()
+            if ovp <= uvp:
+                QMessageBox.warning(self, "Safety Limits",
+                    f"OVP ({ovp:.2f}V) ต้องมากกว่า UVP ({uvp:.2f}V)")
+                return
+            if otp <= utp:
+                QMessageBox.warning(self, "Safety Limits",
+                    f"OTP ({otp:.1f}°C) ต้องมากกว่า UTP ({utp:.1f}°C)")
+                return
+
+            parent.config.system.ui_theme = "dark" if self.cb_dark.isChecked() else "light"
+            parent.config.system.cloud_push_enabled = self.cb_push.isChecked()
+            parent.config.system.cloud_dashboard_url = self.ed_url.text()
+            if parent.config.system.safety_limits is None:
+                parent.config.system.safety_limits = {}
+            parent.config.system.safety_limits["max_voltage"] = ovp
+            parent.config.system.safety_limits["min_voltage"] = uvp
+            parent.config.system.safety_limits["max_current"] = self.spn_max_current.value()
+            parent.config.system.safety_limits["max_temperature"] = otp
+            parent.config.system.safety_limits["min_temperature"] = utp
+            parent.config.save_config()
+            if hasattr(parent, "_refresh_battery_readout"):
+                parent._refresh_battery_readout()
+            QMessageBox.information(self, "Saved",
+                "บันทึก Safety Limits แล้ว (มีผลทันที)\nTheme changes will take effect on next restart.")
         super().accept()
 
     def _on_pdf(self):

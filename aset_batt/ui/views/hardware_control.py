@@ -110,7 +110,8 @@ class HardwareControlMixin:
         if hasattr(self, "lbl_safety_limits") and self.config.system.safety_limits:
             limits = self.config.system.safety_limits
             self.lbl_safety_limits.setText(
-                f"[SAFETY] Max V: {limits.get('max_voltage', 0):.2f}V | Min V: {limits.get('min_voltage', 0):.2f}V | Max Temp: {limits.get('max_temperature', 0):.1f}°C"
+                f"[SAFETY] OVP: {limits.get('max_voltage', 0):.2f}V | UVP: {limits.get('min_voltage', 0):.2f}V | "
+                f"OTP: {limits.get('max_temperature', 0):.1f}°C | UTP: {limits.get('min_temperature', 0):.1f}°C"
             )
     def _on_connect(self):
         psu, load, esp = self.cb_psu.currentText(), self.cb_load.currentText(), self.cb_esp.currentText()
