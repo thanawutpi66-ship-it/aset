@@ -45,9 +45,15 @@ MATERIAL_THEMES = {
     "dark": os.path.join(_THEMES_DIR, "isa101_dark.xml"),
 }
 
+# Light palette darkened one step (ก.ค. 2026, operator feedback: "ขาวเกินไป"):
+# surfaces sit ~8-10% lower than the original #b9bdc1..#eceef0 ramp so panels
+# and buttons read as solid grey instead of near-white, and MUTED gained
+# contrast for small annotation text (e.g. the charge stage breakdown).
+# Fallback only — with qt-material installed these are overridden from
+# material_themes/isa101_light.xml (kept in sync, same values).
 LIGHT = dict(
-    BG="#b9bdc1", PANEL="#c9cdd1", PANEL2="#d7dadd", FIELD="#eceef0",
-    BORDER="#8c9296", TEXT="#1d2123", MUTED="#54595d",
+    BG="#a6abb0", PANEL="#b6bbc0", PANEL2="#c5c9cd", FIELD="#dfe2e5",
+    BORDER="#7b8085", TEXT="#1d2123", MUTED="#43484c",
     OK="#2e7d32", WARN="#c98a00", CRIT="#c62828", INFO="#1565c0", NEUTRAL="#6b7075",
 )
 

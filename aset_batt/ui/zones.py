@@ -274,8 +274,25 @@ class ZonesMixin:
         # Advanced Parameters Group
         from PySide6.QtWidgets import QGroupBox
         self.grp_advanced = QGroupBox("Advanced Test Parameters")
+        self.grp_advanced.setObjectName("grp_advanced")
         self.grp_advanced.setEnabled(False)
-        theme.style(self.grp_advanced, lambda: f"QGroupBox {{ color:{theme.MUTED}; font-weight:bold; font-size:11px; border:1px solid {theme.BORDER}; border-radius:4px; margin-top:6px; }} QGroupBox::title {{ subcontrol-origin: margin; left: 8px; padding: 0 3px 0 3px; }}")
+        # Admin-PIN-locked, not merely "off": qt-material's own :disabled rules
+        # render text at 20-30% alpha (QComboBox/QLabel/QCheckBox) — meant for
+        # "temporarily unavailable" controls, not a whole panel meant to stay
+        # legible while locked. Scoped to #grp_advanced only (by object name) so
+        # it doesn't touch disabled-state styling anywhere else in the app.
+        theme.style(self.grp_advanced, lambda: (
+            f"QGroupBox {{ color:{theme.MUTED}; font-weight:bold; font-size:11px; "
+            f"border:1px solid {theme.BORDER}; border-radius:4px; margin-top:6px; }} "
+            f"QGroupBox::title {{ subcontrol-origin: margin; left: 8px; padding: 0 3px 0 3px; }} "
+            f"QGroupBox#grp_advanced:disabled QLabel {{ color:{theme.MUTED}; }} "
+            f"QGroupBox#grp_advanced:disabled QCheckBox {{ color:{theme.MUTED}; }} "
+            f"QGroupBox#grp_advanced:disabled QComboBox, "
+            f"QGroupBox#grp_advanced:disabled QSpinBox, "
+            f"QGroupBox#grp_advanced:disabled QDoubleSpinBox {{ "
+            f"color:{theme.MUTED}; background:{theme.PANEL}; "
+            f"border:1px solid {theme.BORDER}; }}"
+        ))
         adv_lay = QVBoxLayout(self.grp_advanced)
         adv_lay.setContentsMargins(8, 12, 8, 8)
         adv_lay.setSpacing(4)
@@ -298,9 +315,9 @@ class ZonesMixin:
         self.cb_seq_crate.addItems(["0.05C", "0.1C", "0.2C", "0.3C", "0.5C", "1.0C"])
         self.cb_seq_crate.setCurrentText("0.5C")
         self.lbl_seq_crate_a = QLabel("— A")
-        self.lbl_seq_crate_a.setStyleSheet(
+        theme.style(self.lbl_seq_crate_a, lambda: (
             f"color:{theme.INFO}; font-weight:700; font-size:11px;"
-        )
+        ))
         crate_row.addWidget(self.cb_seq_crate)
         crate_row.addWidget(self.lbl_seq_crate_a)
         crate_row.addStretch(1)
@@ -309,9 +326,15 @@ class ZonesMixin:
 
         # Stage breakdown
         self.lbl_charge_crate = QLabel("Charge rate: — (เลือกแบตก่อน)")
-        self.lbl_charge_crate.setStyleSheet(
-            f"color:{theme.MUTED}; font-size:10px; padding-left:24px; padding-bottom:2px;"
-        )
+        # theme.style (not a one-shot setStyleSheet): built once at construction,
+        # never restyled by any slot — a bare setStyleSheet froze the color at
+        # whatever palette was active at startup, leaving dark-theme grey text
+        # on the light panel after a live theme switch (unreadable). TEXT rather
+        # than MUTED: this is the actual charge plan the operator confirms
+        # against, not decoration.
+        theme.style(self.lbl_charge_crate, lambda: (
+            f"color:{theme.TEXT}; font-size:11px; padding-left:24px; padding-bottom:2px;"
+        ))
         self.lbl_charge_crate.setWordWrap(True)
         adv_lay.addWidget(self.lbl_charge_crate)
 
@@ -340,9 +363,9 @@ class ZonesMixin:
             "EN 50342-1, ได้ Ce เทียบ Cn ตรงๆ ไม่พึ่ง Peukert) · lithium: 0.2C ตาม "
             "IEC 61960. อัตราอื่นยังเทสได้แต่ผลจะติดป้าย non-standard")
         self.lbl_test_crate_a = QLabel("— A")
-        self.lbl_test_crate_a.setStyleSheet(
+        theme.style(self.lbl_test_crate_a, lambda: (
             f"color:{theme.INFO}; font-weight:700; font-size:11px;"
-        )
+        ))
         test_row.addWidget(self.cb_test_crate)
         test_row.addWidget(self.lbl_test_crate_a)
         test_row.addStretch(1)

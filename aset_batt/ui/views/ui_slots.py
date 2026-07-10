@@ -196,8 +196,10 @@ class UiSlotsMixin:
         self._set_temp_label_color(temp)
     @Slot(str, str)
     def _slot_profile_status(self, text, color):
-        self.lbl_profile_status.setText(text)
-        self.lbl_profile_status.setStyleSheet(f"color:{color};")
+        # lbl_profile_status belonged to the legacy IEC PROFILES zone removed in
+        # e7e9ab4 — a leftover reference here raised AttributeError and killed
+        # the slot before the state-pill update below ever ran (Qt swallows slot
+        # exceptions, so the pill just silently stopped tracking Run/E-STOP/Idle).
         self.state_pill.setText(f"  {text.upper()}  ")
         self.state_pill.setStyleSheet(self._pill(self._pill_color_for(text)))
         # Lock hardware disconnect during active test runs
