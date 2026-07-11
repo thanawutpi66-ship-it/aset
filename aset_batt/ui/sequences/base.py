@@ -461,6 +461,7 @@ class BaseSequenceMixin:
                     self.buf_soc, self.buf_rin, self.buf_temp):
             buf.clear()
         self._elapsed_t0 = None
+        self._run_generation += 1   # invalidate any straggling sample from a stopped run — see _slot_display
         self._seq_last_meas_time = 0.0   # reset watchdog
         self._seq_temp_stale_warned = False   # one-shot guard, see _seq_check_temp_stale
         if hasattr(self, "_lbl_soc_note"):

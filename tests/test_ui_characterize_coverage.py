@@ -45,7 +45,8 @@ class MockApp(CharacterizeMixin):
         
         self._seq_running = MagicMock()
         self._seq_running.is_set.return_value = False
-        
+        self._run_generation = 0
+
         # Some methods used inside
         self.controller = MagicMock()
         self._ensure_logging = MagicMock()

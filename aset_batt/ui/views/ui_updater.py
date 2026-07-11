@@ -182,12 +182,22 @@ class UiUpdaterMixin:
             "background:#1A2A1A; color:#55CC55; padding:3px 10px; font-size:10px;"
             " font-family:Consolas,monospace; border-top:1px solid #336633;"
         )
-    def update_display(self, v, i, soc, rin, temp=None, soh=None):
+    def update_display(self, v, i, soc, rin, temp=None, soh=None, _gen=None):
+        """_gen: explicit generation stamp for callers that schedule this call
+        for LATER execution on the GUI thread (the monitor loop, via
+        root.after) — self._run_generation may have already moved on by the
+        time a root.after-deferred call actually runs, so those callers must
+        capture the generation at the moment they decide to send this sample,
+        not let this method read the (by-then-current) value itself. Callers
+        that invoke this synchronously (sequences/characterize, straight from
+        their own thread) can omit it — the synchronous read below happens at
+        the true call moment either way."""
         if temp is None:
             temp = getattr(self.hw, "current_temp", 25.0)
         if soh is None:
             soh = getattr(self.estimator, "soh", 100.0)
-        self.sig_display.emit(float(v), float(i), float(soc), float(rin), float(temp), float(soh))
+        gen = self._run_generation if _gen is None else _gen
+        self.sig_display.emit(float(v), float(i), float(soc), float(rin), float(temp), float(soh), int(gen))
     def update_live_readback(self, v, i, temp):
         """Lightweight display-only update — used right after Connect, before any
         test is running (no CSV logging, no state estimator). See _slot_live_readback."""

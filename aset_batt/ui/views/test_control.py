@@ -193,6 +193,7 @@ class TestControlMixin:
         self.buf_t.clear(); self.buf_v.clear(); self.buf_i.clear()
         self.buf_soc.clear(); self.buf_rin.clear(); self.buf_temp.clear()
         self._elapsed_t0 = None
+        self._run_generation += 1   # invalidate any straggling sample from a stopped run — see _slot_display
         self._last_hppc_phase_text = None   # force the first sample of this run to render
         from aset_batt.storage.data_utils import DataHandler
         csv_path = DataHandler.make_session_path()

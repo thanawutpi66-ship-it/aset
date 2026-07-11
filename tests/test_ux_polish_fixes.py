@@ -84,7 +84,7 @@ class TestPendingPlaceholdersAreVisuallyDistinct(unittest.TestCase):
             rin_lbl, _ = win.metric_labels["Rin"]
             self.assertIn(MUTED, rin_lbl.styleSheet())
 
-            win._slot_display(12.5, 5.0, 50.0, 0.05, 25.0, float("nan"))
+            win._slot_display(12.5, 5.0, 50.0, 0.05, 25.0, float("nan"), win._run_generation)
             self.assertIn(TEXT, rin_lbl.styleSheet())
         finally:
             win.close()

@@ -320,6 +320,14 @@ class CharacterizeMixin:
         # operator left "Start Monitor" running.
         if self.controller and self.controller.monitor_running:
             self.controller.stop_monitor()
+        # Only bump on the nothing-running -> running transition — a second
+        # CHARACTERIZE test (pk/eta/gitt/cca) joining an already-active one is
+        # intentionally allowed (see the comment above _busy_reason above) and
+        # must NOT invalidate its sibling's still-legitimate samples; this
+        # only needs to invalidate stragglers left over from a DIFFERENT,
+        # just-stopped Run Test/Sequence — see _slot_display.
+        if not self._char_any_running():
+            self._run_generation += 1
         return True
 
     def _char_check_safety(self, ev, temp) -> bool:

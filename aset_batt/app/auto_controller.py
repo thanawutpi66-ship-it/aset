@@ -559,6 +559,14 @@ class AutoController:
 
                     # ส่งค่าไปอัปเดต UI (thread-safe ผ่าน root.after)
                     if self.ui and self.root:
+                        # Capture the generation NOW, on this thread, before
+                        # root.after defers the actual update_display() call
+                        # to run later on the GUI thread — by the time it
+                        # fires, self.ui._run_generation may have already
+                        # moved on to a new test/sequence, and update_display
+                        # reading it fresh at that point would defeat the
+                        # staleness check entirely. See _slot_display.
+                        _gen = getattr(self.ui, "_run_generation", 0)
                         self.root.after(
                             0,
                             self.ui.update_display,
@@ -568,6 +576,7 @@ class AutoController:
                             state["rin"],
                             self.hw.current_temp,
                             state["soh"],
+                            _gen,
                         )
 
                     # คำนวณ elapsed seconds จากเวลาเริ่มต้น (monotonic — ดู _start_mono)

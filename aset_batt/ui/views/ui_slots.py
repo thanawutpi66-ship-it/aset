@@ -116,8 +116,17 @@ class UiSlotsMixin:
         self.sig_seq_aborted.connect(self._on_seq_aborted)
         self.sig_update_available.connect(self._slot_update_available)
         self.sig_update_done.connect(self._slot_update_done)
-    @Slot(float, float, float, float, float, float)
-    def _slot_display(self, v, i, soc, rin, temp, soh):
+    @Slot(float, float, float, float, float, float, int)
+    def _slot_display(self, v, i, soc, rin, temp, soh, gen):
+        # Drop a straggler from an already-stopped run: the monitor loop can
+        # be mid-SCPI-read (real hardware only — Mock's near-zero latency
+        # almost never hits this window) when stop_monitor() is requested,
+        # still queuing one more update_display() call after a NEW
+        # test/sequence has already cleared buf_t/buf_v and started its own
+        # feed — without this check that stale sample lands in the fresh
+        # buffer and renders as a second overlapping trace of the same color.
+        if gen != self._run_generation:
+            return
         import time
         rin_mohm = rin * 1000.0
         self._update_vi_temp_labels(v, i, temp)

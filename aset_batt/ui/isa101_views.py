@@ -165,7 +165,7 @@ from aset_batt.ui.views.session_manager import SessionManagerMixin
 from aset_batt.ui.views.dialogs import DialogsMixin
 
 class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMixin, UiUpdaterMixin, UiSlotsMixin, HardwareControlMixin, TestControlMixin, SessionManagerMixin, DialogsMixin, QMainWindow):
-    sig_display = Signal(float, float, float, float, float, float)
+    sig_display = Signal(float, float, float, float, float, float, int)
     sig_profile_status = Signal(str, str)
     sig_charge_status = Signal(str)
     sig_button = Signal(str, bool)
@@ -226,6 +226,15 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMi
         self._last_trend_redraw = 0.0   # perf_counter of the last graph repaint — see _slot_display
         self._last_hppc_phase_text = None   # skip redundant setText/setStyleSheet — see _on_hppc_telemetry
         self._elapsed_t0 = None
+        # Bumped by every exclusive-ownership "start a run" entry point
+        # (_on_run_test, _seq_common_start, first CHARACTERIZE test) so a
+        # straggling sample from an already-stopped run — e.g. the monitor
+        # loop mid-SCPI-read when stop_monitor() is called, which real
+        # hardware I/O latency makes easy to hit but Mock's near-zero
+        # latency almost never triggers — can be told apart from a genuinely
+        # current one and dropped in _slot_display instead of drawing a
+        # second overlapping trace of the same color into buf_t/buf_v/etc.
+        self._run_generation = 0
         self._sample_index = 0
         self._buttons = {}
         self._profile_map = {}
