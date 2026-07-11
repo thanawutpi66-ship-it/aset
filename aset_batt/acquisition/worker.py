@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import csv
+import gc
 import math
 import time
 import logging
@@ -101,16 +102,47 @@ class AcquisitionWorker(QObject):
             # sequence and didn't have any rate diagnostics at all. Logged every
             # _RATE_LOG_EVERY samples so a slow rig is visible without waiting for
             # the whole test to finish.
-            _t_scpi = _t_log = _t_est = 0.0
+            _t_scpi = _t_log = _t_est = _t_emit = _t_safety = _t_flush = 0.0
             _t_sleep_req = _t_sleep_actual = 0.0
+            _t_ctrl = 0.0
             _rate_n = 0
             _rate_t0 = t0
+
+            # Python's cyclic GC fires transparently on allocation-count thresholds
+            # (not time), runs INLINE holding the GIL, and can be triggered by ANY
+            # thread's allocation (a dict, a list.append) — invisible to every
+            # perf_counter() wrapper above since it can preempt mid-statement. Real
+            # hardware runs showed a suspiciously clean, near-perfect alternating
+            # fast/slow-block pattern once "other(unexplained)" was isolated with
+            # everything else measured — too regular for external CPU contention,
+            # consistent with GC generation thresholds. gc.callbacks fires around
+            # every collection process-wide; accumulate its duration directly to
+            # test this rather than guess.
+            _t_gc_accum = [0.0]
+            _gc_t0 = [None]
+            def _gc_cb(phase, info):
+                if phase == "start":
+                    _gc_t0[0] = time.perf_counter()
+                elif _gc_t0[0] is not None:
+                    _t_gc_accum[0] += time.perf_counter() - _gc_t0[0]
+                    _gc_t0[0] = None
+            gc.callbacks.append(_gc_cb)
             _RATE_LOG_EVERY = 25
             while True:
+                # Time to acquire self._ctrl and evaluate the pause/estop branch —
+                # the one remaining unmeasured piece of a normal (non-paused)
+                # iteration. Contended if the UI thread is mid-call to pause()/
+                # stop()/emergency_stop() (or blocked on the GIL waiting to get
+                # there). flush%% explained SOME slow blocks fully (other=0%% once
+                # flush was measured) but real hardware runs still showed 22-49%%
+                # unexplained in OTHER slow blocks with flush=0%% — this isolates
+                # whether ctrl-mutex contention is that remainder.
+                _c0 = time.perf_counter()
                 with QMutexLocker(self._ctrl):
                     if not self._running:
                         break
                     paused, estop = self._paused, self._estop
+                _t_ctrl += time.perf_counter() - _c0
                 if estop:
                     break
                 if paused:
@@ -155,7 +187,9 @@ class AcquisitionWorker(QObject):
                 v_hist.append(v); q_hist.append(self.cap_ah); t_hist.append(temp)
                 time_hist.append(elapsed); i_hist.append(i); soc_hist.append(soc)
 
+                _s3 = time.perf_counter()
                 self._check_safety(v, i, temp, p)
+                _t_safety += time.perf_counter() - _s3
 
                 row = {"elapsed": elapsed, "v": v, "i": i, "cap": self.cap_ah,
                        "soc": soc, "temp": temp, "mode": self.cfg.mode.value}
@@ -164,13 +198,30 @@ class AcquisitionWorker(QObject):
                                  f"{elapsed:.3f}", f"{v:.4f}", f"{i:.4f}",  # discharge +
                                  f"{soc:.2f}", f"{temp:.2f}", f"{self.cap_ah:.5f}",
                                  self.cfg.mode.value])
-                self.telemetry.emit(row)   # async cross-thread signal — not timed
-                                           # separately, see hppc.py's equivalent note
                 _t_log += time.perf_counter() - _s1
+                # Cross-thread Qt signal emit to the GUI thread — previously left
+                # unmeasured (folded into "other"). Fires once per sample, same
+                # cadence as the unexplained ~65ms/sample gap found by comparing
+                # "other" against the now-measured actual msleep() duration (see
+                # worker Hz breakdown investigation, 2026-07-11) — timing this
+                # separately will show directly whether GIL/event-queue contention
+                # on this emit() is the hidden cost, instead of it staying invisible.
+                _s4 = time.perf_counter()
+                self.telemetry.emit(row)
+                _t_emit += time.perf_counter() - _s4
 
                 now = time.perf_counter()
                 if now - last_flush_t >= 1.0:
+                    # Disk sync — the one remaining untimed piece of the loop body.
+                    # emit/safety were measured on a real run and came back flat 0%,
+                    # ruling both out, yet "other(unexplained)" was still 28-65% in
+                    # slow blocks — this fires only once/sec so it wouldn't show up
+                    # in every block, matching that unevenness. A stalled disk write
+                    # (Windows Defender / antivirus scanning the CSV, slow storage)
+                    # would land here and nowhere else already measured.
+                    _s5 = time.perf_counter()
                     f.flush()
+                    _t_flush += time.perf_counter() - _s5
                     last_flush_t = now
 
                 _rate_n += 1
@@ -178,28 +229,47 @@ class AcquisitionWorker(QObject):
                     _rate_span = now - _rate_t0
                     if _rate_span > 0.5:
                         _hz = _rate_n / _rate_span
-                        _t_accounted = _t_scpi + _t_log + _t_est
+                        # msleep() overshoot, emit(), safety, and ctrl-mutex were all
+                        # measured and ruled out on real hardware runs. f.flush()
+                        # explained SOME slow blocks fully but not others. A near-
+                        # perfect alternating fast/slow-block pattern (too regular for
+                        # external CPU contention) then pointed at the cyclic GC,
+                        # which fires on allocation thresholds and can preempt ANY
+                        # thread mid-statement, invisible to every timer above — now
+                        # measured directly via gc.callbacks (_t_gc_accum).
+                        _t_gc = _t_gc_accum[0]
+                        _t_accounted = (_t_scpi + _t_log + _t_est + _t_emit + _t_safety
+                                       + _t_flush + _t_ctrl + _t_gc + _t_sleep_actual)
                         _t_total = max(_t_accounted, _rate_span)
                         _t_other = max(0.0, _t_total - _t_accounted)
-                        # Requested vs actual msleep() duration — isolates real OS/GIL
-                        # scheduling delay from "other" (which otherwise conflates that
-                        # with intentionally-requested sleep time, e.g. when real work
-                        # is well under the target period). A real log showed "other"
-                        # swinging 63ms -> 221ms/sample between consecutive windows
-                        # despite SCPI staying flat (~40ms/sample both times) — this
-                        # pins down whether that swing IS msleep overshoot or something
-                        # else in the loop body entirely.
+                        # Every explicit Python-level operation in the loop is now
+                        # measured and ruled out (SCPI/estimator/log/emit/safety/
+                        # flush/ctrl-mutex/GC all flat 0% in the affected blocks) yet
+                        # "other(unexplained)" alternates ~0%/~38% in a near-perfect
+                        # pattern with a ~6.8s fast+slow period — matching HPPC's own
+                        # PULSE<->RELAX cycle (backends.py step()) rather than
+                        # anything external. Logging the phase directly instead of
+                        # guessing further.
+                        _hppc_phase = ("PULSE" if getattr(self.backend, "_hppc_loaded", None)
+                                      else "RELAX") if self.cfg.mode == OperationMode.HPPC else "-"
                         logger.info(
-                            "%s worker sampled at %.1f Hz (%d samples / %.1fs, target %.1f Hz) — "
-                            "breakdown: SCPI %.0f%%  estimator %.0f%%  log %.0f%%  other %.0f%%  "
+                            "%s worker sampled at %.1f Hz (%d samples / %.1fs, target %.1f Hz, "
+                            "hppc_phase=%s) — "
+                            "breakdown: SCPI %.0f%%  estimator %.0f%%  log %.0f%%  emit %.0f%%  "
+                            "safety %.0f%%  flush %.0f%%  ctrl %.0f%%  gc %.0f%%  sleep %.0f%%  "
+                            "other(unexplained) %.0f%%  "
                             "(sleep requested %.0fms actual %.0fms over %d samples)",
-                            self.cfg.mode.value, _hz, _rate_n, _rate_span, 1.0 / period,
+                            self.cfg.mode.value, _hz, _rate_n, _rate_span, 1.0 / period, _hppc_phase,
                             100 * _t_scpi / _t_total, 100 * _t_est / _t_total,
-                            100 * _t_log / _t_total, 100 * _t_other / _t_total,
+                            100 * _t_log / _t_total, 100 * _t_emit / _t_total,
+                            100 * _t_safety / _t_total, 100 * _t_flush / _t_total,
+                            100 * _t_ctrl / _t_total, 100 * _t_gc / _t_total,
+                            100 * _t_sleep_actual / _t_total, 100 * _t_other / _t_total,
                             _t_sleep_req * 1000, _t_sleep_actual * 1000, _rate_n)
                     _rate_n = 0
-                    _t_scpi = _t_log = _t_est = 0.0
+                    _t_scpi = _t_log = _t_est = _t_emit = _t_safety = _t_flush = _t_ctrl = 0.0
                     _t_sleep_req = _t_sleep_actual = 0.0
+                    _t_gc_accum[0] = 0.0
                     _rate_t0 = now
 
                 if self.cfg.mode == OperationMode.CC_DISCHARGE and v <= p.cutoff_v:
@@ -226,6 +296,10 @@ class AcquisitionWorker(QObject):
             logger.exception("worker loop error")
             self.alarm.emit("CRITICAL", f"Acquisition fault: {e}")
         finally:
+            try:
+                gc.callbacks.remove(_gc_cb)
+            except ValueError:
+                pass
             with QMutexLocker(self._io):
                 try:
                     self.backend.safe_shutdown()
