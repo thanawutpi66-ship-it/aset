@@ -179,7 +179,6 @@ class DialogsMixin:
                 if hasattr(self.estimator, "reset_battery_state"):
                     self.estimator.reset_battery_state()
             self.iec_standard = IEC61960Standard(b.rated_capacity, b.battery_type, b.pack_nominal_voltage)
-            self._populate_profiles()
         except Exception as exc:
             logger.error("apply product: %s", exc)
         # อัป CHARGE step description ให้ตรงกับ strategy ของเคมีแบต
