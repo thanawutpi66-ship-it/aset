@@ -14,11 +14,13 @@
   --muted:#93a1b5;
   --faint:#5d6b80;
 
-  --v:#22c55e;
-  --i:#f97316;
-  --soc:#38bdf8;
-  --r:#a78bfa;
-  --t:#f43f5e;
+  --v:#3b82f6;
+  --i:#eab308;
+  --soc:#22c55e;
+  --r:#93a1b5;
+  --t:#ef4444;
+  --soh:#a78bfa;
+  --grade:#f472b6;
 
   --ok:#34d399; --warn:#fbbf24; --crit:#f43f5e;
 
@@ -45,11 +47,13 @@
 
   /* Voltage/Current/Temp match the GUI's own trend-graph pen colors
      (widgets.py's MultiAxisTrend: INFO/WARN/CRIT respectively). */
-  --v:#1565c0;
-  --i:#c98a00;
-  --soc:#0369a1;
-  --r:#6d28d9;
-  --t:#c62828;
+  --v:#1d4ed8;
+  --i:#a16207;
+  --soc:#15803d;
+  --r:#64748b;
+  --t:#dc2626;
+  --soh:#7c3aed;
+  --grade:#db2777;
 
   --ok:#2e7d32; --warn:#c98a00; --crit:#c62828;
 
