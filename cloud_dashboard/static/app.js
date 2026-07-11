@@ -101,7 +101,7 @@ function emkSeries(name, color, yAxisIndex, data) {
 function ebaseOpts(gridOpts = {}) {
   return {
     animation: false,
-    tooltip: { trigger: 'axis', backgroundColor: '#0b1220', borderColor: 'rgba(255,255,255,.12)', textStyle: { color: css('--text'), fontSize: 11 } },
+    tooltip: { trigger: 'axis', backgroundColor: css('--panel'), borderColor: css('--border-2'), textStyle: { color: css('--text'), fontSize: 11 } },
     // Bounded to the plot's left/right edges (not centered/full-width) so it
     // never overlaps the right-side axes' vertical titles above.
     legend: { textStyle: { color: css('--muted'), fontSize: 11 }, top: 0, left: 55, right: 55 },
@@ -227,7 +227,7 @@ function buildIcaChart() {
   icaChart = echarts.init(el);
   const opts = {
     animation: false,
-    tooltip: { trigger: 'axis', backgroundColor: '#0b1220', borderColor: 'rgba(255,255,255,.12)', textStyle: { color: css('--text'), fontSize: 11 } },
+    tooltip: { trigger: 'axis', backgroundColor: css('--panel'), borderColor: css('--border-2'), textStyle: { color: css('--text'), fontSize: 11 } },
     grid: { left: 55, right: 20, top: 20, bottom: 40 },
     xAxis: { type: 'value', name: 'Voltage (V)', nameLocation: 'middle', nameGap: 25, nameTextStyle: { color: css('--muted'), fontSize: 10 }, axisLabel: { color: css('--faint'), fontSize: 10 }, splitLine: { show: true, lineStyle: { color: css('--border') } }, scale: true },
     yAxis: { type: 'value', name: 'dQ/dV', nameLocation: 'middle', nameGap: 35, nameTextStyle: { color: css('--muted'), fontSize: 10 }, axisLabel: { color: css('--faint'), fontSize: 10 }, splitLine: { show: true, lineStyle: { color: css('--border') } }, scale: true },
