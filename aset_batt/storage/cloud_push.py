@@ -20,7 +20,8 @@ import urllib.request
 import urllib.error
 
 from aset_batt.core.config import config_manager
-from aset_batt.storage.data_utils import _tail_csv_rows, _compute_summary, _run_analysis, _extract_series, _CHANNELS
+from aset_batt.storage.data_utils import (_tail_csv_rows, _tail_csv_rows_incremental,
+                                          _compute_summary, _run_analysis, _extract_series, _CHANNELS)
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +132,17 @@ def _downsample(rows, max_points, window_s=None):
     return {k: v[::stride] for k, v in series.items()}
 
 
-def build_payload(csv_path, max_points, cached_analysis=None, config=None):
-    """Build push payload. Pass cached_analysis to skip the expensive ECM fitting."""
+def build_payload(csv_path, max_points, cached_analysis=None, config=None, csv_cache=None):
+    """Build push payload. Pass cached_analysis to skip the expensive ECM fitting.
+
+    Pass csv_cache (a dict owned by the caller, e.g. one per CloudPusher instance)
+    to read the CSV incrementally instead of re-parsing the whole file from disk
+    every call — see _tail_csv_rows_incremental's docstring. Omit (as the one-shot
+    CLI path does) to keep the simple always-full-read behavior.
+    """
     cfg = config if config is not None else config_manager
-    rows = _tail_csv_rows(csv_path, limit=20000)
+    rows = (_tail_csv_rows_incremental(csv_path, csv_cache, limit=20000) if csv_cache is not None
+            else _tail_csv_rows(csv_path, limit=20000))
     summary = _compute_summary(rows)
     summary["csv_path"] = csv_path
 
@@ -215,6 +223,7 @@ class CloudPusher:
         self._thread = None
         self._cached_analysis: dict = {}
         self._last_analysis_t: float = 0.0
+        self._csv_cache: dict = {}   # see _tail_csv_rows_incremental — persists across push_once() calls
 
     @property
     def enabled(self) -> bool:
@@ -243,21 +252,44 @@ class CloudPusher:
                       else self.csv_path)
 
             now = time.time()
+            # Timing instrumentation — this whole method runs on its own background
+            # thread every `interval` seconds (default 5s), sharing the GIL with the
+            # acquisition worker + ESP32 monitor threads. build_payload() now reads
+            # the CSV incrementally (self._csv_cache, _tail_csv_rows_incremental) —
+            # only new rows since the last push are parsed — but was previously an
+            # O(total rows) full re-read/re-parse every cycle, a candidate for the
+            # worker-thread rate-degradation plateau under investigation (see ESP32
+            # monitor loop timing added to hardware_driver.py). Logged so a real
+            # test run's numbers can be correlated by timestamp against the
+            # "worker sampled at X Hz" lines, and to confirm build stays flat now.
+            _t_analysis = 0.0
             if now - self._last_analysis_t >= self.analysis_interval:
+                _a0 = time.perf_counter()
                 try:
                     self._cached_analysis = _run_analysis(self._config, active)
                     self._last_analysis_t = now
                     logger.debug("cloud push: analysis refreshed")
                 except Exception as e:
                     logger.warning("cloud push: analysis failed — using cache: %s", e)
+                _t_analysis = time.perf_counter() - _a0
 
+            _b0 = time.perf_counter()
             payload = build_payload(active, self.max_points,
                                     cached_analysis=self._cached_analysis or None,
-                                    config=self._config)
+                                    config=self._config, csv_cache=self._csv_cache)
+            _t_build = time.perf_counter() - _b0
+
+            _h0 = time.perf_counter()
             status, _ = push(self.url, self.token, payload)
+            _t_http = time.perf_counter() - _h0
+
+            row_count = payload["summary"].get("row_count")
+            logger.info(
+                "cloud push: rows=%s analysis=%.0fms build=%.0fms http=%.0fms total=%.0fms",
+                row_count, _t_analysis * 1000, _t_build * 1000, _t_http * 1000,
+                (_t_analysis + _t_build + _t_http) * 1000)
             logger.debug("cloud push -> HTTP %s (rows=%s, analysis_age=%.0fs)",
-                         status, payload["summary"].get("row_count"),
-                         now - self._last_analysis_t)
+                         status, row_count, now - self._last_analysis_t)
             return True
         except Exception as e:
             logger.warning("cloud push ล้มเหลว: %s", e)

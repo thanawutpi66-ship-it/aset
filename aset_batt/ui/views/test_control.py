@@ -231,6 +231,7 @@ class TestControlMixin:
     def _on_test_telemetry(self, row: dict):
         self.buf_t.append(row["elapsed"]); self.buf_v.append(row["v"])
         self.buf_i.append(row["i"]); self.buf_temp.append(row["temp"])
+        self._trim_trend_buffers()
         v_lbl = self.metric_labels.get("Voltage")
         if v_lbl:
             self.metric_labels["Voltage"][0].setText(f'{row["v"]:.2f} {self.metric_labels["Voltage"][1]}')

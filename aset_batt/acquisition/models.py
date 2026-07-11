@@ -8,6 +8,8 @@ import logging
 from dataclasses import dataclass
 from enum import Enum
 
+from aset_batt.core.battery_model import DEFAULT_SAMPLE_HZ
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,11 +61,12 @@ class BatteryProfile:
 class TestConfig:
     profile: BatteryProfile
     mode: OperationMode
-    # Target loop rate. The real ceiling is the instruments' SCPI readback (~5 Hz on
-    # the GW Instek PSW/PEL over USB: ~100 ms per MEAS query, and we query two per
-    # sample), so the effective rate is ~3–5 Hz regardless of a higher setting here.
-    # Timing uses the measured per-sample dt (perf_counter), so this is only a target.
-    sample_hz: float = 5.0
+    # Target loop rate — shared across the whole app via battery_model.DEFAULT_
+    # SAMPLE_HZ (see its docstring for the measured SCPI ceilings this stays
+    # under). Timing uses the measured per-sample dt (perf_counter), so this is
+    # only a target, not a guarantee — the achieved rate still depends on real
+    # per-iteration cost and any GIL contention with other threads.
+    sample_hz: float = DEFAULT_SAMPLE_HZ
 
 
 # Not a pytest test class (name starts with "Test") — tell the collector to skip it.

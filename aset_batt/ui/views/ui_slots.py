@@ -170,6 +170,7 @@ class UiSlotsMixin:
         self.buf_soc.append(soc)
         self.buf_rin.append(rin_mohm)
         self.buf_temp.append(temp)
+        self._trim_trend_buffers()
         self._sample_index += 1
         # Redraw the graph at most ~5 Hz. The monitor loop feeds this at up to 10 Hz
         # during CHARGE — repainting pyqtgraph curves (and converting the deques to

@@ -26,6 +26,7 @@ from PySide6.QtSvgWidgets import QSvgWidget
 from aset_batt.acquisition.models import TestConfig, OperationMode, BatteryProfile as AcqProfile
 from aset_batt.acquisition.backends import HardwareBackend
 from aset_batt.acquisition.worker import AcquisitionWorker
+from aset_batt.core.battery_model import DEFAULT_SAMPLE_HZ
 import re
 from PySide6.QtGui import QColor, QDoubleValidator, QFont, QPixmap
 from PySide6.QtWidgets import (
@@ -444,16 +445,18 @@ class HppcMixin:
                     # watchdog actually gets checked — a hung hw.read_vi() call used
                     # to freeze this whole loop forever with no way out.
                     #
-                    # Paced to a ~5 Hz target (0.2 s period), same technique as
+                    # Paced to DEFAULT_SAMPLE_HZ (battery_model.py — shared target
+                    # across the whole app, was a hardcoded "0.2" here independent
+                    # of worker.py's own config), same technique as
                     # AutoController._monitor_loop: sleep only the time REMAINING
                     # after the SCPI round-trip, not a flat 1 s on top of it — this
                     # was 1 Hz before, well under the 5 Hz identify_ecm_fit()'s own
                     # docstring assumes ("30s pulse at 5Hz gives ~150 points... R1/C1
                     # are well-resolved at 5Hz") for a good R1/C1 fit. Real achieved
-                    # rate will land somewhat under 5 Hz once USB/SCPI latency (~40-
-                    # 200 ms) is accounted for — still a large improvement over 1 Hz.
+                    # rate will land somewhat under target once USB/SCPI latency
+                    # (~40-200 ms) is accounted for — still a large improvement over 1 Hz.
                     _elapsed_iter = _t.perf_counter() - _iter_t0
-                    if not self._seq_sleep(max(0.0, 0.2 - _elapsed_iter)):
+                    if not self._seq_sleep(max(0.0, 1.0 / DEFAULT_SAMPLE_HZ - _elapsed_iter)):
                         break
                 if not self._seq_running.is_set():
                     break
@@ -495,7 +498,9 @@ class HppcMixin:
                 # them by themselves.
                 _fit_t0 = _t.perf_counter()
                 _rest_n = len(_relax_tail_v)
-                _fit_t = [-(_rest_n - k) * 0.2 for k in range(_rest_n)]
+                # Must match the relax leg's own pacing period above (DEFAULT_SAMPLE_HZ) —
+                # this is the same time axis identify_ecm_fit() reads.
+                _fit_t = [-(_rest_n - k) / DEFAULT_SAMPLE_HZ for k in range(_rest_n)]
                 _fit_i = [0.0] * _rest_n
                 _fit_v = list(_relax_tail_v)
                 voc_for_fit = (sorted(_relax_tail_v)[_rest_n // 2]
@@ -563,12 +568,12 @@ class HppcMixin:
                     except Exception as e:
                         import logging
                         logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
-                    # Same ~5 Hz pacing as the relax leg above — see its comment.
-                    # Extra important here: R0's t=0 extrapolation depends on having
-                    # enough points densely sampled right at the pulse edge, which
-                    # 1 Hz could barely resolve at all.
+                    # Same DEFAULT_SAMPLE_HZ pacing as the relax leg above — see its
+                    # comment. Extra important here: R0's t=0 extrapolation depends on
+                    # having enough points densely sampled right at the pulse edge,
+                    # which 1 Hz could barely resolve at all.
                     _elapsed_iter = _t.perf_counter() - _iter_t0
-                    if not self._seq_sleep(max(0.0, 0.2 - _elapsed_iter)):
+                    if not self._seq_sleep(max(0.0, 1.0 / DEFAULT_SAMPLE_HZ - _elapsed_iter)):
                         break
                 self.hw.load_off()
                 # Same low-latency edge sample as the pulse-start above, for the
@@ -610,7 +615,7 @@ class HppcMixin:
                         _rate_warned = True
                         self.sig_alarm.emit(
                             f"[HPPC SEQ] Sampling only {_hz:.1f} Hz during pulses "
-                            f"(target ~5 Hz) — breakdown: SCPI {100*_t_scpi/_t_total:.0f}% "
+                            f"(target ~{DEFAULT_SAMPLE_HZ:.0f} Hz) — breakdown: SCPI {100*_t_scpi/_t_total:.0f}% "
                             f"log {100*_t_log/_t_total:.0f}% display {100*_t_display/_t_total:.0f}% "
                             f"other {100*_t_other/_t_total:.0f}% — R1/C1 fit quality degraded")
                 # Feed this cycle's own real R0/R1/C1 into the live estimator — HPPC's
