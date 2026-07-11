@@ -48,7 +48,7 @@ let _analyzeState = null;  // {idx, queued_at, timer} while re-analysis is in fl
 function sohColor(v){ return v >= 85 ? css('--ok') : v >= 70 ? css('--warn') : css('--crit'); }
 
 /* ---- axis / dataset helpers (ECharts) ------------------------------------ */
-function emkScale(name, color, pos, offset = 0) {
+function emkScale(name, color, pos, offset = 0, minRange) {
   return {
     type: 'value', name, position: pos, offset, scale: true,
     // Vertical axis title, anchored to the middle of the axis — the default
@@ -64,7 +64,17 @@ function emkScale(name, color, pos, offset = 0) {
     // chart, which already read css('--border') correctly) — invisible/wrong
     // hue against the light theme's near-white background.
     splitLine: { show: pos === 'left', lineStyle: { color: css('--border') } },
-    axisLine: { show: true, lineStyle: { color } }
+    axisLine: { show: true, lineStyle: { color } },
+    // `scale:true` autoscales tightly to the data's actual min/max — great
+    // for a wide-ranging voltage curve, but on a near-flat trace (Temp
+    // barely moving, or a steady rest/float Current) it zooms in on plain
+    // sensor noise (±0.1°C ADC jitter) until it fills the whole plot height,
+    // rendering as dramatic-looking spikes. Clamp the axis to at least
+    // `minRange` wide, centered on the real data, same fix this dashboard
+    // already had before the Chart.js→ECharts migration silently dropped it
+    // (mkScale()'s afterDataLimits hook — no ECharts equivalent existed yet).
+    min: minRange ? (v) => (v.max - v.min < minRange ? (v.min + v.max) / 2 - minRange / 2 : v.min) : undefined,
+    max: minRange ? (v) => (v.max - v.min < minRange ? (v.min + v.max) / 2 + minRange / 2 : v.max) : undefined,
   };
 }
 function emkSeries(name, color, yAxisIndex, data) {
@@ -149,10 +159,10 @@ function buildMainCharts() {
     // Extra right margin: two stacked right-side axes (Current/Temp, offset 0/45)
     // plus each series' end-of-line value label need room beyond the old 90px.
     const opts = ebaseOpts({ right: 150 });
-    opts.yAxis = [ 
-      emkScale('Voltage (V)', vC, 'left'), 
-      emkScale('Current (A)', iC, 'right'), 
-      emkScale('Temp (°C)', tC, 'right', 45) 
+    opts.yAxis = [
+      emkScale('Voltage (V)', vC, 'left', 0, 0.2),
+      emkScale('Current (A)', iC, 'right', 0, 0.5),
+      emkScale('Temp (°C)', tC, 'right', 45, 2.0)
     ];
     opts.series = [ 
       emkSeries('Voltage (V)', vC, 0, []), 
@@ -164,22 +174,22 @@ function buildMainCharts() {
     const c1 = addWrap(215);
     mainCharts.vc = echarts.init(c1);
     const opts1 = ebaseOpts();
-    opts1.yAxis = [ emkScale('Voltage (V)', vC, 'left'), emkScale('Current (A)', iC, 'right') ];
+    opts1.yAxis = [ emkScale('Voltage (V)', vC, 'left', 0, 0.2), emkScale('Current (A)', iC, 'right', 0, 0.5) ];
     opts1.series = [ emkSeries('Voltage (V)', vC, 0, []), emkSeries('Current (A)', iC, 1, []) ];
     mainCharts.vc.setOption(opts1);
 
     const c2 = addWrap(215);
     mainCharts.temp = echarts.init(c2);
     const opts2 = ebaseOpts();
-    opts2.yAxis = [ emkScale('Temp (°C)', tC, 'left') ];
+    opts2.yAxis = [ emkScale('Temp (°C)', tC, 'left', 0, 2.0) ];
     opts2.series = [ emkSeries('Temp (°C)', tC, 0, []) ];
     mainCharts.temp.setOption(opts2);
   } else {
-    [['Voltage (V)', vC, 'yV'], ['Current (A)', iC, 'yI'], ['Temp (°C)', tC, 'yT']].forEach(([label, color, axis]) => {
+    [['Voltage (V)', vC, 'yV', 0.2], ['Current (A)', iC, 'yI', 0.5], ['Temp (°C)', tC, 'yT', 2.0]].forEach(([label, color, axis, minRange]) => {
       const el = addWrap(145);
       mainCharts[axis] = echarts.init(el);
       const opts = ebaseOpts();
-      opts.yAxis = [ emkScale(label, color, 'left') ];
+      opts.yAxis = [ emkScale(label, color, 'left', 0, minRange) ];
       opts.series = [ emkSeries(label, color, 0, []) ];
       mainCharts[axis].setOption(opts);
     });
