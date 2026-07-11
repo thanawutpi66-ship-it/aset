@@ -320,6 +320,9 @@ function renderPayload(p, received_at) {
   const ser = graphWindow === 'full' ? lastSeriesFull : lastSeriesRecent;
 
   $('battery').innerHTML = '<i class="dot"></i>battery: <b>' + escapeHtml((p.meta||{}).battery || '–') + '</b>';
+  
+  const sn = (p.meta||{}).sn || (p.meta||{}).serial_number || (p.meta||{}).device_id || 'N/A';
+  if ($('deviceSn')) $('deviceSn').textContent = escapeHtml(sn);
 
   const T = num(L, 'Temperature_C');
   $('tempTitle').textContent = T != null ? f(T, 2) + ' °C' : '-- °C';
