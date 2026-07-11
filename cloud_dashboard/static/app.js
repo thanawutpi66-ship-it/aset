@@ -52,7 +52,7 @@ function mkDataset(label, data, color, yAxisID) {
   return { label, data, borderColor: color, backgroundColor: color + '22',
     borderWidth: 1.8, pointRadius: 0, fill: false, tension: 0.18, yAxisID };
 }
-function mkScale(pos, color, label, drawGrid) {
+function mkScale(pos, color, label, drawGrid, minRange) {
   return {
     type: 'linear', position: pos,
     // Chart.js auto-picks tick precision from the data range — on a nearly-flat
@@ -62,6 +62,13 @@ function mkScale(pos, color, label, drawGrid) {
     grid: { color: drawGrid ? css('--border') : 'rgba(0,0,0,0)' },
     border: { color, width: pos === 'right' ? 2 : 1 },
     title: { display: true, text: label, color, font: { size: 10 } },
+    afterDataLimits: (scale) => {
+      if (minRange && scale.max - scale.min < minRange) {
+        const mid = (scale.max + scale.min) / 2;
+        scale.min = mid - minRange / 2;
+        scale.max = mid + minRange / 2;
+      }
+    }
   };
 }
 function baseOpts(extraScales) {
@@ -112,9 +119,9 @@ function buildMainCharts() {
         mkDataset('Temp (°C)',   [], tC, 'yT'),
       ]},
       options: baseOpts({
-        yV: mkScale('left',  vC, 'Voltage (V)', true),
-        yI: mkScale('right', iC, 'Current (A)', false),
-        yT: mkScale('right', tC, 'Temp (°C)',   false),
+        yV: mkScale('left',  vC, 'Voltage (V)', true, 0.2),
+        yI: mkScale('right', iC, 'Current (A)', false, 0.5),
+        yT: mkScale('right', tC, 'Temp (°C)',   false, 2.0),
       }),
     });
   } else if (graphMode === 'split2') {
@@ -122,21 +129,21 @@ function buildMainCharts() {
     mainCharts.vc = new Chart(c1, {
       type: 'line',
       data: { labels: [], datasets: [mkDataset('Voltage (V)', [], vC, 'yV'), mkDataset('Current (A)', [], iC, 'yI')] },
-      options: baseOpts({ yV: mkScale('left', vC, 'Voltage (V)', true), yI: mkScale('right', iC, 'Current (A)', false) }),
+      options: baseOpts({ yV: mkScale('left', vC, 'Voltage (V)', true, 0.2), yI: mkScale('right', iC, 'Current (A)', false, 0.5) }),
     });
     const c2 = addWrap(205);
     mainCharts.temp = new Chart(c2, {
       type: 'line',
       data: { labels: [], datasets: [mkDataset('Temp (°C)', [], tC, 'yT')] },
-      options: baseOpts({ yT: mkScale('left', tC, 'Temp (°C)', true) }),
+      options: baseOpts({ yT: mkScale('left', tC, 'Temp (°C)', true, 2.0) }),
     });
   } else {
-    [['Voltage (V)', vC, 'yV'], ['Current (A)', iC, 'yI'], ['Temp (°C)', tC, 'yT']].forEach(([label, color, axis]) => {
+    [['Voltage (V)', vC, 'yV', 0.2], ['Current (A)', iC, 'yI', 0.5], ['Temp (°C)', tC, 'yT', 2.0]].forEach(([label, color, axis, minRange]) => {
       const c = addWrap(135);
       mainCharts[axis] = new Chart(c, {
         type: 'line',
         data: { labels: [], datasets: [mkDataset(label, [], color, axis)] },
-        options: baseOpts({ [axis]: mkScale('left', color, label, true) }),
+        options: baseOpts({ [axis]: mkScale('left', color, label, true, minRange) }),
       });
     });
   }
@@ -454,29 +461,6 @@ function updateChargeStatus(current, meta, summary) {
   const isCC = subPhase === 'cc' || phase === 'cc' || phase === 'bulk';
   const isCV = subPhase === 'cv' || phase === 'cv' || phase === 'absorption' || phase === 'float';
   const isChargePhase = ['charge','bulk','absorption','float','cc','cv'].includes(phase);
-
-  if (ccBadge) ccBadge.classList.toggle('active', isCC);
-  if (cvBadge) cvBadge.classList.toggle('active', isCV);
-
-  // Charge elapsed time — use elapsed_s from meta during charging phases
-  if (chargeElEl) {
-    if (isChargePhase || state === 'charging') {
-      const el = num(meta, 'elapsed_s');
-      chargeElEl.textContent = fmtElapsed(el);
-    } else if (state === 'discharging') {
-      // Also show elapsed for discharge phase
-      const el = num(meta, 'elapsed_s');
-      chargeElEl.textContent = fmtElapsed(el);
-      // Update card label
-      const tkEl = chargeElEl.closest('.tcard');
-      if (tkEl) { const lbl = tkEl.querySelector('.tk'); if (lbl) lbl.textContent = 'ELAPSED'; }
-    } else {
-      chargeElEl.textContent = '--:--';
-      // Reset label
-      const tkEl = chargeElEl.closest('.tcard');
-      if (tkEl) { const lbl = tkEl.querySelector('.tk'); if (lbl) lbl.textContent = 'CHARGE TIME'; }
-    }
-  }
 }
 
 /* ---- test panel ---------------------------------------------------------- */
@@ -522,6 +506,25 @@ function updateTestPanel(meta, summary) {
       else if (i === activeIdx) el.classList.add('active');
     }
   });
+
+  const stepBadge = $('stepCcvBadge');
+  if (stepBadge) {
+    if (activeIdx === 1) { // CHARGE phase
+      if (subPhase === 'cc' || phase === 'cc' || phase === 'bulk') {
+        stepBadge.textContent = 'CC';
+        stepBadge.className = 'step-ccv-badge mode-cc';
+      } else if (subPhase === 'cv' || phase === 'cv' || phase === 'absorption' || phase === 'float') {
+        stepBadge.textContent = 'CV';
+        stepBadge.className = 'step-ccv-badge mode-cv';
+      } else {
+        stepBadge.textContent = '';
+        stepBadge.className = 'step-ccv-badge';
+      }
+    } else {
+      stepBadge.textContent = '';
+      stepBadge.className = 'step-ccv-badge';
+    }
+  }
 
   const nom = num(meta,'nominal_ah') ?? num(summary,'nominal_ah');
   const cc  = num(meta,'charge_crate');
@@ -579,21 +582,6 @@ function updateTestPanel(meta, summary) {
       actPhaseEl.textContent = PHASE_LABELS[activeIdx];
       const descEl = descEls[activeIdx];
       actDetailEl.textContent = (descEl && descEl.textContent) || DEFAULT_DETAILS[activeIdx];
-    }
-    // Show CC/CV sub-phase in the activity sub-line during charge
-    const actSubEl = $('tpActSub');
-    if (actSubEl) {
-      if (activeIdx === 1) {
-        // During charge step, show CC/CV mode
-        if (subPhase === 'cc' || phase === 'cc' || phase === 'bulk')
-          actSubEl.textContent = 'Mode: CC (Constant Current)';
-        else if (subPhase === 'cv' || phase === 'cv' || phase === 'absorption' || phase === 'float')
-          actSubEl.textContent = 'Mode: CV (Constant Voltage)';
-        else
-          actSubEl.textContent = '';
-      } else {
-        actSubEl.textContent = '';
-      }
     }
   }
 

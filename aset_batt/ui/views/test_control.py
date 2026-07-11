@@ -100,6 +100,8 @@ class TestControlMixin:
         mode = self.cb_charge_mode.currentText()
         self._log_alarm(f"Charge started ({mode})." if ok else "Charge start failed.")
         if ok:
+            self._ensure_battery_sn()
+            self.sig_profile_status.emit("RUN", theme.INFO)
             try:
                 from aset_batt.storage.cloud_push import set_cloud_meta
                 set_cloud_meta(phase="charge", test_mode="MANUAL", workflow=f"Manual — {mode}", total_s=0)
@@ -109,6 +111,7 @@ class TestControlMixin:
     def _on_stop_charge(self):
         if self.controller:
             self.controller.stop_charge()
+            self.sig_profile_status.emit("IDLE", theme.NEUTRAL)
             self._log_alarm("Charge stopped.")
             try:
                 from aset_batt.storage.cloud_push import set_cloud_meta
@@ -142,6 +145,7 @@ class TestControlMixin:
             self.config.battery.serial_number = new_sn
             if hasattr(self, "ed_sn"):
                 self.ed_sn.setText(new_sn)
+            self._refresh_sn_badge()
             self._log_alarm(f"No SN provided, auto-generated: {new_sn}")
     def _on_run_hppc(self):
         self._on_run_test(mode=OperationMode.HPPC)
@@ -189,6 +193,7 @@ class TestControlMixin:
         self.buf_t.clear(); self.buf_v.clear(); self.buf_i.clear()
         self.buf_soc.clear(); self.buf_rin.clear(); self.buf_temp.clear()
         self._elapsed_t0 = None
+        self._last_hppc_phase_text = None   # force the first sample of this run to render
         from aset_batt.storage.data_utils import DataHandler
         csv_path = DataHandler.make_session_path()
         self._last_csv = csv_path
@@ -216,10 +221,12 @@ class TestControlMixin:
         else:
             self.btn_run_test.setEnabled(False)
         self._test_thread.start()
+        self.sig_profile_status.emit("RUN", theme.INFO)
         self._log_alarm(f"Characterization started: {cfg.mode.value}")
     def _on_stop_test(self):
         if self._test_worker:
             self._test_worker.stop()
+            self.sig_profile_status.emit("STOP", theme.WARN)
             self._log_alarm("Test stop requested.")
     def _on_test_telemetry(self, row: dict):
         self.buf_t.append(row["elapsed"]); self.buf_v.append(row["v"])
@@ -237,14 +244,41 @@ class TestControlMixin:
                     self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} {_u}')
             self.metric_labels["Temp"][0].setText(f'{row["temp"]:.1f} {self.metric_labels["Temp"][1]}')
         self._set_temp_label_color(row["temp"])
-        # Throttled the same way as _slot_display — see its comment.
+        # Throttled the same way as _slot_display — see its comment. NOTE: the
+        # 0.2s window matches the worker's own 5 Hz TARGET exactly, so at any
+        # achieved rate AT or BELOW 5 Hz (the common case per the real-rig
+        # breakdown logs) this throttle provides no headroom at all — it fires
+        # on every single sample, not "1 in N". Timed here (logged only when it
+        # actually redraws, at most every ~5s to avoid spamming) to test the
+        # hypothesis that this full-buffer pyqtgraph redraw running on the GUI
+        # thread is the real source of the worker breakdown's "other" bucket
+        # via GIL contention, now that the msleep pacing bug is fixed.
         import time as _time
         _now_redraw = _time.perf_counter()
         if _now_redraw - self._last_trend_redraw >= 0.2:
             self._last_trend_redraw = _now_redraw
+            _rd0 = _time.perf_counter()
             self.trend.update(list(self.buf_t), list(self.buf_v), list(self.buf_i), list(self.buf_temp))
+            _rd_cost = _time.perf_counter() - _rd0
+            if not hasattr(self, "_last_redraw_log") or _now_redraw - self._last_redraw_log >= 5.0:
+                self._last_redraw_log = _now_redraw
+                logger.info("trend.update() redraw cost: %.1f ms (buffer=%d points)",
+                           _rd_cost * 1000, len(self.buf_t))
     def _on_hppc_telemetry(self, row: dict):
-        """Update the HPPC phase indicator (REST / PULSE / cycle count) from elapsed time."""
+        """Update the HPPC phase indicator (REST / PULSE / cycle count) from elapsed time.
+
+        setText()+setStyleSheet() ran unconditionally on EVERY sample regardless of
+        whether the phase/remaining-seconds text actually changed — unlike
+        _on_test_telemetry's trend redraw (throttled to ~5 Hz), this had no guard at
+        all. setStyleSheet() in particular re-parses the whole stylesheet string and
+        can cost real time; at the worker's target 5 Hz that's up to 5x/s of Qt
+        style recalculation for a label whose text only changes once a second (the
+        "remaining seconds" countdown). A real-rig log showed the manual HPPC run's
+        per-sample cost 80-92% unaccounted for ("other") despite SCPI being only
+        8-20% — this call runs synchronously on the GUI thread reacting to the same
+        signal that also feeds the worker thread's own pacing, so GIL contention
+        here can slow the WORKER down too, not just the GUI. Skip the Qt calls when
+        the text hasn't changed."""
         try:
             pulse = max(1.0, float(self.ed_hppc_pulse.text() or "30"))
             relax = max(1.0, float(self.ed_hppc_relax.text() or "30"))
@@ -260,6 +294,9 @@ class TestControlMixin:
                 remaining = int(pulse - (t_in_cycle - relax))
                 text = f"Cycle {cycle_num}  ·  PULSE  ({remaining} s left)"
                 bg, fg = theme.OK, "white"
+            if text == self._last_hppc_phase_text:
+                return
+            self._last_hppc_phase_text = text
             self.lbl_hppc_phase.setText(text)
             self.lbl_hppc_phase.setStyleSheet(
                 f"background:{bg}; color:{fg}; border:1px solid {theme.BORDER}; "
@@ -295,6 +332,7 @@ class TestControlMixin:
         grade = results["grade"]
         conf = results.get("confidence", 1.0)
         self.lbl_grade.setText(grade if grade == "REVIEW" else f"{grade}")
+        self.sig_profile_status.emit("DONE", theme.OK)
         grade_lbl, _ = self.metric_labels_final["Grade"]
         grade_lbl.setText(grade)
         # Colors for the whole final-analysis row are state+theme hybrids —

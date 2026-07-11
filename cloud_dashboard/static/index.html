@@ -7,7 +7,7 @@
 <title>ASET Cloud Dashboard · Battery Health</title>
 <link rel="icon" type="image/png" href="asetlogo.png"/>
 <link rel="preconnect" href="https://cdn.jsdelivr.net"/>
-<link rel="stylesheet" href="style.css?v=12"/>
+<link rel="stylesheet" href="style.css?v=19"/>
 <script>
   (function(){
     var saved = localStorage.getItem('aset-theme');
@@ -15,7 +15,7 @@
   })();
 </script>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script defer src="app.js?v=13"></script>
+<script defer src="app.js?v=19"></script>
 </head>
 <body>
 
@@ -91,14 +91,7 @@
         <span class="tk">SOH</span>
         <span class="tv"><b id="mSoH">–</b></span>
       </div>
-      <div class="tcard tcard-charge" style="--accent:var(--soc)" id="chargeInfoCard">
-        <span class="tk">CHARGE TIME</span>
-        <span class="tv"><b id="chargeElapsed">--:--</b></span>
-        <span class="tcard-ccv" id="chargeModeLabel">
-          <span class="ccv-badge" id="ccBadge">CC</span>
-          <span class="ccv-badge" id="cvBadge">CV</span>
-        </span>
-      </div>
+
     </section>
 
     <!-- graph mode selector -->
@@ -153,7 +146,7 @@
           <div class="tp-step" data-step="1">
             <span class="step-dot"></span>
             <div class="step-info">
-              <span class="step-name">CHARGE</span>
+              <span class="step-name">CHARGE <span class="step-ccv-badge" id="stepCcvBadge"></span></span>
               <span class="step-desc" id="tpChargeDesc">Bulk→Absorption→Float</span>
             </div>
           </div>
@@ -202,7 +195,34 @@
 
         <!-- Analytics tab -->
         <div class="lptab-content" id="lptab-analytics" hidden>
-          <button class="ecm-toggle" id="ecmToggle">▶ Show Equivalent Circuit</button>
+          <div class="an-top-hdr">ANALYSIS RESULTS <span class="an-top-sub">(last completed test)</span></div>
+          <div class="an-top-cards">
+            <div class="an-tcard">
+              <span class="an-tcard-lbl">GRADE</span>
+              <span class="an-tcard-val" id="grade">–</span>
+            </div>
+            <div class="an-tcard">
+              <span class="an-tcard-lbl">SOH</span>
+              <span class="an-tcard-val"><b id="sumSoH">–</b></span>
+            </div>
+            <div class="an-tcard">
+              <span class="an-tcard-lbl">RIN</span>
+              <span class="an-tcard-val"><b id="dcir">–</b></span>
+            </div>
+          </div>
+
+          <div class="sess-header">
+            <span class="sess-label">Sessions:</span>
+            <span class="sess-viewing" id="sessViewingBadge"></span>
+            <button class="sess-back" id="backToLiveBtn" hidden onclick="backToLive()">× Live</button>
+            <button class="sess-refresh-sq" id="refreshSessions" title="Refresh sessions"></button>
+          </div>
+          <div class="sess-list" id="sessionsList">
+            <div class="sess-empty">No sessions yet.</div>
+          </div>
+          <div class="sess-prompt" id="sessPrompt">Select a session above to analyze.</div>
+
+          <button class="ecm-toggle" id="ecmToggle">▶ SHOW EQUIVALENT CIRCUIT</button>
           <div class="ecm-content" id="ecmContent" hidden>
             <!-- Randles ECM — dark theme, Cd parallel branch above Rd -->
             <svg class="ecm-svg" viewBox="0 0 285 145" xmlns="http://www.w3.org/2000/svg">
@@ -255,46 +275,14 @@
             </div>
           </div>
 
-          <div class="sess-header">
-            <span class="sess-label">Sessions:</span>
-            <span class="sess-viewing" id="sessViewingBadge"></span>
-            <button class="sess-back" id="backToLiveBtn" hidden onclick="backToLive()">× Live</button>
-            <button class="sess-refresh" id="refreshSessions" title="Refresh sessions">↻</button>
-          </div>
-          <div class="sess-list" id="sessionsList">
-            <div class="sess-empty">No sessions yet.</div>
-          </div>
-          <div class="sess-prompt" id="sessPrompt">Select a session above to analyze.</div>
-
-          <div class="an-results" id="anResults" hidden>
-            <div class="sum-head">Summary</div>
-            <div class="sum-table">
-              <div class="sum-row">
-                <span>Grade</span>
-                <span><b id="grade" class="grade-txt">–</b><span class="conf-label"> conf <b id="gradeConf">–</b>%</span></span>
-              </div>
-              <div class="sum-row">
-                <span>State of Health</span>
-                <span><b id="sumSoH">N/A</b> %</span>
-              </div>
-              <div class="sum-row">
-                <span>Capacity</span>
-                <span><b id="cap">–</b> Ah</span>
-              </div>
-              <div class="sum-row">
-                <span>Rested OCV</span>
-                <span><b id="ocv">–</b> V</span>
-              </div>
-            </div>
-            <div class="sum-section-head">Resistance &amp; Cranking (DCIR @ ~250 ms)</div>
-            <div class="sum-table">
-              <div class="sum-row">
-                <span>DCIR</span>
-                <span><b id="dcir">–</b> ± <b id="dcirUnc">–</b> mΩ</span>
-              </div>
-            </div>
+          <div class="an-actions">
             <button class="grade-action-btn" id="gradeActionBtn">–</button>
-            <button class="analyze-btn" id="analyzeBtn">Analyze Last CSV</button>
+            <button class="analyze-btn" id="analyzeBtn">ANALYZE LAST CSV</button>
+          </div>
+
+          <!-- hidden elements to prevent JS errors when updating old IDs -->
+          <div id="anResults" hidden>
+            <b id="gradeConf"></b><b id="cap"></b><b id="ocv"></b><b id="dcirUnc"></b>
           </div>
         </div>
 

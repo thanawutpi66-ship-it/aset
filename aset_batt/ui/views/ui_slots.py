@@ -196,15 +196,19 @@ class UiSlotsMixin:
         self._set_temp_label_color(temp)
     @Slot(str, str)
     def _slot_profile_status(self, text, color):
-        # lbl_profile_status was the old "legacy IEC PROFILES" status label,
-        # removed along with its RUN/STOP buttons — this slot kept writing to
-        # it anyway, crashing with AttributeError before ever reaching
-        # state_pill below, so the pill (the real status indicator now) never
-        # updated. state_pill is the only status display left.
+        # lbl_profile_status belonged to the legacy IEC PROFILES zone removed in
+        # e7e9ab4 — a leftover reference here raised AttributeError and killed
+        # the slot before the state-pill update below ever ran (Qt swallows slot
+        # exceptions, so the pill just silently stopped tracking Run/E-STOP/Idle).
         self.state_pill.setText(f"  {text.upper()}  ")
         self.state_pill.setStyleSheet(self._pill(self._pill_color_for(text)))
         # Lock hardware disconnect during active test runs
         is_idle = any(x in text.upper() for x in ["IDLE", "STOP", "FAIL", "DONE", "REVIEW"])
+        
+        # Update active SN display
+        self._refresh_sn_badge()
+
+
         if hasattr(self, 'btn_disconnect'):
             self.btn_disconnect.setEnabled(is_idle)
             self.btn_connect.setEnabled(is_idle)

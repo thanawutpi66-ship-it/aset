@@ -224,6 +224,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMi
         self.buf_rin = deque(maxlen=_TREND_MAXLEN)
         self.buf_temp = deque(maxlen=_TREND_MAXLEN)
         self._last_trend_redraw = 0.0   # perf_counter of the last graph repaint — see _slot_display
+        self._last_hppc_phase_text = None   # skip redundant setText/setStyleSheet — see _on_hppc_telemetry
         self._elapsed_t0 = None
         self._sample_index = 0
         self._buttons = {}

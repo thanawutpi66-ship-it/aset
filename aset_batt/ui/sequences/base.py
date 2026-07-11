@@ -195,6 +195,7 @@ class BaseSequenceMixin:
         this slot only handles the parts every abort path shares."""
         self._set_phase_banner_idle()
         self._seq_reset_step_leds()
+        self.sig_profile_status.emit("IDLE", theme.NEUTRAL)
 
     def _banner_active(self, led_list, step: int, color: str):
         """Update the always-visible banner to '▶ TEST · PHASE' for the active step."""
@@ -335,11 +336,13 @@ class BaseSequenceMixin:
         self.lbl_phase_banner.setStyleSheet(
             f"background:{theme.PANEL2}; color:{theme.OK}; border:1px solid {theme.OK}; "
             f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
+        self.sig_profile_status.emit("DONE", theme.OK)
         try:
             import winsound
             winsound.MessageBeep(winsound.MB_ICONASTERISK)
         except Exception:
             QApplication.beep()
+
         if not self._headless:
             msg = QMessageBox(self)
             msg.setWindowTitle(title)
@@ -409,6 +412,10 @@ class BaseSequenceMixin:
             self.config.battery.serial_number = sn
             if hasattr(self, "ed_sn"):
                 self.ed_sn.setText(sn)
+            # setText() with an unchanged string emits no textChanged, so the
+            # toolbar badge would never refresh through that path — refresh it
+            # directly from config (the source of truth just written above).
+            self._refresh_sn_badge()
             dlg.accept()
             
         btn_conf.clicked.connect(on_confirm)
@@ -463,6 +470,9 @@ class BaseSequenceMixin:
         self._seq_running.set()
         self.btn_seq_cancel.setEnabled(True)
         self.sig_loading.emit(btn_key, True, loading_label)
+        if hasattr(self, '_ensure_battery_sn'):
+            self._ensure_battery_sn()
+        self.sig_profile_status.emit("RUN", theme.INFO)
 
     # G8 (industrial-grade audit): a momentary staleness blip only warns — a hard
     # stop on that alone would be its own false-trip hazard. Sustained staleness

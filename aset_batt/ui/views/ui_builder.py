@@ -159,19 +159,47 @@ class UiBuilderMixin:
 
         m = bar.addMenu("Help")
         m.addAction("About ASET Battery Tester", self._on_about)
+    def _menubar_style(self):
+        # Menu bar is its own visual layer (Thonny-style): a light row clearly
+        # separated from the dark badge toolbar below it — one shared style fn
+        # painting both bars the same color made them read as a single thick
+        # band, which operators found confusing.
+        return (f"QMenuBar {{ background: {theme.PANEL2}; color: {theme.TEXT}; "
+                f"border: none; border-bottom: 1px solid {theme.BORDER}; }} "
+                f"QMenuBar::item {{ background: transparent; color: {theme.TEXT}; padding: 4px 10px; }} "
+                f"QMenuBar::item:selected {{ background: {theme.FIELD}; }}")
+
+    def _toolbar_style(self):
+        is_dark = theme.current_theme() == "dark"
+        bg = "#0e1011" if is_dark else "#8a9095"
+        return f"QToolBar {{ background: {bg}; border-bottom: 1px solid {theme.BORDER}; }}"
+
     def _build_toolbar(self):
         toolbar = QToolBar("Main")
         toolbar.setMovable(False)
-        theme.style(toolbar, lambda: f"QToolBar {{ background:{theme.PANEL}; border-bottom:1px solid {theme.BORDER}; }}")
+        theme.style(toolbar, self._toolbar_style)
 
         bar = self.menuBar()
         bar.setNativeMenuBar(False)
-        theme.style(bar, lambda: f"QMenuBar {{ background:{theme.PANEL}; border: none; }}")
+        theme.style(bar, self._menubar_style)
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         spacer.setStyleSheet("border: none; background: transparent;")
         toolbar.addWidget(spacer)
+
+        # S/N badge — outlined cyan, next to SIMULATION badge
+        self.lbl_active_sn = QLabel("")
+        theme.style(self.lbl_active_sn, lambda: (
+            f"background: {theme.PANEL2}; color: #00acc1; border: 1px solid #00acc1; "
+            f"border-radius: 4px; padding: 3px 8px; font-weight: 700; "
+            f"letter-spacing: 1px; margin-right: 6px;"
+        ))
+        self._sn_action = toolbar.addWidget(self.lbl_active_sn)
+        # Persistent like the SIMULATION badge: reflect config at construction
+        # (an S/N saved in config.json must show from app start, not stay
+        # hidden until the first profile-status update).
+        self._refresh_sn_badge()
 
         mode = "SIMULATION" if self.config.system.simulation_mode else "HARDWARE"
         self.mode_badge = QLabel(f"  {mode}  ")
@@ -242,7 +270,7 @@ class UiBuilderMixin:
         self.btn_update.clicked.connect(self._on_update_clicked)
         sb.addPermanentWidget(self.btn_update)
         self.lbl_session = QLabel("")
-        self.lbl_session.setStyleSheet(f"color:{theme.MUTED}; font-size:11px; padding-right:10px;")
+        theme.style(self.lbl_session, lambda: f"color:{theme.MUTED}; font-size:11px; padding-right:10px;")
         sb.addPermanentWidget(self.lbl_session)
         self.conn_led = QLabel("●")
         self.conn_led.setStyleSheet(f"color:{theme.NEUTRAL}; font-size:14px; padding:0 4px;")

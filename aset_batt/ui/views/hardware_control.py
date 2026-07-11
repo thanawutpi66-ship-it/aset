@@ -310,9 +310,15 @@ class HardwareControlMixin:
             # G9 (industrial-grade audit): set_psu() now reports whether the SCPI
             # write actually succeeded — a failed command used to just be logged,
             # so the operator watching this exact button had no way to know the PSU
-            # didn't really change state.
             if not ok and not self._headless:
                 QMessageBox.warning(self, "PSU", "PSU command failed — see log for details")
+            elif ok:
+                if on or getattr(self.hw, "_psu_output_on", False) or getattr(self.hw, "_load_output_on", False):
+                    if hasattr(self, "_ensure_battery_sn"):
+                        self._ensure_battery_sn()
+                    self.sig_profile_status.emit("RUN", theme.INFO)
+                else:
+                    self.sig_profile_status.emit("IDLE", theme.NEUTRAL)
         except ValueError:
             if not self._headless:
                 QMessageBox.warning(self, "PSU", "Invalid voltage / current")
@@ -330,6 +336,13 @@ class HardwareControlMixin:
             # G9 (industrial-grade audit): see _psu_manual's comment — same fix.
             if not ok and not self._headless:
                 QMessageBox.warning(self, "Load", "Load command failed — see log for details")
+            elif ok:
+                if on or getattr(self.hw, "_psu_output_on", False) or getattr(self.hw, "_load_output_on", False):
+                    if hasattr(self, "_ensure_battery_sn"):
+                        self._ensure_battery_sn()
+                    self.sig_profile_status.emit("RUN", theme.INFO)
+                else:
+                    self.sig_profile_status.emit("IDLE", theme.NEUTRAL)
             try:
                 from aset_batt.storage.cloud_push import set_cloud_meta
                 if on:
@@ -433,6 +446,30 @@ class HardwareControlMixin:
                 self.sig_loading.emit("btn_ocv", False, "")
         threading.Thread(target=_run, daemon=True).start()
     def _on_estop(self):
+        if hasattr(self, "_seq_running"):
+            self._seq_running.clear()
+        for char_ev in getattr(self, "_char_running", {}).values():
+            char_ev.clear()
+
+        try:
+            from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+            from PySide6.QtCore import QUrl
+            import os
+            
+            # Keep references so they aren't garbage collected
+            self._estop_player = QMediaPlayer()
+            self._estop_audio = QAudioOutput()
+            self._estop_player.setAudioOutput(self._estop_audio)
+            
+            pido_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "pido.mp3"))
+            if os.path.exists(pido_path):
+                self._estop_player.setSource(QUrl.fromLocalFile(pido_path))
+                self._estop_audio.setVolume(1.0)
+                self._estop_player.play()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to play pido.mp3: {e}")
+
         if self._test_worker:
             self._test_worker.emergency_stop()   # immediate instrument override
         if self.controller:
