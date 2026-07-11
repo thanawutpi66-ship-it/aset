@@ -125,6 +125,16 @@ def build_results_html(results: dict) -> str:
         parts.append(row("C₁", f"{results['c1_farad']:.0f}", "F"))
         parts.append(row("τ  (R₁·C₁)", f"{results['tau_s']:.1f}", "s"))
         parts.append(row("Total (R₀+R₁)", f"{results['ri_mohm']:.2f}", "mΩ"))
+        # FreedomCAR-style DC resistance at defined pulse timepoints (G5) — read
+        # off the fitted model so they're comparable across rigs/labs regardless
+        # of sample rate. R@10s is the closest surrogate to a cranking/high-rate pull.
+        r01 = results.get("r_at_0p1s_mohm", float("nan"))
+        r1s = results.get("r_at_1s_mohm", float("nan"))
+        r10 = results.get("r_at_10s_mohm", float("nan"))
+        if not math.isnan(r01):
+            parts.append(row("DCR @ 0.1 / 1 / 10 s",
+                             f"{r01:.1f} / {r1s:.1f} / {r10:.1f}", "mΩ",
+                             "FreedomCAR timepoints (R@10s ≈ cranking)"))
 
     # ── Quality flags ──
     if warns:
