@@ -28,30 +28,30 @@
 }
 
 :root[data-theme="light"]{
-  --bg:#f4f6f9;
-  --bg2:#ffffff;
-  --panel:#ffffff;
-  --panel2:#eef1f5;
-  /* Was .10/.16 — read fine on a calibrated monitor at 100% zoom but washed
-     out to invisible on a screenshot/photo (near-black at 10% opacity over
-     near-white loses almost all contrast under compression). Buttons, panel
-     separators, and the chart's own grid lines (both read var(--border))
-     all looked borderless because of this. */
-  --border:rgba(15,23,42,.22);
-  --border-2:rgba(15,23,42,.34);
-  --shadow:0 10px 30px -12px rgba(15,23,42,.15);
+  /* Matched to the desktop GUI's own LIGHT palette (aset_batt/ui/theme.py)
+     so the web dashboard and the lab GUI read as the same product instead
+     of two different shades of "light theme". */
+  --bg:#a6abb0;
+  --bg2:#c5c9cd;
+  --panel:#b6bbc0;
+  --panel2:#c5c9cd;
+  --border:#7b8085;
+  --border-2:#7b8085;
+  --shadow:0 10px 30px -12px rgba(29,33,35,.25);
 
-  --text:#161b22;
-  --muted:#586374;
-  --faint:#8993a3;
+  --text:#1d2123;
+  --muted:#43484c;
+  --faint:#5c6266;
 
-  --v:#15803d;
-  --i:#c2410c;
+  /* Voltage/Current/Temp match the GUI's own trend-graph pen colors
+     (widgets.py's MultiAxisTrend: INFO/WARN/CRIT respectively). */
+  --v:#1565c0;
+  --i:#c98a00;
   --soc:#0369a1;
   --r:#6d28d9;
-  --t:#be123c;
+  --t:#c62828;
 
-  --ok:#15803d; --warn:#b45309; --crit:#be123c;
+  --ok:#2e7d32; --warn:#c98a00; --crit:#c62828;
 
   --gA:#15803d; --gB:#4d7c0f; --gC:#b45309; --gREJECT:#be123c; --gREVIEW:#586374;
 }
