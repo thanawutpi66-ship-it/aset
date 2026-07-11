@@ -21,15 +21,12 @@ def mock_app_deps():
 
 def test_controller_init(mock_app_deps):
     assert mock_app_deps.monitor_running is False
-    assert mock_app_deps.is_profile_running is False
     assert mock_app_deps.is_charging is False
     assert mock_app_deps.safety_triggered is False
 
 def test_emergency_shutdown(mock_app_deps):
-    mock_app_deps.is_profile_running = True
-    with patch.object(mock_app_deps, 'stop_profile'):
-        mock_app_deps._emergency_shutdown()
-    
+    mock_app_deps._emergency_shutdown()
+
     mock_app_deps.hw.psu_off.assert_called_once()
     mock_app_deps.hw.load_off.assert_called_once()
 
@@ -38,20 +35,10 @@ def test_start_stop_monitor(mock_app_deps):
         mock_app_deps.data.start_logging.return_value = (True, "")
         mock_app_deps.start_monitor()
         assert mock_app_deps.monitor_running is True
-        
+
         mock_app_deps.monitor_running = True
         mock_app_deps.stop_monitor()
         assert mock_app_deps.monitor_running is False
-
-def test_start_stop_profile(mock_app_deps):
-    mock_app_deps.current_profile = MagicMock()
-    mock_app_deps.profile_data = [MagicMock()]
-    with patch('threading.Thread') as mock_thread:
-        mock_app_deps.start_profile()
-        assert mock_app_deps.is_profile_running is True
-        
-        mock_app_deps.stop_profile()
-        assert mock_app_deps.is_profile_running is False
 
 def test_ensure_logging(mock_app_deps):
     mock_app_deps.data.is_recording = False

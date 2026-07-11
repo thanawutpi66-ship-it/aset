@@ -31,6 +31,23 @@ MAX_STEP_EDGE_LATENCY_S = 0.5
 # acquisition.analysis._vi_levels' plateau detection (_VI_LEVEL_MAX_SPREAD_V).
 STEADY_STATE_MAX_SPREAD_V = 0.15
 
+# Target acquisition rate, shared by every loop that paces itself against real
+# hardware readback: acquisition.models.TestConfig.sample_hz (manual TEST MODE,
+# worker.py) and ui.sequences.hppc's pulse/relax pacing (used to hardcode its
+# own "0.2" independently of the config default — the two drifted out of sync
+# by construction). Raised from the old 5.0: measured real SCPI round-trip is
+# ~35-40ms for the combined MEAS:SCAL:ALL:DC? query used during discharge/HPPC
+# (read_measurements()'s prefer_load_v=True path) — a ~25-28Hz ceiling — and
+# ~70-80ms for charge/idle's two separate queries — a ~12-14Hz ceiling. 10Hz
+# keeps clear margin under the lower (charge-mode) ceiling while still roughly
+# doubling the old target, tightening R0's ΔV/ΔI single-step method (it reads
+# whatever sample lands first after the current edge — the sooner that sample
+# arrives, the less R1/polarisation has bled into it; see identify_dcir's own
+# docstring). This does NOT guarantee HPPC pulses achieve 10Hz in practice —
+# that still depends on real per-iteration cost + GIL contention with other
+# threads, both separately measured via each loop's own Hz-breakdown logging.
+DEFAULT_SAMPLE_HZ = 10.0
+
 
 def is_plausible_r0(r0: float, base_rin: float,
                     abs_ceiling: float = ABS_R0_CEILING_OHM) -> bool:

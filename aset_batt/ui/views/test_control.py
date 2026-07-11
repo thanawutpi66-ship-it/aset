@@ -199,6 +199,16 @@ class TestControlMixin:
         csv_path = DataHandler.make_session_path()
         self._last_csv = csv_path
         self.lbl_csv.setText(f"CSV: {csv_path}")
+        # Manual TEST MODE writes its own CSV directly (AcquisitionWorker.run(),
+        # not DataHandler.start_logging()), so self.data.current_path is never
+        # set here — CloudPusher.push_once() falls back to its OWN self.csv_path
+        # (config.system.csv_filepath) instead, silently pushing/analysing a
+        # stale, unrelated file for the whole run (confirmed on a real log: rows
+        # stuck at the 20000-row cap the entire session — a file this test never
+        # touched). Point the running CloudPusher at this session's real file so
+        # the dashboard — and _run_analysis()'s cost — reflect the live test.
+        if getattr(self, "_cloud_svc", None) is not None:
+            self._cloud_svc.csv_path = csv_path
 
         backend = HardwareBackend(self.hw)
         self._test_thread = QThread()
@@ -232,6 +242,7 @@ class TestControlMixin:
     def _on_test_telemetry(self, row: dict):
         self.buf_t.append(row["elapsed"]); self.buf_v.append(row["v"])
         self.buf_i.append(row["i"]); self.buf_temp.append(row["temp"])
+        self._trim_trend_buffers()
         v_lbl = self.metric_labels.get("Voltage")
         if v_lbl:
             self.metric_labels["Voltage"][0].setText(f'{row["v"]:.2f} {self.metric_labels["Voltage"][1]}')

@@ -208,21 +208,25 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMi
             self.config.battery.pack_nominal_voltage,
         )
 
-        # maxlen bounds both memory AND the cost of the list(deque) conversion done
-        # on every redraw (see _slot_display) — without it, a multi-hour charge at
-        # the monitor loop's ~10 Hz target grows this unbounded, and pyqtgraph
-        # setData() + the list() conversion both cost O(n): the GUI gets steadily
-        # more sluggish over the session and can appear to hang late in a long test.
-        # 20,000 samples ≈ last ~33 min at 10 Hz (typical during CHARGE) or ~5.5 h at
-        # 1 Hz (typical during DISCHARGE/HPPC) — a rolling window, same idea as the
-        # cloud dashboard already using "last 30 min" instead of the whole session.
-        _TREND_MAXLEN = 20000
-        self.buf_t = deque(maxlen=_TREND_MAXLEN)
-        self.buf_v = deque(maxlen=_TREND_MAXLEN)
-        self.buf_i = deque(maxlen=_TREND_MAXLEN)
-        self.buf_soc = deque(maxlen=_TREND_MAXLEN)
-        self.buf_rin = deque(maxlen=_TREND_MAXLEN)
-        self.buf_temp = deque(maxlen=_TREND_MAXLEN)
+        # Duration-based (not count-based) rolling window — bounds both memory AND
+        # the cost of the list(deque) conversion done on every redraw (see
+        # _slot_display): without it, a multi-hour test grows this unbounded, and
+        # pyqtgraph setData() + the list() conversion both cost O(n), so the GUI
+        # gets steadily more sluggish over the session. Was a fixed-COUNT
+        # deque(maxlen=20000) — at a higher DEFAULT_SAMPLE_HZ (battery_model.py)
+        # that made the visible history window shrink proportionally (66min at
+        # 5Hz -> ~13min at 20Hz) purely as a side effect of the rate fix, which
+        # operators don't want. _TREND_MAX_DURATION_S=4000s (~66min) preserves the
+        # old visible-history length regardless of sample rate — see
+        # _trim_trend_buffers, called after every append (test_control.py's
+        # _on_test_telemetry, ui_slots.py's _slot_display).
+        self._TREND_MAX_DURATION_S = 4000.0
+        self.buf_t = deque()
+        self.buf_v = deque()
+        self.buf_i = deque()
+        self.buf_soc = deque()
+        self.buf_rin = deque()
+        self.buf_temp = deque()
         self._last_trend_redraw = 0.0   # perf_counter of the last graph repaint — see _slot_display
         self._last_hppc_phase_text = None   # skip redundant setText/setStyleSheet — see _on_hppc_telemetry
         self._elapsed_t0 = None
@@ -261,6 +265,19 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMi
 
         self._updating = False
         self._start_update_check()
+
+    def _trim_trend_buffers(self):
+        """Drop samples older than _TREND_MAX_DURATION_S from the front of the
+        trend buffers — duration-based equivalent of the old deque(maxlen=N).
+        buf_t holds the same "elapsed" seconds value used as the graph's x-axis,
+        so it's the natural trim key. Call after every append to buf_t (some
+        call sites only populate a subset of the six buffers — pop only as many
+        as are non-empty so they can't drift out of lockstep)."""
+        bufs = (self.buf_t, self.buf_v, self.buf_i, self.buf_soc, self.buf_rin, self.buf_temp)
+        while len(self.buf_t) > 1 and self.buf_t[-1] - self.buf_t[0] > self._TREND_MAX_DURATION_S:
+            for buf in bufs:
+                if buf:
+                    buf.popleft()
 
     # ── In-app updater (git fast-forward) ────────────────────────────────
 

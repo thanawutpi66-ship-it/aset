@@ -773,7 +773,22 @@ class HardwareController:
         self.last_esp_heartbeat = time.time()
         _unmatched_logged = set()   # avoid log-spamming the same unknown format
         _matched_once = False
+        # Runs as its own daemon thread at 20 Hz (time.sleep(0.05)), continuously,
+        # for the entire app session — sharing the GIL with any acquisition worker
+        # thread and the GUI thread. Timed here (logged once per _RATE_LOG_EVERY
+        # iterations) to test whether THIS thread's own per-iteration cost grows
+        # over a long-running test — a real-rig HPPC run showed the acquisition
+        # worker's achieved rate step down from ~4.8 Hz to a stable ~3.7 Hz
+        # partway through, with SCPI/estimator/log all unchanged in absolute
+        # cost, which pointed at something OUTSIDE those measured buckets (GIL
+        # contention from a background thread was the leading remaining
+        # hypothesis after ruling out the live trend-graph redraw).
+        _t_work = 0.0
+        _rate_n = 0
+        _rate_t0 = time.perf_counter()
+        _RATE_LOG_EVERY = 200   # ~10s of wall time at the nominal 20 Hz poll rate
         while self.is_esp_connected:
+            _iter_t0 = time.perf_counter()
             try:
                 if self.esp_serial.in_waiting > 0:
                     line = self.esp_serial.readline().decode('utf-8', errors='ignore').strip()
@@ -796,6 +811,19 @@ class HardwareController:
                             _unmatched_logged.add(key)
             except Exception as exc:
                 logger.warning("ESP32 serial error: %s", exc)
+            _t_work += time.perf_counter() - _iter_t0
+            _rate_n += 1
+            if _rate_n >= _RATE_LOG_EVERY:
+                _now = time.perf_counter()
+                _span = _now - _rate_t0
+                if _span > 0.5:
+                    logger.info(
+                        "ESP32 monitor loop: %.1f%% of wall time spent working "
+                        "(not sleeping) over %d iterations / %.1fs",
+                        100 * _t_work / _span, _rate_n, _span)
+                _rate_n = 0
+                _t_work = 0.0
+                _rate_t0 = _now
             time.sleep(0.05)
 
     def shutdown_all(self):

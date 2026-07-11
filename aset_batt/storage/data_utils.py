@@ -126,6 +126,60 @@ def _tail_csv_rows(csv_path: str, limit: int = 20000) -> list:
         return []
 
 
+def _tail_csv_rows_incremental(csv_path: str, cache: dict, limit: int = 20000) -> list:
+    """Like _tail_csv_rows but reuses *cache* (caller-owned, e.g. one dict per
+    CloudPusher instance) across calls so only lines appended since the last
+    call are read+parsed — the whole CSV is not re-opened and re-parsed from
+    scratch every cycle. Cost of a repeat call is O(new rows), not O(total rows).
+
+    Falls back to a full _tail_csv_rows() read (and repopulates the cache) on
+    the first call for a path, if the file shrank (truncated/rotated — a new
+    test session reusing the same path), or on any parse error.
+    """
+    # Binary-mode I/O throughout: os.path.getsize() and f.seek()/f.tell() must
+    # agree on the same byte-offset units, which text-mode "utf-8-sig" doesn't
+    # cleanly guarantee (BOM stripping makes tell()'s opaque offsets risky to
+    # mix with getsize()). Decoding is done manually on each raw chunk instead.
+    try:
+        if cache.get("path") != csv_path:
+            cache.clear()
+            cache["path"] = csv_path
+        size = os.path.getsize(csv_path)
+        pos = cache.get("pos")
+        if pos is None or size < pos:
+            rows = _tail_csv_rows(csv_path, limit=limit)
+            with open(csv_path, "rb") as f:
+                header_line = f.readline().decode("utf-8-sig")
+            cache["fieldnames"] = next(csv.reader([header_line])) if header_line.strip() else []
+            cache["rows"] = rows
+            cache["pos"] = size
+            return cache["rows"]
+        if size == pos:
+            return cache.get("rows", [])
+        with open(csv_path, "rb") as f:
+            f.seek(pos)
+            chunk = f.read()
+        # Only consume complete lines — the writer may be mid-writerow() on the
+        # tail of the file; hold back any trailing partial line for next time.
+        last_nl = chunk.rfind(b"\n")
+        if last_nl == -1:
+            return cache.get("rows", [])
+        complete = chunk[:last_nl + 1]
+        cache["pos"] = pos + len(complete)
+        fieldnames = cache.get("fieldnames", [])
+        rows = cache.setdefault("rows", [])
+        for parsed in csv.reader(complete.decode("utf-8", errors="replace").splitlines()):
+            if parsed:
+                rows.append(dict(zip(fieldnames, parsed)))
+        if len(rows) > limit:
+            del rows[:len(rows) - limit]
+        return rows
+    except Exception as e:
+        logger.warning("_tail_csv_rows_incremental failed, falling back to full read: %s", e)
+        cache.clear()
+        return _tail_csv_rows(csv_path, limit=limit)
+
+
 def _extract_series(rows: list, keys: list = None) -> dict:
     """Extract columns from rows into dict of float lists."""
     if keys is None:
