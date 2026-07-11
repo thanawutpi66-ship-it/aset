@@ -641,5 +641,10 @@ class DialogsMixin:
         except Exception as exc:
             logger.error("analysis pool shutdown on close: %s", exc)
     def _on_open_settings(self):
+        # Lazy import: SettingsDialog lives in isa101_views.py, which imports
+        # DialogsMixin (this class) — a top-level import here would be
+        # circular. This was previously missing entirely, so Tools ->
+        # Preferences raised NameError before the dialog could even open.
+        from aset_batt.ui.isa101_views import SettingsDialog
         dlg = SettingsDialog(self)
         dlg.exec()

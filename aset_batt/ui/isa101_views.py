@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -71,29 +70,38 @@ class SettingsDialog(QDialog):
         lay.addWidget(lbl_app)
         self.cb_dark = QCheckBox("Dark Theme")
         if parent and hasattr(parent, 'config'):
-            self.cb_dark.setChecked(parent.config.system.dark_mode)
+            # SystemConfig จริงมี ui_theme ("light"/"dark") ไม่มี dark_mode — field เดิม
+            # ที่ dialog นี้อ้างถึงไม่เคยมีอยู่จริง เปิดกี่ครั้งก็ AttributeError ทันที
+            self.cb_dark.setChecked(parent.config.system.ui_theme == "dark")
         lay.addWidget(self.cb_dark)
 
         # 2. Cloud Integration
         lbl_cloud = QLabel("CLOUD INTEGRATION")
         lbl_cloud.setStyleSheet("font-weight: bold; color: #a1a6ab; margin-top: 10px;")
         lay.addWidget(lbl_cloud)
-        
+
         row1 = QHBoxLayout()
         self.cb_push = QCheckBox("Enable Cloud Push")
         if parent and hasattr(parent, 'config'):
-            self.cb_push.setChecked(parent.config.system.cloud_push)
+            self.cb_push.setChecked(parent.config.system.cloud_push_enabled)
         row1.addWidget(self.cb_push)
         lay.addLayout(row1)
 
         row2 = QHBoxLayout()
-        row2.addWidget(QLabel("InfluxDB / MQTT URL:"))
+        row2.addWidget(QLabel("Cloud Dashboard URL:"))
         self.ed_url = QLineEdit()
         self.ed_url.setPlaceholderText("https://...")
         if parent and hasattr(parent, 'config'):
-            self.ed_url.setText(parent.config.system.cloud_url)
+            self.ed_url.setText(parent.config.system.cloud_dashboard_url)
         row2.addWidget(self.ed_url, 1)
         lay.addLayout(row2)
+
+        # NOTE: OVP/UVP/OTP/UTP safety limits are edited from the SETUP tab's
+        # "Edit Safety Limits…" button (SafetyLimitsDialog in
+        # aset_batt/ui/views/hardware_control.py), not here — they used to
+        # live in this dialog too, but Tools → Preferences buried them behind
+        # a menu nobody found (and, separately, this dialog was unreachable
+        # via that menu until the NameError below was fixed — see dialogs.py).
 
         # 3. PDF Reporting
         lbl_pdf = QLabel("REPORTS")
@@ -115,10 +123,10 @@ class SettingsDialog(QDialog):
     def accept(self):
         parent = self.parent()
         if parent and hasattr(parent, 'config'):
-            parent.config.system.dark_mode = self.cb_dark.isChecked()
-            parent.config.system.cloud_push = self.cb_push.isChecked()
-            parent.config.system.cloud_url = self.ed_url.text()
-            parent.config.save()
+            parent.config.system.ui_theme = "dark" if self.cb_dark.isChecked() else "light"
+            parent.config.system.cloud_push_enabled = self.cb_push.isChecked()
+            parent.config.system.cloud_dashboard_url = self.ed_url.text()
+            parent.config.save_config()
             QMessageBox.information(self, "Restart Required", "Theme changes will take effect on next restart.")
         super().accept()
 
