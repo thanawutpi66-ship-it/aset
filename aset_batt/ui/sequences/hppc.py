@@ -214,15 +214,45 @@ class HppcMixin:
             # the start so the CSV actually contains a genuine rest window.
             self.controller._ensure_logging(label="HPPC")
 
-            def _ocv_progress(elapsed, v, dv_mv, st):
-                dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
-                status(f"HPPC SEQ: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
-                self.controller._log_sample(v, 0.0)
-                self.update_display(v, 0.0, self.controller.estimator.soc,
-                                    self.controller.estimator.rin)
+            def _ocv_progress_factory(prefix, total_estimate=None):
+                """Shared on_progress callback for calibrate_from_ocv_stable(),
+                used by both the PREPARE (PHASE 0) and post-charge (PHASE 2) OCV
+                settle calls below.
+
+                calibrate_from_ocv_stable() can internally trigger
+                _bleed_off_surface_charge() (a real C/20 discharge) when the
+                rested voltage reads above the OCV curve's 100% point — that
+                bleed loop already logs its own (v, i_bleed) samples via
+                _log_sample(). This callback used to ALSO call
+                _log_sample(v, 0.0) unconditionally on every progress tick,
+                including during "bleeding" — so every real bled sample got a
+                second, contradictory row logged right next to it with a
+                hardcoded current of 0.0 A. A real run
+                (test_HPPC_20260708_152502) had 137 of these fake zero-current
+                rows / 272 fake current edges: the rest-median OCV anchor read
+                wrong (load voltage tagged as rest), the coulomb integral on
+                replay was off, and the CSV claimed no current flowed during a
+                window where 0.264 A was actually being drawn. Skip the
+                duplicate log (and the display update, which would show the
+                same fake 0.0 A) whenever status is "bleeding" — the status
+                text above still updates every tick so the operator still sees
+                live feedback.
+                """
+                def _cb(elapsed, v, dv_mv, st):
+                    dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
+                    status(f"{prefix}: {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+                    if total_estimate is not None:
+                        self.sig_phase_progress.emit(
+                            int(elapsed), max(total_estimate, int(elapsed) + 30))
+                    if st == "bleeding":
+                        return
+                    self.controller._log_sample(v, 0.0)
+                    self.update_display(v, 0.0, self.controller.estimator.soc,
+                                        self.controller.estimator.rin)
+                return _cb
 
             soc0_ocv, v0_ocv, ocv_result = self.controller.calibrate_from_ocv_stable(
-                on_progress=_ocv_progress,
+                on_progress=_ocv_progress_factory("HPPC SEQ: OCV settle"),
                 cancel_check=self._seq_running.is_set,
             )
             if not self._seq_running.is_set():
@@ -272,60 +302,31 @@ class HppcMixin:
             self.sig_hppc_seq_wf.emit(1, "done")
             self.sig_alarm.emit("[HPPC SEQ] Charge complete")
 
-            # ── PHASE 2: REST 30 min ─────────────────────────────────────
+            # ── PHASE 2: REST (OCV settle, auto bleed-off surface charge) ──
+            # Used to be a fixed 30-min timer + a single immediate
+            # calibrate_from_ocv() read, with only a passive advisory warning
+            # if the rest voltage was still above the OCV curve's 100% point
+            # (see test_HPPC_20260708_152502: rest voltage stayed 430 mV over
+            # range, the advisory fired, and the sequence pulsed on a still
+            # surface-charged battery anyway — the CHARGE phase re-creates
+            # exactly the surface charge PREPARE's own bleed-off had already
+            # stripped, and nothing here repeated that bleed). Now reuses the
+            # same calibrate_from_ocv_stable() PHASE 0 uses: real ΔV/Δt
+            # settle-checking PLUS an automatic C/20 bleed-off when the
+            # settled reading is still above range — instead of just warning
+            # about it.
             self.sig_hppc_seq_wf.emit(2, "active")
-            _rest_total = 30 * 60
-            t_rest_end = _t.time() + _rest_total
-            while self._seq_running.is_set():
-                remaining = int(t_rest_end - _t.time())
-                if remaining <= 0:
-                    break
-                elapsed_r = _rest_total - remaining
-                mins, secs = divmod(remaining, 60)
-                status(f"HPPC REST (OCV settle): เหลือ {mins}:{secs:02d}")
-                self.sig_phase_progress.emit(elapsed_r, _rest_total)
-                # monitor_running is stopped for this whole phase (see the comment on
-                # stop_monitor() right above) to avoid double-counting the estimator —
-                # but that also meant no CSV row / live gauge update happened for the
-                # entire 30 min, so the GUI and web dashboard both showed the last
-                # CHARGE voltage frozen instead of the real OCV decay. _log_sample()
-                # only logs the reading (no estimator.update()), so it's safe here.
-                try:
-                    v_r, i_r, _ = self.hw.read_vi()
-                    self.controller._log_sample(v_r, i_r)
-                    self.update_display(v_r, i_r, self.controller.estimator.soc,
-                                        self.controller.estimator.rin, self.hw.current_temp)
-                except Exception as e:
-                    import logging
-                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
-                if not self._seq_sleep(10.0):
-                    break
+            soc_h, v_h, ocv_result2 = self.controller.calibrate_from_ocv_stable(
+                on_progress=_ocv_progress_factory("HPPC REST (OCV settle)",
+                                                  total_estimate=1800),
+                cancel_check=self._seq_running.is_set,
+            )
             self.sig_phase_progress.emit(0, 0)
             if not self._seq_running.is_set():
                 return
-            soc_h = self._hw_retry(self.controller.calibrate_from_ocv)
-            v_h, _, _ = self._hw_retry(self.hw.read_vi)
-            self.sig_alarm.emit(f"[HPPC SEQ] Post-rest OCV: {v_h:.3f} V → SoC {soc_h:.1f}%")
-            # Surface-charge advisory before the pulses: a real run
-            # (test_HPPC_20260708_152502) started its pulses with the rest
-            # voltage still ABOVE the OCV curve's own 100% point, and the
-            # per-pulse rest anchor then drifted 13.34→13.15 V across the 5
-            # cycles — the raw edge R0 declined 41.5→30.2 mΩ (37%) purely from
-            # that anchor drift, not from the battery. The fit itself is
-            # protected (median-of-tail voc + voc-divergence warning), but the
-            # operator should know THIS run's R0 spread will be inflated.
-            try:
-                _over_mv = self.controller.estimator.battery_model.ocv_out_of_range_mv(
-                    v_h, self.hw.current_temp)
-                if _over_mv > 0.0:
-                    self.sig_alarm.emit(
-                        f"[HPPC SEQ] ⚠ rest voltage {v_h:.3f} V is still "
-                        f"{_over_mv:.0f} mV above the OCV curve's 100% point — "
-                        f"surface charge not fully dissipated; per-pulse R0 anchors "
-                        f"will drift downward across cycles (consider a bleed-off "
-                        f"or a longer post-charge rest for tighter R0 spread)")
-            except Exception:
-                pass
+            flag2 = "✓ settled" if ocv_result2 == "settled" else "⚠ timeout"
+            self.sig_alarm.emit(
+                f"[HPPC SEQ] Post-charge OCV: {v_h:.3f} V → SoC {soc_h:.1f}% ({flag2})")
             self.sig_hppc_seq_wf.emit(2, "done")
 
             # ── PHASE 3: HPPC N cycles ────────────────────────────────────
@@ -350,6 +351,25 @@ class HppcMixin:
                     f"chemistry's rest-settle time ({_min_rest_s:.0f}s) — the relax "
                     f"leg's estimator update will only count coulombs, the voltage "
                     f"correction won't fire this run")
+            # G3 (advisory only — no timing change): a relax leg shorter than ~3τ
+            # captures only part of the RC decay, so the fitted R1/C1 (and the
+            # τ = R1·C1 read off it) come out systematically biased LOW no matter how
+            # high the fit R² looks — R² only measures the fit over the window it was
+            # given, and a too-short window can look excellent while missing the tail.
+            # lead-acid τ is order 10-60 s, so the 30 s UI default is ~0.5-3τ. Surface
+            # a concrete "use ≥3τ" number from the estimator's own current RC guess so
+            # the operator can lengthen relax_s next run if they want an unbiased τ.
+            try:
+                _r0d, _r1d, _c1d = self.controller.estimator._ekf_rc_defaults()
+                _tau_est = _r1d * _c1d
+            except Exception:
+                _tau_est = 0.0
+            if _tau_est > 1.0 and relax_s < 3.0 * _tau_est:
+                self.sig_alarm.emit(
+                    f"[HPPC SEQ] relax_s={relax_s:.0f}s captures only "
+                    f"~{relax_s / _tau_est:.1f}τ of the RC tail (τ≈{_tau_est:.0f}s for "
+                    f"this chemistry) — R1/C1/τ will be biased low; ≥{3.0 * _tau_est:.0f}s "
+                    f"(~3τ) recommended for an unbiased fit (fit R² can look high anyway)")
             max_dis = self.controller.config.battery.max_current
             i_pulse = min(crate * rated, max_dis)
             pack_min = self.controller.config.battery.pack_min_voltage

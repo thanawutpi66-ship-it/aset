@@ -23,8 +23,16 @@ def _est():
 
 class TestOhmicR0InUpdate(unittest.TestCase):
     def test_update_uses_ekf_r0_not_dcir(self):
+        # This test only exercises the R0 PLUMBING (the measurement update must be
+        # fed ekf.R0, not self.rin). It uses a deliberately huge distinctive R0
+        # (0.1234 Ω) so the traced value is unmistakable — but at a 5 A discharge
+        # that huge R makes the implied OCV (V + I·(R0+R1)) overshoot the OCV
+        # curve's 100% point, which the surface-charge gate (F3) now correctly
+        # reads with the EKF's own R basis and blocks. Keep the current low (1 A)
+        # so the implied OCV stays in range and the measurement update actually
+        # fires — the R0 plumbing being verified is independent of magnitude.
         e = _est()
-        e.update(13.0, 5.0, dt=1.0, temp=25.0)      # lazily create the EKF
+        e.update(12.5, 1.0, dt=1.0, temp=25.0)      # lazily create the EKF (in-range)
         e.update_ecm(0.1234, 0.02, 1000.0)           # distinctive OHMIC R0
         captured = {}
         real_update = e._ekf.update
@@ -32,7 +40,7 @@ class TestOhmicR0InUpdate(unittest.TestCase):
             captured["r0"] = r0
             return real_update(v, cur, ocv, docv, r0, r_override=r_override)
         e._ekf.update = spy
-        e.update(13.0, 5.0, dt=1.0, temp=25.0)
+        e.update(12.5, 1.0, dt=1.0, temp=25.0)
         # the R0 fed to the measurement update must be the ohmic ekf.R0, and must NOT be
         # the full DCIR (self.rin), which differs.
         self.assertAlmostEqual(captured["r0"], 0.1234, places=4)

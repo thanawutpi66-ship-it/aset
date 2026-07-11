@@ -525,9 +525,36 @@ def _check_soh_start_soc(
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
     return warnings
 
+# FreedomCAR/USABC-style DC resistance at fixed pulse timepoints (G5). The
+# single "R0" the report shows is the first-sample-after-edge value (≈R@100ms at
+# this rig's ~10 Hz), which already carries part of R1 — not a clean ohmic number
+# and not directly comparable across rigs/labs sampling at different rates. The
+# standard answer is to report ΔV/ΔI at DEFINED times instead: R@0.1s (ohmic-
+# dominated), R@1s, R@10s (the closest surrogate to a cranking/high-rate pull).
+# With a 1-RC/2-RC ECM already fitted, R(t) = R0 + Σ Ri·(1 − e^(−t/τi)) is exactly
+# those timepoints read off the de-noised model of the same pulse — no change to
+# how the pulse is measured, only what's reported. NaN when no ECM was identified
+# (a single-step DCIR can't be resolved into a time-resolved R(t)).
+_R_TIMEPOINTS_S = (0.1, 1.0, 10.0)
+
+
+def ecm_r_at(t: float, r0: float, r1: float, tau1: float,
+             r2: float = 0.0, tau2: float = 0.0) -> float:
+    """1-RC/2-RC model DC resistance at pulse time ``t`` seconds:
+    ``R0 + R1·(1−e^(−t/τ1)) [+ R2·(1−e^(−t/τ2))]``. Each RC term is only added
+    when its (Ri, τi) are physical (>0), so a 1-RC fit (R2=τ2=0) contributes
+    nothing from the second branch instead of dividing by a zero τ2."""
+    r = r0
+    if tau1 > 1e-9 and r1 > 0.0:
+        r += r1 * (1.0 - float(np.exp(-t / tau1)))
+    if tau2 > 1e-9 and r2 > 0.0:
+        r += r2 * (1.0 - float(np.exp(-t / tau2)))
+    return r
+
+
 def _extract_ecm_metrics(
-        time_s, current_a, voltage_v, ocv: float, ocv_ceil: float, is_hppc: bool, 
-        harness_r: float, profile: "BatteryProfile", t_med: float, dcir: float, measured: bool, 
+        time_s, current_a, voltage_v, ocv: float, ocv_ceil: float, is_hppc: bool,
+        harness_r: float, profile: "BatteryProfile", t_med: float, dcir: float, measured: bool,
         warnings: list) -> tuple[dict, list, float]:
     ecm, ecm_reason = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc else (None, "")
     is_2rc = bool(ecm and "R2_ohm" in ecm)
@@ -538,7 +565,8 @@ def _extract_ecm_metrics(
     out = {
         "r0": dcir, "r1": 0.0, "c1": 0.0, "tau": 0.0, "r2_ecm_fit": 0.0,
         "r2_rc": 0.0, "c2": 0.0, "tau2": 0.0, "ri_total": dcir,
-        "ecm_fit_t_s": float("nan"), "is_2rc": False, "ecm_identified": False
+        "ecm_fit_t_s": float("nan"), "is_2rc": False, "ecm_identified": False,
+        "r_0p1s": float("nan"), "r_1s": float("nan"), "r_10s": float("nan"),
     }
     
     if ecm:
@@ -585,11 +613,17 @@ def _extract_ecm_metrics(
             warnings.append(f"DCIR@250ms ({dcir*1e3:.0f} mΩ) disagrees with fit "
                                    f"R0+R1 ({ri_total*1e3:.0f} mΩ) — check the pulse")
                                    
+        # DC resistance at the standard 0.1/1/10 s pulse timepoints, read off the
+        # fitted model (G5). Temp-normalised R0/R1/R2 + τ1/τ2 are used so these are
+        # on the same 25 °C basis as the rest of the reported resistances.
+        _rt = {tp: ecm_r_at(tp, r0, r1, tau, r2_rc, tau2) for tp in _R_TIMEPOINTS_S}
+
         out.update({
             "r0": r0, "r1": r1, "c1": c1, "tau": tau, "r2_ecm_fit": r2_ecm_fit,
             "r2_rc": r2_rc, "c2": c2, "tau2": tau2, "ri_total": ri_total,
             "ecm_fit_t_s": float(ecm.get("t_edge_s", float("nan"))),
-            "is_2rc": is_2rc, "ecm_identified": True
+            "is_2rc": is_2rc, "ecm_identified": True,
+            "r_0p1s": _rt[0.1], "r_1s": _rt[1.0], "r_10s": _rt[10.0],
         })
         
     _ocv_eff = min(ocv, ocv_ceil) if ocv_ceil else ocv
@@ -691,6 +725,9 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "ecm_identified": ecm["ecm_identified"], "ecm_r2": ecm["r2_ecm_fit"], "ecm_fit_t_s": ecm["ecm_fit_t_s"],
         "ecm_model": "2RC" if ecm["is_2rc"] else "1RC",
         "r2_mohm": ecm["r2_rc"] * 1000.0, "c2_farad": ecm["c2"], "tau2_s": ecm["tau2"],
+        # FreedomCAR-style DC resistance at 0.1/1/10 s (G5) — NaN when no ECM fit.
+        "r_at_0p1s_mohm": ecm["r_0p1s"] * 1000.0, "r_at_1s_mohm": ecm["r_1s"] * 1000.0,
+        "r_at_10s_mohm": ecm["r_10s"] * 1000.0,
         "ica": (ica_v, ica),
     }
 

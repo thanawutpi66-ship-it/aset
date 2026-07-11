@@ -166,6 +166,28 @@ class StateEstimator:
         self._anchor_settle_until = 0.0        # time.monotonic() deadline; 0 = inactive
         self._anchor_settle_r_mult = 200.0     # measurement-variance inflation factor
 
+        # --- Surface-charge gate latch (F3) ---
+        # The surface-charge gate (see _fuse_ekf) skips voltage correction while the
+        # implied OCV sits above the curve's own 100% point (a still-surface-charged
+        # lead-acid pack carries no discriminating SoC information there). Two real
+        # defects made the bare per-sample form of that gate release too early:
+        #   (a) it compared the implied OCV built with self.rin — the blended
+        #       estimate_rin value (~26-30 mΩ on a real run), NOT the R basis the
+        #       EKF itself predicts terminal voltage with (its own R0+R1 ~48 mΩ).
+        #       The smaller R made v_ocv_est read ~46 mV too LOW, so it crossed into
+        #       range a full sample early while the pack was genuinely still charged.
+        #   (b) even with the right R basis, the gate was edge-triggered with no
+        #       hysteresis: because the terminal voltage sags monotonically under a
+        #       discharge load, the implied OCV grazes the 100% line for exactly one
+        #       sample, and that single frame was enough for one big-innovation EKF
+        #       update to pin SoC at 100% (the exact HPPC 100%-pin the replay caught).
+        # The latch below adds persistence: once tripped, the gate only releases after
+        # the implied OCV has stayed in range for a sustained hold OR a genuine
+        # in-range rest is seen — not on the first microvolt of crossing.
+        self._surface_charge_latched = False
+        self._surface_clear_s = 0.0
+        self._SURFACE_CHARGE_CLEAR_HOLD_S = 15.0   # in-range hold before releasing
+
         # Exponential smoothing
         self.alpha = 0.05
         self.soc_filtered = 50.0
@@ -300,6 +322,8 @@ class StateEstimator:
             self._r0_calibrated = False
             self._ecm_calibrated = False
             self._ecm_fit_soc = 50.0
+            self._surface_charge_latched = False   # F3: don't carry a latch across packs
+            self._surface_clear_s = 0.0
 
 
 
@@ -432,6 +456,11 @@ class StateEstimator:
         self.ah_accumulated = 0.0
         self.last_ocv_correction_time = time.monotonic()
         self._last_current = None      # avoid a stale trapezoid average after a reset
+        # An explicit re-anchor to a known SoC supersedes any pending surface-charge
+        # latch — the anchor is the trustworthy value now, so don't keep the gate
+        # closed on the pre-anchor voltage history (F3).
+        self._surface_charge_latched = False
+        self._surface_clear_s = 0.0
         if start_settle_window:
             self._anchor_settle_until = time.monotonic() + self._min_rest_s
         if self._ekf is not None:
@@ -557,8 +586,27 @@ class StateEstimator:
             # (test_20260709_154818) showed the EKF pinning SoC at 100% for the
             # first ~8 min of discharge (~0.37 Ah erased) before the voltage
             # dropped back inside the curve.
-            v_ocv_est = voltage + max(0.0, cur) * self.rin
-            surface_charged = self.battery_model.ocv_out_of_range_mv(v_ocv_est, t_use) > 0.0
+            # (a) Build the implied OCV with the SAME R basis the EKF predicts
+            # terminal voltage from (its own R0+R1), not self.rin (the blended
+            # estimate_rin value, ~26-30 mΩ on a real run vs the EKF's ~48 mΩ) —
+            # the smaller R under-stated v_ocv_est by ~46 mV and let the gate open a
+            # sample early. See the F3 note in __init__.
+            v_ocv_est = voltage + max(0.0, cur) * (r0_use + ekf.R1)
+            raw_surface = self.battery_model.ocv_out_of_range_mv(v_ocv_est, t_use) > 0.0
+            # (b) Hysteresis: once surface charge is detected, hold the gate closed
+            # until the implied OCV has stayed in range for a sustained window (or a
+            # genuine in-range rest is seen) — not the first frame it grazes the line.
+            if raw_surface:
+                self._surface_charge_latched = True
+                self._surface_clear_s = 0.0
+            elif self._surface_charge_latched:
+                self._surface_clear_s += dt
+                cleared_by_hold = self._surface_clear_s >= self._SURFACE_CHARGE_CLEAR_HOLD_S
+                cleared_by_rest = near_rest and self._rested_s >= self._min_rest_s
+                if cleared_by_hold or cleared_by_rest:
+                    self._surface_charge_latched = False
+                    self._surface_clear_s = 0.0
+            surface_charged = raw_surface or self._surface_charge_latched
             still_polarised = near_rest and self._rested_s < self._min_rest_s
             # While CHARGING (convention: charge = negative current), the terminal
             # voltage carries no usable SoC information: it sits at the charger's

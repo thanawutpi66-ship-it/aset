@@ -334,7 +334,18 @@ class TestWorkerEcmFeedbackAnchorsToPulseSoc(unittest.TestCase):
         # cur stays within _profile()'s max_discharge_a=7.0 (the worker's OCP
         # interlock trips emergency_stop() at 1.05x that and would otherwise
         # cut this test's run short before the tail ever runs).
-        r0, r1, c1, cur, voc = 0.012, 0.018, 1000.0, 5.0, 12.80
+        # voc is a mid-SoC rest (12.40 V, ~2.07 V/cell) deliberately WELL below the
+        # 6S OCV-curve 100% point (~12.888 V): this test verifies update_ecm's
+        # fit_soc anchors to the pulse timestamp (not the final SoC), which needs
+        # the tail's voltage correction to keep moving SoC. A near-ceiling voc
+        # (the old 12.80 V) plus the pulse's I·R would push the implied OCV above
+        # the curve top, tripping the surface-charge gate (F3) — correct in real
+        # use, but here the compressed simulated dt (sample_hz=1e5 → microsecond
+        # dt) means the gate's in-range clear-hold never elapses, so the tail's
+        # correction would be suppressed and SoC would not move. A mid-SoC voc
+        # keeps the pulse and tail in range so the anchoring being tested is
+        # exercised on the normal correction path.
+        r0, r1, c1, cur, voc = 0.012, 0.018, 1000.0, 5.0, 12.40
         tau = r1 * c1
         dt = 0.1
         t_rest = np.arange(0, 10, dt)
