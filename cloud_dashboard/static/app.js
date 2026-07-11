@@ -60,7 +60,10 @@ function emkScale(name, color, pos, offset = 0) {
     nameRotate: pos === 'left' ? 90 : -90,
     nameTextStyle: { color, fontSize: 10 },
     axisLabel: { color, fontSize: 10, formatter: (val) => val.toFixed(2) },
-    splitLine: { show: pos === 'left', lineStyle: { color: 'rgba(56,189,248,0.15)' } },
+    // Was a hardcoded cyan tint, ignoring the theme entirely (unlike the ICA
+    // chart, which already read css('--border') correctly) — invisible/wrong
+    // hue against the light theme's near-white background.
+    splitLine: { show: pos === 'left', lineStyle: { color: css('--border') } },
     axisLine: { show: true, lineStyle: { color } }
   };
 }
@@ -100,8 +103,8 @@ function ebaseOpts(gridOpts = {}) {
     xAxis: { 
       type: 'category', data: [], 
       axisLabel: { color: css('--faint'), fontSize: 10, maxInterval: 300 }, 
-      splitLine: { show: true, lineStyle: { color: 'rgba(56,189,248,0.15)' } }, 
-      axisTick: { show: false } 
+      splitLine: { show: true, lineStyle: { color: css('--border') } },
+      axisTick: { show: false }
     },
     yAxis: []
   };

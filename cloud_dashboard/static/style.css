@@ -32,8 +32,13 @@
   --bg2:#ffffff;
   --panel:#ffffff;
   --panel2:#eef1f5;
-  --border:rgba(15,23,42,.10);
-  --border-2:rgba(15,23,42,.16);
+  /* Was .10/.16 — read fine on a calibrated monitor at 100% zoom but washed
+     out to invisible on a screenshot/photo (near-black at 10% opacity over
+     near-white loses almost all contrast under compression). Buttons, panel
+     separators, and the chart's own grid lines (both read var(--border))
+     all looked borderless because of this. */
+  --border:rgba(15,23,42,.22);
+  --border-2:rgba(15,23,42,.34);
   --shadow:0 10px 30px -12px rgba(15,23,42,.15);
 
   --text:#161b22;
