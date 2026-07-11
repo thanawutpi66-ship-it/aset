@@ -47,52 +47,45 @@ let _analyzeState = null;  // {idx, queued_at, timer} while re-analysis is in fl
 
 function sohColor(v){ return v >= 85 ? css('--ok') : v >= 70 ? css('--warn') : css('--crit'); }
 
-/* ---- axis / dataset helpers ---------------------------------------------- */
-function mkDataset(label, data, color, yAxisID) {
-  return { label, data, borderColor: color, backgroundColor: color + '22',
-    borderWidth: 1.8, pointRadius: 0, fill: false, tension: 0.18, yAxisID };
-}
-function mkScale(pos, color, label, drawGrid, minRange) {
+/* ---- axis / dataset helpers (ECharts) ------------------------------------ */
+function emkScale(name, color, pos, offset = 0) {
   return {
-    type: 'linear', position: pos,
-    // Chart.js auto-picks tick precision from the data range — on a nearly-flat
-    // Current trace that means 4+ decimals of noise (-0.5330, -0.5332, ...).
-    // Force 2 decimals to match every other reading on the page.
-    ticks: { color, font: { size: 10 }, callback: (v) => Number(v).toFixed(2) },
-    grid: { color: drawGrid ? css('--border') : 'rgba(0,0,0,0)' },
-    border: { color, width: pos === 'right' ? 2 : 1 },
-    title: { display: true, text: label, color, font: { size: 10 } },
-    afterDataLimits: (scale) => {
-      if (minRange && scale.max - scale.min < minRange) {
-        const mid = (scale.max + scale.min) / 2;
-        scale.min = mid - minRange / 2;
-        scale.max = mid + minRange / 2;
-      }
-    }
+    type: 'value', name, position: pos, offset, scale: true,
+    nameTextStyle: { color, fontSize: 10, align: pos === 'left' ? 'right' : 'left' },
+    axisLabel: { color, fontSize: 10, formatter: (val) => val.toFixed(2) },
+    splitLine: { show: pos === 'left', lineStyle: { color: css('--border') } },
+    axisLine: { show: true, lineStyle: { color } }
   };
 }
-function baseOpts(extraScales) {
+function emkSeries(name, color, yAxisIndex, data) {
   return {
-    responsive: true, maintainAspectRatio: false, animation: false,
-    interaction: { intersect: false, mode: 'index' },
-    scales: {
-      x: {
-        ticks: { color: css('--faint'), font: { size: 10 }, maxTicksLimit: 8 },
-        grid: { color: css('--border') },
-        title: { display: true, text: 'Elapsed (s)', color: css('--muted'), font: { size: 10 } },
-      },
-      ...extraScales,
+    name, type: 'line', data, yAxisIndex,
+    showSymbol: false, itemStyle: { color }, lineStyle: { width: 1.8 }
+  };
+}
+function ebaseOpts(gridOpts = {}) {
+  return {
+    animation: false,
+    tooltip: { trigger: 'axis', backgroundColor: '#0b1220', borderColor: 'rgba(255,255,255,.12)', textStyle: { color: css('--text'), fontSize: 11 } },
+    legend: { textStyle: { color: css('--muted'), fontSize: 11 }, top: 0 },
+    grid: { left: 55, right: 55, top: 35, bottom: 45, ...gridOpts },
+    dataZoom: [
+      { type: 'slider', bottom: 5, height: 16, borderColor: css('--border'), textStyle: { color: css('--muted') }, handleSize: '80%' },
+      { type: 'inside' }
+    ],
+    xAxis: { 
+      type: 'category', data: [], 
+      axisLabel: { color: css('--faint'), fontSize: 10, maxInterval: 300 }, 
+      splitLine: { show: true, lineStyle: { color: css('--border') } }, 
+      axisTick: { show: false } 
     },
-    plugins: {
-      legend: { display: true, labels: { color: css('--muted'), font: { size: 11 }, boxWidth: 12 } },
-      tooltip: { backgroundColor: '#0b1220', borderColor: 'rgba(255,255,255,.12)', borderWidth: 1 },
-    },
+    yAxis: []
   };
 }
 
 /* ---- build / destroy main charts ----------------------------------------- */
 function destroyMainCharts() {
-  Object.values(mainCharts).forEach(c => { try { c.destroy(); } catch(e){} });
+  Object.values(mainCharts).forEach(c => { try { c.dispose(); } catch(e){} });
   mainCharts = {};
   $('charts').innerHTML = '';
 }
@@ -101,50 +94,53 @@ function addWrap(heightPx) {
   const wrap = document.createElement('div');
   wrap.className = 'chart-wrap';
   wrap.style.height = heightPx + 'px';
-  const canvas = document.createElement('canvas');
-  wrap.appendChild(canvas);
+  const container = document.createElement('div');
+  container.style.width = '100%';
+  container.style.height = '100%';
+  wrap.appendChild(container);
   host.appendChild(wrap);
-  return canvas;
+  return container;
 }
 function buildMainCharts() {
   destroyMainCharts();
   const vC = css('--v'), iC = css('--i'), tC = css('--t');
   if (graphMode === 'combined') {
-    const canvas = addWrap(420);
-    mainCharts.combined = new Chart(canvas, {
-      type: 'line',
-      data: { labels: [], datasets: [
-        mkDataset('Voltage (V)', [], vC, 'yV'),
-        mkDataset('Current (A)', [], iC, 'yI'),
-        mkDataset('Temp (°C)',   [], tC, 'yT'),
-      ]},
-      options: baseOpts({
-        yV: mkScale('left',  vC, 'Voltage (V)', true, 0.2),
-        yI: mkScale('right', iC, 'Current (A)', false, 0.5),
-        yT: mkScale('right', tC, 'Temp (°C)',   false, 2.0),
-      }),
-    });
+    const el = addWrap(420);
+    mainCharts.combined = echarts.init(el);
+    const opts = ebaseOpts({ right: 90 });
+    opts.yAxis = [ 
+      emkScale('Voltage (V)', vC, 'left'), 
+      emkScale('Current (A)', iC, 'right'), 
+      emkScale('Temp (°C)', tC, 'right', 45) 
+    ];
+    opts.series = [ 
+      emkSeries('Voltage (V)', vC, 0, []), 
+      emkSeries('Current (A)', iC, 1, []), 
+      emkSeries('Temp (°C)', tC, 2, []) 
+    ];
+    mainCharts.combined.setOption(opts);
   } else if (graphMode === 'split2') {
-    const c1 = addWrap(205);
-    mainCharts.vc = new Chart(c1, {
-      type: 'line',
-      data: { labels: [], datasets: [mkDataset('Voltage (V)', [], vC, 'yV'), mkDataset('Current (A)', [], iC, 'yI')] },
-      options: baseOpts({ yV: mkScale('left', vC, 'Voltage (V)', true, 0.2), yI: mkScale('right', iC, 'Current (A)', false, 0.5) }),
-    });
-    const c2 = addWrap(205);
-    mainCharts.temp = new Chart(c2, {
-      type: 'line',
-      data: { labels: [], datasets: [mkDataset('Temp (°C)', [], tC, 'yT')] },
-      options: baseOpts({ yT: mkScale('left', tC, 'Temp (°C)', true, 2.0) }),
-    });
+    const c1 = addWrap(215);
+    mainCharts.vc = echarts.init(c1);
+    const opts1 = ebaseOpts();
+    opts1.yAxis = [ emkScale('Voltage (V)', vC, 'left'), emkScale('Current (A)', iC, 'right') ];
+    opts1.series = [ emkSeries('Voltage (V)', vC, 0, []), emkSeries('Current (A)', iC, 1, []) ];
+    mainCharts.vc.setOption(opts1);
+
+    const c2 = addWrap(215);
+    mainCharts.temp = echarts.init(c2);
+    const opts2 = ebaseOpts();
+    opts2.yAxis = [ emkScale('Temp (°C)', tC, 'left') ];
+    opts2.series = [ emkSeries('Temp (°C)', tC, 0, []) ];
+    mainCharts.temp.setOption(opts2);
   } else {
-    [['Voltage (V)', vC, 'yV', 0.2], ['Current (A)', iC, 'yI', 0.5], ['Temp (°C)', tC, 'yT', 2.0]].forEach(([label, color, axis, minRange]) => {
-      const c = addWrap(135);
-      mainCharts[axis] = new Chart(c, {
-        type: 'line',
-        data: { labels: [], datasets: [mkDataset(label, [], color, axis)] },
-        options: baseOpts({ [axis]: mkScale('left', color, label, true, minRange) }),
-      });
+    [['Voltage (V)', vC, 'yV'], ['Current (A)', iC, 'yI'], ['Temp (°C)', tC, 'yT']].forEach(([label, color, axis]) => {
+      const el = addWrap(145);
+      mainCharts[axis] = echarts.init(el);
+      const opts = ebaseOpts();
+      opts.yAxis = [ emkScale(label, color, 'left') ];
+      opts.series = [ emkSeries(label, color, 0, []) ];
+      mainCharts[axis].setOption(opts);
     });
   }
 }
@@ -152,51 +148,44 @@ function updateMainCharts(ser) {
   const elapsed = (ser.Elapsed_s || []).map(v => v.toFixed(1));
   const vD = ser.Voltage_V || [], iD = ser.Current_A || [], tD = ser.Temperature_C || [];
   if (graphMode === 'combined' && mainCharts.combined) {
-    const ch = mainCharts.combined;
-    ch.data.labels = elapsed; ch.data.datasets[0].data = vD; ch.data.datasets[1].data = iD; ch.data.datasets[2].data = tD;
-    ch.update('none');
+    mainCharts.combined.setOption({ xAxis: { data: elapsed }, series: [{ data: vD }, { data: iD }, { data: tD }] });
   } else if (graphMode === 'split2') {
-    if (mainCharts.vc)   { mainCharts.vc.data.labels = elapsed;   mainCharts.vc.data.datasets[0].data = vD; mainCharts.vc.data.datasets[1].data = iD; mainCharts.vc.update('none'); }
-    if (mainCharts.temp) { mainCharts.temp.data.labels = elapsed; mainCharts.temp.data.datasets[0].data = tD; mainCharts.temp.update('none'); }
+    if (mainCharts.vc)   mainCharts.vc.setOption({ xAxis: { data: elapsed }, series: [{ data: vD }, { data: iD }] });
+    if (mainCharts.temp) mainCharts.temp.setOption({ xAxis: { data: elapsed }, series: [{ data: tD }] });
   } else {
-    if (mainCharts.yV) { mainCharts.yV.data.labels = elapsed; mainCharts.yV.data.datasets[0].data = vD; mainCharts.yV.update('none'); }
-    if (mainCharts.yI) { mainCharts.yI.data.labels = elapsed; mainCharts.yI.data.datasets[0].data = iD; mainCharts.yI.update('none'); }
-    if (mainCharts.yT) { mainCharts.yT.data.labels = elapsed; mainCharts.yT.data.datasets[0].data = tD; mainCharts.yT.update('none'); }
+    if (mainCharts.yV) mainCharts.yV.setOption({ xAxis: { data: elapsed }, series: [{ data: vD }] });
+    if (mainCharts.yI) mainCharts.yI.setOption({ xAxis: { data: elapsed }, series: [{ data: iD }] });
+    if (mainCharts.yT) mainCharts.yT.setOption({ xAxis: { data: elapsed }, series: [{ data: tD }] });
   }
 }
 
 /* ---- ICA chart (in Diagnostics tab) -------------------------------------- */
 function buildIcaChart() {
-  const canvas = $('icaChart');
-  if (!canvas) return;
-  if (icaChart) { try { icaChart.destroy(); } catch(e){} icaChart = null; }
-  icaChart = new Chart(canvas, {
-    type: 'line',
-    data: { datasets: [{ label: 'dQ/dV', data: [],
-      borderColor: css('--soc'), backgroundColor: css('--soc') + '22',
-      borderWidth: 1.5, pointRadius: 0, tension: 0.3, fill: false }] },
-    options: {
-      responsive: true, maintainAspectRatio: false, animation: false,
-      scales: {
-        x: { type: 'linear', title: { display: true, text: 'Voltage (V)', color: css('--muted'), font: { size: 9 } }, ticks: { color: css('--faint'), font: { size: 9 }, maxTicksLimit: 6 }, grid: { color: css('--border') } },
-        y: { title: { display: true, text: 'dQ/dV', color: css('--muted'), font: { size: 9 } }, ticks: { color: css('--faint'), font: { size: 9 } }, grid: { color: css('--border') } },
-      },
-      plugins: { legend: { display: false }, tooltip: { backgroundColor: '#0b1220' } },
-    },
-  });
+  const el = $('icaChart');
+  if (!el) return;
+  if (icaChart) { try { icaChart.dispose(); } catch(e){} icaChart = null; }
+  icaChart = echarts.init(el);
+  const opts = {
+    animation: false,
+    tooltip: { trigger: 'axis', backgroundColor: '#0b1220', borderColor: 'rgba(255,255,255,.12)', textStyle: { color: css('--text'), fontSize: 11 } },
+    grid: { left: 55, right: 20, top: 20, bottom: 40 },
+    xAxis: { type: 'value', name: 'Voltage (V)', nameLocation: 'middle', nameGap: 25, nameTextStyle: { color: css('--muted'), fontSize: 10 }, axisLabel: { color: css('--faint'), fontSize: 10 }, splitLine: { show: true, lineStyle: { color: css('--border') } }, scale: true },
+    yAxis: { type: 'value', name: 'dQ/dV', nameLocation: 'middle', nameGap: 35, nameTextStyle: { color: css('--muted'), fontSize: 10 }, axisLabel: { color: css('--faint'), fontSize: 10 }, splitLine: { show: true, lineStyle: { color: css('--border') } }, scale: true },
+    series: [{ name: 'dQ/dV', type: 'line', data: [], showSymbol: false, itemStyle: { color: css('--soc') }, lineStyle: { width: 1.5 } }]
+  };
+  icaChart.setOption(opts);
 }
 function updateIcaChart(voltageArr, socArr) {
   if (!icaChart) return;
-  if (!voltageArr || !socArr || voltageArr.length < 5) { icaChart.data.datasets[0].data = []; icaChart.update('none'); return; }
+  if (!voltageArr || !socArr || voltageArr.length < 5) { icaChart.setOption({ series: [{ data: [] }] }); return; }
   const pts = [];
   for (let i = 1; i < voltageArr.length; i++) {
     const dV = voltageArr[i] - voltageArr[i-1], dQ = socArr[i] - socArr[i-1];
-    if (Math.abs(dV) > 1e-4) pts.push({ x: voltageArr[i], y: dQ / dV });
+    if (Math.abs(dV) > 1e-4) pts.push([voltageArr[i], dQ / dV]);
   }
   const w = 5;
-  const smoothed = pts.map((p, i) => { const sl = pts.slice(Math.max(0,i-w),i+w+1); return { x: p.x, y: sl.reduce((s,q)=>s+q.y,0)/sl.length }; });
-  icaChart.data.datasets[0].data = smoothed;
-  icaChart.update('none');
+  const smoothed = pts.map((p, i) => { const sl = pts.slice(Math.max(0,i-w),i+w+1); return [p[0], sl.reduce((s,q)=>s+q[1],0)/sl.length]; });
+  icaChart.setOption({ series: [{ data: smoothed }] });
 }
 
 /* ---- re-analysis (Method 1 — lab polling) -------------------------------- */

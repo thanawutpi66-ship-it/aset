@@ -14,8 +14,8 @@
     if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
   })();
 </script>
-<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script defer src="app.js?v=19"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<script defer src="app.js?v=21"></script>
 </head>
 <body>
 
@@ -291,7 +291,7 @@
         <div class="lptab-content" id="lptab-diagnostics" hidden>
           <div class="ica-title">ICA (Incremental Capacity)</div>
           <div class="ica-wrap">
-            <canvas id="icaChart"></canvas>
+            <div id="icaChart" style="width: 100%; height: 100%;"></div>
           </div>
         </div>
 
@@ -310,7 +310,6 @@
       </div><!-- /right-panel -->
 
     </div><!-- /main-layout -->
-
   </div><!-- /content -->
 
   <footer class="foot">
