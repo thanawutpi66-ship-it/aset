@@ -53,7 +53,7 @@ function emkScale(name, color, pos, offset = 0) {
     type: 'value', name, position: pos, offset, scale: true,
     nameTextStyle: { color, fontSize: 10, align: pos === 'left' ? 'right' : 'left' },
     axisLabel: { color, fontSize: 10, formatter: (val) => val.toFixed(2) },
-    splitLine: { show: pos === 'left', lineStyle: { color: css('--border') } },
+    splitLine: { show: pos === 'left', lineStyle: { color: 'rgba(56,189,248,0.15)' } },
     axisLine: { show: true, lineStyle: { color } }
   };
 }
@@ -76,7 +76,7 @@ function ebaseOpts(gridOpts = {}) {
     xAxis: { 
       type: 'category', data: [], 
       axisLabel: { color: css('--faint'), fontSize: 10, maxInterval: 300 }, 
-      splitLine: { show: true, lineStyle: { color: css('--border') } }, 
+      splitLine: { show: true, lineStyle: { color: 'rgba(56,189,248,0.15)' } }, 
       axisTick: { show: false } 
     },
     yAxis: []

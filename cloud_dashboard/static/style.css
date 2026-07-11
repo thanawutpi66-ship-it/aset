@@ -165,12 +165,13 @@ b{font-weight:700}
 .mode-opts{display:flex;align-items:center;gap:2px}
 .mode-label{font-size:12px;color:var(--muted);margin-right:6px;white-space:nowrap}
 .mode-btn{
-  background:none;border:none;color:var(--muted);
-  font-size:12.5px;cursor:pointer;padding:4px 12px;border-radius:4px;
+  background:none;border:1px solid var(--border);color:var(--muted);
+  font-size:12.5px;font-weight:600;text-transform:uppercase;
+  cursor:pointer;padding:4px 12px;border-radius:4px;
   transition:color .15s,background .15s;
 }
-.mode-btn.active{color:var(--text);font-weight:600;background:rgba(255,255,255,.06)}
-.mode-btn:hover:not(.active){color:var(--text)}
+.mode-btn.active{color:#fff;background:var(--muted);border-color:var(--muted)}
+.mode-btn:hover:not(.active){color:var(--text);background:rgba(0,0,0,0.05)}
 
 /* ---- main layout --------------------------------------------------------- */
 .main-layout{
@@ -385,10 +386,12 @@ b{font-weight:700}
   border-bottom:1px solid var(--border);flex-shrink:0;
 }
 .an-tcard{
-  flex:1;background:transparent;
+  flex:1;position:relative;overflow:hidden;
+  background:var(--bg2);
   border:1px solid var(--border-2);border-radius:6px;
   padding:8px 10px;display:flex;flex-direction:column;gap:4px;
 }
+.an-tcard::before{content:"";position:absolute;left:0;top:0;right:0;height:3px;background:var(--accent,transparent)}
 .an-tcard-lbl{font-size:9.5px;font-weight:700;color:var(--muted);letter-spacing:.5px}
 .an-tcard-val{font-size:14px;font-weight:700;color:var(--text);display:flex;align-items:baseline;gap:2px}
 
@@ -484,18 +487,19 @@ b{font-weight:700}
 /* ---- telemetry strip — flat band above chart ----------------------------- */
 .telemetry{
   display:grid;grid-template-columns:repeat(6,1fr);
-  gap:0;margin-bottom:0;
+  gap:10px;margin-bottom:0;
+  padding:10px 14px;
   border-left:1px solid var(--border);border-right:1px solid var(--border);
-  background:var(--bg2);
+  background:var(--panel);
 }
 .tcard{
   position:relative;overflow:hidden;
-  background:transparent;
-  border:none;border-right:1px solid var(--border);
-  border-radius:0;padding:10px 14px;box-shadow:none;
+  background:var(--bg2);
+  border:1px solid var(--border-2);
+  border-radius:6px;padding:8px 12px;box-shadow:var(--shadow);
 }
-.tcard:last-child{border-right:none}
-.tcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent,var(--faint))}
+.tcard:last-child{border-right:1px solid var(--border-2)}
+.tcard::before{content:"";position:absolute;left:0;top:0;right:0;height:4px;background:var(--accent,var(--faint))}
 .tk{font-size:10px;font-weight:700;letter-spacing:.7px;color:var(--muted)}
 .tv{display:flex;align-items:baseline;gap:4px;margin-top:4px;
   font-variant-numeric:tabular-nums;font-family:'Consolas','SF Mono',monospace}
