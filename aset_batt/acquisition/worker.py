@@ -102,6 +102,7 @@ class AcquisitionWorker(QObject):
             # _RATE_LOG_EVERY samples so a slow rig is visible without waiting for
             # the whole test to finish.
             _t_scpi = _t_log = _t_est = 0.0
+            _t_sleep_req = _t_sleep_actual = 0.0
             _rate_n = 0
             _rate_t0 = t0
             _RATE_LOG_EVERY = 25
@@ -180,14 +181,25 @@ class AcquisitionWorker(QObject):
                         _t_accounted = _t_scpi + _t_log + _t_est
                         _t_total = max(_t_accounted, _rate_span)
                         _t_other = max(0.0, _t_total - _t_accounted)
+                        # Requested vs actual msleep() duration — isolates real OS/GIL
+                        # scheduling delay from "other" (which otherwise conflates that
+                        # with intentionally-requested sleep time, e.g. when real work
+                        # is well under the target period). A real log showed "other"
+                        # swinging 63ms -> 221ms/sample between consecutive windows
+                        # despite SCPI staying flat (~40ms/sample both times) — this
+                        # pins down whether that swing IS msleep overshoot or something
+                        # else in the loop body entirely.
                         logger.info(
                             "%s worker sampled at %.1f Hz (%d samples / %.1fs, target %.1f Hz) — "
-                            "breakdown: SCPI %.0f%%  estimator %.0f%%  log %.0f%%  other %.0f%%",
+                            "breakdown: SCPI %.0f%%  estimator %.0f%%  log %.0f%%  other %.0f%%  "
+                            "(sleep requested %.0fms actual %.0fms over %d samples)",
                             self.cfg.mode.value, _hz, _rate_n, _rate_span, 1.0 / period,
                             100 * _t_scpi / _t_total, 100 * _t_est / _t_total,
-                            100 * _t_log / _t_total, 100 * _t_other / _t_total)
+                            100 * _t_log / _t_total, 100 * _t_other / _t_total,
+                            _t_sleep_req * 1000, _t_sleep_actual * 1000, _rate_n)
                     _rate_n = 0
                     _t_scpi = _t_log = _t_est = 0.0
+                    _t_sleep_req = _t_sleep_actual = 0.0
                     _rate_t0 = now
 
                 if self.cfg.mode == OperationMode.CC_DISCHARGE and v <= p.cutoff_v:
@@ -205,7 +217,11 @@ class AcquisitionWorker(QObject):
                 # 84-91% — "other" WAS this fixed sleep, not hidden overhead). Same
                 # self-correcting pacing sequences/hppc.py's pulse loop already uses.
                 _iter_elapsed = time.perf_counter() - _iter_t0
-                QThread.msleep(max(0, int((period - _iter_elapsed) * 1000)))
+                _sleep_ms = max(0, int((period - _iter_elapsed) * 1000))
+                _sl0 = time.perf_counter()
+                QThread.msleep(_sleep_ms)
+                _t_sleep_req += _sleep_ms / 1000.0
+                _t_sleep_actual += time.perf_counter() - _sl0
         except Exception as e:
             logger.exception("worker loop error")
             self.alarm.emit("CRITICAL", f"Acquisition fault: {e}")
