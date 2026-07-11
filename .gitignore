@@ -45,6 +45,8 @@ secrets.*
 # Per-machine config (each rig keeps its own hardware ports / simulation_mode).
 # Tracked template is config.example.json — copy it to config.json and edit.
 config.json
+config.json.corrupt
+recovery.json
 
 # Local-only dashboard simulator (personal dev tool, not shared via git)
 dashboard_sim/
