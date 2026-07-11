@@ -489,9 +489,14 @@ function updateChargeStatus(current, meta, summary) {
   let icon = '\u2015';   // ― horizontal bar
   let label = 'REST';
 
-  if (current != null && current > 0.01) {
+  // Sign convention (set in auto_controller.py monitor loop, matches the
+  // estimator/CSV/dashboard everywhere else): discharge = positive,
+  // charge = negative (PSU sourcing current into the pack is i_net = -psu_i).
+  // This was backwards here, so a real CHARGE (negative current) showed as
+  // DISCHARGING while the phase/step tracker correctly said Charge.
+  if (current != null && current < -0.01) {
     state = 'charging'; icon = '\u25B2'; label = 'CHARGING';   // ▲
-  } else if (current != null && current < -0.01) {
+  } else if (current != null && current > 0.01) {
     state = 'discharging'; icon = '\u25BC'; label = 'DISCHARGING'; // ▼
   }
 
