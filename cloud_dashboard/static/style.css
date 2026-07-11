@@ -458,7 +458,7 @@ b{font-weight:700}
   padding:12px 14px;
   display:flex;flex-direction:column;gap:10px;
 }
-.chart-wrap{width:100%;position:relative}
+.chart-wrap{width:100%;position:relative;flex-shrink:0}
 
 /* ---- ICA chart (in Diagnostics tab) -------------------------------------- */
 .ica-title{

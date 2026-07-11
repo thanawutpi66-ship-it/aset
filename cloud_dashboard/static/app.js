@@ -93,13 +93,10 @@ function addWrap(heightPx) {
   const host = $('charts');
   const wrap = document.createElement('div');
   wrap.className = 'chart-wrap';
+  wrap.style.width = '100%';
   wrap.style.height = heightPx + 'px';
-  const container = document.createElement('div');
-  container.style.width = '100%';
-  container.style.height = '100%';
-  wrap.appendChild(container);
   host.appendChild(wrap);
-  return container;
+  return wrap;
 }
 function buildMainCharts() {
   destroyMainCharts();
