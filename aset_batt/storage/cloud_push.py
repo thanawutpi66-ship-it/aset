@@ -160,6 +160,7 @@ def build_payload(csv_path, max_points, cached_analysis=None, config=None, csv_c
     return {
         "meta": {
             "battery": battery_desc,
+            "sn": getattr(bat, "serial_number", ""),
             "csv_name": os.path.basename(csv_path),
             "pushed_at": time.time(),
             **_meta_override,   # phase, test_mode, workflow (set by GUI)
