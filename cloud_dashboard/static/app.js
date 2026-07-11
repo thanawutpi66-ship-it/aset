@@ -51,7 +51,14 @@ function sohColor(v){ return v >= 85 ? css('--ok') : v >= 70 ? css('--warn') : c
 function emkScale(name, color, pos, offset = 0) {
   return {
     type: 'value', name, position: pos, offset, scale: true,
-    nameTextStyle: { color, fontSize: 10, align: pos === 'left' ? 'right' : 'left' },
+    // Vertical axis title, anchored to the middle of the axis — the default
+    // nameLocation:'end' floats the title at the very top of the axis, which
+    // collides with the legend (also anchored top:0) and renders as garbled
+    // overlapping text once there's more than one right-side axis.
+    nameLocation: 'middle',
+    nameGap: pos === 'left' ? 38 : 45,
+    nameRotate: pos === 'left' ? 90 : -90,
+    nameTextStyle: { color, fontSize: 10 },
     axisLabel: { color, fontSize: 10, formatter: (val) => val.toFixed(2) },
     splitLine: { show: pos === 'left', lineStyle: { color: 'rgba(56,189,248,0.15)' } },
     axisLine: { show: true, lineStyle: { color } }
@@ -60,14 +67,31 @@ function emkScale(name, color, pos, offset = 0) {
 function emkSeries(name, color, yAxisIndex, data) {
   return {
     name, type: 'line', data, yAxisIndex,
-    showSymbol: false, itemStyle: { color }, lineStyle: { width: 1.8 }
+    showSymbol: false, itemStyle: { color }, lineStyle: { width: 1.8 },
+    // End-of-line value label + hover-highlight-this-series, mirroring the
+    // ECharts line-race example — dim the other lines instead of a busy
+    // tooltip trying to rank 3 differently-scaled series at once.
+    endLabel: {
+      show: true,
+      formatter: (params) => {
+        // Category-axis line series stores plain numbers (not [x,y] pairs),
+        // so params.value is the y-value itself here.
+        const v = Array.isArray(params.value) ? params.value[params.value.length - 1] : params.value;
+        return v != null && !isNaN(v) ? Number(v).toFixed(2) : '';
+      },
+      color, fontSize: 10,
+    },
+    labelLayout: { moveOverlap: 'shiftY' },
+    emphasis: { focus: 'series' },
   };
 }
 function ebaseOpts(gridOpts = {}) {
   return {
     animation: false,
     tooltip: { trigger: 'axis', backgroundColor: '#0b1220', borderColor: 'rgba(255,255,255,.12)', textStyle: { color: css('--text'), fontSize: 11 } },
-    legend: { textStyle: { color: css('--muted'), fontSize: 11 }, top: 0 },
+    // Bounded to the plot's left/right edges (not centered/full-width) so it
+    // never overlaps the right-side axes' vertical titles above.
+    legend: { textStyle: { color: css('--muted'), fontSize: 11 }, top: 0, left: 55, right: 55 },
     grid: { left: 55, right: 55, top: 35, bottom: 45, ...gridOpts },
     dataZoom: [
       { type: 'slider', bottom: 5, height: 16, borderColor: css('--border'), textStyle: { color: css('--muted') }, handleSize: '80%' },
@@ -81,6 +105,21 @@ function ebaseOpts(gridOpts = {}) {
     },
     yAxis: []
   };
+}
+
+/* ---- responsive resize ----------------------------------------------------
+   ECharts locks in whatever pixel size its container reports at echarts.init()
+   time and never re-measures on its own. If that happens before the flex
+   layout (.chart-area{flex:1}) has settled — very likely on first paint, or
+   whenever this container's size changes afterward (window resize, sidebar
+   content changing height) — the canvas is stuck squished (this was the
+   actual cause of the garbled/overlapping chart reported: it wasn't just the
+   axis-label/legend collision, the plot area itself was rendering at ~100px
+   wide). A ResizeObserver on the shared #charts host catches every case;
+   window 'resize' is kept too as a cheap belt-and-suspenders fallback. */
+function resizeAllCharts() {
+  Object.values(mainCharts).forEach(c => { try { c.resize(); } catch(e){} });
+  if (icaChart) { try { icaChart.resize(); } catch(e){} }
 }
 
 /* ---- build / destroy main charts ----------------------------------------- */
@@ -104,7 +143,9 @@ function buildMainCharts() {
   if (graphMode === 'combined') {
     const el = addWrap(420);
     mainCharts.combined = echarts.init(el);
-    const opts = ebaseOpts({ right: 90 });
+    // Extra right margin: two stacked right-side axes (Current/Temp, offset 0/45)
+    // plus each series' end-of-line value label need room beyond the old 90px.
+    const opts = ebaseOpts({ right: 150 });
     opts.yAxis = [ 
       emkScale('Voltage (V)', vC, 'left'), 
       emkScale('Current (A)', iC, 'right'), 
@@ -140,6 +181,15 @@ function buildMainCharts() {
       mainCharts[axis].setOption(opts);
     });
   }
+  // The DOM mutations above (innerHTML='' then appendChild) happen in the same
+  // synchronous tick as echarts.init() — the browser hasn't run a layout pass
+  // yet, so the container can report a stale/incorrect size (this is what
+  // actually produced the ~100px-wide squished chart, separate from the
+  // axis-label/legend overlap). Deferring one frame guarantees layout has
+  // settled before ECharts measures its container. A parent-size-only
+  // ResizeObserver (see resizeAllCharts) doesn't cover this case — swapping
+  // children doesn't change the parent's own size, so it never fires here.
+  requestAnimationFrame(resizeAllCharts);
 }
 function updateMainCharts(ser) {
   const elapsed = (ser.Elapsed_s || []).map(v => v.toFixed(1));
@@ -171,6 +221,7 @@ function buildIcaChart() {
     series: [{ name: 'dQ/dV', type: 'line', data: [], showSymbol: false, itemStyle: { color: css('--soc') }, lineStyle: { width: 1.5 } }]
   };
   icaChart.setOption(opts);
+  requestAnimationFrame(() => { try { icaChart.resize(); } catch(e){} });
 }
 function updateIcaChart(voltageArr, socArr) {
   if (!icaChart) return;
@@ -486,6 +537,12 @@ function updateTestPanel(meta, summary) {
   }
 
   const phase = (meta.phase || summary.phase || '').toLowerCase();
+  // Used both by the CC/CV step badge just below and the HPPC pulse/relax
+  // description further down — must be declared before either use (this was
+  // previously declared after its first use here, a temporal-dead-zone
+  // ReferenceError that silently aborted every renderPayload() call, so the
+  // charts/analytics/alarm log never updated at all).
+  const subPhase = (meta.sub_phase || '').toLowerCase();
   const activeIdx = PHASE_MAP[phase] ?? -1;
 
   document.querySelectorAll('.tp-step').forEach((el, i) => {
@@ -539,7 +596,6 @@ function updateTestPanel(meta, summary) {
   // loop into one "Test" step; override its description with the same
   // pulse-vs-relax detail (cycle N/M, pulse current) the GUI's own status
   // line shows, so the two stay in lockstep instead of just saying "Test".
-  const subPhase = (meta.sub_phase || '').toLowerCase();
   if (phase === 'test' && $('tpTestDesc')) {
     const cycIdx = num(meta, 'cycle_index'), cycTot = num(meta, 'cycle_total');
     const cycLabel = (cycIdx != null && cycTot != null) ? ` ${cycIdx}/${cycTot}` : '';
@@ -660,6 +716,10 @@ function setGraphWindow(win) {
 function switchLpTab(name) {
   document.querySelectorAll('.lptab').forEach(b => b.classList.toggle('active', b.dataset.lptab === name));
   document.querySelectorAll('.lptab-content').forEach(el => { el.hidden = el.id !== 'lptab-' + name; });
+  // The ICA chart was initialized while its tab was hidden (display:none), so
+  // ECharts may have locked in a zero/stale size — force a re-measure now
+  // that the container is actually visible.
+  if (name === 'diagnostics' && icaChart) { try { icaChart.resize(); } catch(e){} }
 }
 
 /* ---- ECM accordion ------------------------------------------------------- */
@@ -761,4 +821,10 @@ window.addEventListener('DOMContentLoaded', () => {
   fetchSessions();
   load();
   setInterval(load, 5000);
+
+  window.addEventListener('resize', resizeAllCharts);
+  const chartsHost = $('charts');
+  if (chartsHost && window.ResizeObserver) {
+    new ResizeObserver(resizeAllCharts).observe(chartsHost);
+  }
 });
