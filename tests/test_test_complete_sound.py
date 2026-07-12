@@ -142,3 +142,50 @@ def test_char_done_skips_sound_when_safety_triggered():
         mock_sound.assert_not_called()
     finally:
         w.close()
+
+
+def test_clicking_ok_on_the_sequence_done_popup_stops_the_sound():
+    """Nobody wants to sit through the full ~15s clip once they've already
+    seen the result — the popup's OK button must cut it short. Needs a real
+    QWidget parent for QMessageBox(self), so use the full window here rather
+    than the lightweight BaseSequenceMixin Host pattern used elsewhere."""
+    from PySide6.QtWidgets import QMessageBox
+
+    w = _make_window()
+    try:
+        w._current_test_name = "IEC 61960"
+        # _headless (True under offscreen pytest) skips the popup branch
+        # entirely — force it off to actually exercise the QMessageBox path.
+        w._headless = False
+        with patch.object(w, "_play_test_complete_sound"), \
+             patch.object(w, "_stop_test_complete_sound") as mock_stop:
+            w._slot_seq_done("IEC 61960 Sequence Complete", "Grade: A")
+            box = next(x for x in QApplication.topLevelWidgets() if isinstance(x, QMessageBox))
+            box.accept()   # simulate clicking OK
+            mock_stop.assert_called_once()
+            box.close()
+    finally:
+        # _headless=False also flips closeEvent() onto its QMessageBox.question()
+        # confirm branch, which blocks forever unpatched — reset before close().
+        w._headless = True
+        w.close()
+
+
+def test_stop_test_complete_sound_stops_the_player():
+    w = _make_window()
+    try:
+        mock_player = MagicMock()
+        w._done_player = mock_player
+        w._stop_test_complete_sound()
+        mock_player.stop.assert_called_once()
+    finally:
+        w.close()
+
+
+def test_stop_test_complete_sound_is_a_noop_before_anything_ever_played():
+    w = _make_window()
+    try:
+        assert not hasattr(w, "_done_player")
+        w._stop_test_complete_sound()   # must not raise
+    finally:
+        w.close()

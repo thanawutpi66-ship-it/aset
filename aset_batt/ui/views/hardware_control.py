@@ -500,3 +500,15 @@ class HardwareControlMixin:
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f"Failed to play test_complete.wav: {e}")
+
+    def _stop_test_complete_sound(self):
+        """Cut the completion chime short — wired to the sequence-done
+        popup's OK button (see _slot_seq_done) so acknowledging the result
+        doesn't also mean sitting through the rest of the ~15s clip."""
+        player = getattr(self, "_done_player", None)
+        if player is not None:
+            try:
+                player.stop()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to stop test_complete.wav: {e}")

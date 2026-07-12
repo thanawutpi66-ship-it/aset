@@ -345,6 +345,10 @@ class BaseSequenceMixin:
             msg.setIcon(QMessageBox.Icon.Information)
             msg.setStandardButtons(QMessageBox.StandardButton.Ok)
             msg.setWindowModality(Qt.WindowModality.NonModal)
+            # Nobody wants to sit through the full ~15s chime once they've
+            # already seen the result — clicking OK (or closing the box any
+            # other way) cuts it short instead of forcing it to finish.
+            msg.finished.connect(lambda _: self._stop_test_complete_sound())
             msg.show()
 
     def _show_pretest_dialog(self, title: str, plan_lines: list, eta_min: int) -> bool:
