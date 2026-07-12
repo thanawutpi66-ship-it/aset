@@ -729,7 +729,6 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                    profile: "BatteryProfile", is_hppc: bool, soh=None,
                    soc_start=None) -> dict:
     """Run the unified analysis on raw series → the standard results dict."""
-    from aset_batt.acquisition.analytics import Analytics
     v = Analytics.hampel_filter(np.asarray(voltage_v, float))
     ia = Analytics.hampel_filter(np.asarray(current_a, float))
     q = np.asarray(capacity_series, float)
