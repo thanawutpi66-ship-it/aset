@@ -161,7 +161,7 @@ ASET_BATT/
 > **ความจุ/SoH** ต้อง discharge จริงด้วย PEL-3111 เทียบ datasheet/IEC 61960 ·
 > อย่าเขียน "เทียบ DCIR กับ GBM" (มันวัด ACIR คนละนิยาม)
 
-**ข้อจำกัดที่ต้องจำ:** SCPI readback ~5 Hz · MLX90614 ช้า ~240ms · MCB สั่ง trip ด้วย ESP32 ไม่ได้
+**ข้อจำกัดที่ต้องจำ:** SCPI readback ~10 Hz · MLX90614 ช้า ~240ms · MCB สั่ง trip ด้วย ESP32 ไม่ได้
 
 ---
 

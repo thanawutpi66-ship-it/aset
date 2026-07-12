@@ -256,15 +256,17 @@ class TestControlMixin:
                     self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} {_u}')
             self.metric_labels["Temp"][0].setText(f'{row["temp"]:.1f} {self.metric_labels["Temp"][1]}')
         self._set_temp_label_color(row["temp"])
-        # Throttled the same way as _slot_display — see its comment. NOTE: the
-        # 0.2s window matches the worker's own 5 Hz TARGET exactly, so at any
-        # achieved rate AT or BELOW 5 Hz (the common case per the real-rig
-        # breakdown logs) this throttle provides no headroom at all — it fires
-        # on every single sample, not "1 in N". Timed here (logged only when it
-        # actually redraws, at most every ~5s to avoid spamming) to test the
-        # hypothesis that this full-buffer pyqtgraph redraw running on the GUI
-        # thread is the real source of the worker breakdown's "other" bucket
-        # via GIL contention, now that the msleep pacing bug is fixed.
+        # Throttled the same way as _slot_display — see its comment. Target rate
+        # is now DEFAULT_SAMPLE_HZ=10 (battery_model.py), so this 0.2s (5Hz)
+        # redraw window finally provides real headroom — it now fires on roughly
+        # 1 in 2 samples at a healthy achieved rate instead of every single one
+        # (previously the redraw target matched the OLD 5Hz acquisition target
+        # exactly, so this throttle did nothing at all). Redraw cost itself was
+        # ruled out as a GIL-contention source (0.3-1.4ms, negligible) — the real
+        # cause of the worker breakdown's "other" bucket was root-caused to
+        # Windows USB selective suspend, see CLAUDE.md. Still timed here (logged
+        # only when it actually redraws, at most every ~5s) since it's useful
+        # confirmation that redraw cost stays flat as buffers grow.
         import time as _time
         _now_redraw = _time.perf_counter()
         if _now_redraw - self._last_trend_redraw >= 0.2:

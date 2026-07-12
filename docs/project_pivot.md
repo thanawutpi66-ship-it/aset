@@ -13,9 +13,9 @@
 ---
 
 ## 2. ทำไมต้องเปลี่ยน (เหตุผลให้ทีมเข้าใจ)
-1. **75 Hz ผ่าน SCPI ทำไม่ได้จริง** — การอ่าน `MEAS:VOLT?`/`MEAS:CURR?` จาก GW Instek ได้จริง ~5 Hz (ตามที่รายงานเองระบุ) การจะได้ 75 Hz ต้อง **ซื้อ INA226 + ESP32 วัดเอง + contactor** เพิ่ม → **ทีมตัดสินใจไม่ซื้อเพิ่ม**
+1. **75 Hz ผ่าน SCPI ทำไม่ได้จริง** — การอ่าน `MEAS:VOLT?`/`MEAS:CURR?` จาก GW Instek ได้จริง ~10 Hz (ตามที่รายงานเองระบุ) การจะได้ 75 Hz ต้อง **ซื้อ INA226 + ESP32 วัดเอง + contactor** เพิ่ม → **ทีมตัดสินใจไม่ซื้อเพิ่ม**
 2. **อาจารย์เสนอให้ทดสอบแบตปกติ (มอเตอร์ไซค์)** — เล็ก ปลอดภัยกว่ามาก (12V/7Ah), หาแบต **ดี/เสีย หลายลูกได้ง่ายและถูก** (= แก้ปัญหาขาด dataset)
-3. **แนว "คัดเกรด" ไม่ต้องการ 75 Hz** — good/bad ใช้ SOH + DCIR(step) + OCV + CCA ซึ่งวัดที่ 5 Hz ได้หมด → การตัด 75 Hz จึง **สอดคล้องกับทิศใหม่ ไม่ใช่จุดอ่อน**
+3. **แนว "คัดเกรด" ไม่ต้องการ 75 Hz** — good/bad ใช้ SOH + DCIR(step) + OCV + CCA ซึ่งวัดที่ 10 Hz ได้หมด → การตัด 75 Hz จึง **สอดคล้องกับทิศใหม่ ไม่ใช่จุดอ่อน**
 4. ถ้าเป็น **lead-acid → เส้น OCV–SoC ลาดชัน** (ไม่ flat แบบ LFP) → ประมาณ SoC ง่ายและแม่นกว่า
 
 ---
@@ -30,7 +30,7 @@
 - โครงสร้าง grader (rule-based / RandomForest), แนวคิด 1RC
 
 ### ❌ ตัด / ลดเป้า (ต้องแก้ objective + แจ้งอาจารย์)
-- **75 Hz / จับ Ohmic Drop คม (R0 ล้วน)** → ทำไม่ได้ที่ ~5 Hz (สเต็ปแรกมาช้า ~200 ms)
+- **75 Hz / จับ Ohmic Drop คม (R0 ล้วน)** → ทำไม่ได้ที่ ~10 Hz (สเต็ปแรกมาช้า ~100 ms)
 - **Active cutoff เร็วระดับ ms** → เหลือ **software cutoff ผ่าน SCPI (`:INP OFF`/`:OUTP OFF`) + MCB LUMIRA เป็น passive backstop** (ช้ากว่า แต่แบต 12V พลังงานต่ำ รับได้)
 - **ไม่ซื้อ INA226 / DC contactor / isolation / NTC** (ใช้ของเดิม)
 
@@ -53,7 +53,7 @@
 ```
 [แบตมอไซค์ 12V (DUT)]
    ├─ charge ← GW Instek PSW/PSB-1080L (SCPI)
-   ├─ discharge + วัด V/I ← GW Instek PEL-3111 (SCPI, ~5 Hz)
+   ├─ discharge + วัด V/I ← GW Instek PEL-3111 (SCPI, ~10 Hz)
    ├─ อุณหภูมิ ← MLX90614 → ESP32 → UART → PC
    └─ ตัดวงจร ← software (SCPI OFF) + MCB LUMIRA (passive backstop)
                          │

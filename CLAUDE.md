@@ -71,6 +71,27 @@ grep -n "_ensure_logging\|stop_monitor\|_log_sample\|update_display\|_seq_check_
 sequences.py มาแต่ไม่ได้เอา guard พวกนี้มาด้วย ทำให้ estimator ถูกนับซ้ำ + กราฟไม่อัปเดต + แครชเงียบ
 มาหลายเดือนโดยไม่มีใครรู้ (ดู `tests/test_graph_feed_during_sequences.py`)
 
+## เครื่องแล็บ — ต้องปิด USB selective suspend (ตั้งครั้งเดียว)
+
+**อาการ**: sample rate ของ `AcquisitionWorker`/HPPC ตกเป็นช่วงๆ แบบสม่ำเสมอ (~50% ของ block ช้าลง
+เหลือ 4-6Hz จากเป้า 10Hz) ทั้งที่ SCPI/estimator/log/cloud-push ทุกจุดวัดแล้วปกติหมด — เคยไล่จนสงสัย
+GC, Windows timer resolution, GIL contention มาก่อน แต่ตัดออกหมดด้วย instrumentation ใน
+`worker.py`'s per-25-sample breakdown log
+
+**สาเหตุจริง (ยืนยันแล้ว ก.ค. 2026)**: Windows **USB selective suspend** (เปิดเป็นค่า default) พัก
+USB ของ PSU/Load/ESP32-serial adapter เป็นระยะ แล้วต้อง "ปลุก" ทุกครั้งที่ใช้งาน กิน ~1.5-1.7s/ครั้ง —
+เกิดที่ระดับ driver/OS จึงมองไม่เห็นจาก Python-level instrumentation ใดๆ เลย (ดู commit `e9aa3e0`)
+
+**วิธีแก้ (ต้องทำที่เครื่องแล็บทุกเครื่องที่ใช้จริง — เป็น Windows power setting ไม่ใช่โค้ด แก้ในรีโปไม่ได้)**:
+Control Panel → Power Options → เลือก plan ปัจจุบัน → Change plan settings → Change advanced power
+settings → USB settings → USB selective suspend setting → ตั้งเป็น **Disabled** ทั้ง On battery และ
+Plugged in (หรือ `powercfg` ทาง command line) — ทำครั้งเดียวต่อเครื่อง ถ้า reimage/เปลี่ยนเครื่อง/
+Windows update reset ค่า power plan กลับมาเป็น default ต้องทำซ้ำ
+
+`worker.py`'s per-substep breakdown instrumentation (SCPI/estimator/log/emit/safety/flush/ctrl/gc/
+hppc_phase) ยังคงอยู่ในโค้ด (overhead ต่ำ) — เผื่อเครื่องที่ IT policy ไม่ให้ปิด USB selective suspend
+ได้ จะได้มี fallback วินิจฉัยปัญหาเดิมซ้ำได้ทันทีโดยไม่ต้องไล่ใหม่ตั้งแต่ต้น
+
 ## Cloud dashboard
 
 - push เข้า `main` → GitHub Actions build เฉพาะโฟลเดอร์ `cloud_dashboard/` แล้ว deploy ขึ้น Azure App Service อัตโนมัติ (~5 นาที) — ห้ามแก้ workflow ให้ build จาก root เพราะ requirements.txt ที่ root เป็นของ GUI
