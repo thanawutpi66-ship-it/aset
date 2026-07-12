@@ -6,13 +6,14 @@ from aset_batt.hardware.hardware_driver import HardwareController
 def hw():
     config = MagicMock()
     # Mock ConfigManager globally if needed or just pass it
-    controller = HardwareController()
-    controller.psu_inst = MagicMock()
-    controller.load_inst = MagicMock()
-    controller.esp32_inst = MagicMock()
-    controller.rm = MagicMock()
-    controller.is_connected = True
-    return controller
+    with patch('aset_batt.hardware.hardware_driver.pyvisa.ResourceManager'):
+        controller = HardwareController()
+        controller.psu_inst = MagicMock()
+        controller.load_inst = MagicMock()
+        controller.esp32_inst = MagicMock()
+        controller.rm = MagicMock()
+        controller.is_connected = True
+        return controller
 
 def test_hardware_read_measurements(hw):
     hw.psu_inst.query.return_value = "12.0, 5.0"
@@ -49,7 +50,8 @@ def test_hardware_connect_disconnect(hw):
         # Since psu/load were mocked, disconnect should call close
         
 def test_hardware_get_ports():
-    with patch('serial.tools.list_ports.comports') as mock_ports:
+    with patch('serial.tools.list_ports.comports') as mock_ports, \
+         patch('aset_batt.hardware.hardware_driver.pyvisa.ResourceManager'):
         mock_port = MagicMock()
         mock_port.device = "COM3"
         mock_ports.return_value = [mock_port]

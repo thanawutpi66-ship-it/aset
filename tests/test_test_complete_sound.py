@@ -66,7 +66,7 @@ def _real_test_results(soh=82.0):
 def test_play_test_complete_sound_uses_the_distinct_wav_not_the_siren():
     w = _make_window()
     try:
-        with patch("PySide6.QtMultimedia.QMediaPlayer") as mock_cls:
+        with patch("aset_batt.ui.isa101_views.QMediaPlayer") as mock_cls:
             mock_player = mock_cls.return_value
             w._play_test_complete_sound()
             mock_player.setSource.assert_called_once()

@@ -40,6 +40,7 @@ def test_cloud_pusher_failure(mock_urlopen):
         # Should catch error and log, but not crash
         mock_urlopen.assert_called_once()
     
+@patch.dict('os.environ', {'INGEST_TOKEN': 'test_token'})
 def test_cloud_pusher_start_stop():
     pusher = CloudPusher('http://test.com')
     with patch('threading.Thread') as mock_thread:

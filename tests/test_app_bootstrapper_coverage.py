@@ -15,7 +15,8 @@ def test_app_bootstrapper_init_cleanup():
              patch('aset_batt.storage.data_utils.DataHandler') as mock_dh, \
              patch('aset_batt.core.state_estimator.StateEstimator') as mock_est, \
              patch('aset_batt.app.auto_controller.AutoController') as mock_ac, \
-             patch('aset_batt.storage.cloud_push.CloudPusher') as mock_cp:
+             patch('aset_batt.storage.cloud_push.CloudPusher') as mock_cp, \
+             patch('aset_batt.app.app_bootstrapper.ASETLogger') as mock_log:
             
             mock_cm.__name__ = 'ConfigManager'
             mock_hw.__name__ = 'HardwareController'
@@ -23,6 +24,7 @@ def test_app_bootstrapper_init_cleanup():
             mock_est.__name__ = 'StateEstimator'
             mock_ac.__name__ = 'AutoController'
             mock_cp.__name__ = 'CloudPusher'
+            mock_log.__name__ = 'ASETLogger'
             
             bootstrapper.initialize()
             
