@@ -133,9 +133,23 @@ class StateEstimator:
         # to hold continuously for _anchor_min_sustain_s before firing, same pattern
         # as the Peukert sustain gate above; a genuinely full/empty pack stays past
         # the threshold far longer than one glitchy sample, a marginal fluke doesn't.
+        #
+        # A real Quick Scan run (test_QuickScan_20260712_150458.csv) found the
+        # dt-only version of this gate still fires on one sample: Quick Scan/IEC/
+        # Cycle Life discharge loops poll every ~5s, so a single sample's dt alone
+        # (~5s) already clears _anchor_min_sustain_s (3s) — the "hold continuously"
+        # requirement was silently a no-op for any loop slower than the threshold.
+        # SoC hard-reset 24.25%->0.00% on a single ~2mV-over-threshold sample while
+        # the pack kept discharging another 4.6 min to the real voltage cutoff.
+        # Also require a minimum number of consecutive qualifying samples so one
+        # glitchy reading can never satisfy "sustained" by itself, regardless of
+        # how slow the calling loop's cadence is.
         self._full_anchor_sustain_s = 0.0
         self._zero_anchor_sustain_s = 0.0
+        self._full_anchor_count = 0
+        self._zero_anchor_count = 0
         self._anchor_min_sustain_s = 3.0
+        self._anchor_min_samples = 2
 
         # OCV correction
         # monotonic (not time.time()): this is a pure elapsed-duration check ("has N
@@ -524,7 +538,9 @@ class StateEstimator:
             anchor_i_tail = max(0.25, self.rated_capacity * cp.tail_current_c_rate * 1.5)
             full_anchor_cond = (cur < 0 and voltage >= anchor_v_full and abs(cur) <= anchor_i_tail and self.soc < 98.0)
             self._full_anchor_sustain_s = self._full_anchor_sustain_s + dt if full_anchor_cond else 0.0
-            if full_anchor_cond and self._full_anchor_sustain_s >= self._anchor_min_sustain_s:
+            self._full_anchor_count = self._full_anchor_count + 1 if full_anchor_cond else 0
+            if (full_anchor_cond and self._full_anchor_sustain_s >= self._anchor_min_sustain_s
+                    and self._full_anchor_count >= self._anchor_min_samples):
                 logger.info("Endpoint anchor -> 100%%: %.3fV (>=%.3f) I=%.3fA tail=%.3fA", voltage, anchor_v_full, cur, anchor_i_tail)
                 self._reset_to_soc(100.0, start_settle_window=True)
                 self._cap_counting = True
@@ -537,7 +553,9 @@ class StateEstimator:
         ocv_est = voltage + cur * self.rin if cur > 0 else voltage
         zero_anchor_cond = (cur > 0 and cur <= anchor_i_max and ocv_est <= anchor_v_empty * 1.01 and self.soc > 2.0)
         self._zero_anchor_sustain_s = self._zero_anchor_sustain_s + dt if zero_anchor_cond else 0.0
-        if zero_anchor_cond and self._zero_anchor_sustain_s >= self._anchor_min_sustain_s:
+        self._zero_anchor_count = self._zero_anchor_count + 1 if zero_anchor_cond else 0
+        if (zero_anchor_cond and self._zero_anchor_sustain_s >= self._anchor_min_sustain_s
+                and self._zero_anchor_count >= self._anchor_min_samples):
             logger.info("Endpoint anchor -> 0%%: est.OCV %.3fV (<=%.3f) meas=%.3fV I=%.3fA", ocv_est, anchor_v_empty, voltage, cur)
             if self._cap_counting and self._cap_counter_ah > 0.30 * self.rated_capacity:
                 self.measured_capacity_ah = self._cap_counter_ah
