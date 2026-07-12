@@ -180,7 +180,7 @@ class QuickScanMixin:
         try:
             # ── Phase 0: OCV ────────────────────────────────────────────────
             self.sig_qs_workflow.emit(0, "active")
-            status("QUICK: ปิดอุปกรณ์, อ่าน OCV...")
+            status("QUICK: ปิดอุปกรณ์, รอ OCV settle...")
             self.hw.psu_off()
             self.hw.load_off()
             # See the comment in _auto_sequence_thread — log from PREPARE so the CSV
@@ -188,15 +188,29 @@ class QuickScanMixin:
             # once start_charge()/start_monitor() implicitly opens one, and
             # _quality_flags always flags "no clear rest before load").
             self.controller._ensure_logging(label="QuickScan")
-            if not self._seq_sleep(5.0):
-                return
 
-            soc = self.controller.calibrate_from_ocv()
-            v, _, _ = self.hw.read_vi()
-            self.sig_alarm.emit(f"[QUICK] OCV: {v:.3f} V → SoC {soc:.1f}%")
+            def _ocv_progress(elapsed, v, dv_mv, st):
+                dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
+                status(f"QUICK PREPARE: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+                self.controller._log_sample(v, 0.0)
+                self.update_display(v, 0.0, self.controller.estimator.soc,
+                                    self.controller.estimator.rin)
+
+            # A one-shot instant read here (old behavior: 5s sleep then a raw
+            # calibrate_from_ocv()) could catch the pack still polarized from
+            # whatever happened right before this test started — use the same
+            # ΔV/Δt settle-checked anchor every other sequence's PREPARE uses.
+            soc, v, ocv_result = self.controller.calibrate_from_ocv_stable(
+                on_progress=_ocv_progress,
+                cancel_check=self._seq_running.is_set,
+            )
+            if not self._seq_running.is_set():
+                return
+            flag = "✓ settled" if ocv_result == "settled" else "⚠ timeout"
+            self.sig_alarm.emit(f"[QUICK] OCV: {v:.3f} V → SoC {soc:.1f}% ({flag})")
             self.sig_qs_workflow.emit(0, "done")
 
-            # ── Phase 1: REST 5 นาที ─────────────────────────────────────
+            # ── Phase 1: REST 5 นาที (fixed protocol minimum) ─────────────
             self.sig_qs_workflow.emit(1, "active")
             _rest_total = 5 * 60
             t_end = _t.time() + _rest_total
@@ -221,20 +235,29 @@ class QuickScanMixin:
             self.sig_phase_progress.emit(0, 0)
             if not self._seq_running.is_set():
                 return
-            soc2 = self._hw_retry(self.controller.calibrate_from_ocv)
-            v2, _, _ = self._hw_retry(self.hw.read_vi)
-            self.sig_alarm.emit(f"[QUICK] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}%")
-            # Log THIS reading as the pre-edge rest sample, not just use it for the
-            # alarm text — the REST loop above logs every 10s, so its last logged
-            # sample could be up to 10s stale by the time set_load() below actually
-            # fires the edge. identify_dcir()'s single-step method needs the
-            # pre-edge reference within _DCIR_MAX_STEP_DT (0.5s) of the true
-            # transition, same as the immediate post-edge sample already captured
-            # right after set_load() below — without this, a real run showed
-            # identify_dcir() dropping the ONLY edge in the whole record as stale
-            # (n_stale=1, measured=False), so DCIR fell back to the profile
-            # baseline for the entire test with zero real resistance measurement.
-            self.controller._log_sample(v2, 0.0)
+
+            # Re-anchor with a real ΔV/Δt settle-check (not an instant read) before
+            # the discharge edge below — the fixed 5-min timer above is a protocol
+            # minimum, not proof of settling, same reasoning as every other
+            # sequence's post-rest anchor. The on_progress callback logs each tick
+            # (including the final settled/timeout sample) as a near-zero-current
+            # rest sample, which doubles as the pre-edge reference identify_dcir()
+            # needs within its 0.5s staleness gate before set_load() fires below.
+            def _post_rest_progress(elapsed, v, dv_mv, st):
+                dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
+                status(f"QUICK REST: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+                self.controller._log_sample(v, 0.0)
+                self.update_display(v, 0.0, self.controller.estimator.soc,
+                                    self.controller.estimator.rin)
+
+            soc2, v2, ocv_result2 = self.controller.calibrate_from_ocv_stable(
+                on_progress=_post_rest_progress,
+                cancel_check=self._seq_running.is_set,
+            )
+            if not self._seq_running.is_set():
+                return
+            flag2 = "✓ settled" if ocv_result2 == "settled" else "⚠ timeout"
+            self.sig_alarm.emit(f"[QUICK] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}% ({flag2})")
             self.sig_qs_workflow.emit(1, "done")
 
             # ── Phase 2: DISCHARGE 1C ────────────────────────────────────
@@ -251,6 +274,7 @@ class QuickScanMixin:
             last_log = _t.perf_counter()
             _dis_t0 = _t.perf_counter()
             _dis_est = int(rated / max(i_dis, 0.01) * 3600)
+            _cutoff_confirm_n = 0
             # Same low-latency edge sample as _auto_sequence_thread's IEC discharge —
             # this loop's own pacing (~5s) is 10x identify_dcir()'s staleness gate
             # (0.5s), so every discharge-start edge was guaranteed dropped as stale.
@@ -281,7 +305,10 @@ class QuickScanMixin:
                     self.sig_phase_progress.emit(elapsed_d, _dis_est)
                     if not self._seq_check_otp(temp3):
                         break
-                    if v3 <= pack_min:
+                    # Same debounce as worker.py's CC_DISCHARGE cutoff check — 5
+                    # consecutive at/below-cutoff samples, not just one.
+                    _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v3 <= pack_min else 0
+                    if _cutoff_confirm_n >= 5:
                         break
                 except Exception as exc:
                     self.sig_alarm.emit(f"[QUICK] read error: {exc}")
@@ -292,11 +319,21 @@ class QuickScanMixin:
             self.sig_phase_progress.emit(0, 0)
             if not self._seq_running.is_set():
                 return
-            # รอ 30 วิให้แรงดันนิ่ง แล้ว re-anchor SoC
-            status("QUICK: รอ 30 วิ OCV settle...")
-            if not self._seq_sleep(30.0):
+            # รอแรงดันนิ่งจริง (ΔV/Δt) แล้ว re-anchor SoC — เดิมรอ fixed 30s แล้วอ่านค่า
+            # ทันที ซึ่งสั้นกว่า _OCV_SETTLE ของ LiFePO4/LeadAcid (300s min_rest) มาก
+            def _post_dis_progress(elapsed, v, dv_mv, st):
+                dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
+                status(f"QUICK: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+                self.controller._log_sample(v, 0.0)
+                self.update_display(v, 0.0, self.controller.estimator.soc,
+                                    self.controller.estimator.rin)
+
+            self.controller.calibrate_from_ocv_stable(
+                on_progress=_post_dis_progress,
+                cancel_check=self._seq_running.is_set,
+            )
+            if not self._seq_running.is_set():
                 return
-            self.controller.calibrate_from_ocv()
             self.sig_qs_workflow.emit(2, "done")
             self.sig_alarm.emit("[QUICK] Discharge complete (1C) — Peukert correction applied in analysis")
 

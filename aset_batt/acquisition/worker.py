@@ -41,6 +41,12 @@ class AcquisitionWorker(QObject):
     # confirmation at all.
     _CV_TAIL_CONFIRM_SAMPLES = 5
 
+    # Same reasoning, for CC_DISCHARGE's cutoff-voltage test-complete check below —
+    # a single sample at/below cutoff_v (ADC noise, a brief sag under a load step)
+    # used to end the test immediately with no confirmation, same bug class as the
+    # CV tail-current check above and the estimator's endpoint-anchor sustain gate.
+    _CUTOFF_CONFIRM_SAMPLES = 5
+
     def __init__(self, backend, cfg: TestConfig, csv_path: str, estimator=None):
         super().__init__()
         self.backend = backend
@@ -115,6 +121,7 @@ class AcquisitionWorker(QObject):
             _rate_n = 0
             _rate_t0 = t0
             _cv_tail_confirm_n = 0
+            _cutoff_confirm_n = 0
 
             # Python's cyclic GC fires transparently on allocation-count thresholds
             # (not time), runs INLINE holding the GIL, and can be triggered by ANY
@@ -293,9 +300,15 @@ class AcquisitionWorker(QObject):
                     _t_gc_accum[0] = 0.0
                     _rate_t0 = now
 
-                if self.cfg.mode == OperationMode.CC_DISCHARGE and v <= p.cutoff_v:
-                    self.alarm.emit("INFO", "Discharge reached cut-off voltage — test complete")
-                    break
+                if self.cfg.mode == OperationMode.CC_DISCHARGE:
+                    # Require _CUTOFF_CONFIRM_SAMPLES consecutive samples at/below
+                    # cutoff before ending — same debounce as the CV tail-current
+                    # check above, guarding against a single noisy/sagging sample
+                    # ending the test early and understating measured capacity.
+                    _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v <= p.cutoff_v else 0
+                    if _cutoff_confirm_n >= self._CUTOFF_CONFIRM_SAMPLES:
+                        self.alarm.emit("INFO", "Discharge reached cut-off voltage — test complete")
+                        break
                 if self.cfg.mode == OperationMode.CC_CV_CHARGE:
                     # abs(i), not i: i is discharge-positive (see the sign-flip comment
                     # above), so i is NEGATIVE the entire time this mode is genuinely

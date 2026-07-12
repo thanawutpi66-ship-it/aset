@@ -333,6 +333,7 @@ class CycleLifeMixin:
                 _dis_est = int(rated / max(i_dis, 0.01) * 3600)
                 ah_acc = 0.0
                 last_log = _t.perf_counter()
+                _cutoff_confirm_n = 0
                 # Same low-latency edge sample as _auto_sequence_thread's IEC discharge —
                 # this loop's own pacing (~5s) is 10x identify_dcir()'s staleness gate.
                 try:
@@ -377,7 +378,10 @@ class CycleLifeMixin:
                         status(f"CYCLE {cyc}/{n_cyc} DIS: {v_d:.3f} V  "
                                f"{ah_acc:.3f} Ah  SoC ~{max(0, 100-100*ah_acc/rated):.0f}%")
                         self.sig_phase_progress.emit(elapsed_d, _dis_est)
-                        if v_d <= pack_min:
+                        # Same debounce as worker.py's CC_DISCHARGE cutoff check — 5
+                        # consecutive at/below-cutoff samples, not just one.
+                        _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v_d <= pack_min else 0
+                        if _cutoff_confirm_n >= 5:
                             break
                     except Exception as exc:
                         self.sig_alarm.emit(f"[CYCLE] read error: {exc}")

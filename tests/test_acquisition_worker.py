@@ -64,15 +64,21 @@ def _collect_signals(worker):
 
 class TestHappyPath(unittest.TestCase):
     def test_discharge_loop_runs_to_cutoff_and_emits_telemetry(self):
+        """Requires _CUTOFF_CONFIRM_SAMPLES consecutive at/below-cutoff samples,
+        not just one — same debounce as CC_CV_CHARGE's tail-current check below:
+        a single noisy/sagging sample used to end the test immediately with no
+        confirmation, understating measured capacity."""
         profile = _make_profile(cutoff_v=10.0)
         worker, backend, csv_path = _make_worker(profile)
         telemetry, alarms, states, finished = _collect_signals(worker)
 
-        backend.step.side_effect = [(12.0, 1.0), (11.0, 1.0), (9.5, 1.0)]
+        n_confirm = worker._CUTOFF_CONFIRM_SAMPLES
+        backend.step.side_effect = [(12.0, 1.0), (11.0, 1.0)] + [(9.5, 1.0)] * n_confirm
 
         worker.run()
 
-        self.assertEqual(len(telemetry), 3)
+        n_samples = 2 + n_confirm
+        self.assertEqual(len(telemetry), n_samples)
         self.assertAlmostEqual(telemetry[-1]["v"], 9.5)
         self.assertIn("RUNNING", states)
         self.assertEqual(states[-1], "STOPPED")
@@ -82,7 +88,7 @@ class TestHappyPath(unittest.TestCase):
 
         with open(csv_path, encoding="utf-8") as f:
             rows = f.readlines()
-        self.assertEqual(len(rows), 4)  # header + 3 samples
+        self.assertEqual(len(rows), n_samples + 1)  # header + samples
 
     def test_current_sign_normalized_to_discharge_positive(self):
         """backend.step returns (v, i_raw) with charge +/discharge − per its own
