@@ -49,13 +49,23 @@ def profile_from_config(config) -> BatteryProfile:
     except Exception:
         rin = 0.03
     otp = float(s.get("max_temperature", 55.0))
-    # Peukert exponent by chemistry: lead-acid capacity is markedly rate-dependent,
-    # lithium almost not. Resolved through the canonical chemistry registry (same
-    # as _cca_cutoff_v below) rather than an ad-hoc substring match on the raw
-    # battery_type string, so a chemistry alias not containing "lead" (e.g. a
-    # future product-family name) isn't silently misclassified as lithium.
+    # Peukert exponent: read from the SAME chemistry registry the live estimator
+    # uses (aset_batt.core.battery_profiles), with a product-specific override if
+    # one is set — NOT a hardcoded 1.20/1.05 split. That hardcode used to silently
+    # disagree with the registry's own LeadAcid default (1.10, "AGM 1.05-1.15;
+    # flooded 1.2-1.6" — see battery_profiles.json's own comment): live SoC used
+    # 1.10 but this post-hoc SoH/grading path used 1.20, a real AGM product's SoH
+    # differing by >13 points (80.0% vs 93.4%, potentially the difference between
+    # grade A and B) depending purely on which code path computed it.
     from aset_batt.core import battery_profiles
-    peukert = 1.20 if battery_profiles.get_chemistry(b.battery_type).name == "LeadAcid" else 1.05
+    peukert = battery_profiles.get_chemistry(b.battery_type).peukert_k
+    try:
+        prod = battery_profiles.get_product(getattr(b, "product_name", "") or "")
+        if prod and getattr(prod, "peukert_k", 0.0) > 0.0:
+            peukert = prod.peukert_k
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     # A characterised specimen's R0/R1 (see aset_batt.core.battery_profiles.
     # save_measured_params) overrides the chemistry-generic base_rin/60-40 split for

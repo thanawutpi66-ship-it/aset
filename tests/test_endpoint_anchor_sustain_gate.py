@@ -53,8 +53,12 @@ class TestZeroAnchorSustainGate(unittest.TestCase):
 
     def test_sustained_genuine_empty_condition_still_fires(self):
         """The gate must not block a REAL empty condition — just require it to
-        persist past a single noisy sample."""
+        persist past a single noisy sample. Requires r0 to be confirmed
+        calibrated (see test_zero_anchor_requires_calibration.py for the
+        uncalibrated case) — this test is about the sustain mechanism
+        specifically, not calibration."""
         e = self._est()
+        e._r0_calibrated = True
         e.rin = 0.06923
         # v retuned 11.39->11.36 after the LeadAcid Ea/R 4000->2200 K correction:
         # update() recomputes self.rin each call ((R0+R1)*temp_mult), and the
@@ -92,8 +96,13 @@ class TestZeroAnchorSustainGate(unittest.TestCase):
         """The extra consecutive-sample requirement must not block a genuinely
         sustained empty condition just because the loop is slow — two ~5s-cadence
         samples in a row (>= _anchor_min_samples, and >= _anchor_min_sustain_s of
-        real elapsed time) should still anchor."""
+        real elapsed time) should still anchor. Requires r0 to be confirmed
+        calibrated (see test_zero_anchor_requires_calibration.py for the
+        uncalibrated case — the real regression this scenario's numbers came
+        from was actually an UNCALIBRATED run, so two consecutive samples
+        alone must NOT anchor unless calibrated)."""
         e = self._est()
+        e._r0_calibrated = True
         e.rin = 0.0804
         v, i = 11.34, 5.0
         for _ in range(2):
@@ -105,6 +114,7 @@ class TestZeroAnchorSustainGate(unittest.TestCase):
         """A brief dip below threshold followed by recovery shouldn't accumulate
         toward firing — mirrors the Peukert sustain gate's reset-on-rest behavior."""
         e = self._est()
+        e._r0_calibrated = True
         e.rin = 0.06923
         # v retuned 11.39->11.36 after the LeadAcid Ea/R 4000->2200 K correction:
         # update() recomputes self.rin each call ((R0+R1)*temp_mult), and the

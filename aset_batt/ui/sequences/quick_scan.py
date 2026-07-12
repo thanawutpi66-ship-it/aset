@@ -224,6 +224,17 @@ class QuickScanMixin:
             soc2 = self._hw_retry(self.controller.calibrate_from_ocv)
             v2, _, _ = self._hw_retry(self.hw.read_vi)
             self.sig_alarm.emit(f"[QUICK] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}%")
+            # Log THIS reading as the pre-edge rest sample, not just use it for the
+            # alarm text — the REST loop above logs every 10s, so its last logged
+            # sample could be up to 10s stale by the time set_load() below actually
+            # fires the edge. identify_dcir()'s single-step method needs the
+            # pre-edge reference within _DCIR_MAX_STEP_DT (0.5s) of the true
+            # transition, same as the immediate post-edge sample already captured
+            # right after set_load() below — without this, a real run showed
+            # identify_dcir() dropping the ONLY edge in the whole record as stale
+            # (n_stale=1, measured=False), so DCIR fell back to the profile
+            # baseline for the entire test with zero real resistance measurement.
+            self.controller._log_sample(v2, 0.0)
             self.sig_qs_workflow.emit(1, "done")
 
             # ── Phase 2: DISCHARGE 1C ────────────────────────────────────

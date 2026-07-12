@@ -315,6 +315,18 @@ class CycleLifeMixin:
                 self.sig_cycle_wf.emit(2, "active")
                 status(f"CYCLE {cyc}/{n_cyc}: ดิสชาร์จ {i_dis:.3f} A ({c_di}C)...")
                 self.controller._ensure_logging(label="CycleLife")
+                # Fresh pre-edge reference right before the edge, not the REST loop's
+                # own last sample (up to 10s stale, its own _seq_sleep(10.0) pacing) —
+                # same fix as quick_scan.py/iec_capacity.py's equivalent transition.
+                # identify_dcir() needs the pre-edge reference within
+                # _DCIR_MAX_STEP_DT (0.5s) of the true transition, same as the
+                # immediate post-edge sample already captured right after set_load().
+                try:
+                    v_pre, i_pre, _ = self.hw.read_vi()
+                    self.controller._log_sample(v_pre, i_pre)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 self.hw.set_load(True, str(i_dis))
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
                 _dis_t0 = _t.perf_counter()

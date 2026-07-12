@@ -550,8 +550,27 @@ class StateEstimator:
         # 0% anchor
         anchor_v_empty = self.battery_model.get_ocv_from_soc(0.0)
         anchor_i_max = self.rated_capacity * 2.0
+        # The IR-compensated estimate below (ocv_est = voltage + cur*self.rin) is
+        # only as trustworthy as self.rin. Before any real R0 fit lands, self.rin
+        # is _ekf_rc_defaults()'s generic pre-fit guess for the chemistry, not a
+        # value fitted to THIS pack. A real Quick Scan run
+        # (test_QuickScan_20260712_150458.csv, rin_calibrated=False the entire
+        # run) under-compensated the IR drop enough to cross the 1% margin and
+        # hard-reset SoC 24.25%->0.00% while the pack kept discharging another
+        # 4.6 min to its real voltage cutoff — and the bias was systematic (not a
+        # single noisy glitch), so it held past the existing _anchor_min_samples
+        # consecutive-sample requirement too. This mirrors the exact "don't trust
+        # a voltage-based correction while actively loaded and uncalibrated" rule
+        # _fuse_ekf already applies to its own OCV update (see
+        # uncalibrated_and_active there) — the loaded zero-anchor has the
+        # identical failure mode and needs the identical guard. The anchor
+        # becomes available again as soon as real R0/ECM fitting lands (now
+        # reachable earlier too — see the pre-edge sample fix in
+        # quick_scan.py/iec_capacity.py/cycle_life.py).
+        r0_confirmed = self._r0_calibrated or self._ecm_calibrated
         ocv_est = voltage + cur * self.rin if cur > 0 else voltage
-        zero_anchor_cond = (cur > 0 and cur <= anchor_i_max and ocv_est <= anchor_v_empty * 1.01 and self.soc > 2.0)
+        zero_anchor_cond = (r0_confirmed and cur > 0 and cur <= anchor_i_max
+                             and ocv_est <= anchor_v_empty * 1.01 and self.soc > 2.0)
         self._zero_anchor_sustain_s = self._zero_anchor_sustain_s + dt if zero_anchor_cond else 0.0
         self._zero_anchor_count = self._zero_anchor_count + 1 if zero_anchor_cond else 0
         if (zero_anchor_cond and self._zero_anchor_sustain_s >= self._anchor_min_sustain_s

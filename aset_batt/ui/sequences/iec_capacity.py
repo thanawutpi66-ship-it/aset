@@ -349,6 +349,14 @@ class IecCapacityMixin:
                 soc2 = self._hw_retry(self.controller.calibrate_from_ocv)
                 v2, _, _ = self._hw_retry(self.hw.read_vi)
                 self.sig_alarm.emit(f"[AUTO] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}%")
+                # Log THIS reading as the pre-edge rest sample — the REST loop above
+                # logs every 10s, so its last logged sample could be up to 10s stale
+                # by the time the discharge edge actually fires below. Same fix as
+                # quick_scan.py's equivalent transition (see its comment) —
+                # identify_dcir() needs a pre-edge reference within
+                # _DCIR_MAX_STEP_DT (0.5s) of the true transition, same as the
+                # immediate post-edge sample already captured after set_load().
+                self.controller._log_sample(v2, 0.0)
                 self.sig_workflow.emit(2, "done")
 
             # ── PHASE 3: DISCHARGE TEST (IEC — C-rate จาก cb_test_crate) ───────
