@@ -116,6 +116,16 @@ def build_results_html(results: dict) -> str:
         parts.append(row("DCIR (V–I slope)", f"{slope:.2f}", "mΩ",
                          f"R² {results['dcir_slope_r2']:.3f}, OCV-cancelled"))
 
+    # ── R@fixed timepoints (FreedomCAR/SAE J537-style: 0.1s~ohmic, 1s~+charge-
+    # transfer, 10s~+diffusion, closest to sustained-load/cranking resistance) ──
+    tps = results.get("dcir_timepoints_mohm") or {}
+    if tps:
+        parts.append(hdr("R @ fixed post-edge timepoints (norm. 25 °C)"))
+        for tp in sorted(tps):
+            d = tps[tp]
+            parts.append(row(f"R @ {tp:g}s", f"{d['r_mohm']:.2f} ± {d['std_mohm']:.2f}", "mΩ",
+                             f"n={d['n_steps']} step{'s' if d['n_steps'] != 1 else ''}"))
+
     # ── ECM (HPPC only) ──
     if results.get("ecm_identified"):
         r2 = results.get("ecm_r2", 0.0)

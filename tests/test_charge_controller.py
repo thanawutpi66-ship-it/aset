@@ -51,13 +51,27 @@ class TestDecideThreeStage(unittest.TestCase):
         self.assertEqual(d.stage, cc.ABSORPTION)
 
     def test_absorption_to_float_on_tail_current(self):
-        d = decide(self.p, cc.ABSORPTION, v_pack=14.4, i_charge=0.10, t_in_stage=60)
+        # tail_confirm_n must reach p.tail_confirm_samples before FLOAT commits —
+        # see decide()'s docstring for why a single low-current sample used to be
+        # enough to end the charge prematurely.
+        d = decide(self.p, cc.ABSORPTION, v_pack=14.4, i_charge=0.10, t_in_stage=60,
+                   tail_confirm_n=self.p.tail_confirm_samples)
         self.assertEqual(d.stage, cc.FLOAT)
         self.assertAlmostEqual(d.set_voltage, 13.65, places=2)
 
     def test_absorption_holds_while_current_high(self):
-        d = decide(self.p, cc.ABSORPTION, v_pack=14.4, i_charge=0.5, t_in_stage=60)
+        d = decide(self.p, cc.ABSORPTION, v_pack=14.4, i_charge=0.5, t_in_stage=60,
+                   tail_confirm_n=self.p.tail_confirm_samples)
         self.assertEqual(d.stage, cc.ABSORPTION)
+
+    def test_absorption_holds_on_single_low_sample_not_yet_confirmed(self):
+        """A single sample below tail_current_a (tail_confirm_n=1, below the
+        confirm threshold) must NOT end the charge — a real risk this
+        distinguishes from test_absorption_to_float_on_tail_current above."""
+        d = decide(self.p, cc.ABSORPTION, v_pack=14.4, i_charge=0.10, t_in_stage=60,
+                   tail_confirm_n=1)
+        self.assertEqual(d.stage, cc.ABSORPTION,
+                         "one low-current sample must not end the charge")
 
     def test_float_is_done(self):
         d = decide(self.p, cc.FLOAT, v_pack=13.65, i_charge=0.02, t_in_stage=5)
@@ -80,10 +94,17 @@ class TestDecideCCCV(unittest.TestCase):
         self.assertEqual(d.stage, cc.CV)
 
     def test_cv_to_done_cuts_output(self):
-        d = decide(self.p, cc.CV, v_pack=14.6, i_charge=0.3, t_in_stage=30)
+        d = decide(self.p, cc.CV, v_pack=14.6, i_charge=0.3, t_in_stage=30,
+                   tail_confirm_n=self.p.tail_confirm_samples)
         self.assertEqual(d.stage, cc.DONE)
         self.assertTrue(d.done)
         self.assertFalse(d.output_on)   # lithium ตัดไฟเมื่อเต็ม (ไม่ float)
+
+    def test_cv_holds_on_single_low_sample_not_yet_confirmed(self):
+        d = decide(self.p, cc.CV, v_pack=14.6, i_charge=0.3, t_in_stage=30,
+                   tail_confirm_n=1)
+        self.assertEqual(d.stage, cc.CV,
+                         "one low-current sample must not end the charge")
 
 
 class _FakeHW:
@@ -110,6 +131,29 @@ class _FakeHW:
         self.off = True
 
 
+class _ScriptedHW:
+    """Returns a pre-scripted sequence of (v, i) readings regardless of what
+    set_psu_cccv commands — for precisely testing ChargeController.run()'s
+    tail_confirm_n bookkeeping (does it reset on recovery?) end to end,
+    instead of relying on _FakeHW's organic taper timing."""
+    def __init__(self, readings):
+        self.is_connected = True
+        self._readings = list(readings)
+        self._i = 0
+        self.off = False
+
+    def read_vi(self):
+        v, i = self._readings[min(self._i, len(self._readings) - 1)]
+        self._i += 1
+        return (v, i, 0.0)
+
+    def set_psu_cccv(self, volt, curr):
+        pass
+
+    def psu_off(self):
+        self.off = True
+
+
 class TestRunLoop(unittest.TestCase):
     def test_lead_acid_run_reaches_float(self):
         m = BatteryModel("LeadAcid", 2.0, series_cells=6)
@@ -125,6 +169,29 @@ class TestRunLoop(unittest.TestCase):
         final = ctrl.run()
         self.assertEqual(final, cc.DONE)
         self.assertTrue(hw.off)   # PSU ถูกปิดเมื่อจบ
+
+    def test_run_loop_resets_confirm_counter_on_current_recovery(self):
+        """A single low-current sample (noise/regulation blip) followed by
+        recovery, THEN a real sustained taper, must NOT end the charge at the
+        glitch — proves ChargeController.run()'s own tail_confirm_n bookkeeping
+        (not just decide()'s pure logic) resets on recovery rather than just
+        accumulating forever."""
+        m = BatteryModel("LeadAcid", 2.0, series_cells=6)
+        p = ChargeParams.from_config(m.charge_profile, 6, 7.0)
+        tail, n = p.tail_current_a, p.tail_confirm_samples
+        readings = ([(14.4, 0.7)] * 2                    # settled in absorption
+                    + [(14.4, tail * 0.5)]                # ONE glitch sample (< tail)
+                    + [(14.4, 0.7)] * 3                    # recovers -> counter must reset
+                    + [(14.4, tail * 0.5)] * (n + 2))       # now a REAL sustained taper
+        hw = _ScriptedHW(readings)
+        stages_seen = []
+        ctrl = ChargeController(hw, _cfg(6, 7.0), m,
+                                on_update=lambda stage, v, i, note: stages_seen.append(stage),
+                                poll_interval_s=0)
+        final = ctrl.run(float_hold_s=0)
+        self.assertEqual(final, cc.FLOAT)
+        self.assertEqual(stages_seen[2], cc.ABSORPTION,
+                         "a single low-current sample must not have ended the charge yet")
 
 
 if __name__ == "__main__":

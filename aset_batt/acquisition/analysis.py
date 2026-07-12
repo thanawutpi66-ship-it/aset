@@ -326,6 +326,91 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=
     return float(np.median(arr)), float(np.std(arr)), int(arr.size), True, n_stale, n_implausible
 
 
+# FreedomCAR/SAE J537-style fixed post-edge timepoints: R@0.1s is closest to pure
+# ohmic (R0), R@1s adds fast charge-transfer, R@10s adds diffusion and is closest
+# to sustained-load/cranking-relevant resistance — three numbers with an
+# unambiguous, standard meaning, comparable across labs/rigs/sample-rates,
+# instead of identify_dcir()'s single "whatever the first post-edge sample
+# happened to catch" value (rate-dependent: ~100ms at 10Hz, ~200ms at 5Hz).
+_DCIR_TIMEPOINTS_S = (0.1, 1.0, 10.0)
+
+
+def identify_dcir_at_timepoints(current_a, voltage_v, temp_c, profile: BatteryProfile,
+                                 time_s, timepoints_s=_DCIR_TIMEPOINTS_S) -> dict:
+    """R = |ΔV/ΔI| at fixed post-edge timepoints, additive alongside identify_dcir()
+    (does not replace it — same step detection over current edges, same
+    temperature normalisation, plausibility band, and per-timepoint MAD outlier
+    rejection across steps).
+
+    Requires ``time_s`` (elapsed seconds per sample); returns ``{}`` if not usable.
+    A timepoint with no step landing close enough to it (e.g. the rig's rate is
+    too slow, or a pulse is shorter than the timepoint) is simply omitted rather
+    than reported from a stale/wrong sample.
+
+    Returns ``{timepoint_s: (r_ohm_25C, std_ohm, n_steps)}``.
+    """
+    if time_s is None:
+        return {}
+    ia = np.asarray(current_a, float)
+    va = np.asarray(voltage_v, float)
+    tc = np.asarray(temp_c, float)
+    ta = np.asarray(time_s, float)
+    if ia.size < 4 or ta.size != ia.size:
+        return {}
+    temp_mult = _dcir_temp_normalizer(profile)
+    di = np.diff(ia)
+    thr = max(1e-3, 0.20 * float(np.max(np.abs(ia))))
+    r_base = float(profile.internal_r)
+
+    per_tp_vals = {tp: [] for tp in timepoints_s}
+    k = 0
+    while k < di.size:
+        if abs(di[k]) > thr:
+            v_before = float(np.median(va[max(0, k - 2):k + 1]))
+            # t_edge references the FIRST post-edge sample (ta[k+1]), not the last
+            # pre-edge one (ta[k]) — the new current level is only actually present
+            # from ta[k+1] onward, so "t=0" of the step response starts there.
+            # Using ta[k] made "R@0.1s" land on ta[k+1] itself (t=0, not t=0.1) for
+            # any dt<=0.1s rig, silently reporting pure R0 mislabeled as R@0.1s.
+            t_edge = float(ta[k + 1])
+            i_step = float(ia[k + 1])
+            di_step = float(di[k])
+            # Plateau end: the next real edge (current settles back down/off), or
+            # end of record — timepoints are only searched within this window so
+            # a later, unrelated edge can't be mistaken for this one's R@10s.
+            j_end = k + 1
+            while j_end + 1 < ia.size and abs(ia[j_end + 1] - i_step) <= thr * 0.5:
+                j_end += 1
+            seg_t = ta[k + 1:j_end + 1]
+            for tp in timepoints_s:
+                if seg_t.size == 0:
+                    continue
+                j_rel = int(np.argmin(np.abs(seg_t - (t_edge + tp))))
+                j = k + 1 + j_rel
+                # Reject if the closest available sample is still far from the
+                # target timepoint (rig couldn't actually sample it this run —
+                # e.g. a 5s pulse has no real R@10s point) rather than accept a
+                # wrong-timepoint sample silently.
+                if abs(ta[j] - (t_edge + tp)) > max(0.5 * tp, 0.5):
+                    continue
+                r = abs((float(va[j]) - v_before) / di_step)
+                T = float(tc[j]) if not np.isnan(tc[j]) else _T_REF
+                r_norm = r / temp_mult(T)
+                if is_plausible_r0(r_norm, r_base):
+                    per_tp_vals[tp].append(r_norm)
+            k = j_end + 1
+        else:
+            k += 1
+
+    out = {}
+    for tp, vals in per_tp_vals.items():
+        if not vals:
+            continue
+        arr = _reject_outliers_mad(np.asarray(vals, float))
+        out[tp] = (float(np.median(arr)), float(np.std(arr)), int(arr.size))
+    return out
+
+
 # SAE J537's cranking end-voltage for a lead-acid CCA test: 1.2 V/cell. A crank pulse
 # is brief (30 s) and the pack is expected to recover right after, so the standard lets
 # terminal voltage sag much further than profile.cutoff_v (a deep-discharge protection
@@ -645,6 +730,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
 
     dcir, dcir_std, n_steps, measured, n_stale, n_implausible = identify_dcir(
         current_a, voltage_v, temp_c, profile, time_s=time_s)
+    dcir_timepoints = identify_dcir_at_timepoints(
+        current_a, voltage_v, temp_c, profile, time_s=time_s)
     levels = _vi_levels(current_a, voltage_v)
     if len(levels) >= 2:
         dcir_slope, dcir_slope_r2 = dcir_from_vi_slope(
@@ -661,6 +748,11 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         if dcir_slope == dcir_slope:
             dcir_slope, harness_warnings = _correct_for_harness_r(
                 dcir_slope, harness_r, "DCIR slope", harness_warnings)
+        for _tp in list(dcir_timepoints):
+            _r, _std, _n = dcir_timepoints[_tp]
+            _r, harness_warnings = _correct_for_harness_r(
+                _r, harness_r, f"DCIR@{_tp:g}s", harness_warnings)
+            dcir_timepoints[_tp] = (_r, _std, _n)
 
     _tc_arr = np.asarray(temp_c, float)
     t_med = float(np.nanmedian(_tc_arr)) if _tc_arr.size and not np.all(np.isnan(_tc_arr)) else _T_REF
@@ -729,6 +821,13 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "r_at_0p1s_mohm": ecm["r_0p1s"] * 1000.0, "r_at_1s_mohm": ecm["r_1s"] * 1000.0,
         "r_at_10s_mohm": ecm["r_10s"] * 1000.0,
         "ica": (ica_v, ica),
+        # FreedomCAR/SAE J537-style R@0.1s/1s/10s — see identify_dcir_at_timepoints.
+        # {timepoint_s: {"r_mohm", "std_mohm", "n_steps"}}; a timepoint no pulse
+        # in this record was long enough to reach is simply absent, not zeroed.
+        "dcir_timepoints_mohm": {
+            tp: {"r_mohm": r * 1000.0, "std_mohm": std * 1000.0, "n_steps": n}
+            for tp, (r, std, n) in dcir_timepoints.items()
+        },
     }
 
 

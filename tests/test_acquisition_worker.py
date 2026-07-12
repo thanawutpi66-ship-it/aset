@@ -124,6 +124,66 @@ class TestSafetyTrip(unittest.TestCase):
         backend.emergency_zero.assert_called_once()
         self.assertEqual(len(finished), 1)
 
+    def test_undervoltage_while_discharging_triggers_emergency_stop(self):
+        """UVP used to be WARNING-only and never actually stopped the loop — the
+        ONLY safety net HPPC mode has (it has no voltage-based test-complete
+        check of its own, unlike CC_DISCHARGE's cutoff_v), so a weak pack under
+        repeated pulses could be driven arbitrarily far past uvp with a single
+        warning ever (_oneshot fires once per run). Now matches the same
+        emergency_stop() pattern already used for OVP/OTC/OCP above."""
+        profile = _make_profile(uvp=9.0, cutoff_v=-100.0)  # cutoff never trips naturally
+        worker, backend, csv_path = _make_worker(profile)
+        telemetry, alarms, states, finished = _collect_signals(worker)
+
+        # backend.step returns (v, i_raw); i_raw negative -> post-flip i (discharge-
+        # positive) = +1.0, i.e. genuinely discharging when the UVP sample lands.
+        backend.step.side_effect = [(12.0, -1.0), (8.5, -1.0), (12.0, -1.0)]
+
+        worker.run()
+
+        self.assertEqual(len(telemetry), 2)
+        self.assertTrue(any(sev == "CRITICAL" and "Under-voltage" in msg for sev, msg in alarms))
+        self.assertIn("ESTOP", states)
+        self.assertNotIn("STOPPED", states)
+        backend.emergency_zero.assert_called_once()
+        self.assertEqual(len(finished), 1)
+
+
+class TestChargeTermination(unittest.TestCase):
+    def test_charging_current_sign_and_debounce(self):
+        """i is discharge-positive (negative the whole time CC_CV_CHARGE is
+        genuinely charging — see run()'s sign-flip comment), so the termination
+        check must compare abs(i), not i, against the tail threshold: "i <
+        0.02*max_charge_a" is true for EVERY negative i regardless of
+        magnitude, which would have ended every manual CC-CV charge run within
+        ~2s no matter how much current was really flowing. Also requires
+        _CV_TAIL_CONFIRM_SAMPLES consecutive tapered samples, not just one —
+        same debounce fix as charge_controller.py's decide()."""
+        profile = _make_profile(max_charge_a=10.0)
+        worker, backend, csv_path = _make_worker(profile, mode=OperationMode.CC_CV_CHARGE)
+        telemetry, alarms, states, finished = _collect_signals(worker)
+
+        import time as _time
+        calls = {"n": 0}
+        def _step(dt, elapsed):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                _time.sleep(1.1)   # push real elapsed past the `elapsed > 2` guard
+            if calls["n"] <= 8:
+                return (14.0, 5.0)     # i_raw=+5 (backend "charge+") -> worker i=-5.0: still charging hard
+            return (14.0, 0.05)        # i_raw=+0.05 -> worker i=-0.05: genuinely tapered
+
+        backend.step.side_effect = _step
+        worker.run()
+
+        self.assertTrue(any("tapered" in msg for _, msg in alarms),
+                        "a genuinely tapered charge must still be detected as complete")
+        # Must not have ended on the FIRST tapered sample (call 9) alone —
+        # needs _CV_TAIL_CONFIRM_SAMPLES consecutive ones first, and must not
+        # have ended during the 8 "still charging hard" calls at all (proves
+        # the sign fix, not just the debounce).
+        self.assertEqual(calls["n"], 8 + worker._CV_TAIL_CONFIRM_SAMPLES)
+
 
 class TestPauseResume(unittest.TestCase):
     def test_pause_halts_sampling_and_resume_continues_it(self):

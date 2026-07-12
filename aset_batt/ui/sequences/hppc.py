@@ -327,6 +327,31 @@ class HppcMixin:
             flag2 = "✓ settled" if ocv_result2 == "settled" else "⚠ timeout"
             self.sig_alarm.emit(
                 f"[HPPC SEQ] Post-charge OCV: {v_h:.3f} V → SoC {soc_h:.1f}% ({flag2})")
+            # Surface-charge advisory before the pulses: even with the automatic
+            # bleed-off above, a real specimen can simply rest above this chemistry's
+            # generic OCV curve (see CLAUDE.md) — keep this as a final confirmation
+            # rather than assuming the bleed-off always fully clears it. A real run
+            # (test_HPPC_20260708_152502) started its pulses with the rest voltage
+            # still ABOVE the OCV curve's own 100% point, and the per-pulse rest
+            # anchor then drifted 13.34→13.15 V across the 5 cycles — the raw edge
+            # R0 declined 41.5→30.2 mΩ (37%) purely from that anchor drift, not from
+            # the battery. The fit itself is protected (median-of-tail voc + voc-
+            # divergence warning), but the operator should know THIS run's R0
+            # spread will be inflated.
+            try:
+                _over_mv = self.controller.estimator.battery_model.ocv_out_of_range_mv(
+                    v_h, self.hw.current_temp)
+                if _over_mv > 0.0:
+                    self.sig_alarm.emit(
+                        f"[HPPC SEQ] ⚠ rest voltage {v_h:.3f} V is still "
+                        f"{_over_mv:.0f} mV above the OCV curve's 100% point even "
+                        f"after settle+bleed-off — surface charge not fully "
+                        f"dissipated (or this specimen simply rests above the "
+                        f"chemistry's generic OCV curve); per-pulse R0 anchors "
+                        f"will drift downward across cycles — treat this run's "
+                        f"R0 spread as inflated")
+            except Exception:
+                pass
             self.sig_hppc_seq_wf.emit(2, "done")
 
             # ── PHASE 3: HPPC N cycles ────────────────────────────────────
