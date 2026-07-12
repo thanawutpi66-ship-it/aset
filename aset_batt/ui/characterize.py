@@ -1025,6 +1025,11 @@ class CharacterizeMixin:
             # enable save if at least one result exists
             if self._char_results:
                 self.btn_char_save.setEnabled(True)
+            # __DONE__ fires unconditionally (finally-block in every char
+            # thread), including after an E-STOP — skip the completion
+            # chime then so it doesn't stack on top of _on_estop's siren.
+            if not getattr(self.controller, "safety_triggered", False):
+                self._play_test_complete_sound()
             return
 
         if test_id == "gitt" and msg.startswith("__PROGRESS__"):

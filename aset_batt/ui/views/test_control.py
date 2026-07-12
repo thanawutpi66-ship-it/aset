@@ -345,6 +345,11 @@ class TestControlMixin:
         conf = results.get("confidence", 1.0)
         self.lbl_grade.setText(grade if grade == "REVIEW" else f"{grade}")
         self.sig_profile_status.emit("DONE", theme.OK)
+        # AcquisitionWorker.finished fires even after E-STOP (worker.py's
+        # finally-block always emits it) — don't stack the completion chime
+        # on top of _on_estop's own siren for that case.
+        if not getattr(self._test_worker, "_estop", False):
+            self._play_test_complete_sound()
         grade_lbl, _ = self.metric_labels_final["Grade"]
         grade_lbl.setText(grade)
         # Colors for the whole final-analysis row are state+theme hybrids —

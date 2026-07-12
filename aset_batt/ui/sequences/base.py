@@ -29,7 +29,6 @@ from aset_batt.acquisition.worker import AcquisitionWorker
 import re
 from PySide6.QtGui import QColor, QDoubleValidator, QFont, QPixmap
 from PySide6.QtWidgets import (
-    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -337,11 +336,7 @@ class BaseSequenceMixin:
             f"background:{theme.PANEL2}; color:{theme.OK}; border:1px solid {theme.OK}; "
             f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
         self.sig_profile_status.emit("DONE", theme.OK)
-        try:
-            import winsound
-            winsound.MessageBeep(winsound.MB_ICONASTERISK)
-        except Exception:
-            QApplication.beep()
+        self._play_test_complete_sound()
 
         if not self._headless:
             msg = QMessageBox(self)

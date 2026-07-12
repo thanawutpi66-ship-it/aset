@@ -475,3 +475,28 @@ class HardwareControlMixin:
         if self.controller:
             self.controller._trigger_safety("E-STOP pressed by operator")
         self._log_alarm("⛔ E-STOP issued.")
+
+    def _play_test_complete_sound(self):
+        """~15s completion chime, played once for every mode's finish event
+        (Run Test, all 4 sequences, all 4 CHARACTERIZE tests) so an operator
+        away from the screen is called back. Deliberately test_complete.wav,
+        not pido.mp3 — reusing the E-STOP siren here would make a normal,
+        successful finish sound identical to an emergency."""
+        try:
+            from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+            from PySide6.QtCore import QUrl
+            import os
+
+            # Keep references so they aren't garbage collected mid-playback
+            self._done_player = QMediaPlayer()
+            self._done_audio = QAudioOutput()
+            self._done_player.setAudioOutput(self._done_audio)
+
+            wav_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "test_complete.wav"))
+            if os.path.exists(wav_path):
+                self._done_player.setSource(QUrl.fromLocalFile(wav_path))
+                self._done_audio.setVolume(1.0)
+                self._done_player.play()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to play test_complete.wav: {e}")
