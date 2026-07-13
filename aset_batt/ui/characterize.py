@@ -344,15 +344,22 @@ class CharacterizeMixin:
         limit = self._otp_limit()
         if temp is not None and not math.isnan(temp) and temp > limit:
             ev.clear()
-            self.sig_alarm.emit(
-                f"[SAFETY] OTP: {temp:.1f}°C > {limit:.0f}°C — CHARACTERIZE test aborted")
+            reason = f"OTP: {temp:.1f}°C > {limit:.0f}°C — CHARACTERIZE test aborted"
+            self.sig_alarm.emit(f"[SAFETY] {reason}")
+            # Same big-banner + hardware-cut path a live E-STOP press uses (G9) — a
+            # quiet alarm-log line alone reads as "nothing happened" to an operator
+            # watching the main screen, not as the safety trip it actually is.
+            if self.controller:
+                self.controller._trigger_safety(reason)
             return False
         if getattr(self.hw, "temp_is_stale", None) and \
                 self.hw.temp_is_stale(self._SEQ_TEMP_STALE_TRIP_S):
             ev.clear()
-            self.sig_alarm.emit(
-                f"[SAFETY] ESP32 temperature stale for {self._SEQ_TEMP_STALE_TRIP_S:.0f}s+ "
-                "— OTP protection is blind, CHARACTERIZE test aborted")
+            reason = (f"ESP32 temperature stale for {self._SEQ_TEMP_STALE_TRIP_S:.0f}s+ "
+                      "— OTP protection is blind, CHARACTERIZE test aborted")
+            self.sig_alarm.emit(f"[SAFETY] {reason}")
+            if self.controller:
+                self.controller._trigger_safety(reason)
             return False
         if not getattr(self, "_seq_temp_stale_warned", False) and \
                 getattr(self.hw, "temp_is_stale", None) and self.hw.temp_is_stale():

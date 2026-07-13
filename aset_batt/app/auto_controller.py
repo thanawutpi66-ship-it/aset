@@ -93,6 +93,21 @@ class AutoController:
         except Exception as e:
             logger.error("Failed to clear recovery state: %s", e)
 
+    def _raise_if_otp_tripped(self, where: str) -> None:
+        """OTP guard for long blocking waits that sit OUTSIDE _monitor_loop and
+        outside the sequence-level _seq_check_otp() (calibrate_from_ocv_stable's
+        settle wait — up to 15 min, used by every sequence's PREPARE phase and
+        HPPC Full Sequence's post-charge rest — see G9). Fires the SAME big-banner
+        + hardware-cut path a live E-STOP does (_trigger_safety), then raises so
+        the caller's own thread unwinds through its existing safety cleanup."""
+        temp_now = self.hw.current_temp
+        otp_limit = self.config.system.safety_limits.get(
+            "max_temperature", self._DEFAULT_MAX_TEMP_C)
+        if temp_now is not None and temp_now > otp_limit:
+            reason = f"OTP triggered {where}: {temp_now:.1f}°C > {otp_limit:.0f}°C"
+            self._trigger_safety(reason)
+            raise SafetyError(reason)
+
     def check_safety_limits(self, voltage: float, current: float, temperature: float) -> bool:
         """Check if parameters are within safety limits"""
         limits = self.config.system.safety_limits
@@ -325,6 +340,8 @@ class AutoController:
             except Exception as exc:
                 raise HardwareError(f"OCV read failed: {exc}")
 
+            self._raise_if_otp_tripped("during OCV settle")
+
             now = _t.time()
             readings.append((now, v))
 
@@ -348,13 +365,14 @@ class AutoController:
             if settled:
                 break
 
-            # sleep แบบ interruptible (ทุก 0.5s ตรวจ is_connected + cancel_check)
+            # sleep แบบ interruptible (ทุก 0.5s ตรวจ is_connected + cancel_check + OTP)
             t_end = _t.time() + interval
             while _t.time() < t_end:
                 if not self.hw.is_connected:
                     raise HardwareError("Hardware disconnected during OCV settle")
                 if cancel_check is not None and not cancel_check():
                     break
+                self._raise_if_otp_tripped("during OCV settle")
                 _t.sleep(0.5)
 
         # อ่านค่าสุดท้าย + sync estimator

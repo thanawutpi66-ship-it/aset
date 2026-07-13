@@ -482,6 +482,8 @@ class HppcMixin:
                                       f"{v_r:.3f}V ≤ {pack_min:.3f}V cutoff")
                             self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
                             self.sig_wf_status.emit(f"⛔ {reason}")
+                            if self.controller:
+                                self.controller._trigger_safety(reason)
                             break
                     except Exception as e:
                         import logging
@@ -609,6 +611,8 @@ class HppcMixin:
                                       f"{v_p:.3f}V ≤ {hppc_load_floor:.3f}V hardware floor")
                             self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
                             self.sig_wf_status.emit(f"⛔ {reason}")
+                            if self.controller:
+                                self.controller._trigger_safety(reason)
                             break
                     except Exception as e:
                         import logging

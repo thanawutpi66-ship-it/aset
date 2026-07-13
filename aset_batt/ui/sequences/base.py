@@ -509,6 +509,11 @@ class BaseSequenceMixin:
             reason = f"ESP32 temperature stale for {self._SEQ_TEMP_STALE_TRIP_S:.0f}s+"
             self.sig_alarm.emit(f"[SAFETY] {reason} — OTP protection is blind, sequence aborted")
             self.sig_wf_status.emit(f"⛔ {reason}")
+            # Same big-banner + hardware-cut path a live E-STOP press uses (G9) — a
+            # quiet alarm-log line alone reads as "nothing happened" to an operator
+            # watching the main screen, not as the safety trip it actually is.
+            if self.controller:
+                self.controller._trigger_safety(reason)
             return False
         if getattr(self, "_seq_temp_stale_warned", False):
             return True
@@ -598,6 +603,11 @@ class BaseSequenceMixin:
             reason = f"OTP triggered: {temp:.1f}°C > {limit:.0f}°C"
             self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
             self.sig_wf_status.emit(f"⛔ {reason}")
+            # Same big-banner + hardware-cut path a live E-STOP press uses (G9) — a
+            # quiet alarm-log line alone reads as "nothing happened" to an operator
+            # watching the main screen, not as the safety trip it actually is.
+            if self.controller:
+                self.controller._trigger_safety(reason)
             return False
         return True
 
