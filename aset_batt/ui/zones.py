@@ -1202,7 +1202,7 @@ class ZonesMixin:
         w = QWidget()
         lay = QHBoxLayout(w)
         self.plot_ica = pg.PlotWidget()
-        self.plot_ica.setBackground(theme.PANEL2)
+        self.plot_ica.setBackground(theme.GRAPH_BG)
         self.plot_ica.setLabel("bottom", "Voltage", units="V")
         self.plot_ica.setLabel("left", "dQ/dV")
         self.plot_ica.setTitle("ICA (Incremental Capacity)")
@@ -1211,7 +1211,7 @@ class ZonesMixin:
         # background would otherwise stay frozen at whichever theme was active
         # at construction (see the curve itself, plotted fresh from theme.INFO
         # each time a new analysis is shown, which needs no such hook).
-        theme.on_retheme(lambda: self.plot_ica.setBackground(theme.PANEL2))
+        theme.on_retheme(lambda: self.plot_ica.setBackground(theme.GRAPH_BG))
         return w
 
     @staticmethod

@@ -45,22 +45,29 @@ MATERIAL_THEMES = {
     "dark": os.path.join(_THEMES_DIR, "isa101_dark.xml"),
 }
 
-# Light palette darkened one step (ก.ค. 2026, operator feedback: "ขาวเกินไป"):
-# surfaces sit ~8-10% lower than the original #b9bdc1..#eceef0 ramp so panels
-# and buttons read as solid grey instead of near-white, and MUTED gained
-# contrast for small annotation text (e.g. the charge stage breakdown).
+# Light palette (ก.ค. 2026, operator feedback: "ปรับสีให้ขาวขึ้น เหมือน Thonny"):
+# canvas/cards lightened back toward near-white — Thonny reads as flat white
+# with subtle grey distinctions, defined mostly by borders rather than filled
+# grey blocks. PANEL stays a visible mid-grey (darker than BG/PANEL2) so
+# buttons keep the definition from the earlier "ปุ่มขาวเกินไป" fix — only the
+# canvas/card surfaces got lighter, not the buttons sitting on them.
 # Fallback only — with qt-material installed these are overridden from
 # material_themes/isa101_light.xml (kept in sync, same values).
 LIGHT = dict(
-    BG="#a6abb0", PANEL="#b6bbc0", PANEL2="#c5c9cd", FIELD="#dfe2e5",
-    BORDER="#7b8085", TEXT="#1d2123", MUTED="#43484c",
+    BG="#eef0f1", PANEL="#dde0e2", PANEL2="#f5f6f7", FIELD="#ebecee",
+    BORDER="#afb0b1", TEXT="#1d2123", MUTED="#43484c",
     OK="#2e7d32", WARN="#c98a00", CRIT="#c62828", INFO="#1565c0", NEUTRAL="#6b7075",
+    # GRAPH_BG: plot canvas only, kept at its own near-white value (operators
+    # screenshot trend/ICA plots into project reports). Dark mode keeps the
+    # PANEL2 surface.
+    GRAPH_BG="#fdfdfe",
 )
 
 DARK = dict(
     BG="#1c1e21", PANEL="#26292d", PANEL2="#323639", FIELD="#3a3e42",
     BORDER="#4a4f54", TEXT="#e8eaec", MUTED="#a3a9ae",
     OK="#4caf50", WARN="#ffb300", CRIT="#ef5350", INFO="#42a5f5", NEUTRAL="#8a9096",
+    GRAPH_BG="#323639",   # = PANEL2: dark plots stay on the panel surface
 )
 
 
@@ -214,3 +221,4 @@ WARN = LIGHT["WARN"]
 CRIT = LIGHT["CRIT"]
 INFO = LIGHT["INFO"]
 NEUTRAL = LIGHT["NEUTRAL"]
+GRAPH_BG = LIGHT["GRAPH_BG"]

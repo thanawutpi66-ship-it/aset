@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 pg.setConfigOptions(antialias=True)
 
 _THEME_ATTR_NAMES = {"BG", "PANEL", "PANEL2", "FIELD", "BORDER", "TEXT", "MUTED",
-                      "OK", "WARN", "CRIT", "INFO", "NEUTRAL"}
+                      "OK", "WARN", "CRIT", "INFO", "NEUTRAL", "GRAPH_BG"}
 
 
 def _resolve_color(value):
@@ -115,7 +115,7 @@ class MultiAxisTrend(pg.GraphicsLayoutWidget):
 
     def __init__(self):
         super().__init__()
-        self.setBackground(theme.PANEL2)
+        self.setBackground(theme.GRAPH_BG)
         self.p = self.addPlot()
         self.p.setLabel("bottom", "Elapsed", units="s")
         self.p.setLabel("left", "Voltage", units="V", color=theme.INFO)
@@ -168,7 +168,7 @@ class MultiAxisTrend(pg.GraphicsLayoutWidget):
         self.vb_t.setYRange(0, t_max, padding=0.05)
 
     def retheme(self):
-        self.setBackground(theme.PANEL2)
+        self.setBackground(theme.GRAPH_BG)
         self.p.setLabel("left", "Voltage", units="V", color=theme.INFO)
         self.p.getAxis("left").setPen(theme.INFO)
         self.p.getAxis("right").setLabel("Current", units="A", color=theme.WARN)
@@ -195,7 +195,7 @@ class SplitTrend(QWidget):
         lay.setSpacing(2)
 
         self._vi = pg.PlotWidget()
-        self._vi.setBackground(theme.PANEL2)
+        self._vi.setBackground(theme.GRAPH_BG)
         self._vi.setLabel("bottom", "Elapsed", units="s")
         self._vi.setLabel("left", "Voltage", units="V", color=theme.INFO)
         self._vi.showGrid(x=True, y=True, alpha=0.2)
@@ -214,7 +214,7 @@ class SplitTrend(QWidget):
         self._vi.getPlotItem().vb.sigResized.connect(self._sync_vi)
 
         self._tp = pg.PlotWidget()
-        self._tp.setBackground(theme.PANEL2)
+        self._tp.setBackground(theme.GRAPH_BG)
         self._tp.setLabel("bottom", "Elapsed", units="s")
         self._tp.setLabel("left", "Temp", units="°C", color=theme.CRIT)
         self._tp.showGrid(x=True, y=True, alpha=0.2)
@@ -237,14 +237,14 @@ class SplitTrend(QWidget):
         self._tp.setYRange(0, t_max, padding=0.05)
 
     def retheme(self):
-        self._vi.setBackground(theme.PANEL2)
+        self._vi.setBackground(theme.GRAPH_BG)
         self._vi.setLabel("left", "Voltage", units="V", color=theme.INFO)
         self._vi.getAxis("left").setPen(theme.INFO)
         self._vi.getAxis("right").setLabel("Current", units="A", color=theme.WARN)
         self._vi.getAxis("right").setPen(theme.WARN)
         self._c_v.setPen(pg.mkPen(theme.INFO, width=2))
         self._c_i.setPen(pg.mkPen(theme.WARN, width=2))
-        self._tp.setBackground(theme.PANEL2)
+        self._tp.setBackground(theme.GRAPH_BG)
         self._tp.setLabel("left", "Temp", units="°C", color=theme.CRIT)
         self._tp.getAxis("left").setPen(theme.CRIT)
         self._c_t.setPen(pg.mkPen(theme.CRIT, width=2, style=Qt.PenStyle.DashLine))
@@ -276,7 +276,7 @@ class TripleTrend(QWidget):
         self._plots = []
         for label, unit, color, style in _triple_specs():
             pw = pg.PlotWidget()
-            pw.setBackground(theme.PANEL2)
+            pw.setBackground(theme.GRAPH_BG)
             pw.setLabel("bottom", "Elapsed", units="s")
             pw.setLabel("left", label, units=unit, color=color)
             pw.showGrid(x=True, y=True, alpha=0.2)
@@ -294,7 +294,7 @@ class TripleTrend(QWidget):
 
     def retheme(self):
         for pw, curve, (label, unit, color, style) in zip(self._plots, self._curves, _triple_specs()):
-            pw.setBackground(theme.PANEL2)
+            pw.setBackground(theme.GRAPH_BG)
             pw.setLabel("left", label, units=unit, color=color)
             pw.getAxis("left").setPen(color)
             curve.setPen(pg.mkPen(color, width=2, style=style))

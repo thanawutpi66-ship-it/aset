@@ -203,7 +203,9 @@ class TestRetheme(unittest.TestCase):
             win.chk_dark_theme.setChecked(False)  # -> light
             light_bg = win.plot_ica.backgroundBrush().color().name()
             self.assertNotEqual(dark_bg, light_bg)
-            self.assertEqual(light_bg, theme.PANEL2.lower())
+            # Plot canvases use the dedicated GRAPH_BG role (near-white in the
+            # light theme for report screenshots), not the PANEL2 shell surface.
+            self.assertEqual(light_bg, theme.GRAPH_BG.lower())
         finally:
             win.close()
 
