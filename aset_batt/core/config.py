@@ -15,6 +15,19 @@ logger = logging.getLogger(__name__)
 # catching a decimal-place typo (e.g. 1.5 Ω) before it reaches grading.
 HARNESS_RESISTANCE_MAX_OHM = 0.15
 
+# Repo root (three levels up from this file: aset_batt/core/config.py -> aset_batt
+# -> repo root) — anchors the DEFAULT config file location so it no longer depends
+# on the process's current working directory. Previously ConfigManager()'s default
+# "config.json" was a bare relative path: launching main.py from an IDE/shortcut
+# whose CWD isn't the repo root made the app silently read/write a blank config in
+# that other directory instead of the real one — no corruption, no error, just the
+# operator's actual calibrated config never being found (and every "safety limits"
+# edit landing in a config.json nobody will ever look at again). Callers that pass
+# an explicit path (tests, recovery tooling) are unaffected — this only changes
+# what happens when the argument is omitted.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DEFAULT_CONFIG_PATH = os.path.join(_REPO_ROOT, "config.json")
+
 @dataclass
 class BatteryConfig:
     """Battery configuration parameters
@@ -107,8 +120,8 @@ class HardwareConfig:
 class ConfigManager:
     """Centralized configuration management"""
 
-    def __init__(self, config_file: str = "config.json"):
-        self.config_file = config_file
+    def __init__(self, config_file: Optional[str] = None):
+        self.config_file = config_file if config_file is not None else DEFAULT_CONFIG_PATH
         self.battery = BatteryConfig()
         self.system = SystemConfig()
         self.hardware = HardwareConfig()

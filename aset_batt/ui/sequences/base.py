@@ -29,7 +29,6 @@ from aset_batt.acquisition.worker import AcquisitionWorker
 import re
 from PySide6.QtGui import QColor, QDoubleValidator, QFont, QPixmap
 from PySide6.QtWidgets import (
-    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -337,11 +336,7 @@ class BaseSequenceMixin:
             f"background:{theme.PANEL2}; color:{theme.OK}; border:1px solid {theme.OK}; "
             f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;")
         self.sig_profile_status.emit("DONE", theme.OK)
-        try:
-            import winsound
-            winsound.MessageBeep(winsound.MB_ICONASTERISK)
-        except Exception:
-            QApplication.beep()
+        self._play_test_complete_sound()
 
         if not self._headless:
             msg = QMessageBox(self)
@@ -350,6 +345,10 @@ class BaseSequenceMixin:
             msg.setIcon(QMessageBox.Icon.Information)
             msg.setStandardButtons(QMessageBox.StandardButton.Ok)
             msg.setWindowModality(Qt.WindowModality.NonModal)
+            # Nobody wants to sit through the full ~15s chime once they've
+            # already seen the result — clicking OK (or closing the box any
+            # other way) cuts it short instead of forcing it to finish.
+            msg.finished.connect(lambda _: self._stop_test_complete_sound())
             msg.show()
 
     def _show_pretest_dialog(self, title: str, plan_lines: list, eta_min: int) -> bool:
@@ -510,6 +509,11 @@ class BaseSequenceMixin:
             reason = f"ESP32 temperature stale for {self._SEQ_TEMP_STALE_TRIP_S:.0f}s+"
             self.sig_alarm.emit(f"[SAFETY] {reason} — OTP protection is blind, sequence aborted")
             self.sig_wf_status.emit(f"⛔ {reason}")
+            # Same big-banner + hardware-cut path a live E-STOP press uses (G9) — a
+            # quiet alarm-log line alone reads as "nothing happened" to an operator
+            # watching the main screen, not as the safety trip it actually is.
+            if self.controller:
+                self.controller._trigger_safety(reason)
             return False
         if getattr(self, "_seq_temp_stale_warned", False):
             return True
@@ -599,6 +603,11 @@ class BaseSequenceMixin:
             reason = f"OTP triggered: {temp:.1f}°C > {limit:.0f}°C"
             self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
             self.sig_wf_status.emit(f"⛔ {reason}")
+            # Same big-banner + hardware-cut path a live E-STOP press uses (G9) — a
+            # quiet alarm-log line alone reads as "nothing happened" to an operator
+            # watching the main screen, not as the safety trip it actually is.
+            if self.controller:
+                self.controller._trigger_safety(reason)
             return False
         return True
 

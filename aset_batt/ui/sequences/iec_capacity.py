@@ -344,11 +344,30 @@ class IecCapacityMixin:
                     if not self._seq_sleep(10.0):
                         return
                 self.sig_phase_progress.emit(0, 0)
-                # OCV reset after rest — retried: a single VISA hiccup right after a
-                # multi-minute rest must not throw away the whole sequence.
-                soc2 = self._hw_retry(self.controller.calibrate_from_ocv)
-                v2, _, _ = self._hw_retry(self.hw.read_vi)
-                self.sig_alarm.emit(f"[AUTO] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}%")
+                if not self._seq_running.is_set():
+                    return
+                # OCV re-anchor with a real ΔV/Δt settle-check (not an instant read)
+                # after the fixed rest_min timer above — same reasoning as PHASE 0's
+                # own calibrate_from_ocv_stable() call. The on_progress callback logs
+                # each tick (including the final settled/timeout sample) as a
+                # near-zero-current rest sample, which doubles as the pre-edge
+                # reference identify_dcir() needs within its 0.5s staleness gate
+                # before the discharge edge fires in PHASE 3 below.
+                def _post_rest_progress(elapsed, v, dv_mv, st):
+                    dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
+                    status(f"REST: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+                    self.controller._log_sample(v, 0.0)
+                    self.update_display(v, 0.0, self.controller.estimator.soc,
+                                        self.controller.estimator.rin)
+
+                soc2, v2, ocv_result2 = self.controller.calibrate_from_ocv_stable(
+                    on_progress=_post_rest_progress,
+                    cancel_check=self._seq_running.is_set,
+                )
+                if not self._seq_running.is_set():
+                    return
+                flag2 = "✓ settled" if ocv_result2 == "settled" else "⚠ timeout"
+                self.sig_alarm.emit(f"[AUTO] Post-rest OCV: {v2:.3f} V → SoC {soc2:.1f}% ({flag2})")
                 self.sig_workflow.emit(2, "done")
 
             # ── PHASE 3: DISCHARGE TEST (IEC — C-rate จาก cb_test_crate) ───────
@@ -384,6 +403,7 @@ class IecCapacityMixin:
             # Estimate discharge duration from SoC and C-rate (seconds)
             rated2 = self.controller.config.battery.rated_capacity
             _dis_est = int(rated2 / max(i_dis, 0.01) * 3600)
+            _cutoff_confirm_n = 0
             while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
@@ -406,7 +426,10 @@ class IecCapacityMixin:
                     self.sig_phase_progress.emit(elapsed_d, _dis_est)
                     if not self._seq_check_otp(temp3):
                         break
-                    if v3 <= pack_min:
+                    # Same debounce as worker.py's CC_DISCHARGE cutoff check — 5
+                    # consecutive at/below-cutoff samples, not just one.
+                    _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v3 <= pack_min else 0
+                    if _cutoff_confirm_n >= 5:
                         break
                 except Exception as e:
                     self.sig_alarm.emit(f"[AUTO] discharge read error: {e}")

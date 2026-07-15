@@ -133,9 +133,23 @@ class StateEstimator:
         # to hold continuously for _anchor_min_sustain_s before firing, same pattern
         # as the Peukert sustain gate above; a genuinely full/empty pack stays past
         # the threshold far longer than one glitchy sample, a marginal fluke doesn't.
+        #
+        # A real Quick Scan run (test_QuickScan_20260712_150458.csv) found the
+        # dt-only version of this gate still fires on one sample: Quick Scan/IEC/
+        # Cycle Life discharge loops poll every ~5s, so a single sample's dt alone
+        # (~5s) already clears _anchor_min_sustain_s (3s) — the "hold continuously"
+        # requirement was silently a no-op for any loop slower than the threshold.
+        # SoC hard-reset 24.25%->0.00% on a single ~2mV-over-threshold sample while
+        # the pack kept discharging another 4.6 min to the real voltage cutoff.
+        # Also require a minimum number of consecutive qualifying samples so one
+        # glitchy reading can never satisfy "sustained" by itself, regardless of
+        # how slow the calling loop's cadence is.
         self._full_anchor_sustain_s = 0.0
         self._zero_anchor_sustain_s = 0.0
+        self._full_anchor_count = 0
+        self._zero_anchor_count = 0
         self._anchor_min_sustain_s = 3.0
+        self._anchor_min_samples = 2
 
         # OCV correction
         # monotonic (not time.time()): this is a pure elapsed-duration check ("has N
@@ -165,6 +179,28 @@ class StateEstimator:
         # this constant already answers elsewhere) rather than adding a new knob.
         self._anchor_settle_until = 0.0        # time.monotonic() deadline; 0 = inactive
         self._anchor_settle_r_mult = 200.0     # measurement-variance inflation factor
+
+        # --- Surface-charge gate latch (F3) ---
+        # The surface-charge gate (see _fuse_ekf) skips voltage correction while the
+        # implied OCV sits above the curve's own 100% point (a still-surface-charged
+        # lead-acid pack carries no discriminating SoC information there). Two real
+        # defects made the bare per-sample form of that gate release too early:
+        #   (a) it compared the implied OCV built with self.rin — the blended
+        #       estimate_rin value (~26-30 mΩ on a real run), NOT the R basis the
+        #       EKF itself predicts terminal voltage with (its own R0+R1 ~48 mΩ).
+        #       The smaller R made v_ocv_est read ~46 mV too LOW, so it crossed into
+        #       range a full sample early while the pack was genuinely still charged.
+        #   (b) even with the right R basis, the gate was edge-triggered with no
+        #       hysteresis: because the terminal voltage sags monotonically under a
+        #       discharge load, the implied OCV grazes the 100% line for exactly one
+        #       sample, and that single frame was enough for one big-innovation EKF
+        #       update to pin SoC at 100% (the exact HPPC 100%-pin the replay caught).
+        # The latch below adds persistence: once tripped, the gate only releases after
+        # the implied OCV has stayed in range for a sustained hold OR a genuine
+        # in-range rest is seen — not on the first microvolt of crossing.
+        self._surface_charge_latched = False
+        self._surface_clear_s = 0.0
+        self._SURFACE_CHARGE_CLEAR_HOLD_S = 15.0   # in-range hold before releasing
 
         # Exponential smoothing
         self.alpha = 0.05
@@ -300,6 +336,8 @@ class StateEstimator:
             self._r0_calibrated = False
             self._ecm_calibrated = False
             self._ecm_fit_soc = 50.0
+            self._surface_charge_latched = False   # F3: don't carry a latch across packs
+            self._surface_clear_s = 0.0
 
 
 
@@ -432,6 +470,11 @@ class StateEstimator:
         self.ah_accumulated = 0.0
         self.last_ocv_correction_time = time.monotonic()
         self._last_current = None      # avoid a stale trapezoid average after a reset
+        # An explicit re-anchor to a known SoC supersedes any pending surface-charge
+        # latch — the anchor is the trustworthy value now, so don't keep the gate
+        # closed on the pre-anchor voltage history (F3).
+        self._surface_charge_latched = False
+        self._surface_clear_s = 0.0
         if start_settle_window:
             self._anchor_settle_until = time.monotonic() + self._min_rest_s
         if self._ekf is not None:
@@ -495,7 +538,9 @@ class StateEstimator:
             anchor_i_tail = max(0.25, self.rated_capacity * cp.tail_current_c_rate * 1.5)
             full_anchor_cond = (cur < 0 and voltage >= anchor_v_full and abs(cur) <= anchor_i_tail and self.soc < 98.0)
             self._full_anchor_sustain_s = self._full_anchor_sustain_s + dt if full_anchor_cond else 0.0
-            if full_anchor_cond and self._full_anchor_sustain_s >= self._anchor_min_sustain_s:
+            self._full_anchor_count = self._full_anchor_count + 1 if full_anchor_cond else 0
+            if (full_anchor_cond and self._full_anchor_sustain_s >= self._anchor_min_sustain_s
+                    and self._full_anchor_count >= self._anchor_min_samples):
                 logger.info("Endpoint anchor -> 100%%: %.3fV (>=%.3f) I=%.3fA tail=%.3fA", voltage, anchor_v_full, cur, anchor_i_tail)
                 self._reset_to_soc(100.0, start_settle_window=True)
                 self._cap_counting = True
@@ -505,10 +550,31 @@ class StateEstimator:
         # 0% anchor
         anchor_v_empty = self.battery_model.get_ocv_from_soc(0.0)
         anchor_i_max = self.rated_capacity * 2.0
+        # The IR-compensated estimate below (ocv_est = voltage + cur*self.rin) is
+        # only as trustworthy as self.rin. Before any real R0 fit lands, self.rin
+        # is _ekf_rc_defaults()'s generic pre-fit guess for the chemistry, not a
+        # value fitted to THIS pack. A real Quick Scan run
+        # (test_QuickScan_20260712_150458.csv, rin_calibrated=False the entire
+        # run) under-compensated the IR drop enough to cross the 1% margin and
+        # hard-reset SoC 24.25%->0.00% while the pack kept discharging another
+        # 4.6 min to its real voltage cutoff — and the bias was systematic (not a
+        # single noisy glitch), so it held past the existing _anchor_min_samples
+        # consecutive-sample requirement too. This mirrors the exact "don't trust
+        # a voltage-based correction while actively loaded and uncalibrated" rule
+        # _fuse_ekf already applies to its own OCV update (see
+        # uncalibrated_and_active there) — the loaded zero-anchor has the
+        # identical failure mode and needs the identical guard. The anchor
+        # becomes available again as soon as real R0/ECM fitting lands (now
+        # reachable earlier too — see the pre-edge sample fix in
+        # quick_scan.py/iec_capacity.py/cycle_life.py).
+        r0_confirmed = self._r0_calibrated or self._ecm_calibrated
         ocv_est = voltage + cur * self.rin if cur > 0 else voltage
-        zero_anchor_cond = (cur > 0 and cur <= anchor_i_max and ocv_est <= anchor_v_empty * 1.01 and self.soc > 2.0)
+        zero_anchor_cond = (r0_confirmed and cur > 0 and cur <= anchor_i_max
+                             and ocv_est <= anchor_v_empty * 1.01 and self.soc > 2.0)
         self._zero_anchor_sustain_s = self._zero_anchor_sustain_s + dt if zero_anchor_cond else 0.0
-        if zero_anchor_cond and self._zero_anchor_sustain_s >= self._anchor_min_sustain_s:
+        self._zero_anchor_count = self._zero_anchor_count + 1 if zero_anchor_cond else 0
+        if (zero_anchor_cond and self._zero_anchor_sustain_s >= self._anchor_min_sustain_s
+                and self._zero_anchor_count >= self._anchor_min_samples):
             logger.info("Endpoint anchor -> 0%%: est.OCV %.3fV (<=%.3f) meas=%.3fV I=%.3fA", ocv_est, anchor_v_empty, voltage, cur)
             if self._cap_counting and self._cap_counter_ah > 0.30 * self.rated_capacity:
                 self.measured_capacity_ah = self._cap_counter_ah
@@ -557,8 +623,27 @@ class StateEstimator:
             # (test_20260709_154818) showed the EKF pinning SoC at 100% for the
             # first ~8 min of discharge (~0.37 Ah erased) before the voltage
             # dropped back inside the curve.
-            v_ocv_est = voltage + max(0.0, cur) * self.rin
-            surface_charged = self.battery_model.ocv_out_of_range_mv(v_ocv_est, t_use) > 0.0
+            # (a) Build the implied OCV with the SAME R basis the EKF predicts
+            # terminal voltage from (its own R0+R1), not self.rin (the blended
+            # estimate_rin value, ~26-30 mΩ on a real run vs the EKF's ~48 mΩ) —
+            # the smaller R under-stated v_ocv_est by ~46 mV and let the gate open a
+            # sample early. See the F3 note in __init__.
+            v_ocv_est = voltage + max(0.0, cur) * (r0_use + ekf.R1)
+            raw_surface = self.battery_model.ocv_out_of_range_mv(v_ocv_est, t_use) > 0.0
+            # (b) Hysteresis: once surface charge is detected, hold the gate closed
+            # until the implied OCV has stayed in range for a sustained window (or a
+            # genuine in-range rest is seen) — not the first frame it grazes the line.
+            if raw_surface:
+                self._surface_charge_latched = True
+                self._surface_clear_s = 0.0
+            elif self._surface_charge_latched:
+                self._surface_clear_s += dt
+                cleared_by_hold = self._surface_clear_s >= self._SURFACE_CHARGE_CLEAR_HOLD_S
+                cleared_by_rest = near_rest and self._rested_s >= self._min_rest_s
+                if cleared_by_hold or cleared_by_rest:
+                    self._surface_charge_latched = False
+                    self._surface_clear_s = 0.0
+            surface_charged = raw_surface or self._surface_charge_latched
             still_polarised = near_rest and self._rested_s < self._min_rest_s
             # While CHARGING (convention: charge = negative current), the terminal
             # voltage carries no usable SoC information: it sits at the charger's

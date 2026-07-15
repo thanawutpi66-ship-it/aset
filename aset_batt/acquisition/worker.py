@@ -34,6 +34,19 @@ class AcquisitionWorker(QObject):
     state = Signal(str)            # RUNNING / PAUSED / STOPPED / ESTOP
     finished = Signal(object)      # results dict for analytics
 
+    # Consecutive samples the CC-CV charge termination current must hold for
+    # before actually ending the test — same reasoning as charge_controller.py's
+    # ChargeParams.tail_confirm_samples: a single sample below the threshold
+    # (regulation blip, sensor noise) used to end the test immediately with no
+    # confirmation at all.
+    _CV_TAIL_CONFIRM_SAMPLES = 5
+
+    # Same reasoning, for CC_DISCHARGE's cutoff-voltage test-complete check below —
+    # a single sample at/below cutoff_v (ADC noise, a brief sag under a load step)
+    # used to end the test immediately with no confirmation, same bug class as the
+    # CV tail-current check above and the estimator's endpoint-anchor sustain gate.
+    _CUTOFF_CONFIRM_SAMPLES = 5
+
     def __init__(self, backend, cfg: TestConfig, csv_path: str, estimator=None):
         super().__init__()
         self.backend = backend
@@ -107,6 +120,8 @@ class AcquisitionWorker(QObject):
             _t_ctrl = 0.0
             _rate_n = 0
             _rate_t0 = t0
+            _cv_tail_confirm_n = 0
+            _cutoff_confirm_n = 0
 
             # Python's cyclic GC fires transparently on allocation-count thresholds
             # (not time), runs INLINE holding the GIL, and can be triggered by ANY
@@ -229,55 +244,91 @@ class AcquisitionWorker(QObject):
                     _rate_span = now - _rate_t0
                     if _rate_span > 0.5:
                         _hz = _rate_n / _rate_span
-                        # msleep() overshoot, emit(), safety, and ctrl-mutex were all
-                        # measured and ruled out on real hardware runs. f.flush()
-                        # explained SOME slow blocks fully but not others. A near-
-                        # perfect alternating fast/slow-block pattern (too regular for
-                        # external CPU contention) then pointed at the cyclic GC,
-                        # which fires on allocation thresholds and can preempt ANY
-                        # thread mid-statement, invisible to every timer above — now
-                        # measured directly via gc.callbacks (_t_gc_accum).
-                        _t_gc = _t_gc_accum[0]
-                        _t_accounted = (_t_scpi + _t_log + _t_est + _t_emit + _t_safety
-                                       + _t_flush + _t_ctrl + _t_gc + _t_sleep_actual)
-                        _t_total = max(_t_accounted, _rate_span)
-                        _t_other = max(0.0, _t_total - _t_accounted)
-                        # Every explicit Python-level operation in the loop is now
-                        # measured and ruled out (SCPI/estimator/log/emit/safety/
-                        # flush/ctrl-mutex/GC all flat 0% in the affected blocks) yet
-                        # "other(unexplained)" alternates ~0%/~38% in a near-perfect
-                        # pattern with a ~6.8s fast+slow period — matching HPPC's own
-                        # PULSE<->RELAX cycle (backends.py step()) rather than
-                        # anything external. Logging the phase directly instead of
-                        # guessing further.
-                        _hppc_phase = ("PULSE" if getattr(self.backend, "_hppc_loaded", None)
-                                      else "RELAX") if self.cfg.mode == OperationMode.HPPC else "-"
-                        logger.info(
-                            "%s worker sampled at %.1f Hz (%d samples / %.1fs, target %.1f Hz, "
-                            "hppc_phase=%s) — "
-                            "breakdown: SCPI %.0f%%  estimator %.0f%%  log %.0f%%  emit %.0f%%  "
-                            "safety %.0f%%  flush %.0f%%  ctrl %.0f%%  gc %.0f%%  sleep %.0f%%  "
-                            "other(unexplained) %.0f%%  "
-                            "(sleep requested %.0fms actual %.0fms over %d samples)",
-                            self.cfg.mode.value, _hz, _rate_n, _rate_span, 1.0 / period, _hppc_phase,
-                            100 * _t_scpi / _t_total, 100 * _t_est / _t_total,
-                            100 * _t_log / _t_total, 100 * _t_emit / _t_total,
-                            100 * _t_safety / _t_total, 100 * _t_flush / _t_total,
-                            100 * _t_ctrl / _t_total, 100 * _t_gc / _t_total,
-                            100 * _t_sleep_actual / _t_total, 100 * _t_other / _t_total,
-                            _t_sleep_req * 1000, _t_sleep_actual * 1000, _rate_n)
+                        _target_hz = 1.0 / period
+                        # Root-caused (Windows USB selective suspend — see CLAUDE.md)
+                        # and instrumentation kept as a fallback for machines where it
+                        # can't be disabled, but the full per-substep breakdown logging
+                        # every _RATE_LOG_EVERY samples (~2.5s at 10Hz) is too verbose
+                        # for routine, healthy runs. Only pay for the full breakdown
+                        # string + %-of-total divisions when a block is genuinely
+                        # degraded; a healthy block gets one terse DEBUG line.
+                        if _hz < 0.8 * _target_hz:
+                            # msleep() overshoot, emit(), safety, and ctrl-mutex were all
+                            # measured and ruled out on real hardware runs. f.flush()
+                            # explained SOME slow blocks fully but not others. A near-
+                            # perfect alternating fast/slow-block pattern (too regular for
+                            # external CPU contention) then pointed at the cyclic GC,
+                            # which fires on allocation thresholds and can preempt ANY
+                            # thread mid-statement, invisible to every timer above — now
+                            # measured directly via gc.callbacks (_t_gc_accum).
+                            _t_gc = _t_gc_accum[0]
+                            _t_accounted = (_t_scpi + _t_log + _t_est + _t_emit + _t_safety
+                                           + _t_flush + _t_ctrl + _t_gc + _t_sleep_actual)
+                            _t_total = max(_t_accounted, _rate_span)
+                            _t_other = max(0.0, _t_total - _t_accounted)
+                            # Every explicit Python-level operation in the loop is now
+                            # measured and ruled out (SCPI/estimator/log/emit/safety/
+                            # flush/ctrl-mutex/GC all flat 0% in the affected blocks) yet
+                            # "other(unexplained)" alternates ~0%/~38% in a near-perfect
+                            # pattern with a ~6.8s fast+slow period — matching HPPC's own
+                            # PULSE<->RELAX cycle (backends.py step()) rather than
+                            # anything external. Logging the phase directly instead of
+                            # guessing further.
+                            _hppc_phase = ("PULSE" if getattr(self.backend, "_hppc_loaded", None)
+                                          else "RELAX") if self.cfg.mode == OperationMode.HPPC else "-"
+                            logger.info(
+                                "%s worker sampled at %.1f Hz (%d samples / %.1fs, target %.1f Hz, "
+                                "hppc_phase=%s) — "
+                                "breakdown: SCPI %.0f%%  estimator %.0f%%  log %.0f%%  emit %.0f%%  "
+                                "safety %.0f%%  flush %.0f%%  ctrl %.0f%%  gc %.0f%%  sleep %.0f%%  "
+                                "other(unexplained) %.0f%%  "
+                                "(sleep requested %.0fms actual %.0fms over %d samples)",
+                                self.cfg.mode.value, _hz, _rate_n, _rate_span, _target_hz, _hppc_phase,
+                                100 * _t_scpi / _t_total, 100 * _t_est / _t_total,
+                                100 * _t_log / _t_total, 100 * _t_emit / _t_total,
+                                100 * _t_safety / _t_total, 100 * _t_flush / _t_total,
+                                100 * _t_ctrl / _t_total, 100 * _t_gc / _t_total,
+                                100 * _t_sleep_actual / _t_total, 100 * _t_other / _t_total,
+                                _t_sleep_req * 1000, _t_sleep_actual * 1000, _rate_n)
+                        else:
+                            logger.debug(
+                                "%s worker sampled at %.1f Hz (%d samples / %.1fs, target %.1f Hz) — healthy",
+                                self.cfg.mode.value, _hz, _rate_n, _rate_span, _target_hz)
                     _rate_n = 0
                     _t_scpi = _t_log = _t_est = _t_emit = _t_safety = _t_flush = _t_ctrl = 0.0
                     _t_sleep_req = _t_sleep_actual = 0.0
                     _t_gc_accum[0] = 0.0
                     _rate_t0 = now
 
-                if self.cfg.mode == OperationMode.CC_DISCHARGE and v <= p.cutoff_v:
-                    self.alarm.emit("INFO", "Discharge reached cut-off voltage — test complete")
-                    break
-                if self.cfg.mode == OperationMode.CC_CV_CHARGE and i < 0.02 * p.max_charge_a and elapsed > 2:
-                    self.alarm.emit("INFO", "Charge tapered to termination current — test complete")
-                    break
+                if self.cfg.mode == OperationMode.CC_DISCHARGE:
+                    # Require _CUTOFF_CONFIRM_SAMPLES consecutive samples at/below
+                    # cutoff before ending — same debounce as the CV tail-current
+                    # check above, guarding against a single noisy/sagging sample
+                    # ending the test early and understating measured capacity.
+                    _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v <= p.cutoff_v else 0
+                    if _cutoff_confirm_n >= self._CUTOFF_CONFIRM_SAMPLES:
+                        self.alarm.emit("INFO", "Discharge reached cut-off voltage — test complete")
+                        break
+                if self.cfg.mode == OperationMode.CC_CV_CHARGE:
+                    # abs(i), not i: i is discharge-positive (see the sign-flip comment
+                    # above), so i is NEGATIVE the entire time this mode is genuinely
+                    # charging — "i < 0.02*max_charge_a" was comparing a negative number
+                    # against a positive threshold, which is true on EVERY sample from
+                    # the first one (not just once tapered), so this check would have
+                    # ended every manual CC-CV charge run within a couple seconds
+                    # regardless of real current. abs(i) correctly reads the charging
+                    # current's magnitude, tapering toward 0 as the battery fills.
+                    #
+                    # Require _CV_TAIL_CONFIRM_SAMPLES consecutive samples below the
+                    # termination current before actually ending — a single sample
+                    # (regulation blip, sensor noise near the threshold) used to end
+                    # the test immediately with no confirmation, same failure mode
+                    # already fixed in charge_controller.py's decide().
+                    _cv_tail_confirm_n = (_cv_tail_confirm_n + 1) if (
+                        abs(i) < 0.02 * p.max_charge_a and elapsed > 2) else 0
+                    if _cv_tail_confirm_n >= self._CV_TAIL_CONFIRM_SAMPLES:
+                        self.alarm.emit("INFO", "Charge tapered to termination current — test complete")
+                        break
 
                 # Sleep only the time REMAINING in this period, not the full period —
                 # a flat msleep(200ms) here regardless of how long SCPI/estimator/log
@@ -346,7 +397,17 @@ class AcquisitionWorker(QObject):
             self._oneshot("OVP", "CRITICAL", f"Over-voltage {v:.2f} V > {p.ovp} V")
             self.emergency_stop()
         elif v < p.uvp and i > 0:    # i discharge-positive → under-voltage while discharging
-            self._oneshot("UVP", "WARNING", f"Under-voltage {v:.2f} V < {p.uvp} V")
+            # Used to be WARNING-only and never actually stopped anything — the ONLY
+            # safety net for HPPC mode specifically (it has no voltage-based test-
+            # complete check of its own, unlike CC_DISCHARGE's p.cutoff_v below), so a
+            # weak pack under repeated pulses could be driven arbitrarily far past uvp
+            # with just one warning ever (_oneshot fires once per run) until the
+            # e-load's own hardware UVP trip was the last line of defense. Same
+            # emergency_stop() pattern as OVP/OTC/OCP above — this call site already
+            # runs outside any lock (see those three), so it's the same proven-safe
+            # reentrant call, not a new pattern.
+            self._oneshot("UVP", "CRITICAL", f"Under-voltage {v:.2f} V < {p.uvp} V")
+            self.emergency_stop()
         if not math.isnan(temp):
             if temp >= p.otp_crit:
                 self._oneshot("OTC", "CRITICAL", f"Over-temperature {temp:.1f}°C ≥ {p.otp_crit}°C")

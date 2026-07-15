@@ -57,6 +57,8 @@ class TestCalibrateFromOcvStableSurfacesOutOfRangeWarning(unittest.TestCase):
         from aset_batt.core.config import ConfigManager
         cfg = ConfigManager()
         cfg.battery.battery_type = "LeadAcid"
+        cfg.battery.nominal_voltage = 2.0
+        cfg.battery.cells_series = 6
         model = BatteryModel(cfg.battery.battery_type, cfg.battery.nominal_voltage,
                              cfg.battery.cells_series, cfg.battery.cells_parallel)
         estimator = StateEstimator(cfg.battery.rated_capacity, model)
@@ -128,6 +130,8 @@ class TestSurfaceChargeBleedOff(unittest.TestCase):
         from aset_batt.core.config import ConfigManager
         cfg = ConfigManager()
         cfg.battery.battery_type = "LeadAcid"
+        cfg.battery.nominal_voltage = 2.0
+        cfg.battery.cells_series = 6
         model = BatteryModel(cfg.battery.battery_type, cfg.battery.nominal_voltage,
                              cfg.battery.cells_series, cfg.battery.cells_parallel)
         estimator = StateEstimator(cfg.battery.rated_capacity, model)

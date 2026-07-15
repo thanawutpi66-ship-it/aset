@@ -15,7 +15,7 @@ CSV, and serves a remote dashboard.
 python -m venv venv && venv\Scripts\activate     # Windows
 pip install -r requirements.txt
 python main.py            # ISA-101 PySide6 desktop GUI (integrated app)
-pytest -q                 # 64 tests
+pytest -q                 # 588 tests
 ```
 
 `config.json` ships in **simulation mode** (no hardware needed); set `"simulation_mode": false`
@@ -37,8 +37,8 @@ It covers the full test flow: connect, manual control, **chemistry-aware charge*
 (Auto / CC-CV / 3-Stage), **characterization test** (CC-CV / CC-discharge / **HPPC**) driven by
 the QThread acquisition worker, IEC 61960 profiles (single-ambient), live multi-axis V/I/T trend +
 digital readouts + temperature gauge, **ICA `dQ/dV`** diagnostics, and **A/B/C/Reject grading**
-from **SoH + DCIR@~250 ms + 1-RC ECM (R0/R1/C1, HPPC) + voltage-sag + CCA proxy** — the features
-this rig can measure at its ~5 Hz SCPI readback. A prominent E-Stop, CSV logging, and a PDF report
+from **SoH + DCIR + 1-RC ECM (R0/R1/C1, HPPC) + voltage-sag + CCA proxy** — the features
+this rig can measure at its ~10 Hz SCPI readback. A prominent E-Stop, CSV logging, and a PDF report
 round it out.
 
 ### Graph panel
@@ -71,11 +71,11 @@ Reorganised into three tabs to reduce visual clutter:
 | **Data** | CSV logging, PDF report, Cloud Dashboard |
 
 > **Scope** (see [docs/project_pivot.md](docs/project_pivot.md)): this is a multi-chemistry
-> **grading/sorting** bench, not a high-rate characteriser. What ~5 Hz **can** do: a 1-RC ECM
-> fit on an HPPC pulse resolves **R1/C1** well (diffusion τ ≈ 10–60 s → ~150 points/30 s) and
-> **R0** by t=0 extrapolation; the temperature-normalised **DCIR@~250 ms** is reported alongside
+> **grading/sorting** bench, not a high-rate characteriser. What ~10 Hz **can** do: a 1-RC ECM
+> fit on an HPPC pulse resolves **R1/C1** well (diffusion τ ≈ 10–60 s → ~300 points/30 s) and
+> **R0** by t=0 extrapolation; the temperature-normalised **DCIR** is reported alongside
 > as a cross-check. What was dropped (needs extra hardware / a thermal chamber): 75 Hz acquisition
-> and pure-ohmic R0 capture (sub-200 ms), DTV `dT/dV`, and multi-temperature sweeps.
+> and pure-ohmic R0 capture (sub-100 ms), DTV `dT/dV`, and multi-temperature sweeps.
 
 ### Acquisition engine (`aset_batt/acquisition/`)
 
@@ -150,7 +150,7 @@ ASET_BATT/
 │   ├── services/   event_system · service_locator · logging_config · exceptions
 │   ├── storage/    data_utils(CSV) · report_generator(PDF) · cloud_push
 ├── scripts/        generate_sample_data · train_grader · make_training_data
-├── tests/          (49 tests)
+├── tests/          (588 tests)
 ├── docs/ · cloud_dashboard/
 └── logs/  data/    (gitignored runtime output)
 ```
@@ -168,7 +168,7 @@ ASET_BATT/
 | Impedance ref | GW Instek GBM-3080 / FNIRSI HRM-10 (ACIR 1kHz, validation) |
 | Breaker | LUMIRA MCB (passive overcurrent backstop) |
 
-SCPI readback is ~5 Hz; software cutoff (`:OUTP OFF`/`:INP OFF`) is the primary failsafe with
+SCPI readback is ~10 Hz; software cutoff (`:OUTP OFF`/`:INP OFF`) is the primary failsafe with
 the MCB as a passive backstop.
 
 ---

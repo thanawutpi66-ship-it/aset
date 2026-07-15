@@ -53,8 +53,12 @@ class TestZeroAnchorSustainGate(unittest.TestCase):
 
     def test_sustained_genuine_empty_condition_still_fires(self):
         """The gate must not block a REAL empty condition — just require it to
-        persist past a single noisy sample."""
+        persist past a single noisy sample. Requires r0 to be confirmed
+        calibrated (see test_zero_anchor_requires_calibration.py for the
+        uncalibrated case) — this test is about the sustain mechanism
+        specifically, not calibration."""
         e = self._est()
+        e._r0_calibrated = True
         e.rin = 0.06923
         # v retuned 11.39->11.36 after the LeadAcid Ea/R 4000->2200 K correction:
         # update() recomputes self.rin each call ((R0+R1)*temp_mult), and the
@@ -67,10 +71,50 @@ class TestZeroAnchorSustainGate(unittest.TestCase):
         self.assertLess(e.soc, 5.0,
                         "a genuinely sustained empty condition should still anchor")
 
+    def test_single_slow_cadence_sample_does_not_fire(self):
+        """Regression for test_QuickScan_20260712_150458.csv: Quick Scan/IEC/Cycle
+        Life discharge loops poll every ~5s (see _seq_sleep(5.0) in quick_scan.py),
+        so a single sample's own dt (~5s) already clears _anchor_min_sustain_s (3s)
+        — the "hold continuously" gate was a no-op for any loop slower than the
+        threshold. Real run: SoC hard-reset 24.25%->0.00% in one 5s sample
+        (est.OCV 11.742V vs 11.628*1.01=11.744V threshold, a ~2mV margin) while the
+        pack kept discharging another 4.6 min to the real voltage cutoff. Requiring
+        >= _anchor_min_samples consecutive qualifying calls (not just accumulated
+        dt) closes this regardless of loop cadence."""
+        e = self._est()
+        e.rin = 0.0804
+        v, i = 11.34, 5.0
+        anchor_v_empty = e.battery_model.get_ocv_from_soc(0.0)
+        ocv_est = v + i * e.rin
+        self.assertLessEqual(ocv_est, anchor_v_empty * 1.01)
+
+        e.update(v, i, dt=5.03, temp=26.6)  # one ~5s-cadence sample, dt alone > 3s
+        self.assertGreater(e.soc, 20.0,
+                           "one slow-cadence sample must not hard-reset SoC to 0")
+
+    def test_sustained_condition_still_fires_at_slow_cadence(self):
+        """The extra consecutive-sample requirement must not block a genuinely
+        sustained empty condition just because the loop is slow — two ~5s-cadence
+        samples in a row (>= _anchor_min_samples, and >= _anchor_min_sustain_s of
+        real elapsed time) should still anchor. Requires r0 to be confirmed
+        calibrated (see test_zero_anchor_requires_calibration.py for the
+        uncalibrated case — the real regression this scenario's numbers came
+        from was actually an UNCALIBRATED run, so two consecutive samples
+        alone must NOT anchor unless calibrated)."""
+        e = self._est()
+        e._r0_calibrated = True
+        e.rin = 0.0804
+        v, i = 11.34, 5.0
+        for _ in range(2):
+            e.update(v, i, dt=5.03, temp=26.6)
+        self.assertLess(e.soc, 5.0,
+                        "two consecutive slow-cadence samples should still anchor")
+
     def test_sustain_timer_resets_when_condition_drops(self):
         """A brief dip below threshold followed by recovery shouldn't accumulate
         toward firing — mirrors the Peukert sustain gate's reset-on-rest behavior."""
         e = self._est()
+        e._r0_calibrated = True
         e.rin = 0.06923
         # v retuned 11.39->11.36 after the LeadAcid Ea/R 4000->2200 K correction:
         # update() recomputes self.rin each call ((R0+R1)*temp_mult), and the

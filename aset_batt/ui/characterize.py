@@ -344,15 +344,22 @@ class CharacterizeMixin:
         limit = self._otp_limit()
         if temp is not None and not math.isnan(temp) and temp > limit:
             ev.clear()
-            self.sig_alarm.emit(
-                f"[SAFETY] OTP: {temp:.1f}°C > {limit:.0f}°C — CHARACTERIZE test aborted")
+            reason = f"OTP: {temp:.1f}°C > {limit:.0f}°C — CHARACTERIZE test aborted"
+            self.sig_alarm.emit(f"[SAFETY] {reason}")
+            # Same big-banner + hardware-cut path a live E-STOP press uses (G9) — a
+            # quiet alarm-log line alone reads as "nothing happened" to an operator
+            # watching the main screen, not as the safety trip it actually is.
+            if self.controller:
+                self.controller._trigger_safety(reason)
             return False
         if getattr(self.hw, "temp_is_stale", None) and \
                 self.hw.temp_is_stale(self._SEQ_TEMP_STALE_TRIP_S):
             ev.clear()
-            self.sig_alarm.emit(
-                f"[SAFETY] ESP32 temperature stale for {self._SEQ_TEMP_STALE_TRIP_S:.0f}s+ "
-                "— OTP protection is blind, CHARACTERIZE test aborted")
+            reason = (f"ESP32 temperature stale for {self._SEQ_TEMP_STALE_TRIP_S:.0f}s+ "
+                      "— OTP protection is blind, CHARACTERIZE test aborted")
+            self.sig_alarm.emit(f"[SAFETY] {reason}")
+            if self.controller:
+                self.controller._trigger_safety(reason)
             return False
         if not getattr(self, "_seq_temp_stale_warned", False) and \
                 getattr(self.hw, "temp_is_stale", None) and self.hw.temp_is_stale():
@@ -459,6 +466,7 @@ class CharacterizeMixin:
                 t0 = time.perf_counter()
                 self.hw.set_load(True, i_test)
                 last_log = t0
+                _cutoff_confirm_n = 0
 
                 while ev.is_set():
                     try:
@@ -478,7 +486,12 @@ class CharacterizeMixin:
                         elapsed = int(now - t0)
                         status(f"({idx+1}/4) {c:g}C — {v:.3f} V  {i_meas:.3f} A  "
                                f"elapsed {elapsed//60}m{elapsed%60:02d}s")
-                        if v <= pack_min:
+                        # Require 5 consecutive at/below-cutoff samples, not just
+                        # one — same debounce as worker.py's CC_DISCHARGE cutoff
+                        # check (_CUTOFF_CONFIRM_SAMPLES), guarding a single noisy/
+                        # sagging sample from ending the test early.
+                        _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v <= pack_min else 0
+                        if _cutoff_confirm_n >= 5:
                             break
                     except Exception as exc:
                         self.sig_alarm.emit(f"[CHAR/Peukert] read error: {exc}")
@@ -616,14 +629,27 @@ class CharacterizeMixin:
             if not ev.is_set():
                 return
 
-            # ── rest 30 min ───────────────────────────────────────────────
+            # ── rest 30 min (fixed protocol minimum) ───────────────────────
             status("Phase 1/2 done. พักหลังชาร์จ 30 นาที...")
             self.sig_alarm.emit(f"[CHAR/η] Phase 1/2 เสร็จ — Ah_in={sum(ah_in.values()):.3f}")
             if not self._char_sleep(ev, 1800):
                 return
 
-            # OCV anchor
-            soc_now = self.controller.calibrate_from_ocv()
+            # OCV anchor with a real ΔV/Δt settle-check — the fixed 30-min timer
+            # above is a protocol minimum, not proof of settling.
+            def _post_charge_rest_progress(elapsed, v, dv_mv, st):
+                dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
+                status(f"OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+                self.controller._log_sample(v, 0.0)
+                self.update_display(v, 0.0, self.controller.estimator.soc,
+                                    self.controller.estimator.rin)
+
+            soc_now, _, _ = self.controller.calibrate_from_ocv_stable(
+                on_progress=_post_charge_rest_progress,
+                cancel_check=ev.is_set,
+            )
+            if not ev.is_set():
+                return
 
             # ── Phase 2: Discharge at 0.1C; track Ah_out per SoC band ─────
             i_dis = round(0.1 * rated, 3)
@@ -633,6 +659,7 @@ class CharacterizeMixin:
             self.hw.set_load(True, i_dis)
             # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
             last = time.perf_counter()
+            _cutoff_confirm_n = 0
 
             while ev.is_set():
                 try:
@@ -651,7 +678,10 @@ class CharacterizeMixin:
                     self.update_display(v, i_meas, soc_now, state["rin"], temp, state.get("soh"))
                     status(f"Discharge: {v:.3f} V  SoC {soc_now:.0f}%  "
                            f"Ah_out={sum(ah_out.values()):.3f}")
-                    if v <= pack_min:
+                    # Same debounce as worker.py's CC_DISCHARGE cutoff check — 5
+                    # consecutive at/below-cutoff samples, not just one.
+                    _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v <= pack_min else 0
+                    if _cutoff_confirm_n >= 5:
                         break
                 except Exception as exc:
                     self.sig_alarm.emit(f"[CHAR/η] discharge read error: {exc}")
@@ -738,8 +768,19 @@ class CharacterizeMixin:
             soc_points: list = []
             ocv_points: list = []   # V per cell
 
-            # OCV anchor before starting
-            soc_start = self.controller.calibrate_from_ocv()
+            # OCV anchor before starting — no rest phase precedes this at all, so an
+            # instant read here is the clearest case of "too-short rest": whatever
+            # polarization the pack had from before this test started would go
+            # straight into soc_start with no settle-check. Use the same ΔV/Δt
+            # settle-checked anchor every other sequence's PREPARE uses.
+            def _gitt_start_progress(elapsed, v, dv_mv, st):
+                dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
+                status(f"GITT: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
+
+            soc_start, _, _ = self.controller.calibrate_from_ocv_stable(
+                on_progress=_gitt_start_progress,
+                cancel_check=ev.is_set,
+            )
             status(f"GITT: OCV anchor SoC={soc_start:.0f}%  ·  {N_STEPS} จุดจะทดสอบ")
             self.sig_alarm.emit(f"[CHAR/GITT] เริ่มทดสอบ — OCV anchor SoC={soc_start:.0f}%")
             if not ev.is_set():
@@ -761,6 +802,7 @@ class CharacterizeMixin:
                 # phase never actually timed out on its own via dis_dur.
                 phase_start = time.perf_counter()
                 last = phase_start
+                _cutoff_confirm_n = 0
 
                 # ── discharge phase ────────────────────────────────────────
                 while ev.is_set() and (time.perf_counter() - phase_start) < dis_dur:
@@ -778,7 +820,10 @@ class CharacterizeMixin:
                         # same as the other CHARACTERIZE tests.
                         self.controller._log_sample(v, i_meas)
                         self.update_display(v, i_meas, state["soc"], state["rin"], temp, state.get("soh"))
-                        if v <= pack_min:
+                        # Same debounce as worker.py's CC_DISCHARGE cutoff check — 5
+                        # consecutive at/below-cutoff samples, not just one.
+                        _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v <= pack_min else 0
+                        if _cutoff_confirm_n >= 5:
                             status(f"Step {step+1}: UVP reached — หยุด")
                             break
                     except Exception as exc:
@@ -953,6 +998,7 @@ class CharacterizeMixin:
             self.hw.set_load(True, i_test)
             v_min = None
             last = t0
+            _cutoff_confirm_n = 0
             while ev.is_set() and (time.perf_counter() - t0) < 30.0:
                 try:
                     v, i_meas = self.hw.read_measurements(prefer_load_v=True)
@@ -968,7 +1014,10 @@ class CharacterizeMixin:
                     v_min = v if v_min is None else min(v_min, v)
                     elapsed = int(now - t0)
                     status(f"CCA pulse {elapsed}s/30s  {v:.3f}V (min so far {v_min:.3f}V)")
-                    if v <= pack_min:
+                    # Same debounce as worker.py's CC_DISCHARGE cutoff check — 5
+                    # consecutive at/below-cutoff samples, not just one.
+                    _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v <= pack_min else 0
+                    if _cutoff_confirm_n >= 5:
                         status(f"UVP reached ({v:.3f}V <= {pack_min:.3f}V) — หยุด")
                         break
                 except Exception as exc:
@@ -1025,6 +1074,11 @@ class CharacterizeMixin:
             # enable save if at least one result exists
             if self._char_results:
                 self.btn_char_save.setEnabled(True)
+            # __DONE__ fires unconditionally (finally-block in every char
+            # thread), including after an E-STOP — skip the completion
+            # chime then so it doesn't stack on top of _on_estop's siren.
+            if not getattr(self.controller, "safety_triggered", False):
+                self._play_test_complete_sound()
             return
 
         if test_id == "gitt" and msg.startswith("__PROGRESS__"):

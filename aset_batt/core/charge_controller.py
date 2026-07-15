@@ -42,6 +42,10 @@ class ChargeParams:
     cv_v: float              # cc_cv
     v_margin: float          # ระยะเผื่อที่ถือว่า "แตะ" แรงดันเป้า (CV เริ่ม)
     stage_timeout_s: float
+    # จำนวน "ครั้งติดต่อกัน" ที่ i_charge ต้อง <= tail_current_a ก่อนจะยอมรับว่าแบตเต็มจริง
+    # (ดูเหตุผลเต็มที่ decide()'s docstring) — นับเป็นจำนวนครั้ง ไม่ใช่วินาที เพื่อไม่ผูกกับ
+    # poll_interval_s (poll_interval_s=0 ใน unit test ก็ยังทำงานถูกต้อง)
+    tail_confirm_samples: int = 5
 
     @classmethod
     def from_config(cls, charge_profile, series_cells: int,
@@ -79,15 +83,24 @@ class ChargeDecision:
 
 
 def decide(params: ChargeParams, stage: str, v_pack: float, i_charge: float,
-           t_in_stage: float) -> ChargeDecision:
+           t_in_stage: float, tail_confirm_n: int = 0) -> ChargeDecision:
     """ตัดสินสเตทถัดไป (pure) — ไม่มี side-effect
 
-    v_pack    = แรงดันแพ็คที่วัดได้ (V)
-    i_charge  = กระแสที่ไหลเข้าแบต (A, บวก = กำลังชาร์จ)
-    t_in_stage= เวลาที่อยู่ใน stage ปัจจุบัน (s) — ใช้ตัด timeout
+    v_pack        = แรงดันแพ็คที่วัดได้ (V)
+    i_charge      = กระแสที่ไหลเข้าแบต (A, บวก = กำลังชาร์จ)
+    t_in_stage    = เวลาที่อยู่ใน stage ปัจจุบัน (s) — ใช้ตัด timeout
+    tail_confirm_n= จำนวนครั้งติดต่อกัน (นับโดย caller) ที่ i_charge <= tail_current_a
+                    มาแล้ว — ใช้ยืนยันก่อนจบการชาร์จจริง (ABSORPTION→FLOAT, CV→DONE)
+
+    ทำไมต้อง tail_confirm_n: ก่อนหน้านี้กระแส "ต่ำกว่า tail" แค่ sample เดียว
+    (กระแสกระตุกลงชั่วขณะระหว่าง PSU ปรับ regulation, sensor noise ใกล้ threshold)
+    ก็จบการชาร์จเงียบๆ ทันที ทั้งที่แบตยังไม่เต็มจริง — ไม่มี warning ด้วย เพราะ
+    decide() คืนค่า FLOAT/DONE ตรงๆ ให้ caller เชื่อทันที การจบชาร์จก่อนเวลาแบบเงียบ
+    เป็นผลลัพธ์ที่ร้ายแรงกว่าการหน่วงจบไม่กี่ sample เพื่อยืนยันซ้ำ (asymmetric risk)
     """
     p = params
     timed_out = t_in_stage >= p.stage_timeout_s
+    tail_confirmed = i_charge <= p.tail_current_a and tail_confirm_n >= p.tail_confirm_samples
 
     if p.strategy == "three_stage":
         if stage in (IDLE, BULK):
@@ -100,8 +113,8 @@ def decide(params: ChargeParams, stage: str, v_pack: float, i_charge: float,
                                       note="bulk timeout → ข้ามไป absorption")
             return ChargeDecision(BULK, p.absorption_v, p.bulk_current_a)
         if stage == ABSORPTION:
-            if i_charge <= p.tail_current_a or timed_out:
-                why = "กระแส taper ถึง tail" if i_charge <= p.tail_current_a else "absorption timeout"
+            if tail_confirmed or timed_out:
+                why = "กระแส taper ถึง tail (ยืนยันแล้ว)" if tail_confirmed else "absorption timeout"
                 return ChargeDecision(FLOAT, p.float_v, p.bulk_current_a,
                                       note=f"{why} → float")
             return ChargeDecision(ABSORPTION, p.absorption_v, p.bulk_current_a)
@@ -120,8 +133,8 @@ def decide(params: ChargeParams, stage: str, v_pack: float, i_charge: float,
                                       note="cc timeout → cv")
             return ChargeDecision(CC, p.cv_v, p.bulk_current_a)
         if stage == CV:
-            if i_charge <= p.tail_current_a or timed_out:
-                why = "กระแส taper ถึง tail" if i_charge <= p.tail_current_a else "cv timeout"
+            if tail_confirmed or timed_out:
+                why = "กระแส taper ถึง tail (ยืนยันแล้ว)" if tail_confirmed else "cv timeout"
                 return ChargeDecision(DONE, p.cv_v, 0.0, done=True, output_on=False,
                                       note=f"{why} → จบการชาร์จ")
             return ChargeDecision(CV, p.cv_v, p.bulk_current_a)
@@ -169,6 +182,10 @@ class ChargeController:
         self.stage = IDLE
         stage_start = time.time()
         float_entered_at: Optional[float] = None
+        # Consecutive-sample counter for decide()'s tail_confirm_n — counts SAMPLES,
+        # not elapsed seconds, so it works correctly even at poll_interval_s=0 (unit
+        # tests) where wall-clock time barely advances per iteration.
+        tail_confirm_n = 0
         logger.info(f"เริ่มชาร์จ strategy={self.params.strategy} "
                     f"bulk={self.params.bulk_current_a:.2f}A")
 
@@ -181,8 +198,9 @@ class ChargeController:
                 v_pack, psu_i, _load_i = self.hw.read_vi()
                 i_charge = max(0.0, psu_i)   # กระแสเข้าแบต (psu_i = charge)
                 t_in_stage = time.time() - stage_start
+                tail_confirm_n = (tail_confirm_n + 1) if i_charge <= self.params.tail_current_a else 0
 
-                d = decide(self.params, self.stage, v_pack, i_charge, t_in_stage)
+                d = decide(self.params, self.stage, v_pack, i_charge, t_in_stage, tail_confirm_n)
 
                 if d.stage != self.stage:
                     logger.info(f"charge stage {self.stage} → {d.stage}: {d.note}")

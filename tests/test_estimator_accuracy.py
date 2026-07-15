@@ -54,6 +54,13 @@ class TestLiveSoH(unittest.TestCase):
         e._reset_to_soc(100.0)
         e._cap_counting = True               # simulate a 100% anchor just fired
         e._cap_counter_ah = 4.0              # ~4.0 Ah delivered over the full sweep
+        # A real full sweep has plenty of time (and, since the DCIR pre-edge fix, an
+        # edge right at REST->DISCHARGE) to get a real R0 fit well before nearing
+        # empty — simulate that here, since the loaded zero-anchor now refuses to
+        # trust its IR-compensated estimate on an uncalibrated rin (a real Quick
+        # Scan run hard-reset SoC 24.25%->0.00% off exactly that uncalibrated
+        # guess — see test_zero_anchor_requires_calibration.py).
+        e._r0_calibrated = True
         # now force the empty anchor by feeding a low voltage at small current —
         # sustained for a few samples (the anchor now requires _anchor_min_sustain_s
         # of continuous below-threshold readings, not a single sample, to avoid

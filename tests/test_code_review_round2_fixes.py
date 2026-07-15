@@ -334,7 +334,18 @@ class TestWorkerEcmFeedbackAnchorsToPulseSoc(unittest.TestCase):
         # cur stays within _profile()'s max_discharge_a=7.0 (the worker's OCP
         # interlock trips emergency_stop() at 1.05x that and would otherwise
         # cut this test's run short before the tail ever runs).
-        r0, r1, c1, cur, voc = 0.012, 0.018, 1000.0, 5.0, 12.80
+        # voc is a mid-SoC rest (12.40 V, ~2.07 V/cell) deliberately WELL below the
+        # 6S OCV-curve 100% point (~12.888 V): this test verifies update_ecm's
+        # fit_soc anchors to the pulse timestamp (not the final SoC), which needs
+        # the tail's voltage correction to keep moving SoC. A near-ceiling voc
+        # (the old 12.80 V) plus the pulse's I·R would push the implied OCV above
+        # the curve top, tripping the surface-charge gate (F3) — correct in real
+        # use, but here the compressed simulated dt (sample_hz=1e5 → microsecond
+        # dt) means the gate's in-range clear-hold never elapses, so the tail's
+        # correction would be suppressed and SoC would not move. A mid-SoC voc
+        # keeps the pulse and tail in range so the anchoring being tested is
+        # exercised on the normal correction path.
+        r0, r1, c1, cur, voc = 0.012, 0.018, 1000.0, 5.0, 12.40
         tau = r1 * c1
         dt = 0.1
         t_rest = np.arange(0, 10, dt)
@@ -430,12 +441,18 @@ class TestChemistryDetectionConsistency(unittest.TestCase):
         self.assertAlmostEqual(est2._coulomb_eta(soc=95.0, current=-1.0), 0.99)
 
     def test_profile_from_config_peukert_uses_canonical_chemistry(self):
+        """peukert_k itself now comes from the chemistry registry (see
+        TestPeukertKMatchesRegistry below) — this test only proves the
+        registry lookup resolves the VRLA alias correctly (no "lead"
+        substring), not a specific hardcoded value."""
         from aset_batt.acquisition.analysis import profile_from_config
         from aset_batt.core.config import ConfigManager
+        from aset_batt.core import battery_profiles
         cfg = ConfigManager()
         cfg.battery.battery_type = "VRLA"   # alias, no "lead" substring
         profile = profile_from_config(cfg)
-        self.assertAlmostEqual(profile.peukert_k, 1.20)
+        self.assertAlmostEqual(profile.peukert_k,
+                               battery_profiles.get_chemistry("VRLA").peukert_k)
 
     def test_no_more_adhoc_lead_substring_checks_in_core_or_acquisition(self):
         from pathlib import Path
@@ -445,6 +462,46 @@ class TestChemistryDetectionConsistency(unittest.TestCase):
                     "aset_batt/ui/zones.py"):
             src = (root / rel).read_text(encoding="utf-8")
             self.assertNotIn('"lead" in', src, rel)
+
+
+class TestPeukertKMatchesRegistry(unittest.TestCase):
+    """profile_from_config() used to hardcode peukert_k=1.20 for every
+    LeadAcid battery, disagreeing with the SAME chemistry registry the live
+    estimator reads (1.10, "AGM 1.05-1.15; flooded 1.2-1.6" per
+    battery_profiles.json) — a real AGM product's post-hoc SoH differed by
+    >13 points (80.0% vs 93.4% on a real 3.629 Ah discharge) purely
+    depending on which code path computed it, potentially the difference
+    between an A and a B grade."""
+
+    def test_lead_acid_uses_registry_value_not_hardcoded_1_20(self):
+        from aset_batt.acquisition.analysis import profile_from_config
+        from aset_batt.core.config import ConfigManager
+        from aset_batt.core import battery_profiles
+        cfg = ConfigManager()
+        cfg.battery.battery_type = "LeadAcid"
+        cfg.battery.product_name = ""   # no product override
+        profile = profile_from_config(cfg)
+        self.assertAlmostEqual(profile.peukert_k,
+                               battery_profiles.get_chemistry("LeadAcid").peukert_k)
+        self.assertNotAlmostEqual(profile.peukert_k, 1.20, places=2,
+                                  msg="must not silently fall back to the old hardcoded value")
+
+    def test_product_level_override_takes_priority_over_chemistry_default(self):
+        from aset_batt.acquisition.analysis import profile_from_config
+        from aset_batt.core.config import ConfigManager
+        from aset_batt.core import battery_profiles
+        cfg = ConfigManager()
+        cfg.battery.battery_type = "LeadAcid"
+        # Any real product in the registry with its own peukert_k override.
+        override_name = next(
+            (n for n in battery_profiles.list_products()
+             if getattr(battery_profiles.get_product(n), "peukert_k", 0.0) > 0.0), None)
+        if override_name is None:
+            self.skipTest("no product in the registry currently overrides peukert_k")
+        cfg.battery.product_name = override_name
+        profile = profile_from_config(cfg)
+        expected = battery_profiles.get_product(override_name).peukert_k
+        self.assertAlmostEqual(profile.peukert_k, expected)
 
 
 class TestSequenceSafetyConstantsSingleSource(unittest.TestCase):

@@ -23,7 +23,6 @@ of the (multi-hour) sequence.
 """
 import os
 import unittest
-from unittest.mock import MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -114,10 +113,17 @@ class TestIecPrepareLogsRest(unittest.TestCase):
 
 class TestQuickScanPrepareLogsRest(unittest.TestCase):
     def test_5min_rest_loop_logs_samples(self):
+        """Quick Scan's Phase 0 now uses calibrate_from_ocv_stable() (like every
+        other sequence's PREPARE) instead of a fixed 5s sleep + one-shot
+        calibrate_from_ocv() read — a real run could catch the pack still
+        polarized right after connecting. Mock calibrate_from_ocv_stable() to fire
+        on_progress a few times then cancel, same pattern as the IEC test above,
+        so the thread exits right after Phase 0 without waiting through the real
+        5-min REST loop or the rest of the (multi-hour) sequence."""
         win, ctrl, hw, data = _make_bound_window()
         try:
             win._seq_running.set()
-            ctrl.calibrate_from_ocv = MagicMock(return_value=75.0)
+            ctrl.calibrate_from_ocv_stable = _fake_calibrate_stable(win)
 
             log_calls = []
             was_recording = []
@@ -128,26 +134,16 @@ class TestQuickScanPrepareLogsRest(unittest.TestCase):
                 orig_log_sample(*a, **k)
             ctrl._log_sample = _spy_log_sample
 
-            # Let the very first sleep (before Phase 0) complete normally, then force
-            # the 5-min rest loop to run exactly one iteration and stop.
-            calls = {"n": 0}
-            def _fake_sleep(seconds):
-                calls["n"] += 1
-                if calls["n"] == 1:
-                    return True
-                win._seq_running.clear()
-                return False
-            win._seq_sleep = _fake_sleep
-
             win._quick_scan_thread()
 
             # Checked AT log time, not after the whole (now-completed) sequence has
             # closed its own session via end_session() — see the IEC test above for
             # why the post-completion flag is no longer the right thing to assert.
-            self.assertTrue(was_recording, "no samples were logged during the rest loop")
+            self.assertTrue(was_recording, "no samples were logged during Phase 0's OCV settle")
             self.assertTrue(all(was_recording))
-            self.assertGreaterEqual(len(log_calls), 1)
-            self.assertEqual(log_calls[0][1], 0.0)
+            self.assertEqual(len(log_calls), 4, "each on_progress sample must be logged")
+            for args in log_calls:
+                self.assertEqual(args[1], 0.0)
         finally:
             win.close()
 

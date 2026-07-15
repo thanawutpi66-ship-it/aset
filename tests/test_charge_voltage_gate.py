@@ -110,6 +110,63 @@ class TestLoadedSurfaceChargeGate(unittest.TestCase):
                         "in-range loaded voltage must still correct SoC downward")
 
 
+class TestSurfaceChargeLatchHysteresis(unittest.TestCase):
+    """F3: the surface-charge gate must (a) build the implied OCV with the EKF's
+    OWN R basis (R0+R1), not the blended self.rin, and (b) latch — hold the gate
+    closed after tripping instead of releasing on the first sample the implied OCV
+    grazes back into range under a still-sagging discharge load. A real HPPC replay
+    showed the bare per-sample gate releasing on exactly that one grazing frame and
+    letting a single big-innovation EKF update pin SoC at 100%."""
+
+    def _boundary_v(self, est, cur):
+        """Terminal voltage at which the implied OCV (v + cur*(R0+R1)) sits exactly
+        on the curve's 100% point — feed above this to trip, below to clear."""
+        ekf = est._ensure_ekf()
+        top = est.battery_model.get_ocv_from_soc(100.0, 25.0)
+        return top - cur * (ekf.R0 + ekf.R1)
+
+    def test_latch_trips_then_holds_through_single_in_range_graze(self):
+        est = _est(97.0)
+        cur = 2.65
+        b = self._boundary_v(est, cur)
+        for _ in range(8):                       # sustained above-range implied OCV
+            est.update(b + 0.100, cur, dt=1.0, temp=25.0)
+        self.assertTrue(est._surface_charge_latched,
+                        "sustained above-range implied OCV must trip the latch")
+        soc_before = est.soc
+        # one sample whose implied OCV dips 50 mV inside range — the 15 s hold must
+        # keep the gate closed, so SoC cannot be pulled up by that single frame
+        est.update(b - 0.050, cur, dt=1.0, temp=25.0)
+        self.assertTrue(est._surface_charge_latched,
+                        "one in-range graze must NOT release the surface-charge latch")
+        self.assertLessEqual(est.soc, soc_before + 1e-9,
+                             "SoC must not jump upward on the grazing frame")
+
+    def test_latch_releases_after_sustained_in_range(self):
+        est = _est(90.0)
+        cur = 2.65
+        b = self._boundary_v(est, cur)
+        for _ in range(5):
+            est.update(b + 0.100, cur, dt=1.0, temp=25.0)
+        self.assertTrue(est._surface_charge_latched)
+        # implied OCV held in range for longer than the clear-hold window -> release
+        for _ in range(int(est._SURFACE_CHARGE_CLEAR_HOLD_S) + 3):
+            est.update(b - 0.050, cur, dt=1.0, temp=25.0)
+        self.assertFalse(est._surface_charge_latched,
+                         "a sustained in-range implied OCV must release the latch")
+
+    def test_endpoint_anchor_clears_a_pending_latch(self):
+        est = _est(97.0)
+        cur = 2.65
+        b = self._boundary_v(est, cur)
+        for _ in range(6):
+            est.update(b + 0.100, cur, dt=1.0, temp=25.0)
+        self.assertTrue(est._surface_charge_latched)
+        est._reset_to_soc(100.0, start_settle_window=True)   # an explicit re-anchor
+        self.assertFalse(est._surface_charge_latched,
+                         "re-anchoring to a known SoC must clear the surface-charge latch")
+
+
 class TestRinPlaceholderContinuity(unittest.TestCase):
     """A real IEC session CSV (test_IEC_20260708_203952) showed the displayed
     Resistance_mOhm sitting at the generic chemistry base_rin (30.0) through
@@ -135,18 +192,32 @@ class TestRinPlaceholderContinuity(unittest.TestCase):
 
 
 class TestHppcSurfaceChargeAdvisory(unittest.TestCase):
-    def test_post_rest_advisory_present_before_pulses(self):
-        """hppc.py must check ocv_out_of_range_mv on the post-rest voltage and
-        warn before PHASE 3 — a real run started its pulses surface-charged and
-        the per-pulse R0 anchor drifted 37% across 5 cycles."""
+    def test_post_charge_rest_actively_bleeds_not_just_warns(self):
+        """hppc.py's PHASE 2 (post-charge rest, before HPPC pulses) must call
+        calibrate_from_ocv_stable() — which checks ocv_out_of_range_mv
+        internally and, for a surface-charged lead-acid pack, actually runs a
+        C/20 bleed-off and re-settles — instead of a fixed timer + a single
+        immediate calibrate_from_ocv() read with only a passive warning.
+
+        A real run (test_HPPC_20260708_152502) started its pulses 430 mV
+        surface-charged: the old code's advisory fired but the sequence
+        pulsed anyway, and the per-pulse R0 anchor drifted 37% across 5
+        cycles purely from that unresolved surface charge, not the battery.
+        PREPARE's own bleed-off (PHASE 0) had already stripped this once, but
+        the CHARGE phase in between re-creates it and nothing repeated the
+        bleed — see calibrate_from_ocv_stable's own bleed-off branch in
+        auto_controller.py for the correction this now reuses."""
         from pathlib import Path
         src = (Path(__file__).resolve().parent.parent / "aset_batt" / "ui"
                / "sequences" / "hppc.py").read_text(encoding="utf-8")
-        post_rest = src.index("Post-rest OCV")
-        phase3 = src.index("PHASE 3", post_rest)
-        window = src[post_rest:phase3]
-        self.assertIn("ocv_out_of_range_mv", window)
-        self.assertIn("surface charge", window)
+        phase2 = src.index("PHASE 2")
+        phase3 = src.index("PHASE 3", phase2)
+        window = src[phase2:phase3]
+        self.assertIn("calibrate_from_ocv_stable", window,
+                      "PHASE 2 must settle+bleed via calibrate_from_ocv_stable, "
+                      "not a fixed timer + one-shot calibrate_from_ocv")
+        self.assertNotIn("_rest_total = 30 * 60", window,
+                         "the old fixed 30-min timer should be gone")
 
 
 if __name__ == "__main__":

@@ -315,12 +315,25 @@ class CycleLifeMixin:
                 self.sig_cycle_wf.emit(2, "active")
                 status(f"CYCLE {cyc}/{n_cyc}: ดิสชาร์จ {i_dis:.3f} A ({c_di}C)...")
                 self.controller._ensure_logging(label="CycleLife")
+                # Fresh pre-edge reference right before the edge, not the REST loop's
+                # own last sample (up to 10s stale, its own _seq_sleep(10.0) pacing) —
+                # same fix as quick_scan.py/iec_capacity.py's equivalent transition.
+                # identify_dcir() needs the pre-edge reference within
+                # _DCIR_MAX_STEP_DT (0.5s) of the true transition, same as the
+                # immediate post-edge sample already captured right after set_load().
+                try:
+                    v_pre, i_pre, _ = self.hw.read_vi()
+                    self.controller._log_sample(v_pre, i_pre)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 self.hw.set_load(True, str(i_dis))
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
                 _dis_t0 = _t.perf_counter()
                 _dis_est = int(rated / max(i_dis, 0.01) * 3600)
                 ah_acc = 0.0
                 last_log = _t.perf_counter()
+                _cutoff_confirm_n = 0
                 # Same low-latency edge sample as _auto_sequence_thread's IEC discharge —
                 # this loop's own pacing (~5s) is 10x identify_dcir()'s staleness gate.
                 try:
@@ -365,7 +378,10 @@ class CycleLifeMixin:
                         status(f"CYCLE {cyc}/{n_cyc} DIS: {v_d:.3f} V  "
                                f"{ah_acc:.3f} Ah  SoC ~{max(0, 100-100*ah_acc/rated):.0f}%")
                         self.sig_phase_progress.emit(elapsed_d, _dis_est)
-                        if v_d <= pack_min:
+                        # Same debounce as worker.py's CC_DISCHARGE cutoff check — 5
+                        # consecutive at/below-cutoff samples, not just one.
+                        _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v_d <= pack_min else 0
+                        if _cutoff_confirm_n >= 5:
                             break
                     except Exception as exc:
                         self.sig_alarm.emit(f"[CYCLE] read error: {exc}")

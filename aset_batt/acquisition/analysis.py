@@ -49,13 +49,23 @@ def profile_from_config(config) -> BatteryProfile:
     except Exception:
         rin = 0.03
     otp = float(s.get("max_temperature", 55.0))
-    # Peukert exponent by chemistry: lead-acid capacity is markedly rate-dependent,
-    # lithium almost not. Resolved through the canonical chemistry registry (same
-    # as _cca_cutoff_v below) rather than an ad-hoc substring match on the raw
-    # battery_type string, so a chemistry alias not containing "lead" (e.g. a
-    # future product-family name) isn't silently misclassified as lithium.
+    # Peukert exponent: read from the SAME chemistry registry the live estimator
+    # uses (aset_batt.core.battery_profiles), with a product-specific override if
+    # one is set — NOT a hardcoded 1.20/1.05 split. That hardcode used to silently
+    # disagree with the registry's own LeadAcid default (1.10, "AGM 1.05-1.15;
+    # flooded 1.2-1.6" — see battery_profiles.json's own comment): live SoC used
+    # 1.10 but this post-hoc SoH/grading path used 1.20, a real AGM product's SoH
+    # differing by >13 points (80.0% vs 93.4%, potentially the difference between
+    # grade A and B) depending purely on which code path computed it.
     from aset_batt.core import battery_profiles
-    peukert = 1.20 if battery_profiles.get_chemistry(b.battery_type).name == "LeadAcid" else 1.05
+    peukert = battery_profiles.get_chemistry(b.battery_type).peukert_k
+    try:
+        prod = battery_profiles.get_product(getattr(b, "product_name", "") or "")
+        if prod and getattr(prod, "peukert_k", 0.0) > 0.0:
+            peukert = prod.peukert_k
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
     # A characterised specimen's R0/R1 (see aset_batt.core.battery_profiles.
     # save_measured_params) overrides the chemistry-generic base_rin/60-40 split for
@@ -326,6 +336,91 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=
     return float(np.median(arr)), float(np.std(arr)), int(arr.size), True, n_stale, n_implausible
 
 
+# FreedomCAR/SAE J537-style fixed post-edge timepoints: R@0.1s is closest to pure
+# ohmic (R0), R@1s adds fast charge-transfer, R@10s adds diffusion and is closest
+# to sustained-load/cranking-relevant resistance — three numbers with an
+# unambiguous, standard meaning, comparable across labs/rigs/sample-rates,
+# instead of identify_dcir()'s single "whatever the first post-edge sample
+# happened to catch" value (rate-dependent: ~100ms at 10Hz, ~200ms at 5Hz).
+_DCIR_TIMEPOINTS_S = (0.1, 1.0, 10.0)
+
+
+def identify_dcir_at_timepoints(current_a, voltage_v, temp_c, profile: BatteryProfile,
+                                 time_s, timepoints_s=_DCIR_TIMEPOINTS_S) -> dict:
+    """R = |ΔV/ΔI| at fixed post-edge timepoints, additive alongside identify_dcir()
+    (does not replace it — same step detection over current edges, same
+    temperature normalisation, plausibility band, and per-timepoint MAD outlier
+    rejection across steps).
+
+    Requires ``time_s`` (elapsed seconds per sample); returns ``{}`` if not usable.
+    A timepoint with no step landing close enough to it (e.g. the rig's rate is
+    too slow, or a pulse is shorter than the timepoint) is simply omitted rather
+    than reported from a stale/wrong sample.
+
+    Returns ``{timepoint_s: (r_ohm_25C, std_ohm, n_steps)}``.
+    """
+    if time_s is None:
+        return {}
+    ia = np.asarray(current_a, float)
+    va = np.asarray(voltage_v, float)
+    tc = np.asarray(temp_c, float)
+    ta = np.asarray(time_s, float)
+    if ia.size < 4 or ta.size != ia.size:
+        return {}
+    temp_mult = _dcir_temp_normalizer(profile)
+    di = np.diff(ia)
+    thr = max(1e-3, 0.20 * float(np.max(np.abs(ia))))
+    r_base = float(profile.internal_r)
+
+    per_tp_vals = {tp: [] for tp in timepoints_s}
+    k = 0
+    while k < di.size:
+        if abs(di[k]) > thr:
+            v_before = float(np.median(va[max(0, k - 2):k + 1]))
+            # t_edge references the FIRST post-edge sample (ta[k+1]), not the last
+            # pre-edge one (ta[k]) — the new current level is only actually present
+            # from ta[k+1] onward, so "t=0" of the step response starts there.
+            # Using ta[k] made "R@0.1s" land on ta[k+1] itself (t=0, not t=0.1) for
+            # any dt<=0.1s rig, silently reporting pure R0 mislabeled as R@0.1s.
+            t_edge = float(ta[k + 1])
+            i_step = float(ia[k + 1])
+            di_step = float(di[k])
+            # Plateau end: the next real edge (current settles back down/off), or
+            # end of record — timepoints are only searched within this window so
+            # a later, unrelated edge can't be mistaken for this one's R@10s.
+            j_end = k + 1
+            while j_end + 1 < ia.size and abs(ia[j_end + 1] - i_step) <= thr * 0.5:
+                j_end += 1
+            seg_t = ta[k + 1:j_end + 1]
+            for tp in timepoints_s:
+                if seg_t.size == 0:
+                    continue
+                j_rel = int(np.argmin(np.abs(seg_t - (t_edge + tp))))
+                j = k + 1 + j_rel
+                # Reject if the closest available sample is still far from the
+                # target timepoint (rig couldn't actually sample it this run —
+                # e.g. a 5s pulse has no real R@10s point) rather than accept a
+                # wrong-timepoint sample silently.
+                if abs(ta[j] - (t_edge + tp)) > max(0.5 * tp, 0.5):
+                    continue
+                r = abs((float(va[j]) - v_before) / di_step)
+                T = float(tc[j]) if not np.isnan(tc[j]) else _T_REF
+                r_norm = r / temp_mult(T)
+                if is_plausible_r0(r_norm, r_base):
+                    per_tp_vals[tp].append(r_norm)
+            k = j_end + 1
+        else:
+            k += 1
+
+    out = {}
+    for tp, vals in per_tp_vals.items():
+        if not vals:
+            continue
+        arr = _reject_outliers_mad(np.asarray(vals, float))
+        out[tp] = (float(np.median(arr)), float(np.std(arr)), int(arr.size))
+    return out
+
+
 # SAE J537's cranking end-voltage for a lead-acid CCA test: 1.2 V/cell. A crank pulse
 # is brief (30 s) and the pack is expected to recover right after, so the standard lets
 # terminal voltage sag much further than profile.cutoff_v (a deep-discharge protection
@@ -525,9 +620,36 @@ def _check_soh_start_soc(
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
     return warnings
 
+# FreedomCAR/USABC-style DC resistance at fixed pulse timepoints (G5). The
+# single "R0" the report shows is the first-sample-after-edge value (≈R@100ms at
+# this rig's ~10 Hz), which already carries part of R1 — not a clean ohmic number
+# and not directly comparable across rigs/labs sampling at different rates. The
+# standard answer is to report ΔV/ΔI at DEFINED times instead: R@0.1s (ohmic-
+# dominated), R@1s, R@10s (the closest surrogate to a cranking/high-rate pull).
+# With a 1-RC/2-RC ECM already fitted, R(t) = R0 + Σ Ri·(1 − e^(−t/τi)) is exactly
+# those timepoints read off the de-noised model of the same pulse — no change to
+# how the pulse is measured, only what's reported. NaN when no ECM was identified
+# (a single-step DCIR can't be resolved into a time-resolved R(t)).
+_R_TIMEPOINTS_S = (0.1, 1.0, 10.0)
+
+
+def ecm_r_at(t: float, r0: float, r1: float, tau1: float,
+             r2: float = 0.0, tau2: float = 0.0) -> float:
+    """1-RC/2-RC model DC resistance at pulse time ``t`` seconds:
+    ``R0 + R1·(1−e^(−t/τ1)) [+ R2·(1−e^(−t/τ2))]``. Each RC term is only added
+    when its (Ri, τi) are physical (>0), so a 1-RC fit (R2=τ2=0) contributes
+    nothing from the second branch instead of dividing by a zero τ2."""
+    r = r0
+    if tau1 > 1e-9 and r1 > 0.0:
+        r += r1 * (1.0 - float(np.exp(-t / tau1)))
+    if tau2 > 1e-9 and r2 > 0.0:
+        r += r2 * (1.0 - float(np.exp(-t / tau2)))
+    return r
+
+
 def _extract_ecm_metrics(
-        time_s, current_a, voltage_v, ocv: float, ocv_ceil: float, is_hppc: bool, 
-        harness_r: float, profile: "BatteryProfile", t_med: float, dcir: float, measured: bool, 
+        time_s, current_a, voltage_v, ocv: float, ocv_ceil: float, is_hppc: bool,
+        harness_r: float, profile: "BatteryProfile", t_med: float, dcir: float, measured: bool,
         warnings: list) -> tuple[dict, list, float]:
     ecm, ecm_reason = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc else (None, "")
     is_2rc = bool(ecm and "R2_ohm" in ecm)
@@ -538,7 +660,8 @@ def _extract_ecm_metrics(
     out = {
         "r0": dcir, "r1": 0.0, "c1": 0.0, "tau": 0.0, "r2_ecm_fit": 0.0,
         "r2_rc": 0.0, "c2": 0.0, "tau2": 0.0, "ri_total": dcir,
-        "ecm_fit_t_s": float("nan"), "is_2rc": False, "ecm_identified": False
+        "ecm_fit_t_s": float("nan"), "is_2rc": False, "ecm_identified": False,
+        "r_0p1s": float("nan"), "r_1s": float("nan"), "r_10s": float("nan"),
     }
     
     if ecm:
@@ -585,11 +708,17 @@ def _extract_ecm_metrics(
             warnings.append(f"DCIR@250ms ({dcir*1e3:.0f} mΩ) disagrees with fit "
                                    f"R0+R1 ({ri_total*1e3:.0f} mΩ) — check the pulse")
                                    
+        # DC resistance at the standard 0.1/1/10 s pulse timepoints, read off the
+        # fitted model (G5). Temp-normalised R0/R1/R2 + τ1/τ2 are used so these are
+        # on the same 25 °C basis as the rest of the reported resistances.
+        _rt = {tp: ecm_r_at(tp, r0, r1, tau, r2_rc, tau2) for tp in _R_TIMEPOINTS_S}
+
         out.update({
             "r0": r0, "r1": r1, "c1": c1, "tau": tau, "r2_ecm_fit": r2_ecm_fit,
             "r2_rc": r2_rc, "c2": c2, "tau2": tau2, "ri_total": ri_total,
             "ecm_fit_t_s": float(ecm.get("t_edge_s", float("nan"))),
-            "is_2rc": is_2rc, "ecm_identified": True
+            "is_2rc": is_2rc, "ecm_identified": True,
+            "r_0p1s": _rt[0.1], "r_1s": _rt[1.0], "r_10s": _rt[10.0],
         })
         
     _ocv_eff = min(ocv, ocv_ceil) if ocv_ceil else ocv
@@ -600,7 +729,6 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                    profile: "BatteryProfile", is_hppc: bool, soh=None,
                    soc_start=None) -> dict:
     """Run the unified analysis on raw series → the standard results dict."""
-    from aset_batt.acquisition.analytics import Analytics
     v = Analytics.hampel_filter(np.asarray(voltage_v, float))
     ia = Analytics.hampel_filter(np.asarray(current_a, float))
     q = np.asarray(capacity_series, float)
@@ -610,6 +738,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     mean_dis, cap_norm, soh = _calc_capacity_and_soh(capacity, ia, profile, is_hppc, reached_cutoff, soh)
 
     dcir, dcir_std, n_steps, measured, n_stale, n_implausible = identify_dcir(
+        current_a, voltage_v, temp_c, profile, time_s=time_s)
+    dcir_timepoints = identify_dcir_at_timepoints(
         current_a, voltage_v, temp_c, profile, time_s=time_s)
     levels = _vi_levels(current_a, voltage_v)
     if len(levels) >= 2:
@@ -627,6 +757,11 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         if dcir_slope == dcir_slope:
             dcir_slope, harness_warnings = _correct_for_harness_r(
                 dcir_slope, harness_r, "DCIR slope", harness_warnings)
+        for _tp in list(dcir_timepoints):
+            _r, _std, _n = dcir_timepoints[_tp]
+            _r, harness_warnings = _correct_for_harness_r(
+                _r, harness_r, f"DCIR@{_tp:g}s", harness_warnings)
+            dcir_timepoints[_tp] = (_r, _std, _n)
 
     _tc_arr = np.asarray(temp_c, float)
     t_med = float(np.nanmedian(_tc_arr)) if _tc_arr.size and not np.all(np.isnan(_tc_arr)) else _T_REF
@@ -691,7 +826,17 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "ecm_identified": ecm["ecm_identified"], "ecm_r2": ecm["r2_ecm_fit"], "ecm_fit_t_s": ecm["ecm_fit_t_s"],
         "ecm_model": "2RC" if ecm["is_2rc"] else "1RC",
         "r2_mohm": ecm["r2_rc"] * 1000.0, "c2_farad": ecm["c2"], "tau2_s": ecm["tau2"],
+        # FreedomCAR-style DC resistance at 0.1/1/10 s (G5) — NaN when no ECM fit.
+        "r_at_0p1s_mohm": ecm["r_0p1s"] * 1000.0, "r_at_1s_mohm": ecm["r_1s"] * 1000.0,
+        "r_at_10s_mohm": ecm["r_10s"] * 1000.0,
         "ica": (ica_v, ica),
+        # FreedomCAR/SAE J537-style R@0.1s/1s/10s — see identify_dcir_at_timepoints.
+        # {timepoint_s: {"r_mohm", "std_mohm", "n_steps"}}; a timepoint no pulse
+        # in this record was long enough to reach is simply absent, not zeroed.
+        "dcir_timepoints_mohm": {
+            tp: {"r_mohm": r * 1000.0, "std_mohm": std * 1000.0, "n_steps": n}
+            for tp, (r, std, n) in dcir_timepoints.items()
+        },
     }
 
 

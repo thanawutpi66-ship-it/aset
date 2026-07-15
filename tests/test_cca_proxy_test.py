@@ -99,13 +99,14 @@ class TestCcaPassFail(unittest.TestCase):
         ev = threading.Event()
         ev.set()
         win._char_running["cca"] = ev
-        calls = {"n": 0}
-        def _fake_sleep(ev_, seconds):
-            calls["n"] += 1
-            if calls["n"] >= 2:
-                ev_.clear()
-            return calls["n"] < 2
-        win._char_sleep = _fake_sleep
+        # Forced voltage is constant every sample, so the pulse loop's own
+        # UVP-cutoff debounce (5 consecutive at/below-pack_min samples — see the
+        # comment in _char_cca_thread) now needs 5 real iterations to fire before
+        # the loop ends naturally, rather than the old single-sample break. Never
+        # cancel via _char_sleep — cancelling mid-debounce would clear ev before
+        # the confirm count is reached, and the post-loop "if not ev.is_set():
+        # return" would then discard the result before it's ever stored.
+        win._char_sleep = MagicMock(return_value=True)
 
         win._char_cca_thread()
         return win._char_results.get("cca")
