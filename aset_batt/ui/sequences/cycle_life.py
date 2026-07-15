@@ -229,9 +229,15 @@ class CycleLifeMixin:
                 self.update_display(v, 0.0, self.controller.estimator.soc,
                                     self.controller.estimator.rin)
 
+            # No bleed-off here — same reasoning as HPPC Full Sequence's PHASE 0:
+            # cycle 1's CHARGE below always runs to termination current
+            # regardless of this reading, so bleeding surface charge off only
+            # to have the charger immediately put it right back wastes ~5-10 min
+            # for zero effect on the test outcome.
             soc0_ocv, v0_ocv, ocv_result = self.controller.calibrate_from_ocv_stable(
                 on_progress=_ocv_progress,
                 cancel_check=self._seq_running.is_set,
+                allow_bleed_off=False,
             )
             if not self._seq_running.is_set():
                 return
