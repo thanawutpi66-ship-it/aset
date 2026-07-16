@@ -154,7 +154,16 @@ class UiUpdaterMixin:
                 " font-family:Consolas,monospace; border-top:2px solid #770000; font-weight:700;"
             )
     def _alarm_acknowledge(self):
-        """Operator ACK: stop flashing, mark rows as ACKed (solid colour)."""
+        """Operator ACK: stop flashing, mark rows as ACKed (solid colour), and
+        silence the looping E-STOP siren if one is playing (ISO 7731: the danger
+        signal persists until acknowledged, not indefinitely)."""
+        player = getattr(self, "_estop_player", None)
+        if player is not None:
+            try:
+                player.stop()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to stop estop_siren.mp3: {e}")
         tbl = self.tbl_alarms
         ts_ack = datetime.now().strftime("%H:%M:%S")
         for row_idx in list(self._unack_rows):
