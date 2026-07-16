@@ -572,6 +572,150 @@ def identify_ecm_fit(time_s, current_a, voltage_v, voc):
 
 
 
+def identify_hppc_pulses(time_s, current_a, voltage_v, temp_c,
+                         profile: BatteryProfile) -> list:
+    """Per-pulse breakdown of an HPPC record — one dict per discharge pulse.
+
+    The aggregated ECM fit that analyze_series reports uses ONE pulse (the first
+    current edge fit_model finds) and one whole-record OCV anchor, so a
+    systematic drift across the pulse train is invisible in the report. A real
+    run (test_HPPC_20260708_152502) rested 190 mV above equilibrium at pulse 1
+    and relaxed monotonically across the 5 pulses (anchor 13.34→13.15 V): every
+    anchor-referenced estimator showed R0 "declining" 27-37% over 15 minutes —
+    an artifact of the moving anchor, not the battery (detrended repeatability
+    was ~5%). This table makes that trend visible per pulse so the operator can
+    tell a drifting anchor from a genuinely inconsistent pack.
+
+    Per pulse:
+      idx, t_edge_s, duration_s, i_pulse_a, anchor_v (median of last-5 rest
+      samples — same basis as the live sequence's voc_for_fit),
+      edge_dt_s (latency of the first post-edge sample; > MAX_STEP_EDGE_LATENCY_S
+      means the "edge" reading already contains R1 relaxation),
+      r0_edge_mohm (ΔV/ΔI at that first post-edge sample, stale or not — the
+      edge_stale flag says whether to trust it),
+      r0_fit_mohm/r1_fit_mohm/c1_fit_f/tau_fit_s/fit_r2 (per-pulse 1-RC/2-RC fit
+      with THIS pulse's own anchor), all resistances normalised to 25 °C and
+      harness-corrected on the same basis as the aggregated metrics.
+
+    Returns [] when fewer than 2 qualifying pulses (a single pulse has no trend
+    to show and the aggregated fit already covers it).
+    """
+    ia = np.asarray(current_a, float)
+    va = np.asarray(voltage_v, float)
+    tc = np.asarray(temp_c, float)
+    ta = np.asarray(time_s, float)
+    if ia.size < 20 or ta.size != ia.size:
+        return []
+    temp_mult = _dcir_temp_normalizer(profile)
+    harness_r = max(0.0, float(getattr(profile, "harness_r_ohm", 0.0)))
+
+    # Same edge threshold as identify_dcir so both see the same pulses.
+    thr = max(1e-3, 0.20 * float(np.max(np.abs(ia))))
+    on = ia > thr
+    starts = np.where(~on[:-1] & on[1:])[0] + 1
+    ends = np.where(on[:-1] & ~on[1:])[0] + 1
+
+    def _harness(r):
+        if r != r or harness_r <= 0.0:
+            return r
+        corrected, _ = _correct_for_harness_r(r, harness_r, "", [])
+        return corrected
+
+    pulses = []
+    for k_on in starts:
+        k_off_c = ends[ends > k_on]
+        k_off = int(k_off_c[0]) if k_off_c.size else ia.size
+        dur = float(ta[k_off - 1] - ta[k_on])
+        if dur < 2.0 or (k_off - k_on) < 5:
+            continue                       # blip, not an HPPC pulse
+        # Anchor needs real rest right before the edge.
+        pre = slice(max(0, k_on - 5), k_on)
+        if not np.all(np.abs(ia[pre]) < 0.15) or (k_on - pre.start) < 3:
+            continue
+        anchor = float(np.median(va[pre]))
+        i_pulse = float(np.median(ia[k_on:k_off]))
+        T = float(np.nanmedian(tc[k_on:k_off])) if tc.size else _T_REF
+        if T != T:
+            T = _T_REF
+        mult = temp_mult(T)
+
+        edge_dt = float(ta[k_on] - ta[k_on - 1])
+        di = float(ia[k_on] - ia[k_on - 1])
+        v_before = float(np.median(va[max(0, k_on - 3):k_on]))
+        r0_edge = abs((float(va[k_on]) - v_before) / di) / mult if abs(di) > thr else float("nan")
+
+        # Per-pulse 1-RC fit with this pulse's own anchor (rest tail at i=0,
+        # negative relative time — same seeding as the live sequence's fit buffers).
+        n_tail = min(5, k_on)
+        ts = np.concatenate([ta[k_on - n_tail:k_on], ta[k_on:k_off]]) - ta[k_on]
+        cs = np.concatenate([np.zeros(n_tail), ia[k_on:k_off]])
+        vs = np.concatenate([va[k_on - n_tail:k_on], va[k_on:k_off]])
+        fit, _reason = identify_ecm_fit(ts, cs, vs, anchor)
+        if fit:
+            r0_fit = float(fit["R0_ohm"]) / mult
+            r1_fit = float(fit["R1_ohm"]) / mult
+            c1_fit = float(fit["C1_farad"]) * mult
+            tau_fit = float(fit.get("tau1_s", fit.get("tau_s", 0.0)))
+            fit_r2 = float(fit["r_squared"])
+        else:
+            r0_fit = r1_fit = c1_fit = tau_fit = fit_r2 = float("nan")
+
+        pulses.append({
+            "idx": len(pulses) + 1,
+            "t_edge_s": float(ta[k_on]),
+            "duration_s": dur,
+            "i_pulse_a": i_pulse,
+            "anchor_v": anchor,
+            "edge_dt_s": edge_dt,
+            "edge_stale": edge_dt > _DCIR_MAX_STEP_DT,
+            "r0_edge_mohm": _harness(r0_edge) * 1e3,
+            "r0_fit_mohm": _harness(r0_fit) * 1e3,
+            "r1_fit_mohm": r1_fit * 1e3,
+            "c1_fit_f": c1_fit,
+            "tau_fit_s": tau_fit,
+            "fit_r2": fit_r2,
+        })
+    return pulses if len(pulses) >= 2 else []
+
+
+# Per-pulse trend thresholds for the report's drift warning. 50 mV of rest-anchor
+# movement across the pulse train ≈ 10 mΩ of apparent R0 change at a 5 A pulse —
+# larger than a healthy pack's real pulse-to-pulse variation (detrended CV ~5% on
+# the real run above), so past this the R0 TREND is anchor artifact, not battery.
+_HPPC_ANCHOR_DRIFT_WARN_V = 0.050
+_HPPC_R0_CV_WARN_PCT = 10.0
+
+
+def _hppc_pulse_summary(pulses: list, warnings: list) -> tuple:
+    """(anchor_drift_v, r0_cv_pct, warnings) from identify_hppc_pulses output.
+    Prefers the per-pulse fit R0 for the CV (anchor-aware, de-noised); falls back
+    to the edge R0 when fits failed. Appends a quality warning when the anchor
+    moved or the R0 spread is wide — the exact failure the aggregated single-fit
+    report used to hide."""
+    if not pulses:
+        return float("nan"), float("nan"), warnings
+    anchors = np.asarray([p["anchor_v"] for p in pulses], float)
+    drift = float(anchors[-1] - anchors[0])
+    r0s = np.asarray([p["r0_fit_mohm"] for p in pulses], float)
+    if np.all(np.isnan(r0s)):
+        r0s = np.asarray([p["r0_edge_mohm"] for p in pulses], float)
+    r0s = r0s[~np.isnan(r0s)]
+    cv = float(100.0 * np.std(r0s) / np.mean(r0s)) if r0s.size >= 2 and np.mean(r0s) > 0 \
+        else float("nan")
+    if abs(drift) > _HPPC_ANCHOR_DRIFT_WARN_V:
+        warnings.append(
+            f"rest anchor drifted {drift * 1e3:+.0f} mV across {len(pulses)} pulses — "
+            f"per-pulse R0 trend is an anchor artifact (surface charge still "
+            f"dissipating), not the battery; extend REST before pulsing or judge "
+            f"repeatability from the detrended spread")
+    elif cv == cv and cv > _HPPC_R0_CV_WARN_PCT:
+        warnings.append(
+            f"per-pulse R0 varies {cv:.0f}% across {len(pulses)} pulses with a "
+            f"steady anchor — pulses disagree beyond normal spread; check contact/"
+            f"connection stability before trusting the aggregated R0")
+    return drift, cv, warnings
+
+
 def _calc_capacity_and_soh(
         capacity: float, ia: np.ndarray, profile: "BatteryProfile", 
         is_hppc: bool, reached_cutoff: bool, soh: float | None) -> tuple[float, float, float]:
@@ -783,6 +927,14 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     ecm, warnings, cca_est = _extract_ecm_metrics(
         time_s, current_a, voltage_v, ocv, ocv_ceil, is_hppc, harness_r, profile, t_med, dcir, measured, warnings)
 
+    # Per-pulse breakdown (HPPC only) — the aggregated ECM above fits ONE pulse;
+    # this exposes the pulse-to-pulse trend the single fit hides (see
+    # identify_hppc_pulses' docstring for the real anchor-drift incident).
+    hppc_pulses = identify_hppc_pulses(
+        time_s, current_a, voltage_v, temp_c, profile) if is_hppc else []
+    hppc_anchor_drift_v, hppc_r0_cv_pct, warnings = _hppc_pulse_summary(
+        hppc_pulses, warnings)
+
     gradeable = measured or ecm["ecm_identified"] or not np.isnan(soh)
     if not gradeable:
         grade = "REVIEW"
@@ -837,6 +989,10 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
             tp: {"r_mohm": r * 1000.0, "std_mohm": std * 1000.0, "n_steps": n}
             for tp, (r, std, n) in dcir_timepoints.items()
         },
+        # Per-pulse HPPC breakdown — [] for non-HPPC or <2 qualifying pulses.
+        "hppc_pulses": hppc_pulses,
+        "hppc_anchor_drift_v": hppc_anchor_drift_v,
+        "hppc_r0_cv_pct": hppc_r0_cv_pct,
     }
 
 

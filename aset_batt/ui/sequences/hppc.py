@@ -124,6 +124,48 @@ def en50342_capacity_conditions(chemistry: str, c_test: float, pack_min_v: float
     return True, violations
 
 
+# Adaptive HPPC relax (G3 fix): a relax leg shorter than ~3τ truncates the RC
+# tail, biasing the next pulse's fitted R1/C1/τ systematically LOW (fit R² can
+# look excellent over the too-short window it was given). From cycle 2 the relax
+# leg extends to ≥3× the PREVIOUS cycle's own fitted τ — per-unit, not the
+# chemistry's order-of-magnitude guess (lead-acid's generic τ says 10-60 s, but
+# the real FB FTZ6V measured τ≈4-5 s across all 5 pulses of
+# test_HPPC_20260708_152502). Extend only — the configured relax_s is a floor —
+# and cap so a pathological fit (τ=200 s from a noisy pulse) can't stall the
+# sequence for an hour.
+_RELAX_CAP_S = 300.0
+# Settle early-exit for the extension: once the configured floor has elapsed,
+# a voltage flat to <1 mV over two consecutive 10 s windows is settled — waiting
+# out the rest of 3τ̂ adds nothing to the next fit's anchor.
+_SETTLE_DV_V = 0.001
+_SETTLE_WIN_S = 10.0
+
+
+def effective_relax_s(relax_s: float, tau_fit: float) -> float:
+    """Relax duration for this cycle: max(configured, 3×fitted-τ), capped.
+    tau_fit=0 (no fit yet — cycle 1, or every fit so far failed) → configured."""
+    return min(max(relax_s, 3.0 * tau_fit), _RELAX_CAP_S)
+
+
+def relax_settled(settle_win: list, now_w: float, t_relax0: float,
+                  relax_s: float, relax_eff: float) -> bool:
+    """True when the adaptive relax EXTENSION may end early: the configured
+    relax_s floor has elapsed, an extension is actually in effect, and voltage
+    has been flat (ΔV < _SETTLE_DV_V) in each of the last two consecutive
+    _SETTLE_WIN_S windows. ``settle_win`` is the [(wall_t, v), ...] buffer the
+    relax loop maintains (pruned to the last 2×_SETTLE_WIN_S by the caller)."""
+    if relax_eff <= relax_s or (now_w - t_relax0) < relax_s:
+        return False
+    if not settle_win or now_w - settle_win[0][0] < 2.0 * _SETTLE_WIN_S - 1.0:
+        return False                       # window not full yet
+    cut = now_w - _SETTLE_WIN_S
+    v1 = [s[1] for s in settle_win if s[0] < cut]
+    v2 = [s[1] for s in settle_win if s[0] >= cut]
+    return (len(v1) >= 2 and len(v2) >= 2
+            and max(v1) - min(v1) < _SETTLE_DV_V
+            and max(v2) - min(v2) < _SETTLE_DV_V)
+
+
 class HppcMixin:
     # ---- Workflow guide slots -----------------------------------------------
 
@@ -251,9 +293,19 @@ class HppcMixin:
                                         self.controller.estimator.rin)
                 return _cb
 
+            # No bleed-off here: PHASE 1 below always runs a full CC-CV charge to
+            # termination current regardless of this reading (no skip-charge
+            # branch, unlike IEC/AUTO) — bleeding surface charge off only to have
+            # the charger immediately put it right back (plus more) wastes
+            # ~5-10 min for zero effect on the test outcome. This reading only
+            # feeds the charge-duration ETA estimate below, not anything
+            # accuracy-critical. Real bug seen on a pack charged the day before:
+            # 12.91V (above the 100% point) triggered a bleed, then charged
+            # CC-CV anyway.
             soc0_ocv, v0_ocv, ocv_result = self.controller.calibrate_from_ocv_stable(
                 on_progress=_ocv_progress_factory("HPPC SEQ: OCV settle"),
                 cancel_check=self._seq_running.is_set,
+                allow_bleed_off=False,
             )
             if not self._seq_running.is_set():
                 return
@@ -376,14 +428,19 @@ class HppcMixin:
                     f"chemistry's rest-settle time ({_min_rest_s:.0f}s) — the relax "
                     f"leg's estimator update will only count coulombs, the voltage "
                     f"correction won't fire this run")
-            # G3 (advisory only — no timing change): a relax leg shorter than ~3τ
-            # captures only part of the RC decay, so the fitted R1/C1 (and the
-            # τ = R1·C1 read off it) come out systematically biased LOW no matter how
-            # high the fit R² looks — R² only measures the fit over the window it was
-            # given, and a too-short window can look excellent while missing the tail.
-            # lead-acid τ is order 10-60 s, so the 30 s UI default is ~0.5-3τ. Surface
-            # a concrete "use ≥3τ" number from the estimator's own current RC guess so
-            # the operator can lengthen relax_s next run if they want an unbiased τ.
+            # G3: a relax leg shorter than ~3τ captures only part of the RC decay,
+            # so the fitted R1/C1 (and the τ = R1·C1 read off it) come out
+            # systematically biased LOW no matter how high the fit R² looks — R²
+            # only measures the fit over the window it was given, and a too-short
+            # window can look excellent while missing the tail. From cycle 2 the
+            # relax leg now AUTO-EXTENDS to ≥3× the previous cycle's own fitted τ
+            # (see the adaptive-relax block in the cycle loop below) — cycle 1
+            # still runs on the configured value because no per-unit τ exists yet,
+            # so warn when that first leg is short vs the chemistry's generic τ
+            # guess. (Phase-A note: the chemistry default τ for lead-acid is an
+            # order-of-magnitude guess of 10-60 s, but the real FB FTZ6V measured
+            # τ≈4-5 s — the per-unit fit, not this guess, is what the adaptive
+            # extension trusts.)
             try:
                 _r0d, _r1d, _c1d = self.controller.estimator._ekf_rc_defaults()
                 _tau_est = _r1d * _c1d
@@ -392,9 +449,9 @@ class HppcMixin:
             if _tau_est > 1.0 and relax_s < 3.0 * _tau_est:
                 self.sig_alarm.emit(
                     f"[HPPC SEQ] relax_s={relax_s:.0f}s captures only "
-                    f"~{relax_s / _tau_est:.1f}τ of the RC tail (τ≈{_tau_est:.0f}s for "
-                    f"this chemistry) — R1/C1/τ will be biased low; ≥{3.0 * _tau_est:.0f}s "
-                    f"(~3τ) recommended for an unbiased fit (fit R² can look high anyway)")
+                    f"~{relax_s / _tau_est:.1f}τ of the RC tail (chemistry guess "
+                    f"τ≈{_tau_est:.0f}s) — cycle 1's R1/C1/τ may be biased low; later "
+                    f"cycles auto-extend relax to ≥3× the previous cycle's fitted τ")
             max_dis = self.controller.config.battery.max_current
             i_pulse = min(crate * rated, max_dis)
             pack_min = self.controller.config.battery.pack_min_voltage
@@ -415,11 +472,25 @@ class HppcMixin:
             # across relax/pulse boundaries so no interval is ever dropped or doubled.
             _upd_last = _t.perf_counter()
             _rate_warned = False   # once-per-sequence low-sample-rate alarm
+            # Adaptive relax (G3 fix): previous cycle's own fitted τ — local, not
+            # instance state (CLAUDE.md: mixins hold no state). 0.0 until the first
+            # successful per-cycle fit, so cycle 1 runs the configured relax_s.
+            _tau_fit = 0.0
             for cyc in range(1, n_cyc + 1):
                 if not self._seq_running.is_set():
                     break
-                # Relax (REST) leg
-                status(f"HPPC {cyc}/{n_cyc}: REST {relax_s:.0f}s...")
+                # Relax (REST) leg. From cycle 2, extend to ≥3× the previous
+                # cycle's fitted τ (capped) so R1/C1/τ aren't biased low by a
+                # too-short window — extend ONLY; the configured relax_s is the
+                # floor. Once the configured floor has elapsed, the extension may
+                # end early if the voltage has genuinely settled — see
+                # effective_relax_s/relax_settled (module level, unit-tested).
+                relax_eff = effective_relax_s(relax_s, _tau_fit)
+                if relax_eff > relax_s + 0.5:
+                    status(f"HPPC {cyc}/{n_cyc}: REST {relax_eff:.0f}s "
+                           f"(auto-extended from {relax_s:.0f}s, 3×τ̂={3.0 * _tau_fit:.0f}s)...")
+                else:
+                    status(f"HPPC {cyc}/{n_cyc}: REST {relax_s:.0f}s...")
                 try:
                     from aset_batt.storage.cloud_push import set_cloud_meta
                     set_cloud_meta(sub_phase="relax", cycle_index=cyc, cycle_total=n_cyc)
@@ -431,7 +502,9 @@ class HppcMixin:
                 # locate the step (fit_model._detect_step()), not just the pulse's
                 # own already-loaded current throughout.
                 _relax_tail_v = []
-                t_phase = _t.time() + relax_s
+                _t_relax0 = _t.time()
+                t_phase = _t_relax0 + relax_eff
+                _settle_win = []   # (wall_t, v) for the settle early-exit check
                 while self._seq_running.is_set() and _t.time() < t_phase:
                     _iter_t0 = _t.perf_counter()
                     try:
@@ -484,6 +557,21 @@ class HppcMixin:
                             self.sig_wf_status.emit(f"⛔ {reason}")
                             if self.controller:
                                 self.controller._trigger_safety(reason)
+                            break
+                        # Settle early-exit for the ADAPTIVE extension only —
+                        # checked AFTER the rest-UVP trip above so a settled-but-
+                        # empty pack still aborts instead of pulsing.
+                        _now_w = _t.time()
+                        _settle_win.append((_now_w, v_r))
+                        while _settle_win and _now_w - _settle_win[0][0] > 2.0 * _SETTLE_WIN_S:
+                            _settle_win.pop(0)
+                        if relax_settled(_settle_win, _now_w, _t_relax0,
+                                         relax_s, relax_eff):
+                            logger.info(
+                                "HPPC %d/%d relax settled early at %.0fs of %.0fs "
+                                "(ΔV < %.0f mV over 2×%.0fs)",
+                                cyc, n_cyc, _now_w - _t_relax0, relax_eff,
+                                _SETTLE_DV_V * 1e3, _SETTLE_WIN_S)
                             break
                     except Exception as e:
                         import logging
@@ -680,6 +768,13 @@ class HppcMixin:
                             identify_ecm_fit, _correct_for_harness_r)
                         ecm, _reason = identify_ecm_fit(_fit_t, _fit_i, _fit_v, voc_for_fit)
                         if ecm is not None:
+                            # This cycle's own fitted τ drives the NEXT cycle's
+                            # adaptive relax extension (see relax_eff above). τ is
+                            # temp-invariant here (R1·C1 — the normalization below
+                            # divides R1 and multiplies C1 by the same factor).
+                            _tau_new = float(ecm.get("tau1_s", ecm.get("tau_s", 0.0)))
+                            if _tau_new > 0.0:
+                                _tau_fit = _tau_new
                             r0 = float(ecm["R0_ohm"])
                             harness_r = max(0.0, float(getattr(
                                 self.controller.config.battery, "harness_resistance_ohm", 0.0)))
