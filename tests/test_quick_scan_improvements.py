@@ -145,6 +145,42 @@ class TestFitEcmPromotesMiniPulse(unittest.TestCase):
         # Grade must come from the dual-resistance path now that ECM is real.
         self.assertIn(res["grade"], ("A", "B", "C", "REJECT"))
 
+    def test_mini_pulse_promotion_with_equal_current_edges(self):
+        """Production reality, not the exaggerated 2A/6A test above: quick_scan.py
+        computes i_dis ONCE and reuses the identical value for both the
+        mini-pulse and the main discharge (see the "Phase 1 uses the same 1C
+        rate" comment in quick_scan.py) -- so the two edges tie in |delta-I|.
+        _detect_step's np.argmax returns the FIRST index on a tie, and the
+        mini-pulse always occurs first chronologically, so the direct
+        (non-promoted) fit should land on the mini-pulse and succeed."""
+        t, i, v, temp = _quick_scan_shaped_record(i_pulse=6.0, i_discharge=6.0)
+        q = np.cumsum(np.clip(i, 0, None) * np.diff(t, prepend=t[0])) / 3600.0
+        res = analyze_series(t, i, v, temp, q, _make_profile(), is_hppc=False,
+                             fit_ecm=True)
+        self.assertFalse(np.isnan(res["soh"]))
+        self.assertTrue(res["ecm_identified"],
+                        "equal-magnitude mini-pulse/discharge edges (production's "
+                        "actual shape) must still yield an ECM fit")
+        self.assertAlmostEqual(res["r0_mohm"], 30.0, delta=8.0)
+        self.assertAlmostEqual(res["r1_mohm"], 50.0, delta=15.0)
+        self.assertGreater(res["ecm_r2"], 0.90)
+
+    def test_mini_pulse_promotion_with_near_tie_current_edges(self):
+        """More adversarial than an exact tie: a small realistic margin (sensor/
+        readback noise around a commanded-identical setpoint) that pushes
+        _detect_step toward the discharge edge instead of the mini-pulse --
+        the promotion fallback must still recover the mini-pulse's fit."""
+        t, i, v, temp = _quick_scan_shaped_record(i_pulse=6.0, i_discharge=6.06)
+        q = np.cumsum(np.clip(i, 0, None) * np.diff(t, prepend=t[0])) / 3600.0
+        res = analyze_series(t, i, v, temp, q, _make_profile(), is_hppc=False,
+                             fit_ecm=True)
+        self.assertFalse(np.isnan(res["soh"]))
+        self.assertTrue(res["ecm_identified"],
+                        "near-tie edges must still promote the mini-pulse's fit")
+        self.assertAlmostEqual(res["r0_mohm"], 30.0, delta=8.0)
+        self.assertAlmostEqual(res["r1_mohm"], 50.0, delta=15.0)
+        self.assertGreater(res["ecm_r2"], 0.90)
+
     def test_fit_ecm_none_defaults_to_is_hppc_unchanged(self):
         """Backward-compat pin: a caller that never passes fit_ecm (every
         existing call site before this fix) must get byte-identical behavior

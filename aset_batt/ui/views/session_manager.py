@@ -259,11 +259,21 @@ class SessionManagerMixin:
         force_hppc = "hppc" in getattr(self, "_current_test_name", "").lower()
         if not force_hppc:
             force_hppc = self._detect_session_type(csv_path).lower() == "hppc"
+        # Same sniff, for Quick Scan: fit_ecm=True is what made the mini-pulse's
+        # DCIR/ECM breakdown show up in the live report (_quick_scan_thread calls
+        # _auto_analyze(fit_ecm=True)) — without it here, re-analysing a saved
+        # Quick Scan session silently loses that breakdown even though the CSV
+        # has the data. `or None` (not a bare bool) matters: every other session
+        # type must keep resolving fit_ecm from is_hppc exactly as before.
+        fit_ecm = "quick scan" in getattr(self, "_current_test_name", "").lower()
+        if not fit_ecm:
+            fit_ecm = self._detect_session_type(csv_path).lower() == "quick scan"
 
         def work():
             from aset_batt.acquisition.analysis import analyze_csv_mp
             try:
-                res = analyze_csv_mp(csv_path, prof, force_hppc=force_hppc)
+                res = analyze_csv_mp(csv_path, prof, force_hppc=force_hppc,
+                                     fit_ecm=fit_ecm or None)
             except Exception as e:
                 res = {"error": str(e)}
             self.sig_analysis_done.emit(res)   # → _slot_analysis_done → _on_test_finished
