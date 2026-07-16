@@ -169,8 +169,15 @@ def build_results_html(results: dict) -> str:
             r2p = p.get("fit_r2", float("nan"))
             fit_txt = (f"R₀ {r0f:.1f} mΩ  τ {tau:.1f} s  R² {r2p:.3f}"
                        if r0f == r0f else "fit failed")
+            # G6 (regen pulse) / G1-G2 (SoC-sweep) support: tag the pulse's leg
+            # when it's a charge-direction regen pulse (discharge is the
+            # default, unlabeled, to keep the common case terse), and show the
+            # SoC level it fired at when the CSV carried a SoC_pct column.
+            leg_txt = "" if p.get("leg", "discharge") == "discharge" else "  [REGEN]"
+            soc_p = p.get("soc_pct", float("nan"))
+            soc_txt = f"  SoC {soc_p:.0f}%" if soc_p == soc_p else ""
             parts.append(row(
-                f"Pulse {p['idx']}  ({p['i_pulse_a']:.2f} A, {p['duration_s']:.0f} s)",
+                f"Pulse {p['idx']}{leg_txt}{soc_txt}  ({p['i_pulse_a']:.2f} A, {p['duration_s']:.0f} s)",
                 fit_txt, "",
                 f"anchor {p['anchor_v']:.3f} V, edge R₀ {r0e:.1f} mΩ"
                 f" @{p['edge_dt_s']:.1f}s{stale}"))

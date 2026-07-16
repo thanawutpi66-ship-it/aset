@@ -55,6 +55,13 @@ class BatteryConfig:
     # Calibrate once via a reference resistor, known short-circuit, or an external
     # ACIR/impedance meter at the battery terminals.
     harness_resistance_ohm: float = 0.0
+    # HPPC regen (charge-direction) pulse leg (G6): skip scheduling a regen
+    # pulse once live SoC is at/above this ceiling — repeatedly pushing charge
+    # into an already-high pack via regen pulses is unsafe/uninformative. This
+    # is a soft, SoC-based scheduling gate, independent of the hard ovp/
+    # max_voltage voltage trip that still applies during whatever regen pulse
+    # DOES run.
+    hppc_regen_soc_ceiling_pct: float = 90.0
 
     @property
     def pack_nominal_voltage(self) -> float:
@@ -236,6 +243,8 @@ class ConfigManager:
                 f"exceeds the plausible test-rig wiring/contact resistance ceiling "
                 f"({HARNESS_RESISTANCE_MAX_OHM:.2f} Ω) — check for a calibration/entry "
                 f"error before trusting DCIR/R0 grading")
+        if not (0.0 < self.battery.hppc_regen_soc_ceiling_pct <= 100.0):
+            errors.append("hppc_regen_soc_ceiling_pct must be in (0, 100]")
 
         # System validation
         if self.system.max_points <= 0:

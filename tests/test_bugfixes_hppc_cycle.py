@@ -179,5 +179,67 @@ class TestHppcSignConventionRegression(unittest.TestCase):
         self.assertFalse(res["ecm_identified"])
 
 
+# ---------------------------------------------------------------------------
+# G6 regen pulse: identify_hppc_pulses()'s edge-mask fix (ia > thr -> abs(ia)
+# > thr) must detect a legitimate negative-current (regen) pulse alongside a
+# positive-current (discharge) pulse — both correctly signed, i.e. the "good"
+# convention this file's own sign-bug tests above guard, not the injected bug.
+# ---------------------------------------------------------------------------
+def _write_hppc_csv_with_regen(path: str):
+    """One rest -> discharge-pulse -> rest -> regen-pulse -> rest cycle, both
+    pulses correctly signed (discharge positive, regen negative)."""
+    r0, r1, tau, cur_dis, cur_regen, voc = 0.012, 0.018, 18.0, 7.0, -5.25, 12.8
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["Timestamp", "Elapsed_s", "Voltage_V", "Current_A",
+                    "SoC_pct", "Temperature_C", "Capacity_Ah", "Mode"])
+        t = 0.0
+
+        def rest(n, soc):
+            nonlocal t
+            for _ in range(n):
+                w.writerow(["00:00:00", f"{t:.2f}", "12.8000", "0.0000",
+                           f"{soc}", "25.0", "0.0", "HPPC"])
+                t += 0.2
+
+        def pulse(n, cur, soc):
+            nonlocal t
+            for k in range(n):
+                v = voc - cur * (r0 + r1 * (1 - math.exp(-(k * 0.2) / tau)))
+                w.writerow(["00:00:00", f"{t:.2f}", f"{v:.4f}",
+                           f"{cur:.4f}", f"{soc}", "25.0", "0.01", "HPPC"])
+                t += 0.2
+
+        rest(30, "80.0")
+        pulse(30, cur_dis, "79.0")
+        rest(30, "79.0")
+        pulse(30, cur_regen, "82.0")
+        rest(30, "82.0")
+
+
+class TestHppcRegenPulseDetection(unittest.TestCase):
+    def setUp(self):
+        from aset_batt.core.config import config_manager
+        self.profile = profile_from_config(config_manager)
+        fd, self.path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+
+    def tearDown(self):
+        if os.path.exists(self.path):
+            os.remove(self.path)
+
+    def test_discharge_and_regen_pulses_both_detected_and_tagged(self):
+        _write_hppc_csv_with_regen(self.path)
+        res = analyze_csv(self.path, self.profile, force_hppc=True)
+        pulses = res["hppc_pulses"]
+        self.assertEqual(len(pulses), 2,
+                         "sign-mask fix must detect BOTH the discharge pulse "
+                         "and the regen (negative-current) pulse")
+        self.assertEqual(pulses[0]["leg"], "discharge")
+        self.assertGreater(pulses[0]["i_pulse_a"], 0)
+        self.assertEqual(pulses[1]["leg"], "regen")
+        self.assertLess(pulses[1]["i_pulse_a"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

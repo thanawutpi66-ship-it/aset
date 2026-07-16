@@ -552,6 +552,17 @@ class BaseSequenceMixin:
         except Exception:
             return 0.0   # unknown → don't add a spurious cutoff on top of pack_min
 
+    def _ovp_ceiling(self) -> float:
+        """Hardware over-voltage CEILING for a regen (charge-direction) pulse leg —
+        the symmetric counterpart to ``_uvp_floor()`` above. Checked against a
+        LOADED (charging) reading during a regen pulse only; a regen pulse pushes
+        V above rest by design, same reasoning ``_uvp_floor`` uses for why a
+        pulse-leg reading must not be compared against the steady-state cutoff."""
+        try:
+            return float(self.controller.config.system.safety_limits["max_voltage"])
+        except Exception:
+            return 0.0   # unknown → caller must fall back, same pattern as _uvp_floor
+
     def _seq_kick_watchdog(self):
         """Call after every successful measurement read inside a sequence thread."""
         import time as _t
