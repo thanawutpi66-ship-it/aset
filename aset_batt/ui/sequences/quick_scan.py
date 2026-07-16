@@ -435,7 +435,7 @@ class QuickScanMixin:
             # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
             last_log = _t.perf_counter()
             _dis_t0 = _t.perf_counter()
-            _dis_est = int(rated / max(i_dis, 0.01) * 3600)
+            _dis_est = self._estimate_discharge_s(i_dis)
             _cutoff_confirm_n = 0
             # Same low-latency edge sample as _auto_sequence_thread's IEC discharge —
             # this loop's own pacing (~5s) is 10x identify_dcir()'s staleness gate

@@ -400,9 +400,9 @@ class IecCapacityMixin:
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
-            # Estimate discharge duration from SoC and C-rate (seconds)
-            rated2 = self.controller.config.battery.rated_capacity
-            _dis_est = int(rated2 / max(i_dis, 0.01) * 3600)
+            # Estimate discharge duration from SoC and C-rate (seconds) — SoH- and
+            # starting-SoC-aware, see _estimate_discharge_s.
+            _dis_est = self._estimate_discharge_s(i_dis)
             _cutoff_confirm_n = 0
             while self._seq_running.is_set():
                 try:

@@ -731,6 +731,27 @@ class BaseSequenceMixin:
         except Exception:
             return 0
 
+    def _estimate_discharge_s(self, i_dis: float) -> int:
+        """Discharge-time ETA (s), SoH- and starting-SoC-aware.
+
+        The old estimate used the full nameplate rated_capacity regardless of how
+        degraded the pack actually is or how much charge it starts with — a
+        real-world example: a battery discharged from 100% shows a much shorter
+        ETA once graded at 60% SoH than one at 100% SoH, because there's simply
+        less real capacity to discharge, but rated_capacity/i_dis alone can't see
+        that. Uses effective_capacity() (rated * SoH/100, same denominator the
+        estimator's own coulomb counting divides by) scaled by the current SoC —
+        so the estimate reflects the Ah actually available to discharge from here,
+        not a fixed nameplate assumption."""
+        try:
+            estimator = self.controller.estimator
+            eff_cap = estimator.effective_capacity()
+            soc_now = max(0.0, min(100.0, estimator.soc))
+            available_ah = eff_cap * (soc_now / 100.0)
+            return max(60, int(available_ah / max(i_dis, 0.01) * 3600))
+        except Exception:
+            return 0
+
     def _project_tail_eta(self, t_hist: list, i_hist: list, tail_a: float,
                           elapsed_ch: int, fallback_total: int) -> int:
         """Adaptive ETA for the CV/absorption tail: fit the REAL exponential current

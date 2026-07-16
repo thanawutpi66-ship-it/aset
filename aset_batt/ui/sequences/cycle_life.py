@@ -336,7 +336,7 @@ class CycleLifeMixin:
                 self.hw.set_load(True, str(i_dis))
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
                 _dis_t0 = _t.perf_counter()
-                _dis_est = int(rated / max(i_dis, 0.01) * 3600)
+                _dis_est = self._estimate_discharge_s(i_dis)
                 ah_acc = 0.0
                 last_log = _t.perf_counter()
                 _cutoff_confirm_n = 0
