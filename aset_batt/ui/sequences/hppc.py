@@ -166,6 +166,47 @@ def relax_settled(settle_win: list, now_w: float, t_relax0: float,
             and max(v2) - min(v2) < _SETTLE_DV_V)
 
 
+# SoC-sweep HPPC (G1/G2 fix): FreedomCAR sweeps pulse sets across SoC levels
+# (typically every 10%) instead of pulsing only once at 100% SoC right after a
+# full charge — the current default. These two helpers are pure math kept
+# module-level (same as effective_relax_s/relax_settled above) so they're
+# unit-testable without a running thread.
+
+def soc_sweep_done(soc_now: float, soc_floor_pct: float) -> bool:
+    """True once the sweep has discharged down to (or past) the configured
+    floor and should stop scheduling further SoC levels."""
+    return soc_now <= soc_floor_pct
+
+
+def discharge_step_ah_target(rated_capacity_ah: float, soc_step_pct: float) -> float:
+    """Ah to remove for one SoC-sweep discharge step (e.g. 10% of rated ->
+    0.1*rated). Pure conversion for the ETA display only — the actual runtime
+    stop condition inside the thread compares live estimator.soc directly
+    (the same trusted value every other view already polls), not this number,
+    so a second independent Ah accumulator can never disagree with it."""
+    return max(0.0, rated_capacity_ah) * max(0.0, soc_step_pct) / 100.0
+
+
+# Regen (charge) pulse leg (G6 fix): FreedomCAR's real HPPC profile is
+# discharge-pulse -> rest -> regen(charge)-pulse -> rest, but this sequence
+# only ever pulsed discharge. Pure helpers, same reasoning as the two above.
+
+def regen_pulse_current(i_pulse: float, regen_fraction: float = 0.75) -> float:
+    """Regen (charge-direction) pulse magnitude: FreedomCAR standard is 75% of
+    the discharge pulse current. Returns a POSITIVE magnitude (A) — the caller
+    supplies it to set_psu()'s current-limit argument; the actual current sign
+    comes back negative from read_measurements(prefer_load_v=False) on its own
+    (charge = PSU active), nothing here needs to negate anything."""
+    return max(0.0, i_pulse) * max(0.0, regen_fraction)
+
+
+def regen_allowed(soc_now: float, soc_ceiling_pct: float) -> bool:
+    """True when live SoC is still below the configured regen ceiling — the
+    gate that SKIPS (not aborts) a regen leg once the pack is high enough that
+    pushing more charge in via a pulse is unsafe/uninformative."""
+    return soc_now < soc_ceiling_pct
+
+
 class HppcMixin:
     # ---- Workflow guide slots -----------------------------------------------
 
@@ -223,6 +264,10 @@ class HppcMixin:
             "pulse_s": self.ed_hppc_pulse.text(),
             "relax_s": self.ed_hppc_relax.text(),
             "crate": self.ed_hppc_crate.text(),
+            "soc_sweep_enabled": self.chk_hppc_soc_sweep.isChecked(),
+            "soc_step_pct": self.ed_hppc_soc_step.text(),
+            "soc_floor_pct": self.ed_hppc_soc_floor.text(),
+            "regen_enabled": self.chk_hppc_regen.isChecked(),
         }
         import threading
         threading.Thread(target=self._hppc_seq_thread, args=(opts,), daemon=True).start()
@@ -462,24 +507,171 @@ class HppcMixin:
             hppc_load_floor = self._uvp_floor()
             if hppc_load_floor <= 0 or hppc_load_floor >= pack_min:
                 hppc_load_floor = pack_min * 0.95
-            _hppc_total = n_cyc * (relax_s + pulse_s)
+
+            # SoC-sweep (G1/G2 fix): pulse at multiple SoC levels instead of only
+            # once at 100% right after the mandatory full charge. Independent
+            # toggle — off makes the outer level loop below run exactly once,
+            # preserving the single-level behavior byte-for-byte.
+            soc_sweep_enabled = bool(opts.get("soc_sweep_enabled", False))
+            try:
+                soc_step_pct = max(1.0, float(opts.get("soc_step_pct") or "10"))
+                soc_floor_pct = max(0.0, float(opts.get("soc_floor_pct") or "20"))
+            except (ValueError, AttributeError):
+                soc_step_pct, soc_floor_pct = 10.0, 20.0
+
+            # Regen (charge) pulse leg (G6 fix): FreedomCAR's real HPPC profile is
+            # discharge-pulse -> rest -> regen(charge)-pulse -> rest, but this
+            # sequence only ever pulsed discharge. Independent toggle — off makes
+            # the regen block below a no-op, preserving the exact discharge-only
+            # behavior byte-for-byte. i_regen/ceiling computed once (constant per
+            # sequence, same as i_pulse above), not recomputed per cycle.
+            regen_enabled = bool(opts.get("regen_enabled", False))
+            i_regen = regen_pulse_current(i_pulse)
+            pack_max = self.controller.config.battery.pack_max_voltage
+            hppc_regen_ceiling = self._ovp_ceiling()
+            if hppc_regen_ceiling <= 0 or hppc_regen_ceiling <= pack_max:
+                hppc_regen_ceiling = pack_max * 1.05
+
             self.controller._ensure_logging(label="HPPC")
             self.hw.psu_off()
             self.hw.load_off()
-            _hppc_t0 = _t.time()
             v_r = None   # rested voltage from the relax leg — voc for each cycle's ECM fit
             # Real per-sample dt for estimator.update() in both legs below — one clock
-            # across relax/pulse boundaries so no interval is ever dropped or doubled.
+            # across relax/pulse/discharge-step boundaries so no interval is ever
+            # dropped or doubled.
             _upd_last = _t.perf_counter()
             _rate_warned = False   # once-per-sequence low-sample-rate alarm
             # Adaptive relax (G3 fix): previous cycle's own fitted τ — local, not
             # instance state (CLAUDE.md: mixins hold no state). 0.0 until the first
-            # successful per-cycle fit, so cycle 1 runs the configured relax_s.
+            # successful per-cycle fit, so cycle 1 (of each SoC level) runs the
+            # configured relax_s.
             _tau_fit = 0.0
-            for cyc in range(1, n_cyc + 1):
-                if not self._seq_running.is_set():
-                    break
-                # Relax (REST) leg. From cycle 2, extend to ≥3× the previous
+
+            level = 0
+            while self._seq_running.is_set():
+                level += 1
+                _level_label = f" [SoC lvl {level}]" if soc_sweep_enabled else ""
+
+                if soc_sweep_enabled and level > 1:
+                    # ── SoC-sweep DISCHARGE step ─────────────────────────────
+                    # Same shape as cycle_life.py's own discharge step (set_load
+                    # -> paced loop -> ah tracking not needed here, stop condition
+                    # is live SoC), UVP-floor abort identical to the relax leg's.
+                    soc_before = self.controller.estimator.soc
+                    target_level_soc = max(soc_floor_pct, soc_before - soc_step_pct)
+                    status(f"HPPC SoC-SWEEP: discharging toward ~{target_level_soc:.0f}%...")
+                    self.sig_alarm.emit(
+                        f"[HPPC SEQ] SoC-sweep: discharging level {level - 1}→{level} "
+                        f"(target ~{target_level_soc:.0f}%)")
+                    try:
+                        v_pre, i_pre, _ = self.hw.read_vi()
+                        self.controller._log_sample(v_pre, i_pre)
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
+                    self.hw.set_load(True, str(i_pulse))
+                    try:
+                        v_s0, i_s0 = self.hw.read_measurements(prefer_load_v=True)
+                        self.controller._log_sample(v_s0, i_s0)
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
+                    _step_cutoff_n = 0
+                    while self._seq_running.is_set():
+                        try:
+                            v_s, i_s = self.hw.read_measurements(prefer_load_v=True)
+                            temp_s = self.hw.current_temp
+                            if not self._seq_check_temp_stale():
+                                hppc_safety_tripped = True
+                                break
+                            if not self._seq_check_otp(temp_s):
+                                hppc_safety_tripped = True
+                                break
+                            _upd_now = _t.perf_counter()
+                            state_s = self.controller.estimator.update(
+                                v_s, i_s, dt=max(1e-3, _upd_now - _upd_last), temp=temp_s)
+                            _upd_last = _upd_now
+                            self.controller._log_sample(v_s, i_s)
+                            self.update_display(v_s, i_s, state_s["soc"], state_s["rin"], temp_s)
+                            self._seq_kick_watchdog()
+                            status(f"HPPC SoC-SWEEP: {v_s:.3f} V  SoC {state_s['soc']:.1f}% "
+                                   f"(target {target_level_soc:.0f}%)")
+                            if v_s <= pack_min:
+                                self._seq_running.clear()
+                                hppc_safety_tripped = True
+                                reason = (f"Under-voltage during HPPC SoC-sweep discharge: "
+                                          f"{v_s:.3f}V ≤ {pack_min:.3f}V cutoff")
+                                self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
+                                self.sig_wf_status.emit(f"⛔ {reason}")
+                                break
+                            # Same 5-sample debounce idiom as other discharge-cutoff
+                            # checks in this codebase (worker.py CC_DISCHARGE,
+                            # cycle_life.py) — here against the live estimator SoC,
+                            # not voltage, since this is a targeted "remove X% SoC"
+                            # step rather than a capacity-test cutoff.
+                            _step_cutoff_n = (_step_cutoff_n + 1) if state_s["soc"] <= target_level_soc else 0
+                            if _step_cutoff_n >= 5:
+                                break
+                        except Exception as exc:
+                            self.sig_alarm.emit(f"[HPPC SEQ] SoC-sweep discharge read error: {exc}")
+                            break
+                        if not self._seq_sleep(5.0):
+                            break
+                    self.hw.load_off()
+                    if not self._seq_running.is_set():
+                        break
+
+                    # ── Re-anchor after the step's rest ──────────────────────
+                    # CRITICAL: state_estimator.py's still_polarised gate skips the
+                    # EKF's voltage-measurement correction for the ENTIRE duration
+                    # of an active discharge — SoC tracking during the step above
+                    # is coulomb-counting only, with no correction until the pack
+                    # genuinely rests. Uncorrected, this drift compounds across
+                    # sweep levels. Re-anchor with the exact same call PREPARE/
+                    # PHASE 2 already use; allow_bleed_off=False for the same
+                    # reason PREPARE uses it — about to continue discharging/
+                    # pulsing, not making a charge/skip decision.
+                    status(f"HPPC SoC-SWEEP level {level}: OCV settle...")
+                    soc_lvl, v_lvl, ocv_result_lvl = self.controller.calibrate_from_ocv_stable(
+                        on_progress=_ocv_progress_factory(f"HPPC SoC-SWEEP level {level} settle"),
+                        cancel_check=self._seq_running.is_set,
+                        allow_bleed_off=False,
+                    )
+                    if not self._seq_running.is_set():
+                        break
+                    flag_lvl = "✓ settled" if ocv_result_lvl == "settled" else "⚠ timeout"
+                    self.sig_alarm.emit(
+                        f"[HPPC SEQ] SoC-sweep level {level}: {v_lvl:.3f} V → "
+                        f"SoC {soc_lvl:.1f}% ({flag_lvl})")
+                    # τ genuinely varies with SoC — don't carry a stale/foreign
+                    # estimate from a different level into this level's adaptive
+                    # relax extension. Cycle 1 of every level falls back to the
+                    # configured relax_s floor, same as today's cycle 1 does.
+                    _tau_fit = 0.0
+                    if soc_sweep_done(soc_lvl, soc_floor_pct):
+                        self.sig_alarm.emit(
+                            f"[HPPC SEQ] SoC-sweep reached floor ({soc_lvl:.1f}% ≤ "
+                            f"{soc_floor_pct:.0f}%) — stopping after this level")
+                        break
+
+                # Per-level progress-bar reset: the number of SoC-sweep levels
+                # isn't knowable up front (depends on live discharge rate and when
+                # estimator.soc crosses the floor), so this intentionally shows
+                # per-level progress rather than a whole-sweep ETA with false
+                # precision — see sig_alarm below for level-level visibility.
+                _hppc_t0 = _t.time()
+                _hppc_total = n_cyc * (relax_s + pulse_s)
+                if regen_enabled:
+                    _hppc_total += n_cyc * (relax_s + pulse_s)
+                if soc_sweep_enabled:
+                    self.sig_alarm.emit(
+                        f"[HPPC SEQ] Starting SoC-sweep level {level} "
+                        f"(~{self.controller.estimator.soc:.0f}%)")
+
+                for cyc in range(1, n_cyc + 1):
+                    if not self._seq_running.is_set():
+                        break
+                    # Relax (REST) leg. From cycle 2, extend to ≥3× the previous
                 # cycle's fitted τ (capped) so R1/C1/τ aren't biased low by a
                 # too-short window — extend ONLY; the configured relax_s is the
                 # floor. Once the configured floor has elapsed, the extension may
@@ -487,10 +679,10 @@ class HppcMixin:
                 # effective_relax_s/relax_settled (module level, unit-tested).
                 relax_eff = effective_relax_s(relax_s, _tau_fit)
                 if relax_eff > relax_s + 0.5:
-                    status(f"HPPC {cyc}/{n_cyc}: REST {relax_eff:.0f}s "
+                    status(f"HPPC {cyc}/{n_cyc}{_level_label}: REST {relax_eff:.0f}s "
                            f"(auto-extended from {relax_s:.0f}s, 3×τ̂={3.0 * _tau_fit:.0f}s)...")
                 else:
-                    status(f"HPPC {cyc}/{n_cyc}: REST {relax_s:.0f}s...")
+                    status(f"HPPC {cyc}/{n_cyc}{_level_label}: REST {relax_s:.0f}s...")
                 try:
                     from aset_batt.storage.cloud_push import set_cloud_meta
                     set_cloud_meta(sub_phase="relax", cycle_index=cyc, cycle_total=n_cyc)
@@ -608,7 +800,7 @@ class HppcMixin:
                 except Exception as e:
                     import logging
                     logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
-                status(f"HPPC {cyc}/{n_cyc}: PULSE {pulse_s:.0f}s  {i_pulse:.3f} A")
+                status(f"HPPC {cyc}/{n_cyc}{_level_label}: PULSE {pulse_s:.0f}s  {i_pulse:.3f} A")
                 try:
                     from aset_batt.storage.cloud_push import set_cloud_meta
                     set_cloud_meta(sub_phase="pulse", cycle_index=cyc, cycle_total=n_cyc,
@@ -807,6 +999,144 @@ class HppcMixin:
                     except Exception as exc:
                         logger.debug("Live per-cycle ECM fit failed (non-fatal): %s", exc)
                 if not self._seq_running.is_set():
+                    break
+
+                # ── Regen (charge) pulse leg (G6) ────────────────────────────
+                # Deliberately AFTER the discharge pulse's own live ECM fit above
+                # so the discharge fit/adaptive-τ logic is completely untouched
+                # regardless of whether regen is enabled. Do NOT feed the regen
+                # pulse into update_ecm()/_tau_fit: FreedomCAR expects asymmetric
+                # charge/discharge R0, and blending would silently average two
+                # different physical resistances into one number with no way to
+                # tell which produced it. Regen's own R0/R1/C1 is still
+                # analyzable post-hoc via identify_hppc_pulses() (analysis.py).
+                if regen_enabled and self._seq_running.is_set():
+                    soc_now = self.controller.estimator.soc
+                    if not regen_allowed(soc_now, self.controller.config.battery
+                                         .hppc_regen_soc_ceiling_pct):
+                        logger.info(
+                            "HPPC %d/%d: regen pulse skipped — SoC %.1f%% >= "
+                            "ceiling %.1f%%", cyc, n_cyc, soc_now,
+                            self.controller.config.battery.hppc_regen_soc_ceiling_pct)
+                    else:
+                        # Regen-rest leg — own buffer, NOT _relax_tail_v: the
+                        # NEXT cycle's discharge relax leg must not seed its
+                        # fit from regen-rest samples.
+                        status(f"HPPC {cyc}/{n_cyc}{_level_label}: REGEN REST {relax_s:.0f}s...")
+                        _regen_tail_v = []
+                        _t_regen_relax0 = _t.time()
+                        while (self._seq_running.is_set()
+                              and _t.time() < _t_regen_relax0 + relax_s):
+                            _iter_t0 = _t.perf_counter()
+                            try:
+                                v_rg, _, _ = self.hw.read_vi()
+                                temp_rg = self.hw.current_temp
+                                if not self._seq_check_temp_stale():
+                                    hppc_safety_tripped = True
+                                    break
+                                if not self._seq_check_otp(temp_rg):
+                                    hppc_safety_tripped = True
+                                    break
+                                _upd_now = _t.perf_counter()
+                                state_rg = self.controller.estimator.update(
+                                    v_rg, 0.0, dt=max(1e-3, _upd_now - _upd_last),
+                                    temp=temp_rg)
+                                _upd_last = _upd_now
+                                self.controller._log_sample(v_rg, 0.0)
+                                _regen_tail_v.append(v_rg)
+                                if len(_regen_tail_v) > 5:
+                                    _regen_tail_v.pop(0)
+                                self.update_display(v_rg, 0.0, state_rg["soc"], state_rg["rin"])
+                                self._seq_kick_watchdog()
+                                elapsed_h = int(_t.time() - _hppc_t0)
+                                self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
+                                if v_rg <= pack_min:
+                                    self._seq_running.clear()
+                                    hppc_safety_tripped = True
+                                    reason = (f"Under-voltage during HPPC regen rest: "
+                                              f"{v_rg:.3f}V ≤ {pack_min:.3f}V cutoff")
+                                    self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
+                                    self.sig_wf_status.emit(f"⛔ {reason}")
+                                    break
+                            except Exception as e:
+                                import logging
+                                logging.getLogger(__name__).error(
+                                    'Ignored exception: %s', e, exc_info=True)
+                            _elapsed_iter = _t.perf_counter() - _iter_t0
+                            if not self._seq_sleep(max(0.0, 1.0 / DEFAULT_SAMPLE_HZ - _elapsed_iter)):
+                                break
+
+                        if self._seq_running.is_set():
+                            # Regen-pulse leg — CV+CC-limit PSU write, not the
+                            # e-load. current comes back negative on its own from
+                            # read_measurements(prefer_load_v=False) (charge = PSU
+                            # active) — do not re-negate.
+                            self.hw.set_psu(True, str(hppc_regen_ceiling), str(i_regen))
+                            try:
+                                v_rp0, i_rp0 = self.hw.read_measurements(prefer_load_v=False)
+                                self.controller._log_sample(v_rp0, i_rp0)
+                            except Exception as e:
+                                import logging
+                                logging.getLogger(__name__).error(
+                                    'Ignored exception: %s', e, exc_info=True)
+                            status(f"HPPC {cyc}/{n_cyc}{_level_label}: REGEN PULSE "
+                                  f"{pulse_s:.0f}s  -{i_regen:.3f} A")
+                            _t_regen_pulse0 = _t.time()
+                            while (self._seq_running.is_set()
+                                  and _t.time() < _t_regen_pulse0 + pulse_s):
+                                _iter_t0 = _t.perf_counter()
+                                try:
+                                    v_rp, i_rp = self.hw.read_measurements(prefer_load_v=False)
+                                    temp_rp = self.hw.current_temp
+                                    if not self._seq_check_temp_stale():
+                                        hppc_safety_tripped = True
+                                        break
+                                    if not self._seq_check_otp(temp_rp):
+                                        hppc_safety_tripped = True
+                                        break
+                                    _upd_now = _t.perf_counter()
+                                    state_rp = self.controller.estimator.update(
+                                        v_rp, i_rp, dt=max(1e-3, _upd_now - _upd_last),
+                                        temp=temp_rp)
+                                    _upd_last = _upd_now
+                                    self.controller._log_sample(v_rp, i_rp)
+                                    self.update_display(v_rp, i_rp, state_rp["soc"], state_rp["rin"])
+                                    self._seq_kick_watchdog()
+                                    elapsed_h = int(_t.time() - _hppc_t0)
+                                    self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
+                                    if v_rp >= hppc_regen_ceiling:
+                                        self._seq_running.clear()
+                                        hppc_safety_tripped = True
+                                        reason = (f"Over-voltage during HPPC regen pulse: "
+                                                  f"{v_rp:.3f}V ≥ {hppc_regen_ceiling:.3f}V "
+                                                  f"ceiling")
+                                        self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
+                                        self.sig_wf_status.emit(f"⛔ {reason}")
+                                        break
+                                except Exception as e:
+                                    import logging
+                                    logging.getLogger(__name__).error(
+                                        'Ignored exception: %s', e, exc_info=True)
+                                _elapsed_iter = _t.perf_counter() - _iter_t0
+                                if not self._seq_sleep(max(0.0, 1.0 / DEFAULT_SAMPLE_HZ - _elapsed_iter)):
+                                    break
+                            self.hw.psu_off()
+                            try:
+                                v_rp_end, i_rp_end = self.hw.read_measurements(prefer_load_v=False)
+                                self.controller._log_sample(v_rp_end, i_rp_end)
+                            except Exception as e:
+                                import logging
+                                logging.getLogger(__name__).error(
+                                    'Ignored exception: %s', e, exc_info=True)
+
+                if not self._seq_running.is_set():
+                    break
+                if not soc_sweep_enabled:
+                    break   # preserves the exact single-level behavior: run once
+                if soc_sweep_done(self.controller.estimator.soc, soc_floor_pct):
+                    self.sig_alarm.emit(
+                        f"[HPPC SEQ] SoC-sweep reached floor after level {level} "
+                        f"— stopping")
                     break
             self.sig_phase_progress.emit(0, 0)
             # A plain user Cancel should stop with nothing further — but a safety trip

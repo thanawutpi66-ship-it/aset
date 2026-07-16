@@ -774,15 +774,21 @@ class AutoController:
         except Exception as e:
             logger.debug("log_sample error: %s", e)
 
-    def _auto_analyze(self, force_hppc: bool = False) -> dict | None:
+    def _auto_analyze(self, force_hppc: bool = False, fit_ecm=None) -> dict | None:
         """รัน unified analysis (ECM/grade) บน CSV ล่าสุด แล้ว post ANALYSIS_COMPLETED -> UI.
         ใช้วิธีวิเคราะห์เดียวกับ characterization test และปุ่ม Analyze CSV (วิธีเดียวทั้งระบบ)
+
+        ``fit_ecm``: pass True to attempt a pulse fit on a NON-HPPC record (e.g.
+        Quick Scan's mini-pulse leg) without setting force_hppc — force_hppc=True
+        would suppress SoH computation (analyze_series only computes SoH when
+        NOT is_hppc), which is unacceptable for a mode whose primary output IS SoH.
+
         Returns the result dict, or None on failure."""
         try:
             from aset_batt.acquisition.analysis import analyze_csv_mp, profile_from_config
             csv_path = self.data.current_path or self.config.system.csv_filepath
             res = analyze_csv_mp(csv_path, profile_from_config(self.config),
-                                 force_hppc=force_hppc)
+                                 force_hppc=force_hppc, fit_ecm=fit_ecm)
         except Exception as e:
             logger.warning("auto-analyze ล้มเหลว: %s", e)
             return None
