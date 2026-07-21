@@ -220,5 +220,47 @@ class TestHppcSurfaceChargeAdvisory(unittest.TestCase):
                          "the old fixed 30-min timer should be gone")
 
 
+class TestPrepareSkipsPointlessBleedBeforeUnconditionalCharge(unittest.TestCase):
+    """HPPC/CycleLife PHASE 0's PREPARE anchor precedes an UNCONDITIONAL full
+    CC-CV charge (no skip-charge branch, unlike IEC/AUTO sequence) — bleeding
+    surface charge off there only for the charger to immediately put it right
+    back (plus more, to termination current) wastes ~5-10 min for zero effect
+    on the test outcome. Real bug: a pack charged the day before read 12.91V
+    (above the 100% point) at PREPARE, triggered a bleed-off, then charged
+    CC-CV anyway. PHASE 0 must now pass allow_bleed_off=False; PHASE 2 (HPPC's
+    post-charge rest, which precedes the pulses, not another charge) must
+    still allow it."""
+
+    def test_hppc_phase0_disables_bleed_off(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent / "aset_batt" / "ui"
+               / "sequences" / "hppc.py").read_text(encoding="utf-8")
+        phase0 = src.index("PHASE 0: PREPARE")
+        phase1 = src.index("PHASE 1: CHARGE", phase0)
+        window = src[phase0:phase1]
+        self.assertIn("allow_bleed_off=False", window,
+                      "PHASE 0 precedes an unconditional charge — bleeding here is wasted")
+
+    def test_hppc_phase2_still_allows_bleed_off(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent / "aset_batt" / "ui"
+               / "sequences" / "hppc.py").read_text(encoding="utf-8")
+        phase2 = src.index("PHASE 2: REST")
+        phase3 = src.index("PHASE 3", phase2)
+        window = src[phase2:phase3]
+        self.assertNotIn("allow_bleed_off=False", window,
+                         "PHASE 2 precedes the pulses, not another charge — bleed-off must stay active")
+
+    def test_cycle_life_phase0_disables_bleed_off(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent / "aset_batt" / "ui"
+               / "sequences" / "cycle_life.py").read_text(encoding="utf-8")
+        phase0 = src.index("PHASE 0: PREPARE")
+        for_cyc = src.index("for cyc in range", phase0)
+        window = src[phase0:for_cyc]
+        self.assertIn("allow_bleed_off=False", window,
+                      "PHASE 0 precedes cycle 1's unconditional charge — bleeding here is wasted")
+
+
 if __name__ == "__main__":
     unittest.main()

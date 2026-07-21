@@ -552,6 +552,17 @@ class BaseSequenceMixin:
         except Exception:
             return 0.0   # unknown → don't add a spurious cutoff on top of pack_min
 
+    def _ovp_ceiling(self) -> float:
+        """Hardware over-voltage CEILING for a regen (charge-direction) pulse leg —
+        the symmetric counterpart to ``_uvp_floor()`` above. Checked against a
+        LOADED (charging) reading during a regen pulse only; a regen pulse pushes
+        V above rest by design, same reasoning ``_uvp_floor`` uses for why a
+        pulse-leg reading must not be compared against the steady-state cutoff."""
+        try:
+            return float(self.controller.config.system.safety_limits["max_voltage"])
+        except Exception:
+            return 0.0   # unknown → caller must fall back, same pattern as _uvp_floor
+
     def _seq_kick_watchdog(self):
         """Call after every successful measurement read inside a sequence thread."""
         import time as _t
@@ -717,6 +728,27 @@ class BaseSequenceMixin:
             i_chg = max(0.05, abs(c_rate) * rated)
             t_bulk = ah_needed / i_chg * 3600.0
             return max(60, int(t_bulk * 1.5))
+        except Exception:
+            return 0
+
+    def _estimate_discharge_s(self, i_dis: float) -> int:
+        """Discharge-time ETA (s), SoH- and starting-SoC-aware.
+
+        The old estimate used the full nameplate rated_capacity regardless of how
+        degraded the pack actually is or how much charge it starts with — a
+        real-world example: a battery discharged from 100% shows a much shorter
+        ETA once graded at 60% SoH than one at 100% SoH, because there's simply
+        less real capacity to discharge, but rated_capacity/i_dis alone can't see
+        that. Uses effective_capacity() (rated * SoH/100, same denominator the
+        estimator's own coulomb counting divides by) scaled by the current SoC —
+        so the estimate reflects the Ah actually available to discharge from here,
+        not a fixed nameplate assumption."""
+        try:
+            estimator = self.controller.estimator
+            eff_cap = estimator.effective_capacity()
+            soc_now = max(0.0, min(100.0, estimator.soc))
+            available_ah = eff_cap * (soc_now / 100.0)
+            return max(60, int(available_ah / max(i_dis, 0.01) * 3600))
         except Exception:
             return 0
 

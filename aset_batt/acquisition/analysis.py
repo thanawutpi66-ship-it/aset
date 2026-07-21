@@ -528,6 +528,21 @@ def _confidence(dcir_ohm, dcir_std, n_steps, profile, n_warnings):
 
 
 _ECM_MIN_R2 = 0.90      # accept the 1-RC fit only if it explains the transient this well
+# Plausibility ceiling on the fitted RC time constant. Every real pulse this
+# codebase has ever measured (HPPC, and now Quick Scan's mini-pulse) has
+# τ = R1·C1 in the 4-60 s range (see hppc.py's own "lead-acid τ ≈ 10-60s"
+# design comment; real FB FTZ6V data measured τ=4.1-5.1s). fit_model's τ bound
+# is intentionally wide ([1e-3, 1e7] s) so it never artificially clips a real
+# pulse — but that width also lets it "fit" a multi-hour, slowly-declining
+# discharge curve (no fast transient at all) by choosing a huge τ that makes
+# the exponential term ≈ linear over the fit window, clearing R²≥0.90 with a
+# result that is not a real RC branch. Found via fit_ecm=True on the real
+# Quick Scan CSV (a plain 1C discharge, no pulse): τ=91366 s (25 HOURS),
+# R1=10.35 Ω — both absurd for a 5.3 Ah lead-acid pack. 600 s (10 min) is a
+# generous ceiling well above any real pulse/relax duration this rig uses
+# (HPPC's own relax cap is 300 s) while comfortably rejecting an hours-scale
+# spurious fit.
+_ECM_MAX_TAU_S = 600.0
 
 
 def identify_ecm_fit(time_s, current_a, voltage_v, voc):
@@ -555,10 +570,17 @@ def identify_ecm_fit(time_s, current_a, voltage_v, voc):
         logger.info("1-RC ECM fit skipped (%s) — using single-step DCIR", e)
         return None, str(e)
     r2 = res.get("r_squared", 0.0)
+    tau = float(res.get("tau1_s", res.get("tau_s", 0.0)))
     if r2 < _ECM_MIN_R2 or res.get("R0_ohm", 0.0) <= 0:
         logger.info("1-RC ECM fit rejected (R²=%.3f) — using single-step DCIR", r2)
         return None, (f"fit quality too low (R²={r2:.2f} < {_ECM_MIN_R2:.2f}) — "
                       f"pulse noisy or too short for the RC tail")
+    if tau > _ECM_MAX_TAU_S:
+        logger.info("1-RC ECM fit rejected (τ=%.0fs > %.0fs ceiling) — "
+                   "likely a slow trend, not a real RC pulse", tau, _ECM_MAX_TAU_S)
+        return None, (f"fitted τ={tau:.0f}s exceeds the {_ECM_MAX_TAU_S:.0f}s plausibility "
+                      f"ceiling — this looks like a slow SoC/OCV trend, not a real pulse "
+                      f"transient")
     # Attempt 2-RC upgrade; reuse same identifier instance (same smoothing/thresholds).
     try:
         res_2rc = identifier.fit_model_2rc(time_s, current_a, voltage_v, voc,
@@ -570,6 +592,165 @@ def identify_ecm_fit(time_s, current_a, voltage_v, voc):
         logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
     return res, ""
 
+
+
+def identify_hppc_pulses(time_s, current_a, voltage_v, temp_c,
+                         profile: BatteryProfile, soc_pct=None) -> list:
+    """Per-pulse breakdown of an HPPC record — one dict per pulse (discharge
+    AND regen/charge-direction, see the G6 fix in hppc.py's sequence thread).
+
+    The aggregated ECM fit that analyze_series reports uses ONE pulse (the first
+    current edge fit_model finds) and one whole-record OCV anchor, so a
+    systematic drift across the pulse train is invisible in the report. A real
+    run (test_HPPC_20260708_152502) rested 190 mV above equilibrium at pulse 1
+    and relaxed monotonically across the 5 pulses (anchor 13.34→13.15 V): every
+    anchor-referenced estimator showed R0 "declining" 27-37% over 15 minutes —
+    an artifact of the moving anchor, not the battery (detrended repeatability
+    was ~5%). This table makes that trend visible per pulse so the operator can
+    tell a drifting anchor from a genuinely inconsistent pack.
+
+    Per pulse:
+      idx, t_edge_s, duration_s, i_pulse_a (signed — negative for a regen/
+      charge-direction pulse), leg ("discharge" or "regen", derived from the
+      sign of i_pulse_a), anchor_v (median of last-5 rest samples — same
+      basis as the live sequence's voc_for_fit), soc_pct (median live-
+      estimator SoC during the pulse, NaN if the caller didn't supply
+      ``soc_pct``), edge_dt_s (latency of the first post-edge sample; >
+      MAX_STEP_EDGE_LATENCY_S means the "edge" reading already contains R1
+      relaxation), r0_edge_mohm (ΔV/ΔI at that first post-edge sample, stale
+      or not — the edge_stale flag says whether to trust it),
+      r0_fit_mohm/r1_fit_mohm/c1_fit_f/tau_fit_s/fit_r2 (per-pulse 1-RC/2-RC fit
+      with THIS pulse's own anchor), all resistances normalised to 25 °C and
+      harness-corrected on the same basis as the aggregated metrics.
+
+    Returns [] when fewer than 2 qualifying pulses (a single pulse has no trend
+    to show and the aggregated fit already covers it).
+    """
+    ia = np.asarray(current_a, float)
+    va = np.asarray(voltage_v, float)
+    tc = np.asarray(temp_c, float)
+    ta = np.asarray(time_s, float)
+    if ia.size < 20 or ta.size != ia.size:
+        return []
+    sa = np.asarray(soc_pct, float) if soc_pct is not None else None
+    if sa is not None and sa.size != ia.size:
+        sa = None   # mismatched length — treat as not supplied rather than misalign
+    temp_mult = _dcir_temp_normalizer(profile)
+    harness_r = max(0.0, float(getattr(profile, "harness_r_ohm", 0.0)))
+
+    # Same edge threshold as identify_dcir; np.abs() so a regen (charge-
+    # direction, negative) pulse edge is detected too — the discharge-only
+    # "ia > thr" used to make every regen pulse invisible here regardless of
+    # any other logic, since a negative i_pulse never exceeds a positive
+    # threshold.
+    thr = max(1e-3, 0.20 * float(np.max(np.abs(ia))))
+    on = np.abs(ia) > thr
+    starts = np.where(~on[:-1] & on[1:])[0] + 1
+    ends = np.where(on[:-1] & ~on[1:])[0] + 1
+
+    def _harness(r):
+        if r != r or harness_r <= 0.0:
+            return r
+        corrected, _ = _correct_for_harness_r(r, harness_r, "", [])
+        return corrected
+
+    pulses = []
+    for k_on in starts:
+        k_off_c = ends[ends > k_on]
+        k_off = int(k_off_c[0]) if k_off_c.size else ia.size
+        dur = float(ta[k_off - 1] - ta[k_on])
+        if dur < 2.0 or (k_off - k_on) < 5:
+            continue                       # blip, not an HPPC pulse
+        # Anchor needs real rest right before the edge.
+        pre = slice(max(0, k_on - 5), k_on)
+        if not np.all(np.abs(ia[pre]) < 0.15) or (k_on - pre.start) < 3:
+            continue
+        anchor = float(np.median(va[pre]))
+        i_pulse = float(np.median(ia[k_on:k_off]))
+        T = float(np.nanmedian(tc[k_on:k_off])) if tc.size else _T_REF
+        if T != T:
+            T = _T_REF
+        mult = temp_mult(T)
+
+        edge_dt = float(ta[k_on] - ta[k_on - 1])
+        di = float(ia[k_on] - ia[k_on - 1])
+        v_before = float(np.median(va[max(0, k_on - 3):k_on]))
+        r0_edge = abs((float(va[k_on]) - v_before) / di) / mult if abs(di) > thr else float("nan")
+
+        # Per-pulse 1-RC fit with this pulse's own anchor (rest tail at i=0,
+        # negative relative time — same seeding as the live sequence's fit buffers).
+        n_tail = min(5, k_on)
+        ts = np.concatenate([ta[k_on - n_tail:k_on], ta[k_on:k_off]]) - ta[k_on]
+        cs = np.concatenate([np.zeros(n_tail), ia[k_on:k_off]])
+        vs = np.concatenate([va[k_on - n_tail:k_on], va[k_on:k_off]])
+        fit, _reason = identify_ecm_fit(ts, cs, vs, anchor)
+        if fit:
+            r0_fit = float(fit["R0_ohm"]) / mult
+            r1_fit = float(fit["R1_ohm"]) / mult
+            c1_fit = float(fit["C1_farad"]) * mult
+            tau_fit = float(fit.get("tau1_s", fit.get("tau_s", 0.0)))
+            fit_r2 = float(fit["r_squared"])
+        else:
+            r0_fit = r1_fit = c1_fit = tau_fit = fit_r2 = float("nan")
+
+        soc_at_pulse = (float(np.nanmedian(sa[k_on:k_off]))
+                       if sa is not None else float("nan"))
+        pulses.append({
+            "idx": len(pulses) + 1,
+            "t_edge_s": float(ta[k_on]),
+            "duration_s": dur,
+            "i_pulse_a": i_pulse,
+            "leg": "discharge" if i_pulse >= 0 else "regen",
+            "anchor_v": anchor,
+            "soc_pct": soc_at_pulse,
+            "edge_dt_s": edge_dt,
+            "edge_stale": edge_dt > _DCIR_MAX_STEP_DT,
+            "r0_edge_mohm": _harness(r0_edge) * 1e3,
+            "r0_fit_mohm": _harness(r0_fit) * 1e3,
+            "r1_fit_mohm": r1_fit * 1e3,
+            "c1_fit_f": c1_fit,
+            "tau_fit_s": tau_fit,
+            "fit_r2": fit_r2,
+        })
+    return pulses if len(pulses) >= 2 else []
+
+
+# Per-pulse trend thresholds for the report's drift warning. 50 mV of rest-anchor
+# movement across the pulse train ≈ 10 mΩ of apparent R0 change at a 5 A pulse —
+# larger than a healthy pack's real pulse-to-pulse variation (detrended CV ~5% on
+# the real run above), so past this the R0 TREND is anchor artifact, not battery.
+_HPPC_ANCHOR_DRIFT_WARN_V = 0.050
+_HPPC_R0_CV_WARN_PCT = 10.0
+
+
+def _hppc_pulse_summary(pulses: list, warnings: list) -> tuple:
+    """(anchor_drift_v, r0_cv_pct, warnings) from identify_hppc_pulses output.
+    Prefers the per-pulse fit R0 for the CV (anchor-aware, de-noised); falls back
+    to the edge R0 when fits failed. Appends a quality warning when the anchor
+    moved or the R0 spread is wide — the exact failure the aggregated single-fit
+    report used to hide."""
+    if not pulses:
+        return float("nan"), float("nan"), warnings
+    anchors = np.asarray([p["anchor_v"] for p in pulses], float)
+    drift = float(anchors[-1] - anchors[0])
+    r0s = np.asarray([p["r0_fit_mohm"] for p in pulses], float)
+    if np.all(np.isnan(r0s)):
+        r0s = np.asarray([p["r0_edge_mohm"] for p in pulses], float)
+    r0s = r0s[~np.isnan(r0s)]
+    cv = float(100.0 * np.std(r0s) / np.mean(r0s)) if r0s.size >= 2 and np.mean(r0s) > 0 \
+        else float("nan")
+    if abs(drift) > _HPPC_ANCHOR_DRIFT_WARN_V:
+        warnings.append(
+            f"rest anchor drifted {drift * 1e3:+.0f} mV across {len(pulses)} pulses — "
+            f"per-pulse R0 trend is an anchor artifact (surface charge still "
+            f"dissipating), not the battery; extend REST before pulsing or judge "
+            f"repeatability from the detrended spread")
+    elif cv == cv and cv > _HPPC_R0_CV_WARN_PCT:
+        warnings.append(
+            f"per-pulse R0 varies {cv:.0f}% across {len(pulses)} pulses with a "
+            f"steady anchor — pulses disagree beyond normal spread; check contact/"
+            f"connection stability before trusting the aggregated R0")
+    return drift, cv, warnings
 
 
 def _calc_capacity_and_soh(
@@ -648,13 +829,18 @@ def ecm_r_at(t: float, r0: float, r1: float, tau1: float,
 
 
 def _extract_ecm_metrics(
-        time_s, current_a, voltage_v, ocv: float, ocv_ceil: float, is_hppc: bool,
+        time_s, current_a, voltage_v, ocv: float, ocv_ceil: float, fit_ecm: bool,
         harness_r: float, profile: "BatteryProfile", t_med: float, dcir: float, measured: bool,
         warnings: list) -> tuple[dict, list, float]:
-    ecm, ecm_reason = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if is_hppc else (None, "")
+    """``fit_ecm`` gates whether a whole-record 1-RC/2-RC fit is attempted at
+    all — historically this was always ``is_hppc`` (only HPPC records have a
+    pulse transient), but a non-HPPC record can now carry one too (e.g. Quick
+    Scan's mini-pulse leg), so the caller resolves the gate and passes it in
+    directly rather than this function assuming is_hppc."""
+    ecm, ecm_reason = identify_ecm_fit(time_s, current_a, voltage_v, ocv) if fit_ecm else (None, "")
     is_2rc = bool(ecm and "R2_ohm" in ecm)
-    
-    if is_hppc and ecm is None and ecm_reason:
+
+    if fit_ecm and ecm is None and ecm_reason:
         warnings.append(f"ECM R1/C1 not identified — {ecm_reason}; showing DCIR/R0 only")
         
     out = {
@@ -727,8 +913,17 @@ def _extract_ecm_metrics(
 
 def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                    profile: "BatteryProfile", is_hppc: bool, soh=None,
-                   soc_start=None) -> dict:
-    """Run the unified analysis on raw series → the standard results dict."""
+                   soc_start=None, soc_series=None, fit_ecm=None) -> dict:
+    """Run the unified analysis on raw series → the standard results dict.
+
+    ``fit_ecm``: whether to attempt a 1-RC/2-RC pulse fit at all. ``None``
+    (default) resolves to ``is_hppc`` — every existing caller is unaffected.
+    A non-HPPC record can still carry an analyzable pulse (e.g. Quick Scan's
+    mini-pulse leg) — pass ``fit_ecm=True`` explicitly for those WITHOUT also
+    setting ``is_hppc=True``, which would incorrectly suppress SoH
+    (``_calc_capacity_and_soh`` only computes SoH when ``not is_hppc``) and the
+    "did not reach cut-off" quality warning."""
+    fit_ecm = is_hppc if fit_ecm is None else bool(fit_ecm)
     v = Analytics.hampel_filter(np.asarray(voltage_v, float))
     ia = Analytics.hampel_filter(np.asarray(current_a, float))
     q = np.asarray(capacity_series, float)
@@ -781,7 +976,52 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     warnings = _check_soh_start_soc(warnings, is_hppc, reached_cutoff, soh, soc_start, current_a, voltage_v, ocv_ceil, t_med, profile)
 
     ecm, warnings, cca_est = _extract_ecm_metrics(
-        time_s, current_a, voltage_v, ocv, ocv_ceil, is_hppc, harness_r, profile, t_med, dcir, measured, warnings)
+        time_s, current_a, voltage_v, ocv, ocv_ceil, fit_ecm, harness_r, profile, t_med, dcir, measured, warnings)
+
+    # Per-pulse breakdown — the aggregated ECM above fits ONE pulse (whichever
+    # edge fit_model's _detect_step finds first); this exposes the pulse-to-
+    # pulse trend the single fit hides (see identify_hppc_pulses' docstring for
+    # the real HPPC anchor-drift incident) AND, for a non-HPPC record with
+    # exactly one analyzable pulse (e.g. Quick Scan's mini-pulse leg followed by
+    # a long discharge), gives the promotion fallback below a per-pulse fit to
+    # promote even when the aggregated whole-record fit above landed on the
+    # WRONG edge (see promotion comment).
+    hppc_pulses = identify_hppc_pulses(
+        time_s, current_a, voltage_v, temp_c, profile,
+        soc_pct=soc_series) if fit_ecm else []
+    hppc_anchor_drift_v, hppc_r0_cv_pct, warnings = _hppc_pulse_summary(
+        hppc_pulses, warnings)
+
+    # Promotion fallback: fit_model's _detect_step() picks the single LARGEST
+    # |ΔI| edge in the whole record — for a record with two same-magnitude
+    # edges (Quick Scan's ~1C mini-pulse AND its ~1C main discharge), that can
+    # land on the main discharge's "pulse" instead of the real one. The main
+    # discharge's own current stays flat but its voltage sweeps the pack's
+    # whole SoC range, so fit_model's R² gate correctly rejects it (ecm stays
+    # not-identified) — but identify_hppc_pulses() above already fits EACH
+    # edge independently with its own local anchor, so the real short pulse's
+    # fit is sitting right there even when the whole-record fit missed it.
+    # Promote the best-R² per-pulse fit into the headline ECM fields instead of
+    # reporting "not identified" when a real, already-corrected/normalised fit
+    # is available. Only fires when the aggregated fit above found nothing.
+    if fit_ecm and not ecm["ecm_identified"] and hppc_pulses:
+        _candidates = [p for p in hppc_pulses if p["fit_r2"] == p["fit_r2"]]  # non-NaN
+        if _candidates:
+            _best = max(_candidates, key=lambda p: p["fit_r2"])
+            _p_r0 = _best["r0_fit_mohm"] / 1000.0
+            _p_r1 = _best["r1_fit_mohm"] / 1000.0
+            _p_tau = _best["tau_fit_s"]
+            _p_rt = {tp: ecm_r_at(tp, _p_r0, _p_r1, _p_tau) for tp in _R_TIMEPOINTS_S}
+            ecm = dict(ecm)
+            ecm.update({
+                "r0": _p_r0, "r1": _p_r1, "c1": _best["c1_fit_f"], "tau": _p_tau,
+                "r2_ecm_fit": _best["fit_r2"], "ri_total": _p_r0 + _p_r1,
+                "ecm_fit_t_s": _best["t_edge_s"], "is_2rc": False,
+                "ecm_identified": True,
+                "r_0p1s": _p_rt[0.1], "r_1s": _p_rt[1.0], "r_10s": _p_rt[10.0],
+            })
+            cca_est = (max(0.0, (min(ocv, ocv_ceil) if ocv_ceil else ocv) - _cca_cutoff_v(profile)) / ecm["ri_total"]
+                      if ecm["ri_total"] > 1e-6 else 0.0)
 
     gradeable = measured or ecm["ecm_identified"] or not np.isnan(soh)
     if not gradeable:
@@ -837,6 +1077,10 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
             tp: {"r_mohm": r * 1000.0, "std_mohm": std * 1000.0, "n_steps": n}
             for tp, (r, std, n) in dcir_timepoints.items()
         },
+        # Per-pulse HPPC breakdown — [] for non-HPPC or <2 qualifying pulses.
+        "hppc_pulses": hppc_pulses,
+        "hppc_anchor_drift_v": hppc_anchor_drift_v,
+        "hppc_r0_cv_pct": hppc_r0_cv_pct,
     }
 
 
@@ -867,9 +1111,14 @@ def _read_csv(path):
             np.asarray(TEMP, float), np.asarray(CAP, float), np.asarray(SOC, float), modes)
 
 
-def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False) -> dict:
+def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False,
+                fit_ecm=None) -> dict:
     """Parse a telemetry CSV and run the unified analysis. HPPC is inferred from
-    the ``Mode`` column; capacity is integrated from current if not logged."""
+    the ``Mode`` column; capacity is integrated from current if not logged.
+
+    ``fit_ecm``: see ``analyze_series`` — pass ``True`` to attempt a pulse fit
+    on a non-HPPC record (e.g. Quick Scan's mini-pulse leg) without also
+    setting ``force_hppc`` (which would incorrectly suppress SoH)."""
     if not csv_path or not os.path.exists(csv_path):
         raise FileNotFoundError(csv_path or "(no CSV)")
     t, v, i, temp, cap, soc, modes = _read_csv(csv_path)
@@ -882,7 +1131,12 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
     # Starting SoC = the peak logged SoC (start of a discharge) — used to flag an SoH
     # that's under-stated because the pack wasn't full when the capacity test began.
     soc_start = float(np.nanmax(soc)) if soc.size and not np.all(np.isnan(soc)) else None
-    return analyze_series(t, i, v, temp, cap, profile, is_hppc, soc_start=soc_start)
+    # SoC_pct per sample — already parsed by _read_csv (previously only used for
+    # soc_start above); threaded through so identify_hppc_pulses() (HPPC only)
+    # can report which SoC level each pulse fired at (G1/G2 SoC-sweep support).
+    soc_series = soc if soc.size and not np.all(np.isnan(soc)) else None
+    return analyze_series(t, i, v, temp, cap, profile, is_hppc,
+                          soc_start=soc_start, soc_series=soc_series, fit_ecm=fit_ecm)
 
 
 _analysis_pool: ProcessPoolExecutor | None = None
@@ -913,7 +1167,8 @@ def shutdown_analysis_pool():
         _analysis_pool = None
 
 
-def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = False) -> dict:
+def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = False,
+                   fit_ecm=None) -> dict:
     """Same result as analyze_csv(), but the ECM curve-fit (scipy.optimize.curve_fit,
     up to ~10k iterations, run from a background thread after every auto sequence)
     executes in a separate worker process instead of a thread.
@@ -924,13 +1179,13 @@ def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = Fa
     for the ~5-15s the fit takes. A separate process has its own GIL, so the UI
     thread keeps pumping events while this call blocks on the subprocess result.
     """
-    future = _get_analysis_pool().submit(analyze_csv, csv_path, profile, force_hppc)
+    future = _get_analysis_pool().submit(analyze_csv, csv_path, profile, force_hppc, fit_ecm)
     return future.result()
 
 
 def analyze_series_mp(time_s, current_a, voltage_v, temp_c, capacity_series,
                       profile: BatteryProfile, is_hppc: bool, soh=None,
-                      soc_start=None) -> dict:
+                      soc_start=None, soc_series=None, fit_ecm=None) -> dict:
     """Same result as analyze_series(), but off the calling thread's GIL — see
     analyze_csv_mp's docstring. AcquisitionWorker.run() (the Characterization /
     RUN TEST / HPPC-via-RUN-TEST QThread) calls this directly with its in-memory
@@ -939,5 +1194,5 @@ def analyze_series_mp(time_s, current_a, voltage_v, temp_c, capacity_series,
     an extra throwaway CSV just to satisfy that wrapper's file-path signature."""
     future = _get_analysis_pool().submit(
         analyze_series, time_s, current_a, voltage_v, temp_c, capacity_series,
-        profile, is_hppc, soh, soc_start)
+        profile, is_hppc, soh, soc_start, soc_series, fit_ecm)
     return future.result()

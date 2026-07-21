@@ -1,7 +1,7 @@
 """~15s test-complete chime (ก.ค. 2026): plays once for every mode's finish —
 Run Test, all 4 sequences (via the shared _slot_seq_done), all 4 CHARACTERIZE
 tests (via the shared _slot_char_update "__DONE__" dispatch) — using
-test_complete.wav, deliberately NOT pido.mp3 (the E-STOP siren), so a normal
+test_complete.wav, deliberately NOT estop_siren.mp3 (the E-STOP siren), so a normal
 successful finish never sounds identical to an emergency. Run Test and
 CHARACTERIZE both reach their "done" handler unconditionally (even after an
 E-STOP), so both are guarded to skip the chime in that case rather than
@@ -74,7 +74,7 @@ def test_play_test_complete_sound_uses_the_distinct_wav_not_the_siren():
             mock_player.setSource.assert_called_once()
             url_arg = mock_player.setSource.call_args[0][0]
             assert "test_complete.wav" in url_arg.toLocalFile()
-            assert "pido" not in url_arg.toLocalFile()
+            assert "estop_siren" not in url_arg.toLocalFile()
             mock_player.play.assert_called_once()
     finally:
         w.close()

@@ -461,14 +461,21 @@ class HardwareControlMixin:
             self._estop_audio = QAudioOutput()
             self._estop_player.setAudioOutput(self._estop_audio)
             
-            pido_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "pido.mp3"))
-            if os.path.exists(pido_path):
-                self._estop_player.setSource(QUrl.fromLocalFile(pido_path))
+            estop_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "estop_siren.mp3"))
+            if os.path.exists(estop_path):
+                self._estop_player.setSource(QUrl.fromLocalFile(estop_path))
                 self._estop_audio.setVolume(1.0)
+                # ISO 7731 (auditory danger signals): a danger signal must persist
+                # until acknowledged, not play once and go silent — a continuous/
+                # one-shot tone habituates or gets missed entirely if the operator
+                # wasn't looking at the screen the instant it fired. Looped here,
+                # stopped from _alarm_acknowledge() (ui_updater.py) when the
+                # operator presses ACKNOWLEDGE.
+                self._estop_player.setLoops(QMediaPlayer.Loops.Infinite)
                 self._estop_player.play()
         except Exception as e:
             import logging
-            logging.getLogger(__name__).error(f"Failed to play pido.mp3: {e}")
+            logging.getLogger(__name__).error(f"Failed to play estop_siren.mp3: {e}")
 
         if self._test_worker:
             self._test_worker.emergency_stop()   # immediate instrument override
@@ -480,8 +487,8 @@ class HardwareControlMixin:
         """~15s completion chime, played once for every mode's finish event
         (Run Test, all 4 sequences, all 4 CHARACTERIZE tests) so an operator
         away from the screen is called back. Deliberately test_complete.wav,
-        not pido.mp3 — reusing the E-STOP siren here would make a normal,
-        successful finish sound identical to an emergency."""
+        not estop_siren.mp3 — reusing the E-STOP siren here would make a
+        normal, successful finish sound identical to an emergency."""
         try:
             from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
             from PySide6.QtCore import QUrl

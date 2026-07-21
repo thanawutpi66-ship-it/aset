@@ -100,6 +100,74 @@ class TestAnalyzeCsvForceHppc(unittest.TestCase):
         finally:
             win.close()
 
+    def test_quick_scan_session_reanalysis_passes_fit_ecm(self):
+        """Regression: re-analysing a saved Quick Scan session (click in the
+        session list, or the manual button) must still surface the
+        mini-pulse's DCIR/ECM breakdown, the same way the live run's
+        _auto_analyze(fit_ecm=True) call does -- session_manager.py used to
+        never pass fit_ecm at all, silently losing it on re-analysis."""
+        win = self._make_win("sessions/test_QuickScan_20260101_000000.csv", "Quick Scan")
+        try:
+            with patch("os.path.exists", return_value=True), \
+                 patch.object(win, "_detect_session_type", return_value="Data Log"), \
+                 patch("aset_batt.acquisition.analysis.analyze_csv_mp") as mock_analyze:
+                mock_analyze.return_value = {"grade": "A"}
+                win._on_analyze_csv()
+                import time
+                for _ in range(50):
+                    if mock_analyze.called:
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(mock_analyze.called)
+                _, kwargs = mock_analyze.call_args
+                self.assertTrue(kwargs.get("fit_ecm"))
+        finally:
+            win.close()
+
+    def test_quick_scan_session_reanalysis_falls_back_to_detect_session_type(self):
+        """No in-session memory (e.g. after an app restart) -- must still
+        recognise a properly test_QuickScan_*-labelled file via the same
+        classifier that already labels it "Quick Scan" in the session list."""
+        win = self._make_win("sessions/test_QuickScan_20260101_000000.csv", "")
+        try:
+            with patch("os.path.exists", return_value=True), \
+                 patch.object(win, "_detect_session_type", return_value="Quick Scan"), \
+                 patch("aset_batt.acquisition.analysis.analyze_csv_mp") as mock_analyze:
+                mock_analyze.return_value = {"grade": "A"}
+                win._on_analyze_csv()
+                import time
+                for _ in range(50):
+                    if mock_analyze.called:
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(mock_analyze.called)
+                _, kwargs = mock_analyze.call_args
+                self.assertTrue(kwargs.get("fit_ecm"))
+        finally:
+            win.close()
+
+    def test_hppc_session_reanalysis_does_not_pass_fit_ecm(self):
+        """HPPC sessions must keep resolving fit_ecm from is_hppc (via
+        force_hppc) exactly as before -- fit_ecm must come through as None,
+        not an explicit False, so it doesn't override that resolution."""
+        win = self._make_win("nonexistent_but_present.csv", "HPPC Full Sequence")
+        try:
+            with patch("os.path.exists", return_value=True), \
+                 patch.object(win, "_detect_session_type", return_value="Data Log"), \
+                 patch("aset_batt.acquisition.analysis.analyze_csv_mp") as mock_analyze:
+                mock_analyze.return_value = {"grade": "A"}
+                win._on_analyze_csv()
+                import time
+                for _ in range(50):
+                    if mock_analyze.called:
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(mock_analyze.called)
+                _, kwargs = mock_analyze.call_args
+                self.assertIsNone(kwargs.get("fit_ecm"))
+        finally:
+            win.close()
+
 
 if __name__ == "__main__":
     unittest.main()

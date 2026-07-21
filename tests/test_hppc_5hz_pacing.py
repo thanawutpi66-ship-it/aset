@@ -48,18 +48,23 @@ class TestHppcPacingSourcePattern(unittest.TestCase):
     def test_relax_and_pulse_legs_use_the_5hz_pacing_pattern(self):
         # Target period is now DEFAULT_SAMPLE_HZ (battery_model.py — shared with
         # worker.py's TestConfig.sample_hz) instead of a hardcoded "0.2" literal.
+        # 4 occurrences, not 2: the G6 regen-pulse fix added a regen-rest leg and
+        # a regen-pulse leg, both reusing this exact same pacing idiom (relax,
+        # discharge-pulse, regen-rest, regen-pulse) — same pattern, more legs.
         matches = re.findall(
             r"_elapsed_iter = _t\.perf_counter\(\) - _iter_t0\s*\n\s*"
             r"if not self\._seq_sleep\(max\(0\.0, 1\.0 / DEFAULT_SAMPLE_HZ - _elapsed_iter\)\):",
             self.hppc_src,
         )
-        self.assertEqual(len(matches), 2,
-                         "expected the shared DEFAULT_SAMPLE_HZ pacing pattern in both the relax leg and the pulse leg")
+        self.assertEqual(len(matches), 4,
+                         "expected the shared DEFAULT_SAMPLE_HZ pacing pattern in the relax, "
+                         "discharge-pulse, regen-rest, and regen-pulse legs")
 
     def test_iter_t0_is_captured_at_the_top_of_each_loop_iteration(self):
         # _iter_t0 must be (re)stamped every iteration, not once outside the loop,
-        # or _elapsed_iter would measure cumulative time instead of per-sample time.
-        self.assertEqual(self.hppc_src.count("_iter_t0 = _t.perf_counter()"), 2)
+        # or _elapsed_iter would measure cumulative time instead of per-sample
+        # time. 4, not 2 — see the comment in the pacing-pattern test above.
+        self.assertEqual(self.hppc_src.count("_iter_t0 = _t.perf_counter()"), 4)
 
 
 if __name__ == "__main__":

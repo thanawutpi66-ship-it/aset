@@ -176,7 +176,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMi
     sig_profile_done = Signal(object)
     sig_analysis_done = Signal(object)
     sig_workflow        = Signal(int, str)   # IEC sequence (phase 0-4)
-    sig_qs_workflow     = Signal(int, str)  # Quick Scan (phase 0-3)
+    sig_qs_workflow     = Signal(int, str)  # Quick Scan (phase 0-4)
     sig_hppc_seq_wf     = Signal(int, str)  # HPPC Full Sequence (phase 0-3)
     sig_cycle_wf        = Signal(int, str)  # Cycle Life (phase 0-3)
     sig_wf_status       = Signal(str)       # workflow status label text (cross-thread safe)

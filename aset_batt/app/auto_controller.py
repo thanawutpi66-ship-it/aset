@@ -297,7 +297,7 @@ class AutoController:
     _SURFACE_CHARGE_BLEED_SAFETY_MARGIN = 1.05
 
     def calibrate_from_ocv_stable(self, on_progress=None, cancel_check=None,
-                                  _allow_bleed_off=True):
+                                  allow_bleed_off=True):
         """OCV calibration แบบ wait-for-settle ตามมาตรฐาน ΔV/Δt criterion.
 
         อ่านแรงดันทุก 5 วิ จนกว่าจะผ่านทั้งสองเงื่อนไข:
@@ -309,6 +309,17 @@ class AutoController:
 
         cancel_check: callable() → bool; คืน True เมื่อ sequence ยังทำงานอยู่
           (เช่น self._seq_running.is_set). ถ้าคืน False → หยุดรอทันที
+
+        allow_bleed_off: set False when the caller is about to run an
+        UNCONDITIONAL full CC-CV charge right after this anchor regardless of
+        the SoC/OCV reading (HPPC/CycleLife PREPARE) — bleeding off surface
+        charge only to have the charger immediately put it right back (plus
+        more, to termination current) wastes ~5-10 min for zero effect on the
+        test outcome. Keep True (default) whenever the reading feeds a real
+        decision: a skip-charge threshold (IEC/AUTO sequence), or an
+        immediately-following discharge/pulse test that needs an accurate
+        rested baseline (Quick Scan, GITT, HPPC's post-charge rest, manual
+        Calibrate button).
 
         คืน (soc, voltage, status)
         """
@@ -404,17 +415,17 @@ class AutoController:
             # BELOW-range means the coulomb/OCV model already reads this pack as
             # near-empty, and pulling MORE current out of a possibly genuinely
             # depleted pack to "fix" that reading would be actively unsafe, not
-            # helpful. One attempt only (_allow_bleed_off guards the recursive
+            # helpful. One attempt only (allow_bleed_off=False on the recursive
             # re-check) — a pack still out of range after a real bleed-off is a
             # genuine anomaly to surface, not something to keep retrying.
             from aset_batt.core import battery_profiles
             chem_name = battery_profiles.get_chemistry(chemistry).name
-            if oor_mv > 0.0 and _allow_bleed_off and chem_name == "LeadAcid":
+            if oor_mv > 0.0 and allow_bleed_off and chem_name == "LeadAcid":
                 if self._bleed_off_surface_charge(on_progress=on_progress,
                                                   cancel_check=cancel_check):
                     return self.calibrate_from_ocv_stable(
                         on_progress=on_progress, cancel_check=cancel_check,
-                        _allow_bleed_off=False)
+                        allow_bleed_off=False)
         if on_progress:
             on_progress(_t.time() - t_start, v_final, 0.0, final_status)
         return soc, v_final, final_status
@@ -781,15 +792,21 @@ class AutoController:
         except Exception as e:
             logger.debug("log_sample error: %s", e)
 
-    def _auto_analyze(self, force_hppc: bool = False) -> dict | None:
+    def _auto_analyze(self, force_hppc: bool = False, fit_ecm=None) -> dict | None:
         """รัน unified analysis (ECM/grade) บน CSV ล่าสุด แล้ว post ANALYSIS_COMPLETED -> UI.
         ใช้วิธีวิเคราะห์เดียวกับ characterization test และปุ่ม Analyze CSV (วิธีเดียวทั้งระบบ)
+
+        ``fit_ecm``: pass True to attempt a pulse fit on a NON-HPPC record (e.g.
+        Quick Scan's mini-pulse leg) without setting force_hppc — force_hppc=True
+        would suppress SoH computation (analyze_series only computes SoH when
+        NOT is_hppc), which is unacceptable for a mode whose primary output IS SoH.
+
         Returns the result dict, or None on failure."""
         try:
             from aset_batt.acquisition.analysis import analyze_csv_mp, profile_from_config
             csv_path = self.data.current_path or self.config.system.csv_filepath
             res = analyze_csv_mp(csv_path, profile_from_config(self.config),
-                                 force_hppc=force_hppc)
+                                 force_hppc=force_hppc, fit_ecm=fit_ecm)
         except Exception as e:
             logger.warning("auto-analyze ล้มเหลว: %s", e)
             return None
