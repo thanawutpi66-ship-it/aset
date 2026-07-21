@@ -259,6 +259,12 @@ class ZonesMixin:
             f"background:{theme.PANEL2}; color:{theme.MUTED}; border:1px solid {theme.BORDER}; "
             f"border-radius:5px; padding:6px 8px; font-size:13px; font-weight:700;"
         )
+        # Fixed height, not just Preferred: _on_wf_stack_changed's invalidate()+
+        # activate() (needed to shrink the stack down to the current page)
+        # exposes leftover vertical space in outer_lay — with nothing else to
+        # grow into, Qt hands it to this label (the only uncapped item),
+        # ballooning it up to 130px+ instead of its natural ~27px.
+        self.lbl_phase_banner.setFixedHeight(self.lbl_phase_banner.sizeHint().height())
         outer_lay.addWidget(self.lbl_phase_banner)
         self._current_test_name = ""
 
@@ -689,7 +695,10 @@ class ZonesMixin:
 
     def _on_wf_stack_changed(self, idx: int):
         """ปรับให้เฉพาะหน้าที่กำลังแสดงดันความสูงของ stack — หน้าที่ซ่อนตั้งเป็น
-        Ignored เพื่อไม่ให้หน้า IEC (สูงกว่า) ทิ้งช่องว่างใต้หน้า Quick Scan."""
+        Ignored เพื่อไม่ให้หน้า IEC (สูงกว่า) ทิ้งช่องว่างใต้หน้า Quick Scan.
+        setFixedHeight (ไม่ใช่ adjustSize — ใช้ไม่ได้กับ widget ที่อยู่ใน layout
+        ของ parent อยู่แล้ว) บังคับความสูงจริงให้ตรงกับหน้าปัจจุบัน ปุ่ม CANCEL
+        ที่อยู่ต่อท้าย stack ใน outer_lay เลยเลื่อนขึ้นมาชิดปุ่ม RUN ของหน้านั้นเสมอ."""
         for i in range(self._wf_stack.count()):
             page = self._wf_stack.widget(i)
             policy = page.sizePolicy()
@@ -697,7 +706,16 @@ class ZonesMixin:
                 QSizePolicy.Policy.Preferred if i == idx else QSizePolicy.Policy.Ignored
             )
             page.setSizePolicy(policy)
-        self._wf_stack.adjustSize()
+        self._wf_stack.setFixedHeight(self._wf_stack.widget(idx).sizeHint().height())
+        # setFixedHeight alone doesn't cascade to CANCEL below it — outer_lay
+        # (the layout placing btn_seq_cancel right after the stack) needs an
+        # explicit invalidate+activate to actually re-run its geometry pass;
+        # without it CANCEL stayed pinned at the tallest page's old position
+        # (confirmed: 228px gap on Quick Scan) even though the stack itself
+        # had already shrunk.
+        outer_layout = self._wf_stack.parentWidget().layout()
+        outer_layout.invalidate()
+        outer_layout.activate()
 
     # ---- ZONE 2: RUN (charge ⇄ discharge) ----------------------------------
     def _zone_run(self):
