@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 import threading
 import urllib.request
@@ -6,7 +6,7 @@ import urllib.request
 logger = logging.getLogger(__name__)
 
 # TODO: ใส่ URL ของ Web App ที่ได้จาก Google Apps Script ที่นี่
-WEBAPP_URL = "YOUR_WEBAPP_URL_HERE"
+WEBAPP_URL = "https://script.google.com/macros/s/AKfycbzzkBxe6rCiQSq0SHLV5fykAfHgMxmsNh4reZ5LUr3KFbWCbXzIlvlxhVblmcTSJWznKA/exec"
 
 def report_to_gsheet(battery_name: str, grade: str, soh: float, dcir: float):
     if not WEBAPP_URL or WEBAPP_URL == "YOUR_WEBAPP_URL_HERE":
