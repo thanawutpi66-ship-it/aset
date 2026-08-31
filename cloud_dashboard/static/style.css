@@ -14,13 +14,13 @@
   --muted:#93a1b5;
   --faint:#5d6b80;
 
-  --v:#3b82f6;
-  --i:#eab308;
-  --soc:#22c55e;
-  --r:#93a1b5;
-  --t:#ef4444;
-  --soh:#a78bfa;
-  --grade:#f472b6;
+  --v:blue;
+  --i:yellow;
+  --soc:green;
+  --r:gray;
+  --t:red;
+  --soh:purple;
+  --grade:pink;
 
   --ok:#34d399; --warn:#fbbf24; --crit:#f43f5e;
 
@@ -33,12 +33,12 @@
   /* Matched to the desktop GUI's own LIGHT palette (aset_batt/ui/theme.py)
      so the web dashboard and the lab GUI read as the same product instead
      of two different shades of "light theme". */
-  --bg:#a6abb0;
-  --bg2:#c5c9cd;
-  --panel:#b6bbc0;
-  --panel2:#c5c9cd;
-  --border:#7b8085;
-  --border-2:#7b8085;
+  --bg:#f8fafc;
+  --bg2:#ffffff;
+  --panel:#ffffff;
+  --panel2:#f1f5f9;
+  --border:#e2e8f0;
+  --border-2:#cbd5e1;
   --shadow:0 10px 30px -12px rgba(29,33,35,.25);
 
   --text:#1d2123;
@@ -47,13 +47,13 @@
 
   /* Voltage/Current/Temp match the GUI's own trend-graph pen colors
      (widgets.py's MultiAxisTrend: INFO/WARN/CRIT respectively). */
-  --v:#1d4ed8;
-  --i:#a16207;
-  --soc:#15803d;
-  --r:#64748b;
-  --t:#dc2626;
-  --soh:#7c3aed;
-  --grade:#db2777;
+  --v:blue;
+  --i:yellow;
+  --soc:green;
+  --r:gray;
+  --t:red;
+  --soh:purple;
+  --grade:pink;
 
   --ok:#2e7d32; --warn:#c98a00; --crit:#c62828;
 
@@ -328,7 +328,7 @@ b{font-weight:700}
 .lptab.active{color:var(--text);font-weight:700;background:rgba(255,255,255,.04);border-left-color:var(--soc)}
 .lptab:hover:not(.active){color:var(--text);background:rgba(255,255,255,.02)}
 
-.lptab-content{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:0;padding:0}
+.lptab-content{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:0;padding:0;max-height:420px}
 .lptab-content[hidden]{display:none}
 
 /* sessions list */

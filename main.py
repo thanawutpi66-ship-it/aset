@@ -15,3 +15,4 @@ from aset_batt.app.run import run
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     sys.exit(run())
+    
