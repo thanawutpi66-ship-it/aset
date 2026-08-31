@@ -44,10 +44,12 @@ def profile_from_config(config) -> BatteryProfile:
     s = config.system.safety_limits or {}
     try:
         from aset_batt.core.battery_model import BatteryModel
-        rin = BatteryModel(b.battery_type, b.nominal_voltage,
-                           b.cells_series, b.cells_parallel).base_rin
+        rin_r0_only = BatteryModel(b.battery_type, b.nominal_voltage,
+                                   b.cells_series, b.cells_parallel).base_rin
+        from aset_batt.acquisition.analytics import Analytics
+        rin = rin_r0_only / Analytics.R0_FRACTION
     except Exception:
-        rin = 0.03
+        rin = 0.05
     otp = float(s.get("max_temperature", 55.0))
     # Peukert exponent: read from the SAME chemistry registry the live estimator
     # uses (aset_batt.core.battery_profiles), with a product-specific override if
@@ -177,7 +179,7 @@ def _reject_outliers_mad(x, n_sigma=3.0):
     return x[keep] if keep.any() else x
 
 
-def peukert_capacity(capacity_ah, mean_current_a, rated_ah, k, ref_c_rate=0.2):
+def peukert_capacity(capacity_ah, mean_current_a, rated_ah, k, ref_c_rate=0.1):
     """Normalise a measured discharge capacity to a reference C-rate (Peukert's law).
 
     Available capacity falls as the discharge rate rises (strongly for lead-acid). With
