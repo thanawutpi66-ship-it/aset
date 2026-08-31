@@ -538,6 +538,20 @@ class QuickScanMixin:
             status("QUICK SCAN เสร็จ — ดูผลที่แท็บ Analytics  (ค่า capacity ถูก Peukert-correct แล้ว)")
             self.sig_alarm.emit("[QUICK] Scan complete ✓")
             grade_str = res.get("grade", "?") if res else "?"
+
+            # --- Google Sheets Integration ---
+            if res:
+                try:
+                    from aset_batt.app.gsheet_reporter import report_to_gsheet
+                    b_name = self.controller.config.battery.battery_type
+                    soh_val = res.get("soh", float('nan'))
+                    dcir_val = res.get("dcir_mohm", res.get("ri_mohm", float('nan')))
+                    report_to_gsheet(b_name, grade_str, soh_val, dcir_val)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error(f"GSheet reporting error: {e}")
+            # ---------------------------------
+
             self.sig_seq_done.emit("Quick Scan Complete",
                                    f"Grade: {grade_str}\nดูผลเพิ่มเติมที่แท็บ Analytics")
             completed_ok = True
