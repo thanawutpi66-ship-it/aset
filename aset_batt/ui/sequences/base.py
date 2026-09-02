@@ -344,6 +344,15 @@ class BaseSequenceMixin:
             msg.setText(body)
             msg.setIcon(QMessageBox.Icon.Information)
             msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            export_word = msg.addButton("Export Word Report", QMessageBox.ButtonRole.ActionRole)
+            export_word.setToolTip(
+                "Create the editable Chapter 5 evidence report from this completed session")
+
+            def _export_then_close():
+                msg.close()
+                self._on_word_report()
+
+            export_word.clicked.connect(_export_then_close)
             msg.setWindowModality(Qt.WindowModality.NonModal)
             # Nobody wants to sit through the full ~15s chime once they've
             # already seen the result — clicking OK (or closing the box any
