@@ -389,7 +389,7 @@ function renderPayload(p, received_at) {
   // reading the way it was before this field existed.
   $('mR').textContent   = fmtR(num(L,'Resistance_mOhm')) + (L.Rin_Calibrated === false ? ' (est.)' : '');
   $('mT').textContent   = T   != null ? f(T,   2) : '0.00';
-  $('mSoH').textContent = soh != null ? Math.round(soh) + '%' : '–';
+  $('mSoH').textContent = soh != null ? (soh < 10 ? f(soh, 1) : Math.round(soh)) + '%' : '–';
   const mSoHEl = $('mSoH'); if (mSoHEl && soh != null) mSoHEl.style.color = sohColor(soh);
 
   // Analytics tab — grade + confidence
@@ -421,7 +421,7 @@ function renderPayload(p, received_at) {
   if ($('dcir'))    $('dcir').textContent    = f(num(a,'dcir_mohm','ri_mohm'), 2);
   if ($('dcirUnc')) $('dcirUnc').textContent = f(num(a,'dcir_unc_mohm'), 2);
   if ($('sumSoH')) {
-    $('sumSoH').textContent = soh != null ? Math.round(soh) : 'N/A';
+    $('sumSoH').textContent = soh != null ? (soh < 10 ? f(soh, 1) : Math.round(soh)) : 'N/A';
     if (soh != null) $('sumSoH').style.color = sohColor(soh);
   }
 

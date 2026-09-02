@@ -357,6 +357,17 @@ class UiSlotsMixin:
             return
         self._last_analysis = result
         self._on_test_finished(result)
+        if getattr(self, "_cloud_svc", None) is not None:
+            try:
+                import time, threading
+                clean = {k: v for k, v in result.items() if k not in ("ica", "dtv")}
+                clean["success"] = True
+                self._cloud_svc._cached_analysis = clean
+                self._cloud_svc._last_analysis_t = time.time()
+                threading.Thread(target=self._cloud_svc.push_once, daemon=True).start()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Cloud push analysis update failed: %s", e)
 
     @Slot()
     def _on_admin_toggle(self):
