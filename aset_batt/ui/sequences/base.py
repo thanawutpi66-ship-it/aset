@@ -680,7 +680,9 @@ class BaseSequenceMixin:
         try:
             if self.controller:
                 self.controller.stop_charge()
-                self.controller.end_session()   # ปิด session ให้รอบถัดไปเริ่มไฟล์ใหม่แน่ๆ
+                self.controller.end_session(
+                    "cancelled", "operator cancelled sequence")
+                # ปิด session ให้รอบถัดไปเริ่มไฟล์ใหม่แน่ๆ
             self.hw.load_off()
             self.hw.psu_off()
         except Exception as e:

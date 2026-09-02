@@ -299,7 +299,18 @@ class HppcMixin:
             self.hw.load_off()
             # See the same comment in _auto_sequence_thread — log PREPARE's rest from
             # the start so the CSV actually contains a genuine rest window.
-            self.controller._ensure_logging(label="HPPC")
+            self.controller._ensure_logging(
+                label="HPPC",
+                protocol={
+                    "id": "hppc-soc-sweep-v1",
+                    "purpose": "DCIR and 1-RC ECM identification across defined SoC levels",
+                    "phases": ["PREPARE_OCV", "CHARGE", "POST_CHARGE_REST",
+                               "DISCHARGE_PULSE", "RELAX", "REGEN_PULSE"],
+                    "settings": dict(opts),
+                    "sample_hz_target": DEFAULT_SAMPLE_HZ,
+                    "grade_policy": "electrical grade from valid pulse evidence; capacity grade requires a separate verified C10 run",
+                },
+            )
 
             def _ocv_progress_factory(prefix, total_estimate=None):
                 """Shared on_progress callback for calibrate_from_ocv_stable(),
@@ -1197,7 +1208,12 @@ class HppcMixin:
             self._seq_hw_safe_off()
             self._seq_running.clear()
             if self.controller:
-                self.controller.end_session()
+                outcome = ("completed" if completed_ok and not hppc_safety_tripped
+                           else "safety_tripped" if hppc_safety_tripped else "aborted")
+                self.controller.end_session(
+                    outcome,
+                    "HPPC completed" if outcome == "completed" else outcome.replace("_", " "),
+                )
             self.sig_phase_progress.emit(0, 0)
             if not completed_ok:
                 self.sig_seq_aborted.emit()

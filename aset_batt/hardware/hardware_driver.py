@@ -72,16 +72,17 @@ class HardwareController:
         self._load_voltage_offset: float = 0.0
         self._load_current_offset: float = 0.0
 
+        # Provenance for the most recent combined reading.  CSV writers consume
+        # these labels without changing the established read_vi() return contract.
+        self._psu_output_on: bool = False
+        self.last_voltage_source: str = "unknown"
+        self.last_current_source: str = "unknown"
+
     def apply_calibration(self, psu_v, psu_i, load_v, load_i):
         self._psu_voltage_offset = psu_v
         self._psu_current_offset = psu_i
         self._load_voltage_offset = load_v
         self._load_current_offset = load_i
-
-        # Tracks whether PSU OUTPUT is currently ON.  Used by the monitor loop to
-        # distinguish CHARGE (OUTPUT ON → i_net = −psu_i) from REST (OUTPUT OFF, SSR
-        # physically disconnected → i_net ≈ 0, positive by convention).
-        self._psu_output_on: bool = False
 
     def get_visa_ports(self):
         try:
@@ -639,10 +640,24 @@ class HardwareController:
             # PSU current is still needed to see charge current: while charging the load
             # input is OFF (i_load = 0) and the current flows battery⇄PSU.
             v_psu, i_psu = self._meas_vi(self.psu_inst, "_psu_all")
-            # Some e-loads return 0 V when their input is OFF (charge/rest phase).
-            # Fall back to PSU terminal voltage in that case so the graph stays valid.
-            if v < 1.0 and v_psu > 1.0:
+            # Only use the PSU voltage as a fallback while it is actually driving
+            # the battery.  After OUTPUT OFF the PSU's internal output node can
+            # decay slowly to zero; logging that decay as pack voltage corrupts
+            # OCV/SoC even though the battery is electrically isolated by the SSR.
+            voltage_source = "eload"
+            if v < 1.0 and self._psu_output_on and v_psu > 1.0:
                 v = v_psu
+                voltage_source = "psu"
+            elif v < 1.0 and not self._psu_output_on:
+                raise RuntimeError(
+                    "Battery terminal voltage unavailable: e-load reported "
+                    f"{v:.3f} V while PSU OUTPUT is OFF"
+                )
+            self.last_voltage_source = voltage_source
+            self.last_current_source = (
+                "eload" if abs(i_load) > 0.02 else
+                "psu" if self._psu_output_on else "idle"
+            )
             return v, i_psu, i_load
 
 
@@ -909,14 +924,25 @@ class HardwareController:
                 v, i_load = self._meas_vi(self.load_inst, "_load_all")
                 # Discharge: PSU is disconnected (SSR OFF) → battery supplies exactly
                 # the load current.
+                self.last_voltage_source = "eload"
+                self.last_current_source = "eload"
                 return v, i_load
             # Charge / idle: read V from the load (it senses terminal voltage reliably even
-            # when its input is OFF), fall back to PSU only if load returns near-zero (some
-            # e-loads report 0 V when disconnected).  I always from PSU (only active source).
+            # when its input is OFF).  A PSU fallback is safe only during charge:
+            # after OUTPUT OFF it sees its own discharging internal node, not the pack.
             v, _ = self._meas_vi(self.load_inst, "_load_all")
             v_psu, i_psu = self._meas_vi(self.psu_inst, "_psu_all")
-            if v < 1.0 and v_psu > 1.0:
+            voltage_source = "eload"
+            if v < 1.0 and self._psu_output_on and v_psu > 1.0:
                 v = v_psu
+                voltage_source = "psu"
+            elif v < 1.0 and not self._psu_output_on:
+                raise RuntimeError(
+                    "Battery terminal voltage unavailable: e-load reported "
+                    f"{v:.3f} V while PSU OUTPUT is OFF"
+                )
+            self.last_voltage_source = voltage_source
+            self.last_current_source = "psu" if self._psu_output_on else "idle"
             return v, -i_psu
 
     def set_charge(self, state, current_val="0"):

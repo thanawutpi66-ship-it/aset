@@ -142,8 +142,11 @@ class TestFitEcmPromotesMiniPulse(unittest.TestCase):
         self.assertAlmostEqual(res["r0_mohm"], 30.0, delta=8.0)
         self.assertAlmostEqual(res["r1_mohm"], 50.0, delta=15.0)
         self.assertGreater(res["ecm_r2"], 0.90)
-        # Grade must come from the dual-resistance path now that ECM is real.
-        self.assertIn(res["grade"], ("A", "B", "C", "REJECT"))
+        # The mini-pulse gives valid electrical evidence, but Quick Scan is not
+        # a C10 acceptance test.  A valid electrical REJECT remains decisive;
+        # otherwise the overall result would be REVIEW until C10 evidence exists.
+        self.assertEqual(res["grade"], "REJECT")
+        self.assertIn(res["electrical_grade"], ("A", "B", "C", "REJECT"))
 
     def test_mini_pulse_promotion_with_equal_current_edges(self):
         """Production reality, not the exaggerated 2A/6A test above: quick_scan.py

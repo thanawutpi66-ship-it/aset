@@ -196,7 +196,7 @@ class TestControlMixin:
         self._run_generation += 1   # invalidate any straggling sample from a stopped run — see _slot_display
         self._last_hppc_phase_text = None   # force the first sample of this run to render
         from aset_batt.storage.data_utils import DataHandler
-        csv_path = DataHandler.make_session_path()
+        csv_path = DataHandler.make_session_path(label=op_mode.name)
         self._last_csv = csv_path
         self.lbl_csv.setText(f"CSV: {csv_path}")
         # Manual TEST MODE writes its own CSV directly (AcquisitionWorker.run(),

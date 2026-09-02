@@ -38,6 +38,8 @@ class MockHardwareController:
         self._load_off_t = None     # monotonic time the load last turned off
         self._relax_v0 = 0.0        # R1 overpotential at pulse end (decays in rest)
         self._psu_output_on: bool = False  # mirror HardwareController._psu_output_on
+        self.last_voltage_source = "unknown"
+        self.last_current_source = "unknown"
         self.ssr_state = None  # mirror HardwareController.ssr_state
 
     # ------------------------------------------------------------------
@@ -159,6 +161,8 @@ class MockHardwareController:
             overpot = self._load_current * (
                 self._mock_r0 + self._mock_r1 * (1.0 - math.exp(-t_load / self._mock_tau)))
             ripple = 0.002 * math.sin(time.time() - self._t_start)
+            self.last_voltage_source = "eload"
+            self.last_current_source = "eload"
             return round(self._sim_v - overpot + ripple, 4), 0.0, round(self._load_current, 4)
         else:
             # Rest: if a pulse just ended, replay the relaxation tail — terminal
@@ -167,9 +171,15 @@ class MockHardwareController:
             if self._load_off_t is not None:
                 t_off = time.monotonic() - self._load_off_t
                 recovery = self._relax_v0 * math.exp(-t_off / self._mock_tau)
+                self.last_voltage_source = "eload"
+                self.last_current_source = "idle"
                 return round(self._sim_v - recovery + ripple, 4), 0.0, 0.0
+            self.last_voltage_source = "eload"
+            self.last_current_source = "idle"
             return round(self._sim_v + ripple, 4), 0.0, 0.0
         ripple = 0.005 * math.sin(time.time() - self._t_start)
+        self.last_voltage_source = "psu"
+        self.last_current_source = "psu"
         return round(self._sim_v + ripple, 4), round(psu_i, 4), round(load_i, 4)
 
 

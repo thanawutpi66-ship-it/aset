@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import csv
+import json
 import logging
 from concurrent.futures import ProcessPoolExecutor
 
@@ -908,8 +909,98 @@ def ecm_r_at(t: float, r0: float, r1: float, tau1: float,
     return r
 
 
+# A pulse release edge provides a second, independent view of the ohmic jump.
+# Older records often reach their FIRST *load-on* sample 0.3–3 s after the
+# command, by which time the rising RC branch has already inflated ΔV/ΔI.  At
+# load release the observed recovery is R0 PLUS the known RC relaxation during
+# that sampled interval.  Subtracting the latter makes the remaining value a
+# better ACIR/ECM-R0 surrogate without inventing a calibration from the GBM.
+_R0_RELEASE_MAX_PULSE_S = 120.0
+# Legacy HPPC captures have a 1.2–1.3 s release readback gap.  The analytical
+# RC recovery correction remains valid there; longer gaps are increasingly
+# vulnerable to OCV drift and are excluded.
+_R0_RELEASE_MAX_EDGE_DT_S = 1.5
+# A release correction is recovery for an otherwise unresolved *load-on* edge,
+# not a replacement for a genuinely well-sampled 10 Hz edge.  Applying it to a
+# clean 100 ms trace would subtract RC relaxation twice and bias R0 low.
+_R0_RELEASE_MIN_LOAD_ON_DT_S = 0.25
+
+
+def identify_release_r0(time_s, current_a, voltage_v, temp_c,
+                        profile: BatteryProfile, r1_ohm: float,
+                        tau_s: float) -> tuple[float, float, int]:
+    """Estimate R0 from load-release edges, compensating the fitted RC recovery.
+
+    For a constant-current pulse of duration ``tp`` followed by a sampled
+    release interval ``dt``:
+
+    ``ΔV_release / |I| = R0 + R1*(1-exp(-tp/τ))*(1-exp(-dt/τ))``.
+
+    This deliberately applies only to short, bounded pulses.  A capacity
+    discharge lasting minutes/hours has changing OCV and is not valid evidence
+    for this calculation.  The function returns a 25 °C-normalised
+    ``(median_ohm, std_ohm, n_edges)`` or ``(nan, nan, 0)`` when the data cannot
+    support it.  It does not apply harness correction; the caller owns the one
+    consistent correction point for every reported R0 metric.
+    """
+    if not (np.isfinite(r1_ohm) and np.isfinite(tau_s)
+            and r1_ohm > 0.0 and tau_s > 1e-6):
+        return float("nan"), float("nan"), 0
+    ta = np.asarray(time_s, float)
+    ia = np.asarray(current_a, float)
+    va = np.asarray(voltage_v, float)
+    tc = np.asarray(temp_c, float)
+    if ia.size < 6 or not (ta.size == ia.size == va.size):
+        return float("nan"), float("nan"), 0
+    threshold = max(1e-3, 0.20 * float(np.nanmax(np.abs(ia))))
+    on = np.abs(ia) > threshold
+    releases = np.where(on[:-1] & ~on[1:])[0] + 1
+    normalizer = _dcir_temp_normalizer(profile)
+    values = []
+    for k_off in releases:
+        k_on = k_off - 1
+        while k_on > 0 and on[k_on - 1]:
+            k_on -= 1
+        if k_on <= 0:
+            continue
+        pulse_s = float(ta[k_off - 1] - ta[k_on])
+        release_dt = float(ta[k_off] - ta[k_off - 1])
+        load_on_dt = float(ta[k_on] - ta[k_on - 1])
+        if (load_on_dt <= _R0_RELEASE_MIN_LOAD_ON_DT_S
+                or pulse_s < 2.0 or pulse_s > _R0_RELEASE_MAX_PULSE_S
+                or release_dt <= 0.0 or release_dt > _R0_RELEASE_MAX_EDGE_DT_S):
+            continue
+        i_pulse = float(np.nanmedian(np.abs(ia[k_on:k_off])))
+        if i_pulse <= threshold:
+            continue
+        measured = abs(float(va[k_off]) - float(va[k_off - 1])) / i_pulse
+        rc_recovery = (r1_ohm * (1.0 - float(np.exp(-pulse_s / tau_s)))
+                       * (1.0 - float(np.exp(-release_dt / tau_s))))
+        r0 = measured - rc_recovery
+        if not np.isfinite(r0) or r0 <= 0.0:
+            continue
+        T = float(tc[k_off]) if k_off < tc.size and np.isfinite(tc[k_off]) else _T_REF
+        values.append(r0 / normalizer(T))
+    if not values:
+        return float("nan"), float("nan"), 0
+    arr = _reject_outliers_mad(np.asarray(values, float))
+    return float(np.median(arr)), float(np.std(arr)), int(arr.size)
+
+
+def _release_r0_is_consistent(release_r0: float, load_on_r0: float) -> bool:
+    """Whether a release estimate can replace the load-on ECM result.
+
+    Delayed load-on sampling includes positive RC polarisation, so a valid
+    release-edge correction should normally be lower than (or at most very
+    slightly above) the load-on fit.  Reject a contradictory single/mis-timed
+    release edge rather than silently making the headline R0 worse.
+    """
+    return bool(np.isfinite(release_r0) and np.isfinite(load_on_r0)
+                and 0.25 * load_on_r0 <= release_r0 <= 1.05 * load_on_r0)
+
+
 def _extract_ecm_metrics(
-        time_s, current_a, voltage_v, ocv: float, ocv_ceil: float, fit_ecm: bool,
+        time_s, current_a, voltage_v, temp_c, ocv: float, ocv_ceil: float, fit_ecm: bool,
         harness_r: float, profile: "BatteryProfile", t_med: float, dcir: float, measured: bool,
         warnings: list) -> tuple[dict, list, float]:
     """``fit_ecm`` gates whether a whole-record 1-RC/2-RC fit is attempted at
@@ -928,6 +1019,8 @@ def _extract_ecm_metrics(
         "r2_rc": 0.0, "c2": 0.0, "tau2": 0.0, "ri_total": dcir,
         "ecm_fit_t_s": float("nan"), "is_2rc": False, "ecm_identified": False,
         "r_0p1s": float("nan"), "r_1s": float("nan"), "r_10s": float("nan"),
+        "r0_fit": dcir, "r0_release": float("nan"), "r0_release_n": 0,
+        "r0_method": "dcir_fallback",
     }
     
     if ecm:
@@ -942,12 +1035,34 @@ def _extract_ecm_metrics(
         c2 = float(ecm.get("C2_farad", 0.0))
         tau2 = float(ecm.get("tau2_s", 0.0))
         
+        # Keep the conventional load-on fit for auditability, then refine the
+        # headline R0 from release edges when the record contains enough valid
+        # short pulses.  The raw fit remains available in the result/report so
+        # this is a correction of the observable, not hidden re-labelling.
         _ecm_mult = _dcir_temp_normalizer(profile)(t_med)
         r0 /= _ecm_mult
         r1 /= _ecm_mult
         r2_rc /= _ecm_mult
         c1 *= _ecm_mult
         c2 *= _ecm_mult
+        r0_fit = r0
+        r0_release, r0_release_std, r0_release_n = identify_release_r0(
+            time_s, current_a, voltage_v, temp_c, profile,
+            float(ecm["R1_ohm"]), tau)
+        r0_release_corrected = r0_release
+        if r0_release_n and harness_r > 0.0:
+            r0_release_corrected, warnings = _correct_for_harness_r(
+                r0_release, harness_r, "release-edge R0", warnings)
+        if r0_release_n and _release_r0_is_consistent(r0_release_corrected, r0_fit):
+            r0_release = r0_release_corrected
+            r0 = r0_release_corrected
+            r0_method = "release_edge_rc_compensated"
+        else:
+            r0_method = "load_on_ecm_fit"
+            if r0_release_n:
+                warnings.append(
+                    "release-edge R0 disagrees with the load-on ECM fit; "
+                    "keeping the load-on value and retaining the release value for audit")
         ri_total = r0 + r1 + r2_rc
         
         try:
@@ -985,6 +1100,8 @@ def _extract_ecm_metrics(
             "ecm_fit_t_s": float(ecm.get("t_edge_s", float("nan"))),
             "is_2rc": is_2rc, "ecm_identified": True,
             "r_0p1s": _rt[0.1], "r_1s": _rt[1.0], "r_10s": _rt[10.0],
+            "r0_fit": r0_fit, "r0_release": r0_release,
+            "r0_release_n": r0_release_n, "r0_method": r0_method,
         })
         
     _ocv_eff = min(ocv, ocv_ceil) if ocv_ceil else ocv
@@ -1014,14 +1131,23 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         _calc_capacity_and_soh(time_s, capacity_total, ia, profile, is_hppc,
                                 reached_cutoff, soh, modes, soc_start)
 
-    # Polarity Guard: Check if this was actually a charge test
-    _active_i = ia[np.abs(ia) > 0.2]
-    is_charge_record = False
-    if _active_i.size > 0:
-        med_i = float(np.median(_active_i))
-        if med_i < -0.2:  # Negative median current means it's a charge cycle
-            is_charge_record = True
-            soh = float("nan")
+    # Polarity guard: reject a charge-only record, but do not misclassify an
+    # HPPC sequence just because its regen leg has more samples than its
+    # discharge pulses.  Throughput, rather than median current, preserves the
+    # direction evidence that an electrical-characterisation record contains.
+    ta = np.asarray(time_s, float)
+    if ta.size == ia.size and ta.size >= 2:
+        _dt = np.diff(ta)
+        _dt = np.where(np.isfinite(_dt) & (_dt >= 0.0), _dt, 0.0)
+        _i_mid = 0.5 * (ia[:-1] + ia[1:])
+        _pos_as = float(np.sum(np.clip(_i_mid, 0.0, None) * _dt))
+        _neg_as = float(np.sum(np.clip(-_i_mid, 0.0, None) * _dt))
+        is_charge_record = _neg_as > 0.0 and _pos_as < 0.05 * _neg_as
+    else:
+        _active_i = ia[np.abs(ia) > 0.2]
+        is_charge_record = bool(_active_i.size and float(np.median(_active_i)) < -0.2)
+    if is_charge_record:
+        soh = float("nan")
 
     dcir, dcir_std, n_steps, measured, n_stale, n_implausible = identify_dcir(
         current_a, voltage_v, temp_c, profile, time_s=time_s)
@@ -1070,7 +1196,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         warnings.append("test was a CHARGE (negative median current) — grading requires a DISCHARGE; SoH is invalid")
 
     ecm, warnings, cca_est = _extract_ecm_metrics(
-        time_s, current_a, voltage_v, ocv, ocv_ceil, fit_ecm, harness_r, profile, t_med, dcir, measured, warnings)
+        time_s, current_a, voltage_v, temp_c, ocv, ocv_ceil, fit_ecm,
+        harness_r, profile, t_med, dcir, measured, warnings)
 
     # Per-pulse breakdown — the aggregated ECM above fits ONE pulse (whichever
     # edge fit_model's _detect_step finds first); this exposes the pulse-to-
@@ -1105,6 +1232,31 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
             _p_r0 = _best["r0_fit_mohm"] / 1000.0
             _p_r1 = _best["r1_fit_mohm"] / 1000.0
             _p_tau = _best["tau_fit_s"]
+            # Apply the same optional release-edge correction as the
+            # whole-record path.  The per-pulse values above are already on a
+            # 25 °C basis; convert R1 approximately back to the run's median
+            # temperature because identify_release_r0() owns the per-edge
+            # normalisation.  This only changes old, delayed load-on records
+            # (the helper rejects a clean <=250 ms load-on edge).
+            _p_r0_fit = _p_r0
+            _p_r0_release, _p_r0_release_std, _p_r0_release_n = identify_release_r0(
+                time_s, current_a, voltage_v, temp_c, profile,
+                _p_r1 * _dcir_temp_normalizer(profile)(t_med), _p_tau)
+            _p_r0_release_corrected = _p_r0_release
+            if _p_r0_release_n and harness_r > 0.0:
+                _p_r0_release_corrected, warnings = _correct_for_harness_r(
+                    _p_r0_release, harness_r, "per-pulse release-edge R0", warnings)
+            if _p_r0_release_n and _release_r0_is_consistent(
+                    _p_r0_release_corrected, _p_r0_fit):
+                _p_r0_release = _p_r0_release_corrected
+                _p_r0 = _p_r0_release_corrected
+                _p_r0_method = "release_edge_rc_compensated"
+            else:
+                _p_r0_method = "load_on_ecm_fit_per_pulse"
+                if _p_r0_release_n:
+                    warnings.append(
+                        "per-pulse release-edge R0 disagrees with the load-on ECM fit; "
+                        "keeping the load-on value and retaining the release value for audit")
             _p_rt = {tp: ecm_r_at(tp, _p_r0, _p_r1, _p_tau) for tp in _R_TIMEPOINTS_S}
             ecm = dict(ecm)
             ecm.update({
@@ -1113,6 +1265,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                 "ecm_fit_t_s": _best["t_edge_s"], "is_2rc": False,
                 "ecm_identified": True,
                 "r_0p1s": _p_rt[0.1], "r_1s": _p_rt[1.0], "r_10s": _p_rt[10.0],
+                "r0_fit": _p_r0_fit, "r0_release": _p_r0_release,
+                "r0_release_n": _p_r0_release_n, "r0_method": _p_r0_method,
             })
             cca_est = (max(0.0, (min(ocv, ocv_ceil) if ocv_ceil else ocv) - _cca_cutoff_v(profile)) / ecm["ri_total"]
                       if ecm["ri_total"] > 1e-6 else 0.0)
@@ -1155,7 +1309,11 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         electrical_reasons.append("record is a charge, not a discharge")
     if not electrical_source:
         electrical_reasons.append("no valid DCIR or ECM pulse measurement")
-    if n_stale > 0 or n_implausible > 0:
+    # A rejected generic DCIR edge is not grounds to discard a separate,
+    # high-quality ECM pulse fit.  This happens in Quick Scan when the long
+    # main-discharge edge is stale but its diagnostic mini-pulse remains fit
+    # capable.  If no ECM is available, the rejected edge still blocks grade.
+    if (n_stale > 0 or n_implausible > 0) and not ecm["ecm_identified"]:
         electrical_reasons.append("pulse sampling contains stale or implausible edge data")
     if ecm["ecm_identified"] and (np.isnan(ecm["r2_ecm_fit"]) or ecm["r2_ecm_fit"] < 0.90):
         electrical_reasons.append("ECM fit quality is below R² 0.90")
@@ -1228,7 +1386,12 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "capacity_grade": capacity_grade, "capacity_gradeable": capacity_gradeable,
         "electrical_grade": electrical_grade, "electrical_gradeable": electrical_gradeable,
         "confidence": confidence, "quality_warnings": warnings, "temp_drift_c": temp_drift,
-        "r0_mohm": ecm["r0"] * 1000.0, "r1_mohm": ecm["r1"] * 1000.0, "c1_farad": ecm["c1"], "tau_s": ecm["tau"],
+        "r0_mohm": ecm["r0"] * 1000.0,
+        "r0_fit_mohm": ecm["r0_fit"] * 1000.0,
+        "r0_release_mohm": ecm["r0_release"] * 1000.0,
+        "r0_release_n": ecm["r0_release_n"],
+        "r0_method": ecm["r0_method"],
+        "r1_mohm": ecm["r1"] * 1000.0, "c1_farad": ecm["c1"], "tau_s": ecm["tau"],
         "ecm_identified": ecm["ecm_identified"], "ecm_r2": ecm["r2_ecm_fit"], "ecm_fit_t_s": ecm["ecm_fit_t_s"],
         "ecm_model": "2RC" if ecm["is_2rc"] else "1RC",
         "r2_mohm": ecm["r2_rc"] * 1000.0, "c2_farad": ecm["c2"], "tau2_s": ecm["tau2"],
@@ -1279,6 +1442,42 @@ def _read_csv(path):
             np.asarray(TEMP, float), np.asarray(CAP, float), np.asarray(SOC, float), modes)
 
 
+def _apply_session_outcome(csv_path: str, result: dict) -> dict:
+    """Expose a terminal session outcome and withhold a grade for failed runs.
+
+    The CSV still deserves analysis after an interlock/fault — it can explain
+    why a battery failed — but a partial trace is not evidence of a completed
+    acceptance test.  Old CSVs without the new metadata sidecar remain
+    analyzable as before; a still-running session remains provisional until it
+    is closed.
+    """
+    try:
+        with open(csv_path + ".meta.json", encoding="utf-8") as f:
+            meta = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return result
+    outcome = str(meta.get("status", "")).strip().lower()
+    if not outcome:
+        return result
+    result["session_outcome"] = outcome
+    result["session_end_reason"] = meta.get("end_reason", "")
+    result["session_complete"] = outcome == "completed"
+    if outcome in {"aborted", "cancelled", "safety_tripped", "fault", "interrupted"}:
+        warning = (f"session outcome is {outcome.replace('_', ' ')}"
+                   + (f": {result['session_end_reason']}" if result["session_end_reason"] else ""))
+        warnings = result.setdefault("quality_warnings", [])
+        if warning not in warnings:
+            warnings.append(warning)
+        # Keep calculated resistance/capacity fields for diagnosis, but prevent
+        # a report or dashboard from presenting the session as an accepted A/B/C
+        # result.  A later complete re-run is the only way to restore grading.
+        result.update({
+            "grade": "REVIEW", "overall_grade": "REVIEW",
+            "gradeable": False, "overall_gradeable": False,
+        })
+    return result
+
+
 def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False,
                 fit_ecm=None) -> dict:
     """Parse a telemetry CSV and run the unified analysis. HPPC is inferred from
@@ -1327,8 +1526,10 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
     # soc_start above); threaded through so identify_hppc_pulses() (HPPC only)
     # can report which SoC level each pulse fired at (G1/G2 SoC-sweep support).
     soc_series = soc if soc.size and not np.all(np.isnan(soc)) else None
-    return analyze_series(t, i, v, temp, cap, profile, is_hppc,
-                          soc_start=soc_start, soc_series=soc_series, fit_ecm=fit_ecm, modes=modes)
+    result = analyze_series(t, i, v, temp, cap, profile, is_hppc,
+                            soc_start=soc_start, soc_series=soc_series,
+                            fit_ecm=fit_ecm, modes=modes)
+    return _apply_session_outcome(csv_path, result)
 
 
 _analysis_pool: ProcessPoolExecutor | None = None

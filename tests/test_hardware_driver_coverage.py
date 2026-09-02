@@ -24,6 +24,36 @@ def test_hardware_read_measurements(hw):
     res = hw.read_measurements()
     assert res is not None
 
+
+def test_idle_read_rejects_psu_output_decay_as_battery_voltage(hw):
+    """A powered-off PSU can decay through intermediate voltages after charge."""
+    hw._psu_output_on = False
+    hw._meas_vi = MagicMock(side_effect=[(0.0, 0.0), (11.92, 0.0)])
+
+    with pytest.raises(RuntimeError, match="terminal voltage unavailable"):
+        hw.read_vi()
+
+
+def test_idle_measurement_rejects_psu_output_decay_as_battery_voltage(hw):
+    hw._psu_output_on = False
+    hw._meas_vi = MagicMock(side_effect=[(0.0, 0.0), (11.92, 0.0)])
+
+    with pytest.raises(RuntimeError, match="terminal voltage unavailable"):
+        hw.read_measurements(prefer_load_v=False)
+
+
+def test_charge_read_can_fall_back_to_psu_when_load_is_off(hw):
+    hw._psu_output_on = True
+    hw._meas_vi = MagicMock(side_effect=[(0.0, 0.0), (13.8, 0.7)])
+
+    voltage, psu_current, load_current = hw.read_vi()
+
+    assert voltage == 13.8
+    assert psu_current == 0.7
+    assert load_current == 0.0
+    assert hw.last_voltage_source == "psu"
+    assert hw.last_current_source == "psu"
+
 def test_hardware_set_charge(hw):
     hw.set_charge(14.4, 10.0)
     hw.psu_inst.write.assert_called()

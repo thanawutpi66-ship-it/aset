@@ -220,7 +220,16 @@ class CycleLifeMixin:
             self.hw.load_off()
             # See the same comment in _auto_sequence_thread — log PREPARE's rest from
             # the start so the CSV actually contains a genuine rest window.
-            self.controller._ensure_logging(label="CycleLife")
+            self.controller._ensure_logging(
+                label="CycleLife",
+                protocol={
+                    "id": "cycle-life-v1",
+                    "purpose": "capacity-fade tracking over repeated charge/rest/discharge cycles",
+                    "phases": ["OCV_SETTLE", "CHARGE", "REST", "DISCHARGE"],
+                    "settings": dict(opts),
+                    "grade_policy": "trend/aging evidence; not a substitute for a controlled C10 acceptance run",
+                },
+            )
 
             def _ocv_progress(elapsed, v, dv_mv, st):
                 dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
@@ -440,7 +449,10 @@ class CycleLifeMixin:
             self._seq_hw_safe_off()
             self._seq_running.clear()
             if self.controller:
-                self.controller.end_session()
+                self.controller.end_session(
+                    "completed" if completed_ok else "aborted",
+                    "cycle-life test completed" if completed_ok else "cycle-life test cancelled or failed",
+                )
             self.sig_phase_progress.emit(0, 0)
             if not completed_ok:
                 self.sig_seq_aborted.emit()

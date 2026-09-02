@@ -15,6 +15,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 from unittest.mock import MagicMock
 
 from aset_batt.storage.data_utils import get_app_version, write_session_metadata
@@ -116,17 +117,14 @@ class TestAuditTrailWiredIntoStartLogging(unittest.TestCase):
         data = DataHandler()
         ctrl = AutoController(None, hw, data, estimator, cfg)
 
-        try:
-            ctrl._ensure_logging(label="Test")
+        with tempfile.TemporaryDirectory(prefix="aset_audit_session_") as directory:
+            csv_path = os.path.join(directory, "test.csv")
+            with patch.object(DataHandler, "make_session_path", return_value=csv_path):
+                ctrl._ensure_logging(label="Test")
             self.assertTrue(data.is_recording)
             meta_path = data.current_path + ".meta.json"
             self.assertTrue(os.path.exists(meta_path))
-        finally:
             data.stop_logging()
-            for suffix in ("", ".sha256", ".meta.json"):
-                p = data.current_path + suffix if suffix else data.current_path
-                if p and os.path.exists(p):
-                    os.remove(p)
 
 
 if __name__ == "__main__":

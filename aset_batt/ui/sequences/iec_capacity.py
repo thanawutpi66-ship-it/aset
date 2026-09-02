@@ -233,7 +233,16 @@ class IecCapacityMixin:
             # start_monitor()) at PHASE 1, so the CSV never contains a genuine rest
             # window and _quality_flags always flags "no clear rest before load" even
             # though a real rest DID happen, just off-CSV.
-            self.controller._ensure_logging(label="IEC")
+            self.controller._ensure_logging(
+                label="IEC",
+                protocol={
+                    "id": "capacity-verification-v1",
+                    "purpose": "verified capacity and SoH measurement",
+                    "phases": ["OCV_SETTLE", "CHARGE", "REST", "C10_DISCHARGE"],
+                    "settings": dict(opts),
+                    "grade_policy": "capacity grade only when full-charge, rest, reference-rate and cut-off evidence pass",
+                },
+            )
             # Use ΔV/Δt criterion (Fick diffusion settling) instead of a fixed sleep.
             # calibrate_from_ocv_stable() enforces the chemistry-specific minimum rest
             # (Lead-Acid: 300 s min, ΔV < 10 mV over 60 s window) and then syncs
@@ -497,7 +506,10 @@ class IecCapacityMixin:
             self._seq_hw_safe_off()
             self._seq_running.clear()
             if self.controller:
-                self.controller.end_session()
+                self.controller.end_session(
+                    "completed" if completed_ok else "aborted",
+                    "capacity verification completed" if completed_ok else "capacity verification cancelled or failed",
+                )
             self.sig_phase_progress.emit(0, 0)
             if not completed_ok:
                 self.sig_seq_aborted.emit()

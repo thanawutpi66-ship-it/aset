@@ -222,7 +222,20 @@ class QuickScanMixin:
             # actually contains a genuine rest window (otherwise the file only starts
             # once start_charge()/start_monitor() implicitly opens one, and
             # _quality_flags always flags "no clear rest before load").
-            self.controller._ensure_logging(label="QuickScan")
+            self.controller._ensure_logging(
+                label="QuickScan",
+                protocol={
+                    "id": "quick-scan-v2",
+                    "purpose": "screening: OCV anchor + mini-pulse electrical check + 1C discharge estimate",
+                    "phases": ["OCV_SETTLE", "MINI_PULSE", "RELAX",
+                               "MAIN_DISCHARGE", "TAIL_REST"],
+                    "mini_pulse_s": QUICK_MINI_PULSE_S,
+                    "mini_relax_s": QUICK_MINI_RELAX_S,
+                    "discharge_c_rate": 1.0,
+                    "tail_rest_s": QUICK_TAIL_REST_S,
+                    "grade_policy": "electrical screening only; overall grade requires verified C10 capacity",
+                },
+            )
 
             # Trailing rest samples for the mini-pulse's ECM fit below — same
             # role as the relax leg's tail buffer in HPPC's own pulse loop:
@@ -566,7 +579,10 @@ class QuickScanMixin:
             self._seq_hw_safe_off()
             self._seq_running.clear()
             if self.controller:
-                self.controller.end_session()
+                self.controller.end_session(
+                    "completed" if completed_ok else "aborted",
+                    "quick scan completed" if completed_ok else "quick scan cancelled or failed",
+                )
             self.sig_phase_progress.emit(0, 0)
             if not completed_ok:
                 self.sig_seq_aborted.emit()

@@ -193,17 +193,22 @@ class AutoController:
                     self._start_mono = time.perf_counter()
             else:
                 if self.data.is_recording:
-                    self.data.stop_logging()
+                    self.data.stop_logging("interrupted", "new manual monitor session started")
                 self._start_time = time.time()
                 self._start_mono = time.perf_counter()
                 from aset_batt.storage.data_utils import DataHandler, write_session_metadata
                 csv_path = DataHandler.make_session_path()
-                ok, msg = self.data.start_logging(csv_path)
+                ok, msg = self.data.start_logging(csv_path, test_type="Manual Monitor")
                 if not ok:
                     import logging
                     logging.getLogger(__name__).error(f"Cannot start CSV logging: {msg}")
                 else:
-                    write_session_metadata(csv_path, self.config)   # R3: audit trail
+                    write_session_metadata(
+                        csv_path, self.config, session_id=self.data.session_id,
+                        test_type=self.data.test_type,
+                        extra={"protocol": {"id": "manual-monitor-v1",
+                                            "purpose": "operator live monitoring"}},
+                    )   # R3: audit trail
             threading.Thread(target=self._monitor_loop, daemon=True).start()
 
     def stop_monitor(self):
@@ -212,14 +217,14 @@ class AutoController:
             self.monitor_running = False
             logger.info("Monitor loop stopped by user")
 
-    def end_session(self):
+    def end_session(self, outcome: str = "completed", reason: str = ""):
         """ปิด CSV session ปัจจุบันอย่างชัดเจน (ให้ workflow ถัดไปเริ่ม session ใหม่
         แน่ๆ) — เรียกตอนจบ/ยกเลิก auto-sequence เท่านั้น. ไม่เรียกจาก stop_charge()/
         stop_monitor() ธรรมดา เพราะสองอันนั้นถูกเรียกกลาง sequence ระหว่างเปลี่ยน
         phase ด้วย (อยากให้ session เดิมยังอยู่); ไม่มีจุดนี้ is_recording จะค้าง True
         ตลอดไปหลัง sequence จบ ทำให้ sequence รอบถัดไปเผลอต่อท้ายไฟล์เดิม."""
         if self.data.is_recording:
-            self.data.stop_logging()
+            self.data.stop_logging(outcome, reason)
         self._start_time = None
         self._start_mono = None
         self.clear_recovery_state()
@@ -525,6 +530,8 @@ class AutoController:
                         # PSU OUTPUT OFF, SSR OFF → PSU physically disconnected (REST).
                         # Convention: discharge = positive. psu_i ≈ 0.
                         i_net = psu_i
+                    voltage_source = getattr(self.hw, "last_voltage_source", "unknown")
+                    current_source = getattr(self.hw, "last_current_source", "unknown")
 
                     # Monitor loop only checks temperature & overcurrent —
                     # voltage OVP/UVP is handled by the discharge test loop and
@@ -614,6 +621,9 @@ class AutoController:
                         state['soc'], state['rin'] * 1000,  # แปลงเป็น mOhm
                         self.hw.current_temp,
                         rin_calibrated=state.get('rin_calibrated', True),
+                        voltage_source=voltage_source,
+                        current_source=current_source,
+                        expected_dt_s=self._DEFAULT_MONITOR_DT,
                     )
                     consec_errors = 0   # a clean read resets the retry budget
                 except SafetyError as e:
@@ -756,16 +766,20 @@ class AutoController:
     # ------------------------------------------------------------------
     # Logging / auto-analysis helpers
     # ------------------------------------------------------------------
-    def _ensure_logging(self, label: str = ""):
+    def _ensure_logging(self, label: str = "", protocol: dict | None = None):
         """เปิด CSV logging + ตั้งเวลาเริ่ม ถ้ายังไม่ได้เปิด (ให้ IEC test โผล่บน dashboard)
 
         label (เช่น "HPPC", "QuickScan") ถูกฝังในชื่อไฟล์ session เพื่อบอกชนิดเทสต์."""
         if not self.data.is_recording:
             from aset_batt.storage.data_utils import DataHandler, write_session_metadata
             csv_path = DataHandler.make_session_path(label=label)
-            ok, _ = self.data.start_logging(csv_path)
+            ok, _ = self.data.start_logging(csv_path, test_type=label)
             if ok:
-                write_session_metadata(csv_path, self.config)   # R3: audit trail
+                write_session_metadata(
+                    csv_path, self.config, session_id=self.data.session_id,
+                    test_type=self.data.test_type,
+                    extra={"protocol": protocol or {"id": f"{label or 'unknown'}-v1"}},
+                )   # R3: audit trail
         if self._start_time is None:
             self._start_time = time.time()
             self._start_mono = time.perf_counter()
@@ -788,7 +802,9 @@ class AutoController:
                 voltage, current,
                 self.estimator.soc, self.estimator.rin * 1000.0,
                 self.hw.current_temp, rin_calibrated=calibrated,
-                mode=mode
+                mode=mode, phase=mode,
+                voltage_source=getattr(self.hw, "last_voltage_source", "unknown"),
+                current_source=getattr(self.hw, "last_current_source", "unknown"),
             )
         except Exception as e:
             logger.debug("log_sample error: %s", e)
@@ -807,6 +823,11 @@ class AutoController:
         try:
             from aset_batt.acquisition.analysis import analyze_csv_mp, profile_from_config
             csv_path = self.data.current_path or self.config.system.csv_filepath
+            # The sequence is still live while its result screen is produced.
+            # Force the final pulse / cut-off rows out of the one-second buffer
+            # before reading the CSV, otherwise a report can omit its most
+            # important evidence.
+            self.data.flush()
             res = analyze_csv_mp(csv_path, profile_from_config(self.config),
                                  force_hppc=force_hppc, fit_ecm=fit_ecm)
         except Exception as e:
@@ -879,7 +900,7 @@ class AutoController:
         self._shutdown_done = hw_ok
 
         try:
-            self.data.stop_logging()
+            self.data.stop_logging("interrupted", "application shutdown")
             logger.info("Data logging stopped")
         except Exception as e:
             logger.error(f"Error stopping data logging: {e}")

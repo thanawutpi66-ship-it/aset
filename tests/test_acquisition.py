@@ -14,6 +14,7 @@ from aset_batt.acquisition.models import (
 )
 from aset_batt.acquisition.backends import HardwareBackend
 from aset_batt.acquisition.analytics import Analytics
+from aset_batt.acquisition.analysis import analyze_series
 from aset_batt.hardware.mock_hardware import MockHardwareController
 
 
@@ -61,6 +62,29 @@ class TestHardwareBackend(unittest.TestCase):
         self.assertGreater(self.hw._load_current, 0.0)
         self.be.step(0.1, 12.0)                # next cycle, phase 2 → rest (relaxation tail)
         self.assertEqual(self.hw._load_current, 0.0)
+
+
+class TestMixedPolarityHPPC(unittest.TestCase):
+    def test_regen_heavy_hppc_is_not_misclassified_as_a_charge(self):
+        """HPPC may spend longer in regen than discharge; it still contains
+        discharge-pulse evidence and must not have its electrical grade blocked
+        merely because the median current is negative."""
+        t = np.arange(101, dtype=float)
+        i = np.where(t < 75.0, -1.0, 1.0)  # 3x more regen throughput than discharge
+        result = analyze_series(
+            t, i, np.full_like(t, 12.6), np.full_like(t, 25.0),
+            np.zeros_like(t), _profile(), is_hppc=True, fit_ecm=False,
+        )
+        self.assertFalse(any("test was a CHARGE" in w for w in result["quality_warnings"]))
+
+    def test_charge_only_record_remains_flagged(self):
+        t = np.arange(101, dtype=float)
+        i = np.full_like(t, -1.0)
+        result = analyze_series(
+            t, i, np.full_like(t, 12.6), np.full_like(t, 25.0),
+            np.zeros_like(t), _profile(), is_hppc=False, fit_ecm=False,
+        )
+        self.assertTrue(any("test was a CHARGE" in w for w in result["quality_warnings"]))
 
 
 class TestAnalytics(unittest.TestCase):
@@ -133,7 +157,11 @@ class TestWorkerEcmAndDcirWiring(unittest.TestCase):
         self.assertAlmostEqual(res["r1_mohm"], 18.0, delta=5.0)
         self.assertGreater(res["dcir_mohm"], 0.0)        # single-step DCIR cross-check
         self.assertGreater(res["voltage_sag_v"], 0.0)    # load metric is populated
-        self.assertIn(res["grade"], ("A", "B", "C", "REJECT"))
+        # HPPC has valid electrical evidence but is not a verified C10 capacity
+        # test, so the evidence gate withholds the *overall* grade while keeping
+        # the resistance grade available for diagnosis.
+        self.assertEqual(res["grade"], "REVIEW")
+        self.assertIn(res["electrical_grade"], ("A", "B", "C", "REJECT"))
 
 
 class TestProfileLoading(unittest.TestCase):

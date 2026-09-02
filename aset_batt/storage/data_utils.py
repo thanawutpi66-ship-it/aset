@@ -2,11 +2,26 @@ import csv
 import hashlib
 import json
 import os
+import math
+import uuid
 from datetime import datetime
 from typing import Any, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# All new sessions use this schema, whether they are written by AutoController
+# sequences or the high-rate AcquisitionWorker.  Keep the original analysis
+# columns first so existing CSV readers remain compatible.
+SESSION_SCHEMA_VERSION = "2.0"
+SESSION_COLUMNS = [
+    "Timestamp", "Elapsed_s", "Voltage_V", "Current_A", "SoC_pct",
+    "Resistance_mOhm", "Temperature_C", "Rin_Calibrated", "Capacity_Ah",
+    "Mode", "Schema_Version", "Session_ID", "Test_Type", "Phase",
+    "Step_Index", "Voltage_Source", "Current_Source", "Sample_Quality",
+    "Sample_Note",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +57,9 @@ def get_app_version() -> str:
     return _app_version_cache
 
 
-def write_session_metadata(csv_path: str, config: Any) -> None:
+def write_session_metadata(csv_path: str, config: Any = None, *,
+                           session_id: str = "", test_type: str = "",
+                           extra: Optional[dict] = None) -> None:
     """Write a companion <csv_path>.meta.json capturing the audit-trail context
     that used to exist nowhere: which operator ran this session, which exact
     software version produced it, and which calibration values (harness
@@ -82,10 +99,21 @@ def write_session_metadata(csv_path: str, config: Any) -> None:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
+        now = datetime.now().isoformat(timespec="seconds")
         meta = {
+            "schema_version": SESSION_SCHEMA_VERSION,
+            "session_id": session_id,
+            "test_type": test_type,
             "operator": operator,
             "app_version": get_app_version(),
-            "written_at": datetime.now().isoformat(timespec="seconds"),
+            # A CSV is valid evidence only when its exact procedure and outcome
+            # can be reconstructed.  The procedure snapshot is supplied as
+            # ``extra[\"protocol\"]`` by each sequence; these fields express the
+            # lifecycle common to every session, including a run interrupted by
+            # a safety trip or by the operator.
+            "status": "running",
+            "started_at": now,
+            "written_at": now,
             "battery_type": getattr(battery, "battery_type", ""),
             "product_name": product_name,
             "rated_capacity_ah": getattr(battery, "rated_capacity", None),
@@ -94,10 +122,44 @@ def write_session_metadata(csv_path: str, config: Any) -> None:
             "harness_resistance_ohm": getattr(battery, "harness_resistance_ohm", None),
             "measured_params": measured_params,
         }
+        if extra:
+            meta.update(extra)
         with open(csv_path + ".meta.json", "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error(f"Could not write session metadata for {csv_path}: {e}")
+
+
+def finalize_session_metadata(csv_path: str, outcome: str = "completed",
+                              reason: str = "") -> None:
+    """Record the immutable end-of-session evidence after the CSV is closed.
+
+    A row trace by itself cannot distinguish a completed capacity test from an
+    operator cancellation or a safety trip.  Keeping the terminal outcome in
+    the sidecar follows the same audit principle as commercial cyclers: later
+    analysis can show partial data, but must not present it as a completed test.
+    This is best-effort and intentionally never prevents a hardware shutdown.
+    """
+    if not csv_path:
+        return
+    try:
+        path = csv_path + ".meta.json"
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            meta = {"schema_version": SESSION_SCHEMA_VERSION}
+        meta.update({
+            "status": outcome,
+            "ended_at": datetime.now().isoformat(timespec="seconds"),
+            "end_reason": reason or outcome,
+        })
+        if os.path.exists(csv_path):
+            meta["sha256"] = DataHandler._hash_file(csv_path)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error("Could not finalize session metadata for %s: %s", csv_path, e)
 
 # ---------------------------------------------------------------------------
 # Cloud-push helpers (used by cloud_push.py)
@@ -271,7 +333,7 @@ def _run_analysis(config_manager, csv_path: str) -> dict:
         return {"success": False, "error": str(e)}
 
 class DataHandler:
-    def __init__(self):
+    def __init__(self, throttle_redundant_rows: bool = True):
         self.is_recording = False
         self.csv_file = None
         self.csv_writer = None
@@ -281,6 +343,10 @@ class DataHandler:
         # new session's first row always writes.
         self._last_row_vals = None
         self._last_row_elapsed = -1e9
+        self._throttle_redundant_rows = throttle_redundant_rows
+        self.session_id: str = ""
+        self.test_type: str = ""
+        self._step_index = 0
 
     @staticmethod
     def make_session_path(sessions_dir: str = "sessions", label: str = "") -> str:
@@ -295,31 +361,45 @@ class DataHandler:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe = "".join(c for c in (label or "") if c.isalnum())
         prefix = f"test_{safe}_" if safe else "test_"
-        return os.path.join(sessions_dir, f"{prefix}{ts}.csv")
+        # The timestamp remains parseable for old session views; the short token
+        # prevents a second test launched in the same second from appending into
+        # another session's CSV with a different schema/provenance.
+        token = uuid.uuid4().hex[:8]
+        return os.path.join(sessions_dir, f"{prefix}{ts}_{token}.csv")
 
-    def start_logging(self, filepath: str):
+    def start_logging(self, filepath: str, test_type: str = ""):
         """เริ่มบันทึก CSV — คืน (True, "") หรือ (False, error_message)"""
         try:
             self.csv_file = open(filepath, 'a', newline='', encoding='utf-8-sig')
             self.csv_writer = csv.writer(self.csv_file)
             # เขียน header เฉพาะเมื่อไฟล์ใหม่ (ขนาด 0)
             if os.path.getsize(filepath) == 0:
-                self.csv_writer.writerow([
-                    "Timestamp", "Elapsed_s",
-                    "Voltage_V", "Current_A",
-                    "SoC_pct", "Resistance_mOhm", "Temperature_C",
-                    "Rin_Calibrated", "Mode",
-                ])
+                self.csv_writer.writerow(SESSION_COLUMNS)
                 self.csv_file.flush()  # FIX: Prevent 0-byte file on early crash
             self.current_path = filepath
             self.is_recording = True
             self._last_row_vals = None       # new session — first row always writes
             self._last_row_elapsed = -1e9
+            self._step_index = 0
+            self.session_id = uuid.uuid4().hex
+            self.test_type = test_type
             return True, "Success"
         except Exception as e:
             return False, str(e)
 
-    def stop_logging(self):
+    def flush(self) -> None:
+        """Flush buffered rows without ending the session.
+
+        Sequence analysis runs before the UI closes the session.  This makes
+        the final pulse/cut-off samples visible to the analysis rather than
+        depending on the one-second periodic flush cadence.
+        """
+        if self.csv_file:
+            self.csv_file.flush()
+
+    def stop_logging(self, outcome: str = "completed", reason: str = ""):
+        """Close the CSV and mark its terminal outcome in the sidecar metadata."""
+        was_recording = self.is_recording
         self.is_recording = False
         if self.csv_file:
             try:
@@ -340,6 +420,11 @@ class DataHandler:
                 except Exception as e:
                     logger.error(f"Could not write integrity sidecar for "
                                 f"{self.current_path}: {e}")
+        # Do not create a metadata file for a handler that never started.  A
+        # normal completed/aborted session has already received its start
+        # snapshot before this point.
+        if was_recording and self.current_path:
+            finalize_session_metadata(self.current_path, outcome, reason)
 
     @staticmethod
     def _hash_file(path: str) -> str:
@@ -378,7 +463,11 @@ class DataHandler:
 
     def log_row(self, elapsed_s: float, v: float, i_net: float,
                 soc: float, resistance_mohm: float, temp_c: float,
-                rin_calibrated: bool = True, mode: str = ""):
+                rin_calibrated: bool = True, mode: str = "",
+                capacity_ah: Optional[float] = None, phase: str = "",
+                voltage_source: str = "unknown", current_source: str = "unknown",
+                sample_quality: str = "VALID", sample_note: str = "",
+                expected_dt_s: Optional[float] = None):
         """
         บันทึก 1 แถวข้อมูล
 
@@ -394,10 +483,23 @@ class DataHandler:
             rin_calibrated : False = resistance_mohm is still _ekf_rc_defaults()'s
                              uncalibrated placeholder guess, not a real per-pulse fit —
                              the UI marks it "estimated" instead of hiding it.
-            mode           : Optional sub-mode string (e.g. "MAIN_DISCHARGE").
+            mode           : Backward-compatible phase label (e.g. "MAIN_DISCHARGE").
+            capacity_ah    : Cumulative signed-out capacity when measured by a worker.
+            phase/source/quality: Per-row provenance required for later validation.
+            expected_dt_s  : If supplied, a late sample is kept but marked GAP.
         """
         if self.is_recording and self.csv_writer:
             try:
+                phase = phase or mode
+                mode = mode or phase
+                if (expected_dt_s and self._last_row_elapsed > -1e8
+                        and elapsed_s - self._last_row_elapsed > expected_dt_s * 2.5):
+                    gap = elapsed_s - self._last_row_elapsed
+                    sample_quality = "GAP"
+                    sample_note = (sample_note + "; " if sample_note else "") + \
+                        f"sample_gap_s={gap:.3f}"
+                capacity_text = "" if capacity_ah is None or not math.isfinite(capacity_ah) \
+                    else f"{capacity_ah:.5f}"
                 # Redundant-row throttle: the monitor loop polls at ~10 Hz but the
                 # instruments update slower, so long steady phases (a 4 h charge)
                 # produced thousands of rows whose every measured value was identical
@@ -413,12 +515,15 @@ class DataHandler:
                 # immediately, so edges themselves are never delayed.
                 row_vals = (f"{v:.4f}", f"{i_net:.4f}", f"{soc:.2f}",
                             f"{resistance_mohm:.2f}", f"{temp_c:.2f}",
-                            "1" if rin_calibrated else "0", mode)
-                if (row_vals == self._last_row_vals
+                            "1" if rin_calibrated else "0", capacity_text, mode,
+                            phase, voltage_source, current_source, sample_quality,
+                            sample_note)
+                if (self._throttle_redundant_rows and row_vals == self._last_row_vals
                         and elapsed_s - self._last_row_elapsed < 0.25):
                     return
                 self._last_row_vals = row_vals
                 self._last_row_elapsed = elapsed_s
+                self._step_index += 1
                 self.csv_writer.writerow([
                     # Full date, not just HH:MM:SS — a 4-5 h session crossing
                     # midnight otherwise wraps 23:59→00:00 with nothing to
@@ -429,7 +534,12 @@ class DataHandler:
                     # real file), corrupting every dt-based consumer (identify_dcir's
                     # staleness gate, ECM fit time axis, replay dt=0 divisions).
                     f"{elapsed_s:.3f}",
-                    *row_vals,
+                    f"{v:.4f}", f"{i_net:.4f}", f"{soc:.2f}",
+                    f"{resistance_mohm:.2f}", f"{temp_c:.2f}",
+                    "1" if rin_calibrated else "0", capacity_text, mode,
+                    SESSION_SCHEMA_VERSION, self.session_id, self.test_type,
+                    phase, str(self._step_index), voltage_source,
+                    current_source, sample_quality, sample_note,
                 ])
                 # flush() forces a real disk write (or, on this repo's OneDrive-synced
                 # project folder, a sync-agent wakeup) every call — at the monitor

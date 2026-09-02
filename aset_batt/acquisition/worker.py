@@ -11,19 +11,17 @@ project's real estimation module; otherwise SoH falls back to coulomb capacity �
 """
 from __future__ import annotations
 
-import os
-import csv
 import gc
 import math
 import time
 import logging
-from datetime import datetime
 
 import numpy as np
 
 from PySide6.QtCore import QObject, Signal, QThread, QMutex, QMutexLocker
 
 from aset_batt.acquisition.models import BatteryProfile, TestConfig, OperationMode
+from aset_batt.storage.data_utils import DataHandler, write_session_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -91,22 +89,30 @@ class AcquisitionWorker(QObject):
         v_hist, q_hist, t_hist = [], [], []
         time_hist, i_hist = [], []          # for 1-RC ECM identification (HPPC)
         soc_hist = []                       # parallel to time_hist — see update_ecm() feedback below
-        f = open(self.csv_path, "w", newline="", encoding="utf-8")
-        # Metadata provenance (starts with # so it can be skipped by standard CSV parsers)
-        import aset_batt
-        app_version = getattr(aset_batt, "__version__", "unknown")
-        f.write(f"# App_Version: {app_version}\n")
-        f.write(f"# Profile: {p.name}\n")
-        f.write(f"# Rated_Ah: {p.capacity_ah}\n")
-        f.write(f"# Peukert_K: {getattr(p, 'peukert_k', 1.1)}\n")
-        f.write("# Polarity: discharge_positive\n")
-
-        writer = csv.writer(f)
-        # Canonical project schema (matches data_utils.DataHandler / battery_data.csv)
-        # so analysis_module and any project tool can read a test CSV directly.
-        # Current_A uses the project convention: discharge POSITIVE.
-        writer.writerow(["Timestamp", "Elapsed_s", "Voltage_V", "Current_A",
-                         "SoC_pct", "Temperature_C", "Capacity_Ah", "Mode"])
+        session = DataHandler(throttle_redundant_rows=False)
+        ok, message = session.start_logging(self.csv_path, test_type=self.cfg.mode.value)
+        if not ok:
+            raise OSError(f"Cannot start session logging: {message}")
+        write_session_metadata(
+            self.csv_path, session_id=session.session_id,
+            test_type=session.test_type,
+            extra={
+                "profile": p.name,
+                "rated_capacity_ah": p.capacity_ah,
+                "peukert_k": getattr(p, "peukert_k", 1.1),
+                "sample_hz_target": self.cfg.sample_hz,
+                "polarity": "discharge_positive",
+                "protocol": {
+                    "id": "manual-acquisition-v1",
+                    "purpose": "single-mode instrument run",
+                    "mode": self.cfg.mode.value,
+                    "sample_hz_target": self.cfg.sample_hz,
+                    "profile": p.name,
+                },
+            },
+        )
+        outcome = "aborted"
+        end_reason = "test stopped before a normal completion condition"
         try:
             with QMutexLocker(self._io):
                 self.backend.start_mode(self.cfg)
@@ -163,11 +169,17 @@ class AcquisitionWorker(QObject):
                 # whether ctrl-mutex contention is that remainder.
                 _c0 = time.perf_counter()
                 with QMutexLocker(self._ctrl):
-                    if not self._running:
-                        break
+                    running = self._running
                     paused, estop = self._paused, self._estop
                 _t_ctrl += time.perf_counter() - _c0
+                if not running:
+                    if estop:
+                        outcome = "safety_tripped"
+                        end_reason = "emergency stop"
+                    break
                 if estop:
+                    outcome = "safety_tripped"
+                    end_reason = "emergency stop"
                     break
                 if paused:
                     QThread.msleep(40)
@@ -199,11 +211,15 @@ class AcquisitionWorker(QObject):
                 # Live SoC from the real estimator (discharge-positive). SoH/R are NOT
                 # live quantities — they come from the final analysis, not per-sample.
                 soc = float("nan")
+                rin_mohm = float("nan")
+                rin_calibrated = False
                 if self.estimator is not None and dt > 0:
                     _s2 = time.perf_counter()
                     try:
                         st = self.estimator.update(v, i, dt=dt, temp=temp)
                         soc = st.get("soc", float("nan"))
+                        rin_mohm = st.get("rin", float("nan")) * 1000.0
+                        rin_calibrated = bool(st.get("rin_calibrated", False))
                     except Exception as e:
                         logger.debug("estimator update skipped: %s", e)
                     _t_est += time.perf_counter() - _s2
@@ -215,13 +231,21 @@ class AcquisitionWorker(QObject):
                 self._check_safety(v, i, temp, p)
                 _t_safety += time.perf_counter() - _s3
 
+                phase = self.cfg.mode.value
+                if self.cfg.mode == OperationMode.HPPC:
+                    phase = "PULSE" if getattr(self.backend, "_hppc_loaded", False) else "RELAX"
+                uses_load = self.cfg.mode in (OperationMode.HPPC, OperationMode.CC_DISCHARGE)
+                source = "eload" if uses_load else "psu"
                 row = {"elapsed": elapsed, "v": v, "i": i, "cap": self.cap_ah,
-                       "soc": soc, "temp": temp, "mode": self.cfg.mode.value}
+                       "soc": soc, "temp": temp, "mode": phase}
                 _s1 = time.perf_counter()
-                writer.writerow([datetime.now().isoformat(timespec="milliseconds"),
-                                 f"{elapsed:.3f}", f"{v:.4f}", f"{i:.4f}",  # discharge +
-                                 f"{soc:.2f}", f"{temp:.2f}", f"{self.cap_ah:.5f}",
-                                 self.cfg.mode.value])
+                session.log_row(
+                    elapsed, v, i, soc, rin_mohm, temp,
+                    rin_calibrated=rin_calibrated, mode=phase,
+                    capacity_ah=self.cap_ah, phase=phase,
+                    voltage_source=source, current_source=source,
+                    expected_dt_s=period,
+                )
                 _t_log += time.perf_counter() - _s1
                 # Cross-thread Qt signal emit to the GUI thread — previously left
                 # unmeasured (folded into "other"). Fires once per sample, same
@@ -244,7 +268,7 @@ class AcquisitionWorker(QObject):
                     # (Windows Defender / antivirus scanning the CSV, slow storage)
                     # would land here and nowhere else already measured.
                     _s5 = time.perf_counter()
-                    f.flush()
+                    session.csv_file.flush()
                     _t_flush += time.perf_counter() - _s5
                     last_flush_t = now
 
@@ -317,6 +341,8 @@ class AcquisitionWorker(QObject):
                     _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v <= p.cutoff_v else 0
                     if _cutoff_confirm_n >= self._CUTOFF_CONFIRM_SAMPLES:
                         self.alarm.emit("INFO", "Discharge reached cut-off voltage — test complete")
+                        outcome = "completed"
+                        end_reason = "discharge cut-off reached"
                         break
                 if self.cfg.mode == OperationMode.CC_CV_CHARGE:
                     # abs(i), not i: i is discharge-positive (see the sign-flip comment
@@ -337,6 +363,8 @@ class AcquisitionWorker(QObject):
                         abs(i) < 0.02 * p.max_charge_a and elapsed > 2) else 0
                     if _cv_tail_confirm_n >= self._CV_TAIL_CONFIRM_SAMPLES:
                         self.alarm.emit("INFO", "Charge tapered to termination current — test complete")
+                        outcome = "completed"
+                        end_reason = "charge termination current reached"
                         break
 
                 # Sleep only the time REMAINING in this period, not the full period —
@@ -355,6 +383,8 @@ class AcquisitionWorker(QObject):
         except Exception as e:
             logger.exception("worker loop error")
             self.alarm.emit("CRITICAL", f"Acquisition fault: {e}")
+            outcome = "fault"
+            end_reason = f"acquisition fault: {e}"
         finally:
             try:
                 gc.callbacks.remove(_gc_cb)
@@ -366,7 +396,7 @@ class AcquisitionWorker(QObject):
                 except Exception as e:
                     import logging
                     logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
-            f.close()
+            session.stop_logging(outcome, end_reason)
 
         results = self._post_process(time_hist, i_hist, v_hist, q_hist, t_hist, p)
         # Feed final analysis back into the estimator so subsequent live estimation is

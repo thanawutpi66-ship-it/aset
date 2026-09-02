@@ -147,7 +147,16 @@ def build_results_html(results: dict) -> str:
     if results.get("ecm_identified"):
         r2 = results.get("ecm_r2", 0.0)
         parts.append(hdr(f"1-RC Thévenin ECM  (HPPC, R² {r2:.3f})"))
-        parts.append(row("R₀  (ohmic, t=0 extrap.)", f"{results['r0_mohm']:.2f}", "mΩ"))
+        r0_method = results.get("r0_method", "load_on_ecm_fit")
+        if r0_method == "release_edge_rc_compensated":
+            n_release = results.get("r0_release_n", 0)
+            parts.append(row("R₀  (release-edge, RC-comp.)",
+                             f"{results['r0_mohm']:.2f}", "mΩ",
+                             f"median of {n_release} release edge(s); ACIR-comparable"))
+            parts.append(row("R₀  (load-on fit, audit)",
+                             f"{results.get('r0_fit_mohm', float('nan')):.2f}", "mΩ"))
+        else:
+            parts.append(row("R₀  (ohmic, t=0 extrap.)", f"{results['r0_mohm']:.2f}", "mΩ"))
         parts.append(row("R₁  (polarisation)", f"{results['r1_mohm']:.2f}", "mΩ"))
         parts.append(row("C₁", f"{results['c1_farad']:.0f}", "F"))
         parts.append(row("τ  (R₁·C₁)", f"{results['tau_s']:.1f}", "s"))
