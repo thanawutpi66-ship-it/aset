@@ -55,6 +55,11 @@ class BatteryProfile:
     # ~1.0–1.05 for lithium (almost rate-independent), ~1.15–1.30 for lead-acid.
     # Used to normalise measured capacity to a reference C-rate before SoH.
     peukert_k: float = 1.10
+    # Rated-capacity reference duration (h).  A 10 h value means that capacity
+    # acceptance is a C10 discharge, not an arbitrary Quick/HPPC current.
+    # This is deliberately explicit: Peukert correction may be reported as an
+    # estimate at other rates, but cannot turn a Quick Scan into a C10 proof.
+    peukert_hr: float = 10.0
 
 
 @dataclass

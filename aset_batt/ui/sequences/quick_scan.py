@@ -233,7 +233,7 @@ class QuickScanMixin:
             def _ocv_progress(elapsed, v, dv_mv, st):
                 dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
                 status(f"QUICK PREPARE: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
-                self.controller._log_sample(v, 0.0)
+                self.controller._log_sample(v, 0.0, mode="OCV")
                 self.update_display(v, 0.0, self.controller.estimator.soc,
                                     self.controller.estimator.rin)
                 _rest_tail_v.append(v)
@@ -290,7 +290,7 @@ class QuickScanMixin:
             # straight past it, same reasoning as the main discharge loop below.
             try:
                 v_mp0, i_mp0 = self.hw.read_measurements(prefer_load_v=True)
-                self.controller._log_sample(v_mp0, i_mp0)
+                self.controller._log_sample(v_mp0, i_mp0, mode="MINI_PULSE")
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
@@ -317,7 +317,7 @@ class QuickScanMixin:
                     state_mp = self.controller.estimator.update(
                         v_mp, i_mp, dt=max(1e-3, _upd_now - _upd_last), temp=temp_mp)
                     _upd_last = _upd_now
-                    self.controller._log_sample(v_mp, i_mp)
+                    self.controller._log_sample(v_mp, i_mp, mode="MINI_PULSE")
                     _fit_t.append(_t.perf_counter() - _fit_t0)
                     _fit_i.append(i_mp)
                     _fit_v.append(v_mp)
@@ -345,7 +345,7 @@ class QuickScanMixin:
             # pulse-end transition.
             try:
                 v_mp1, i_mp1 = self.hw.read_measurements(prefer_load_v=False)
-                self.controller._log_sample(v_mp1, i_mp1)
+                self.controller._log_sample(v_mp1, i_mp1, mode="RELAX")
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
@@ -368,7 +368,7 @@ class QuickScanMixin:
                     state_rl = self.controller.estimator.update(
                         v_rl, 0.0, dt=max(1e-3, _upd_now - _upd_last), temp=temp_rl)
                     _upd_last = _upd_now
-                    self.controller._log_sample(v_rl, 0.0)
+                    self.controller._log_sample(v_rl, 0.0, mode="RELAX")
                     self.update_display(v_rl, 0.0, state_rl["soc"], state_rl["rin"])
                     self._seq_kick_watchdog()
                 except Exception as e:
@@ -442,7 +442,7 @@ class QuickScanMixin:
             # (0.5s), so every discharge-start edge was guaranteed dropped as stale.
             try:
                 v3_0, i3_0 = self.hw.read_measurements(prefer_load_v=True)
-                self.controller._log_sample(v3_0, i3_0)
+                self.controller._log_sample(v3_0, i3_0, mode="MAIN_DISCHARGE")
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
@@ -456,7 +456,7 @@ class QuickScanMixin:
                     dt     = now - last_log
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
-                    self.controller._log_sample(v3, i3)
+                    self.controller._log_sample(v3, i3, mode="MAIN_DISCHARGE")
                     # see the same comment in _auto_sequence_thread — the shared monitor
                     # loop is stopped for the duration of this sequence, so the live
                     # graph needs its own feed here too, not just CSV/cloud.
@@ -484,7 +484,7 @@ class QuickScanMixin:
             # pre-edge pattern already used at every load ON transition above.
             try:
                 v3_end, i3_end = self.hw.read_measurements(prefer_load_v=True)
-                self.controller._log_sample(v3_end, i3_end)
+                self.controller._log_sample(v3_end, i3_end, mode="MAIN_DISCHARGE")
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
@@ -492,7 +492,7 @@ class QuickScanMixin:
             # Immediate low-latency edge sample for the OFF transition itself.
             try:
                 v3_off, i3_off = self.hw.read_measurements(prefer_load_v=False)
-                self.controller._log_sample(v3_off, i3_off)
+                self.controller._log_sample(v3_off, i3_off, mode="TAIL_REST")
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
@@ -512,7 +512,7 @@ class QuickScanMixin:
             while self._seq_running.is_set() and _t.time() < t_phase:
                 try:
                     v_tail, _, _ = self.hw.read_vi()
-                    self.controller._log_sample(v_tail, 0.0)
+                    self.controller._log_sample(v_tail, 0.0, mode="TAIL_REST")
                     self.update_display(v_tail, 0.0, self.controller.estimator.soc,
                                         self.controller.estimator.rin)
                 except Exception as e:
@@ -530,12 +530,12 @@ class QuickScanMixin:
             # though it's not an HPPC test, so attempt the same 1-RC/2-RC fit
             # without suppressing SoH, which force_hppc would do.
             self.sig_qs_workflow.emit(4, "active")
-            status("QUICK ANALYZE: คำนวณ Peukert-corrected SoH + DCIR/ECM...")
+            status("QUICK ANALYZE: คำนวณ capacity estimate + DCIR/ECM (Overall Grade ต้องใช้ C10 ด้วย)...")
             res = self.controller._auto_analyze(fit_ecm=True)
             self.sig_qs_workflow.emit(4, "done")
             if res:
                 self.sig_seq_result.emit(format_seq_result(res))
-            status("QUICK SCAN เสร็จ — ดูผลที่แท็บ Analytics  (ค่า capacity ถูก Peukert-correct แล้ว)")
+            status("QUICK SCAN เสร็จ — ดู Electrical Grade/Capacity estimate ที่แท็บ Analytics; Overall Grade รอผล C10")
             self.sig_alarm.emit("[QUICK] Scan complete ✓")
             grade_str = res.get("grade", "?") if res else "?"
 
@@ -552,8 +552,11 @@ class QuickScanMixin:
                     logging.getLogger(__name__).error(f"GSheet reporting error: {e}")
             # ---------------------------------
 
+            electrical = res.get("electrical_grade", "REVIEW") if res else "REVIEW"
             self.sig_seq_done.emit("Quick Scan Complete",
-                                   f"Grade: {grade_str}\nดูผลเพิ่มเติมที่แท็บ Analytics")
+                                   f"Overall: {grade_str}  |  Electrical: {electrical}\n"
+                                   "ยืนยัน Overall Grade ด้วย C10 capacity test\n"
+                                   "ดูผลเพิ่มเติมที่แท็บ Analytics")
             completed_ok = True
 
         except Exception as exc:

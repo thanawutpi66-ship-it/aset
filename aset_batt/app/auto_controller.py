@@ -770,7 +770,7 @@ class AutoController:
             self._start_time = time.time()
             self._start_mono = time.perf_counter()
 
-    def _log_sample(self, voltage: float, current: float):
+    def _log_sample(self, voltage: float, current: float, mode: str = ""):
         """log หนึ่งแถว ใช้ค่า SoC/Rin ล่าสุดจาก estimator (สำหรับ IEC test ที่ไม่ผ่าน monitor loop)
 
         Rin still logs live every sample even before any real HPPC pulse has been fitted
@@ -788,6 +788,7 @@ class AutoController:
                 voltage, current,
                 self.estimator.soc, self.estimator.rin * 1000.0,
                 self.hw.current_temp, rin_calibrated=calibrated,
+                mode=mode
             )
         except Exception as e:
             logger.debug("log_sample error: %s", e)
@@ -798,8 +799,9 @@ class AutoController:
 
         ``fit_ecm``: pass True to attempt a pulse fit on a NON-HPPC record (e.g.
         Quick Scan's mini-pulse leg) without setting force_hppc — force_hppc=True
-        would suppress SoH computation (analyze_series only computes SoH when
-        NOT is_hppc), which is unacceptable for a mode whose primary output IS SoH.
+        would suppress the Quick Scan's observed/rate-normalised capacity fields.
+        Those values are diagnostic estimates; the verified capacity grade remains
+        reserved for a full C10 capacity sequence.
 
         Returns the result dict, or None on failure."""
         try:

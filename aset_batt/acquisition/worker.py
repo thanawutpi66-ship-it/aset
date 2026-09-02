@@ -92,6 +92,15 @@ class AcquisitionWorker(QObject):
         time_hist, i_hist = [], []          # for 1-RC ECM identification (HPPC)
         soc_hist = []                       # parallel to time_hist — see update_ecm() feedback below
         f = open(self.csv_path, "w", newline="", encoding="utf-8")
+        # Metadata provenance (starts with # so it can be skipped by standard CSV parsers)
+        import aset_batt
+        app_version = getattr(aset_batt, "__version__", "unknown")
+        f.write(f"# App_Version: {app_version}\n")
+        f.write(f"# Profile: {p.name}\n")
+        f.write(f"# Rated_Ah: {p.capacity_ah}\n")
+        f.write(f"# Peukert_K: {getattr(p, 'peukert_k', 1.1)}\n")
+        f.write("# Polarity: discharge_positive\n")
+
         writer = csv.writer(f)
         # Canonical project schema (matches data_utils.DataHandler / battery_data.csv)
         # so analysis_module and any project tool can read a test CSV directly.

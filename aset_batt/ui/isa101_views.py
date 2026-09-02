@@ -149,7 +149,7 @@ from aset_batt.ui import theme
 from aset_batt.ui.widgets import (
     _btn, _hline, QtRootShim,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
-    _PdfNotifier, _PdfTask,
+    _PdfNotifier, _PdfTask, _WordNotifier, _WordTask,
 )
 from aset_batt.ui.report_html import format_seq_result, build_results_html
 from aset_batt.ui.zones import ZonesMixin
@@ -200,6 +200,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMi
         self.thread_pool = QThreadPool.globalInstance()
         self._pdf_notifier = _PdfNotifier()
         self._pdf_notifier.finished.connect(self._on_pdf_finished)
+        self._word_notifier = _WordNotifier()
+        self._word_notifier.finished.connect(self._on_word_finished)
         self._headless = os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen"
 
         self.iec_standard = IEC61960Standard(

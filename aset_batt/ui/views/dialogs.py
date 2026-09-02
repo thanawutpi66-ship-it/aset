@@ -70,7 +70,7 @@ from aset_batt.ui import theme
 from aset_batt.ui.widgets import (
     _btn, _hline, QtRootShim,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
-    _PdfNotifier, _PdfTask,
+    _PdfNotifier, _PdfTask, _WordNotifier, _WordTask,
 )
 from aset_batt.ui.report_html import format_seq_result, build_results_html
 from aset_batt.ui.zones import ZonesMixin
@@ -413,6 +413,29 @@ class DialogsMixin:
             self._log_alarm(f"PDF failed: {payload}")
             if not self._headless:
                 QMessageBox.critical(self, "PDF Report", payload)
+    def _on_word_report(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Word Experiment Report", "battery_experiment_report.docx", "Word document (*.docx)")
+        if not path:
+            return
+        if not path.lower().endswith(".docx"):
+            path += ".docx"
+        self.btn_word.setEnabled(False)
+        self.btn_word.setText("Generating Word report…")
+        task = _WordTask(self._word_notifier, path, self.config, self.estimator,
+                         self._last_analysis, self._last_csv or self.config.system.csv_filepath)
+        self.thread_pool.start(task)
+    def _on_word_finished(self, ok: bool, payload: str):
+        self.btn_word.setEnabled(True)
+        self.btn_word.setText("Export Word Experiment Report")
+        if ok:
+            self._log_alarm(f"Word report generated: {payload}")
+            if not self._headless:
+                QMessageBox.information(self, "Word Experiment Report", f"Saved:\n{payload}")
+        else:
+            self._log_alarm(f"Word report failed: {payload}")
+            if not self._headless:
+                QMessageBox.critical(self, "Word Experiment Report", payload)
     def _on_soh_trend(self):
         """Parse all sessions for SoH, show a matplotlib window with timeline."""
         import threading

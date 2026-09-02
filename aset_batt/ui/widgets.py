@@ -625,3 +625,29 @@ class _PdfTask(QRunnable):
         except Exception as exc:
             logger.exception("PDF generation failed")
             self.notifier.finished.emit(False, str(exc))
+
+
+class _WordNotifier(QObject):
+    finished = Signal(bool, str)
+
+
+class _WordTask(QRunnable):
+    """Generate the editable Chapter-5 evidence report off the UI thread."""
+    def __init__(self, notifier: _WordNotifier, path: str, config, estimator, analysis, csv_path: str):
+        super().__init__()
+        self.notifier = notifier
+        self.path = path
+        self.config = config
+        self.estimator = estimator
+        self.analysis = analysis
+        self.csv_path = csv_path
+
+    def run(self):
+        try:
+            from aset_batt.storage.word_report import generate_word_report
+            generate_word_report(self.path, self.config, self.estimator,
+                                 analysis=self.analysis, csv_path=self.csv_path)
+            self.notifier.finished.emit(True, self.path)
+        except Exception as exc:
+            logger.exception("Word report generation failed")
+            self.notifier.finished.emit(False, str(exc))

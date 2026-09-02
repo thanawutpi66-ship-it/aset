@@ -16,7 +16,9 @@ from aset_batt.ui import theme
 def format_seq_result(res: dict) -> str:
     """Format an analyze_csv result dict into a short HTML string for the
     inline result card."""
-    grade   = res.get("grade", "?")
+    grade   = res.get("overall_grade", res.get("grade", "?"))
+    capacity_grade = res.get("capacity_grade", "REVIEW")
+    electrical_grade = res.get("electrical_grade", "REVIEW")
     soh     = res.get("soh", float("nan"))
     cap     = res.get("capacity_ah", float("nan"))
     dcir    = res.get("dcir_mohm", float("nan"))
@@ -30,7 +32,8 @@ def format_seq_result(res: dict) -> str:
     cap_str = f"{cap:.2f} Ah" if not math.isnan(cap) else "N/A"
     dcir_str = f"{dcir:.1f} mΩ" if not math.isnan(dcir) else "N/A"
     lines = [
-        f"<b>Grade: {grade}</b>   SoH: {soh_str}   Cap: {cap_str}",
+        f"<b>Verified Overall: {grade}</b>   SoH: {soh_str}   Cap: {cap_str}",
+        f"Capacity: {capacity_grade}   Electrical: {electrical_grade}",
         f"DCIR: {dcir_str}   Confidence: {conf*100:.0f}%",
     ]
     if ecm and not math.isnan(r0):
@@ -42,7 +45,7 @@ def format_seq_result(res: dict) -> str:
 
 def build_results_html(results: dict) -> str:
     """Rich HTML table for the analytics results pane."""
-    grade = results["grade"]
+    grade = results.get("overall_grade", results["grade"])
     gc = {"A": theme.OK, "B": theme.INFO, "C": theme.WARN, "REJECT": theme.CRIT, "REVIEW": theme.NEUTRAL}.get(grade, theme.NEUTRAL)
     soh = results["soh"]
     soh_txt = "N/A" if soh != soh else f"{soh:.1f}"
@@ -53,6 +56,11 @@ def build_results_html(results: dict) -> str:
     ocv = results.get("ocv_v", 0.0)
     cap_ah = results["capacity_ah"]
     cap_norm = results.get("capacity_norm_ah")
+    soh_est = results.get("soh_est", float("nan"))
+    soh_basis = results.get("soh_basis", "")
+    capacity_grade = results.get("capacity_grade", "REVIEW")
+    electrical_grade = results.get("electrical_grade", "REVIEW")
+    capacity_basis = results.get("capacity_basis", "")
     warns = results.get("quality_warnings", [])
 
     def hdr(text):
@@ -87,17 +95,26 @@ def build_results_html(results: dict) -> str:
     # ── Summary ──
     parts.append(hdr("Summary"))
     parts.append(row(
-        "Grade",
+        "Verified Overall Grade",
         f'<span style="color:{gc};font-size:14px">{grade}</span>',
-        f'conf {conf * 100:.0f}%'
+        (f'conf {conf * 100:.0f}% — requires valid capacity + electrical evidence')
     ))
-    parts.append(row("State of Health", soh_txt, "%"))
+    parts.append(row("Observed capacity fraction", soh_txt, "%", soh_basis))
+    if soh_est == soh_est and abs(soh_est - soh) > 1e-4:
+        parts.append(row("Rate/SoC capacity estimate", f"{soh_est:.1f}", "%",
+                         "diagnostic estimate; not used as capacity acceptance"))
+    parts.append(row("Capacity Grade", capacity_grade, "",
+                     "valid only for a phase-labelled full C10 discharge to cut-off"))
+    parts.append(row("Electrical Grade", electrical_grade, "",
+                     "valid only when DCIR/ECM pulse quality passes"))
     cap_sub = ""
     if cap_norm and abs(cap_norm - cap_ah) > 1e-4:
         k = results.get("peukert_k", 1.1)
         i_avg = results.get("mean_discharge_a", 0)
         cap_sub = f"rate-norm. {cap_norm:.3f} Ah @ k={k:.2f}, Ī={i_avg:.1f} A"
-    parts.append(row("Capacity", f"{cap_ah:.3f}", "Ah", cap_sub))
+    cap_provenance = f"source: {capacity_basis}" if capacity_basis else ""
+    cap_sub = "; ".join(x for x in (cap_sub, cap_provenance) if x)
+    parts.append(row("Discharged capacity", f"{cap_ah:.3f}", "Ah", cap_sub))
     parts.append(row("Rested OCV", f"{ocv:.3f}", "V"))
 
     # ── DCIR ──

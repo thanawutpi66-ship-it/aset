@@ -241,7 +241,7 @@ class IecCapacityMixin:
             def _ocv_progress(elapsed, v, dv_mv, st):
                 dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
                 status(f"PREPARE: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
-                self.controller._log_sample(v, 0.0)
+                self.controller._log_sample(v, 0.0, mode="OCV")
                 self.update_display(v, 0.0, self.controller.estimator.soc,
                                     self.controller.estimator.rin)
 
@@ -335,7 +335,7 @@ class IecCapacityMixin:
                     # estimator.update()), so it's safe to call during this loop.
                     try:
                         v_r, i_r, _ = self.hw.read_vi()
-                        self.controller._log_sample(v_r, i_r)
+                        self.controller._log_sample(v_r, i_r, mode="REST")
                         self.update_display(v_r, i_r, self.controller.estimator.soc,
                                             self.controller.estimator.rin, self.hw.current_temp)
                     except Exception as e:
@@ -356,7 +356,7 @@ class IecCapacityMixin:
                 def _post_rest_progress(elapsed, v, dv_mv, st):
                     dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
                     status(f"REST: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
-                    self.controller._log_sample(v, 0.0)
+                    self.controller._log_sample(v, 0.0, mode="REST")
                     self.update_display(v, 0.0, self.controller.estimator.soc,
                                         self.controller.estimator.rin)
 
@@ -396,7 +396,7 @@ class IecCapacityMixin:
             # stale (same root cause already fixed for the HPPC sequence).
             try:
                 v3_0, i3_0 = self.hw.read_measurements(prefer_load_v=True)
-                self.controller._log_sample(v3_0, i3_0)
+                self.controller._log_sample(v3_0, i3_0, mode="MAIN_DISCHARGE")
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
@@ -414,7 +414,7 @@ class IecCapacityMixin:
                     dt = now - last_log
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
-                    self.controller._log_sample(v3, i3)
+                    self.controller._log_sample(v3, i3, mode="MAIN_DISCHARGE")
                     # _log_sample feeds CSV/cloud only — the sequence intentionally
                     # stopped the shared monitor loop in _seq_common_start() (to avoid
                     # double-counting the estimator), so nothing else feeds the live

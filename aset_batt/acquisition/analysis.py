@@ -60,11 +60,15 @@ def profile_from_config(config) -> BatteryProfile:
     # differing by >13 points (80.0% vs 93.4%, potentially the difference between
     # grade A and B) depending purely on which code path computed it.
     from aset_batt.core import battery_profiles
-    peukert = battery_profiles.get_chemistry(b.battery_type).peukert_k
+    chemistry_profile = battery_profiles.get_chemistry(b.battery_type)
+    peukert = chemistry_profile.peukert_k
+    peukert_hr = float(getattr(chemistry_profile, "peukert_hr", 10.0))
     try:
         prod = battery_profiles.get_product(getattr(b, "product_name", "") or "")
         if prod and getattr(prod, "peukert_k", 0.0) > 0.0:
             peukert = prod.peukert_k
+        if prod and getattr(prod, "peukert_hr", 0.0) > 0.0:
+            peukert_hr = float(prod.peukert_hr)
     except Exception as e:
         import logging
         logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
@@ -93,7 +97,7 @@ def profile_from_config(config) -> BatteryProfile:
         ovp=float(s.get("max_voltage", b.pack_max_voltage + 1)),
         uvp=float(s.get("min_voltage", b.pack_min_voltage - 1)),
         otp_warn=max(0.0, otp - 10.0), otp_crit=otp, internal_r=float(max(1e-4, rin)),
-        peukert_k=peukert, r0_fraction=r0_fraction,
+        peukert_k=peukert, peukert_hr=peukert_hr, r0_fraction=r0_fraction,
         harness_r_ohm=max(0.0, float(getattr(b, "harness_resistance_ohm", 0.0))),
     )
 
@@ -130,6 +134,13 @@ _DCIR_MAX_STEP_DT = MAX_STEP_EDGE_LATENCY_S      # s
 # pack reads a proportionally LOW SoH (a 50 %-charged healthy pack → SoH ≈ 50 %).
 # reached_cutoff can't catch it (it guards the END), so a known-partial start is flagged.
 _SOH_MIN_START_SOC = 95.0    # %
+
+# A capacity acceptance result must be measured at the profile's rated duration
+# (normally C10), from a full/known-full start, to the configured cut-off.  A
+# small tolerance absorbs current-regulator error without allowing a Quick 1C
+# discharge to masquerade as a C10 capacity test.
+_CAPACITY_RATE_TOLERANCE = 0.15
+_CAPACITY_CUTOFF_TOLERANCE_V = 0.10
 
 # D2 runtime guard: refuse a harness-resistance correction that would remove more
 # than this fraction of a raw ohmic reading — see _correct_for_harness_r.
@@ -755,21 +766,88 @@ def _hppc_pulse_summary(pulses: list, warnings: list) -> tuple:
     return drift, cv, warnings
 
 
+def _main_discharge_capacity(time_s, ia, capacity_total: float, modes: list[str] | None):
+    """Return Ah belonging to MAIN_DISCHARGE only, plus its provenance.
+
+    Logged cumulative Ah includes Quick Scan's diagnostic pulse and any other
+    positive-current phase.  Integrating only intervals whose two endpoints are
+    MAIN_DISCHARGE keeps that charge out of the capacity claim.  Legacy CSVs
+    have no phase labels, so their total remains displayable but is explicitly
+    marked as unsuitable for a verified capacity grade.
+    """
+    t = np.asarray(time_s, float)
+    i = np.asarray(ia, float)
+    normalised = [str(m or "").strip().upper() for m in (modes or [])]
+    if len(normalised) == len(i) and "MAIN_DISCHARGE" in normalised and len(i) >= 2:
+        mask = np.asarray([m == "MAIN_DISCHARGE" for m in normalised], bool)
+        dt = np.diff(t)
+        interval_mask = mask[:-1] & mask[1:] & np.isfinite(dt) & (dt >= 0.0)
+        current_mid = 0.5 * (np.clip(i[:-1], 0.0, None) + np.clip(i[1:], 0.0, None))
+        return float(np.sum(current_mid[interval_mask] * dt[interval_mask]) / 3600.0), \
+            "MAIN_DISCHARGE"
+    return float(capacity_total), "legacy_all_positive"
+
+
 def _calc_capacity_and_soh(
-        capacity: float, ia: np.ndarray, profile: "BatteryProfile", 
-        is_hppc: bool, reached_cutoff: bool, soh: float | None) -> tuple[float, float, float]:
-    dis = ia[ia > 0.05]
+        time_s, capacity_total: float, ia: np.ndarray, profile: "BatteryProfile",
+        is_hppc: bool, reached_cutoff: bool, soh: float | None,
+        modes: list[str] | None = None, soc_start: float | None = None):
+    """Calculate raw and rate/SoC-normalised capacity separately.
+
+    ``soh`` is always the raw, observed capacity fraction. ``soh_est`` is a
+    clearly-labelled estimate that applies Peukert and (when supplied) start-SoC
+    normalisation.  The estimate is useful for diagnosis, but never by itself a
+    capacity acceptance grade.
+    """
+    capacity, capacity_basis = _main_discharge_capacity(time_s, ia, capacity_total, modes)
+    normalised_modes = [str(m or "").strip().upper() for m in (modes or [])]
+    if len(normalised_modes) == len(ia) and "MAIN_DISCHARGE" in normalised_modes:
+        dis = ia[np.asarray([m == "MAIN_DISCHARGE" for m in normalised_modes], bool)]
+    else:
+        dis = ia[ia > 0.05]
     mean_dis = float(np.mean(dis)) if dis.size else 0.0
+    ref_c_rate = 1.0 / max(1e-9, float(getattr(profile, "peukert_hr", 10.0)))
     cap_norm = peukert_capacity(capacity, mean_dis, profile.capacity_ah,
-                                getattr(profile, "peukert_k", 1.1))
+                                getattr(profile, "peukert_k", 1.1), ref_c_rate)
     if soh is None:
-        if (not is_hppc) and reached_cutoff and profile.capacity_ah:
-            soh = 100.0 * cap_norm / profile.capacity_ah
-        else:
-            soh = float("nan")
-    if not np.isnan(soh):
-        soh = float(min(120.0, max(0.0, soh)))
-    return mean_dis, cap_norm, soh
+        raw_soh = (100.0 * capacity / profile.capacity_ah
+                   if (not is_hppc) and reached_cutoff and profile.capacity_ah else float("nan"))
+    else:
+        raw_soh = float(soh)
+    soh_est = (100.0 * cap_norm / profile.capacity_ah
+               if (not is_hppc) and reached_cutoff and profile.capacity_ah else raw_soh)
+    if soc_start is not None and soc_start == soc_start and 30.0 <= soc_start < 98.0 \
+            and not np.isnan(soh_est):
+        soh_est /= soc_start / 100.0
+        soh_basis = (f"rate/SoC-normalised estimate from {soc_start:.0f}% start SoC; "
+                     "not a full-charge measurement")
+    elif soc_start is not None and soc_start == soc_start and soc_start >= 98.0:
+        soh_basis = "full-charge measurement"
+    else:
+        soh_basis = "raw observed capacity; start SoC is unknown"
+    if not np.isnan(raw_soh):
+        raw_soh = float(min(100.0, max(0.0, raw_soh)))
+    if not np.isnan(soh_est):
+        soh_est = float(min(100.0, max(0.0, soh_est)))
+    return capacity, capacity_basis, mean_dis, cap_norm, raw_soh, soh_est, soh_basis
+
+
+def _grade_from_soh(soh: float) -> str:
+    if np.isnan(soh):
+        return "REVIEW"
+    if soh >= 90.0:
+        return "A"
+    if soh >= 80.0:
+        return "B"
+    if soh >= 70.0:
+        return "C"
+    return "REJECT"
+
+
+def _worst_grade(*grades: str) -> str:
+    """Worst valid grade; REVIEW is handled by the evidence gate before use."""
+    rank = {"A": 0, "B": 1, "C": 2, "REJECT": 3}
+    return max(grades, key=lambda g: rank[g])
 
 def _check_soh_start_soc(
         warnings: list, is_hppc: bool, reached_cutoff: bool, soh: float, 
@@ -915,7 +993,7 @@ def _extract_ecm_metrics(
 
 def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                    profile: "BatteryProfile", is_hppc: bool, soh=None,
-                   soc_start=None, soc_series=None, fit_ecm=None) -> dict:
+                   soc_start=None, soc_series=None, fit_ecm=None, modes=None) -> dict:
     """Run the unified analysis on raw series → the standard results dict.
 
     ``fit_ecm``: whether to attempt a 1-RC/2-RC pulse fit at all. ``None``
@@ -929,10 +1007,21 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     v = Analytics.hampel_filter(np.asarray(voltage_v, float))
     ia = Analytics.hampel_filter(np.asarray(current_a, float))
     q = np.asarray(capacity_series, float)
-    capacity = float(q[-1]) if q.size else 0.0
+    capacity_total = float(q[-1]) if q.size else 0.0
     reached_cutoff = bool(v.size and float(np.min(v)) <= profile.cutoff_v * 1.02)
-    
-    mean_dis, cap_norm, soh = _calc_capacity_and_soh(capacity, ia, profile, is_hppc, reached_cutoff, soh)
+
+    capacity, capacity_basis, mean_dis, cap_norm, soh, soh_est, soh_basis = \
+        _calc_capacity_and_soh(time_s, capacity_total, ia, profile, is_hppc,
+                                reached_cutoff, soh, modes, soc_start)
+
+    # Polarity Guard: Check if this was actually a charge test
+    _active_i = ia[np.abs(ia) > 0.2]
+    is_charge_record = False
+    if _active_i.size > 0:
+        med_i = float(np.median(_active_i))
+        if med_i < -0.2:  # Negative median current means it's a charge cycle
+            is_charge_record = True
+            soh = float("nan")
 
     dcir, dcir_std, n_steps, measured, n_stale, n_implausible = identify_dcir(
         current_a, voltage_v, temp_c, profile, time_s=time_s)
@@ -976,6 +1065,9 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                         f"(stale voltage readback at the edge or quantization); not ohmic resistance")
 
     warnings = _check_soh_start_soc(warnings, is_hppc, reached_cutoff, soh, soc_start, current_a, voltage_v, ocv_ceil, t_med, profile)
+
+    if is_charge_record:
+        warnings.append("test was a CHARGE (negative median current) — grading requires a DISCHARGE; SoH is invalid")
 
     ecm, warnings, cca_est = _extract_ecm_metrics(
         time_s, current_a, voltage_v, ocv, ocv_ceil, fit_ecm, harness_r, profile, t_med, dcir, measured, warnings)
@@ -1025,17 +1117,82 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
             cca_est = (max(0.0, (min(ocv, ocv_ceil) if ocv_ceil else ocv) - _cca_cutoff_v(profile)) / ecm["ri_total"]
                       if ecm["ri_total"] > 1e-6 else 0.0)
 
-    gradeable = measured or ecm["ecm_identified"] or not np.isnan(soh)
-    if not gradeable:
-        grade = "REVIEW"
-    elif ecm["ecm_identified"]:
-        grade = Analytics.grade_from_ecm(soh, ecm["r0"], ecm["r1"], profile)
+    # A C10 capacity acceptance needs explicit phase provenance, a full/known-full
+    # start, the profile cut-off, and a current close to C10.  Quick Scan's
+    # Peukert-corrected number remains a useful estimate (soh_est) but cannot
+    # supply this evidence.  This prevents a 1C scan, or a legacy CSV whose Ah
+    # includes diagnostic pulses, from being promoted into an Overall A/B/C.
+    expected_current = profile.capacity_ah / max(1e-9, float(getattr(profile, "peukert_hr", 10.0)))
+    rate_ok = expected_current > 0.0 and abs(mean_dis - expected_current) <= \
+        expected_current * _CAPACITY_RATE_TOLERANCE
+    full_start = soc_start is not None and soc_start == soc_start and soc_start >= _SOH_MIN_START_SOC
+    cutoff_ok = bool(v.size and float(np.min(v)) <= profile.cutoff_v + _CAPACITY_CUTOFF_TOLERANCE_V)
+    capacity_reasons = []
+    if is_hppc:
+        capacity_reasons.append("HPPC is an electrical-characterisation test, not a capacity test")
+    if is_charge_record:
+        capacity_reasons.append("record is a charge, not a discharge")
+    if capacity_basis != "MAIN_DISCHARGE":
+        capacity_reasons.append("CSV has no MAIN_DISCHARGE phase provenance")
+    if not full_start:
+        capacity_reasons.append("discharge did not start from verified full SoC")
+    if not cutoff_ok:
+        capacity_reasons.append("configured cut-off was not reached")
+    if not rate_ok:
+        capacity_reasons.append(
+            f"mean discharge {mean_dis:.3f} A is not the C{getattr(profile, 'peukert_hr', 10.0):g} "
+            f"reference {expected_current:.3f} A")
+    capacity_gradeable = not capacity_reasons and not np.isnan(soh)
+    capacity_grade = _grade_from_soh(soh) if capacity_gradeable else "REVIEW"
+    if not capacity_gradeable:
+        warnings.append("capacity grade withheld — " + "; ".join(capacity_reasons or ["no valid capacity result"]))
+
+    # Electrical evidence is limited to a resolved pulse resistance.  A stale or
+    # implausible edge is a data-quality failure, not a low-resistance battery.
+    electrical_source = measured or ecm["ecm_identified"]
+    electrical_reasons = []
+    if is_charge_record:
+        electrical_reasons.append("record is a charge, not a discharge")
+    if not electrical_source:
+        electrical_reasons.append("no valid DCIR or ECM pulse measurement")
+    if n_stale > 0 or n_implausible > 0:
+        electrical_reasons.append("pulse sampling contains stale or implausible edge data")
+    if ecm["ecm_identified"] and (np.isnan(ecm["r2_ecm_fit"]) or ecm["r2_ecm_fit"] < 0.90):
+        electrical_reasons.append("ECM fit quality is below R² 0.90")
+    electrical_gradeable = not electrical_reasons
+    if electrical_gradeable:
+        if ecm["ecm_identified"]:
+            electrical_grade = Analytics.grade_from_ecm(float("nan"), ecm["r0"], ecm["r1"], profile)
+        else:
+            electrical_grade = Analytics.grade(float("nan"), dcir, profile)
     else:
-        grade = Analytics.grade(soh, dcir, profile)
+        electrical_grade = "REVIEW"
+        warnings.append("electrical grade withheld — " + "; ".join(electrical_reasons))
+
+    # ``grade`` remains the backward-compatible headline field, but is now the
+    # verified overall grade.  A proven REJECT in either valid dimension is
+    # decisive; every non-reject grade needs BOTH C10 capacity and electrical
+    # evidence.  Therefore Quick Scan can report an electrical A, but only
+    # reports Overall REVIEW until the C10 reference is available.
+    if "REJECT" in (capacity_grade, electrical_grade):
+        grade = "REJECT"
+    elif capacity_gradeable and electrical_gradeable:
+        grade = _worst_grade(capacity_grade, electrical_grade)
+    else:
+        grade = "REVIEW"
+    gradeable = capacity_gradeable and electrical_gradeable
 
     confidence = _confidence(dcir, dcir_std, n_steps, profile, len(warnings))
     if ecm["ecm_identified"]:
         confidence *= 0.7 + 0.3 * max(0.0, min(1.0, ecm["r2_ecm_fit"]))
+
+    # Penalize confidence for severe anchor drift
+    if hppc_anchor_drift_v and hppc_anchor_drift_v > 0.3:
+        confidence *= max(0.0, 1.0 - (hppc_anchor_drift_v - 0.3))
+
+    if n_stale > 0:
+        confidence *= 0.8
+
     if not gradeable:
         confidence = 0.0
 
@@ -1044,17 +1201,21 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     logger.info(
         "GRADE DECISION product=%s chemistry=%s grade=%s confidence=%.2f "
         "soh=%s dcir_mohm=%.2f r0_mohm=%.2f r1_mohm=%.2f harness_r_mohm=%.2f "
-        "n_steps=%d measured=%s ecm_identified=%s gradeable=%s warnings=%d",
+        "n_steps=%d measured=%s ecm_identified=%s gradeable=%s "
+        "capacity_grade=%s electrical_grade=%s capacity_basis=%s warnings=%d",
         getattr(profile, "name", "?"), getattr(profile, "chemistry", "?"),
         grade, confidence, "nan" if np.isnan(soh) else f"{soh:.1f}",
         dcir * 1000.0, ecm["r0"] * 1000.0, ecm["r1"] * 1000.0, harness_r * 1000.0,
-        n_steps, measured, ecm["ecm_identified"], gradeable, len(warnings),
+        n_steps, measured, ecm["ecm_identified"], gradeable,
+        capacity_grade, electrical_grade, capacity_basis, len(warnings),
     )
 
     ica_v, ica = Analytics.incremental_capacity(v, q)
     return {
-        "soh": soh, "capacity_ah": capacity,
-        "capacity_norm_ah": cap_norm, "mean_discharge_a": mean_dis,
+        "soh": soh, "soh_est": soh_est, "soh_basis": soh_basis,
+        "capacity_ah": capacity, "capacity_total_ah": capacity_total,
+        "capacity_basis": capacity_basis, "capacity_norm_ah": cap_norm,
+        "capacity_rate_normalized_ah": cap_norm, "mean_discharge_a": mean_dis,
         "peukert_k": getattr(profile, "peukert_k", 1.1),
         "dcir_mohm": dcir * 1000.0, "dcir_std_mohm": dcir_std * 1000.0,
         "dcir_n_steps": n_steps, "dcir_measured": measured, "dcir_temp_normalised": True,
@@ -1062,7 +1223,10 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "dcir_slope_mohm": dcir_slope * 1000.0, "dcir_slope_r2": dcir_slope_r2,
         "ri_mohm": ecm["ri_total"] * 1000.0,
         "voltage_sag_v": sag, "cca_est_a": cca_est, "ocv_v": ocv,
-        "grade": grade, "gradeable": gradeable,
+        "grade": grade, "overall_grade": grade, "gradeable": gradeable,
+        "overall_gradeable": gradeable,
+        "capacity_grade": capacity_grade, "capacity_gradeable": capacity_gradeable,
+        "electrical_grade": electrical_grade, "electrical_gradeable": electrical_gradeable,
         "confidence": confidence, "quality_warnings": warnings, "temp_drift_c": temp_drift,
         "r0_mohm": ecm["r0"] * 1000.0, "r1_mohm": ecm["r1"] * 1000.0, "c1_farad": ecm["c1"], "tau_s": ecm["tau"],
         "ecm_identified": ecm["ecm_identified"], "ecm_r2": ecm["r2_ecm_fit"], "ecm_fit_t_s": ecm["ecm_fit_t_s"],
@@ -1090,7 +1254,9 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
 def _read_csv(path):
     """Read a canonical (or lowercase) telemetry CSV → arrays + mode strings."""
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
+        # Skip metadata header lines starting with '#' (e.g. provenance metadata)
+        lines = (line for line in f if not line.lstrip().startswith('#'))
+        reader = csv.DictReader(lines)
         hdr = {h.strip().lower(): h for h in (reader.fieldnames or [])}
 
         def col(name):
@@ -1130,15 +1296,39 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
     if np.all(np.isnan(cap)):                       # no capacity column → integrate
         dt = np.diff(t, prepend=t[0])
         cap = np.cumsum(np.clip(i, 0, None) * dt) / 3600.0
-    # Starting SoC = the peak logged SoC (start of a discharge) — used to flag an SoH
-    # that's under-stated because the pack wasn't full when the capacity test began.
-    soc_start = float(np.nanmax(soc)) if soc.size and not np.all(np.isnan(soc)) else None
+    # Starting SoC = the SoC right before the main discharge begins (after any RELAX phase).
+    # This bypasses artificially high initial SoC caused by surface charge.
+    soc_start = None
+    if soc.size and not np.all(np.isnan(soc)):
+        _modes_upper = [str(m).strip().upper() for m in modes]
+        if "MAIN_DISCHARGE" in _modes_upper:
+            first_md_idx = _modes_upper.index("MAIN_DISCHARGE")
+            if first_md_idx > 0:
+                for idx in range(first_md_idx - 1, -1, -1):
+                    if not np.isnan(soc[idx]):
+                        soc_start = float(soc[idx])
+                        break
+
+        # Fallback if no MAIN_DISCHARGE mode is found (e.g. older files without Mode col)
+        if soc_start is None:
+            active_idx = np.where(i > 0.5)[0]
+            if active_idx.size > 0:
+                edge_idx = active_idx[0]
+                if edge_idx > 0:
+                    for idx in range(edge_idx - 1, -1, -1):
+                        if not np.isnan(soc[idx]):
+                            soc_start = float(soc[idx])
+                            break
+
+        # Ultimate fallback (e.g. no discharge at all or very start)
+        if soc_start is None:
+            soc_start = float(np.nanmax(soc))
     # SoC_pct per sample — already parsed by _read_csv (previously only used for
     # soc_start above); threaded through so identify_hppc_pulses() (HPPC only)
     # can report which SoC level each pulse fired at (G1/G2 SoC-sweep support).
     soc_series = soc if soc.size and not np.all(np.isnan(soc)) else None
     return analyze_series(t, i, v, temp, cap, profile, is_hppc,
-                          soc_start=soc_start, soc_series=soc_series, fit_ecm=fit_ecm)
+                          soc_start=soc_start, soc_series=soc_series, fit_ecm=fit_ecm, modes=modes)
 
 
 _analysis_pool: ProcessPoolExecutor | None = None
@@ -1187,7 +1377,7 @@ def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = Fa
 
 def analyze_series_mp(time_s, current_a, voltage_v, temp_c, capacity_series,
                       profile: BatteryProfile, is_hppc: bool, soh=None,
-                      soc_start=None, soc_series=None, fit_ecm=None) -> dict:
+                      soc_start=None, soc_series=None, fit_ecm=None, modes=None) -> dict:
     """Same result as analyze_series(), but off the calling thread's GIL — see
     analyze_csv_mp's docstring. AcquisitionWorker.run() (the Characterization /
     RUN TEST / HPPC-via-RUN-TEST QThread) calls this directly with its in-memory
@@ -1196,5 +1386,5 @@ def analyze_series_mp(time_s, current_a, voltage_v, temp_c, capacity_series,
     an extra throwaway CSV just to satisfy that wrapper's file-path signature."""
     future = _get_analysis_pool().submit(
         analyze_series, time_s, current_a, voltage_v, temp_c, capacity_series,
-        profile, is_hppc, soh, soc_start, soc_series, fit_ecm)
+        profile, is_hppc, soh, soc_start, soc_series, fit_ecm, modes)
     return future.result()
