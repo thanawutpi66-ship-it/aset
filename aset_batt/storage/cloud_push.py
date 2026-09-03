@@ -157,11 +157,27 @@ def build_payload(csv_path, max_points, cached_analysis=None, config=None, csv_c
     battery_desc = prod if prod else (
         f"{bat.cells_series}S{bat.cells_parallel}P {bat.battery_type} {bat.rated_capacity}Ah"
     )
+    # Carry the same immutable identity shown in the exported report.  A file
+    # name alone is not a traceable run identifier when sessions are copied or
+    # re-exported; the sidecar is deliberately optional for legacy/live files.
+    session_meta = {}
+    try:
+        with open(csv_path + ".meta.json", encoding="utf-8") as handle:
+            session_meta = json.load(handle)
+    except (OSError, ValueError):
+        pass
+    protocol = session_meta.get("protocol") or {}
     return {
         "meta": {
             "battery": battery_desc,
             "sn": getattr(bat, "serial_number", ""),
             "csv_name": os.path.basename(csv_path),
+            "session_id": session_meta.get("session_id", ""),
+            "schema_version": session_meta.get("schema_version", ""),
+            "app_version": session_meta.get("app_version", ""),
+            "csv_sha256": session_meta.get("sha256", ""),
+            "protocol_id": protocol.get("id", ""),
+            "analysis_version": protocol.get("analysis_version", ""),
             "pushed_at": time.time(),
             **_meta_override,   # phase, test_mode, workflow (set by GUI)
         },

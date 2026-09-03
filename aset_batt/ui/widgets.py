@@ -651,3 +651,36 @@ class _WordTask(QRunnable):
         except Exception as exc:
             logger.exception("Word report generation failed")
             self.notifier.finished.emit(False, str(exc))
+
+
+class _ReportPackageNotifier(QObject):
+    finished = Signal(bool, str)
+
+
+class _ReportPackageTask(QRunnable):
+    """Create the matching Word + PDF report package off the UI thread."""
+    def __init__(self, notifier: _ReportPackageNotifier, path: str, config,
+                 estimator, analysis, csv_path: str):
+        super().__init__()
+        self.notifier = notifier
+        self.path = path
+        self.config = config
+        self.estimator = estimator
+        self.analysis = analysis
+        self.csv_path = csv_path
+
+    def run(self):
+        try:
+            from aset_batt.storage.report_export import generate_report_package
+            result = generate_report_package(
+                self.path, self.config, self.estimator, analysis=self.analysis,
+                csv_path=self.csv_path)
+            lines = []
+            if result.get("docx_path"):
+                lines.append(f"Word: {result['docx_path']}")
+            lines.append(f"PDF: {result['pdf_path']}")
+            lines.extend(result.get("warnings", []))
+            self.notifier.finished.emit(True, "\n".join(lines))
+        except Exception as exc:
+            logger.exception("Experiment report package generation failed")
+            self.notifier.finished.emit(False, str(exc))

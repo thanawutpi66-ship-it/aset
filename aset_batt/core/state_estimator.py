@@ -22,7 +22,11 @@ class StateEstimator:
         self.battery_model = battery_model or BatteryModel()
 
         # State variables
-        self.soc = 50.0          # % (initial assumption)
+        # 50% is only an internal numerical seed for the filter. It is not a
+        # measured battery state and must not be rendered or recorded until an
+        # OCV/endpoint anchor establishes it.
+        self.soc = 50.0          # % (internal initial assumption)
+        self.soc_is_initialized = False
         self.soc_std = 10.0      # % — 1σ SoC uncertainty from the EKF covariance (live)
         self.soc_initial = 50.0  # % ใช้เป็น reference ของ Coulomb counting
         self.soh = 100.0         # %
@@ -326,6 +330,7 @@ class StateEstimator:
         at the old battery's anchor skews the live rin SoC U-shape correction from
         the very first sample."""
         with self._lock:
+            self.soc_is_initialized = False
             self.soh = 100.0
             self.battery_model.set_aging_from_soh(None)  # D3: also un-age the Rin baseline
             self.measured_capacity_ah = 0.0
@@ -454,6 +459,11 @@ class StateEstimator:
             logger.info(f"SoC synced with OCV: {voltage:.3f}V -> {self.soc:.1f}%")
             return self.soc
 
+    def invalidate_soc(self) -> None:
+        """Mark displayed/logged SoC unknown while a new OCV anchor is pending."""
+        with self._lock:
+            self.soc_is_initialized = False
+
     def _reset_to_soc(self, soc: float, soc_var: float = 1.0,
                       start_settle_window: bool = False) -> None:
         """Reset state ทั้งหมดให้ตรงกับ soc. ``soc_var`` = ความไม่แน่นอนของ SoC ที่ตั้งให้
@@ -465,6 +475,7 @@ class StateEstimator:
         waited out a real rest (calibrate_from_ocv_stable's ΔV/Δt settle) before firing,
         so there's no fresh transient there to guard against."""
         self.soc = soc
+        self.soc_is_initialized = True
         self.soc_initial = soc
         self.soc_filtered = soc
         self.ah_accumulated = 0.0

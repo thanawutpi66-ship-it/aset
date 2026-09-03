@@ -1,0 +1,7781 @@
+
+===== เกณฑ์การประเมินผลโครงงาน (1).pdf | pages=6 =====
+
+--- PAGE 1 ---
+รูบริกประเมินผลโครงงาน Capstone Design 
+ระดับคะแนน 
+คะแนน ระดับผลการประเมิน 
+4 ดีมาก: ชัดเจน ครบถ้วน มีเหตุผลรองรับ 
+3 ดี: เหมาะสม แต่ยังมีรายละเอียดบางส่วนไม่สมบูรณ์ 
+2 พอใช้: มีข้อมูลบางส่วน แต่ยังไม่ชัดเจนหรือไม่ครบ 
+1 ต้องปรับปรุง: ขาดสาระส าคัญหรือไม่เชื่อมโยงกับโครงงาน 
+ 
+ประเมินความก้าวหน้าโครงงาน Progress assessment  
+SO/PLO 2 การออกแบบทางวิศวกรรม 
+ตัวชี้วัด 4 3 2 1 
+ระบุปัญหา ความต้องการ และ
+ข้อก าหนดของงานออกแบบ 
+ชัดเจน วัดผลได้ และสอดคล้องกับ
+บริบทจริง 
+ค่อนข้างชัดเจน แต่บางข้อ
+ยังไม่สมบูรณ์ ยังทั่วไปหรือวัดผลได้ไม่ชัด ไม่ชัดเจนหรือไม่
+สัมพันธ์กับโครงงาน 
+ระบุข้อจ ากัดและเกณฑ์ประเมิน
+ทางเลือก 
+ครอบคลุมด้านเทคนิค ต้นทุน ความ
+ปลอดภัย สังคม และสิ่งแวดล้อม 
+ระบุข้อจ ากัดหลักได้ แต่
+ยังไม่ครบทุกมิติ 
+ระบุได้บางส่วน แต่ยังไม่
+เชื่อมกับการออกแบบ 
+ไม่ระบุข้อจ ากัดหรือ
+เกณฑ์ประเมิน 
+เสนอแนวทางแก้ปัญหาและให้
+เหตุผล 
+เปรียบเทียบทางเลือกและเลือกแนวทาง
+ได้อย่างมีเหตุผล 
+มีแนวทางที่เหมาะสม แต่
+เหตุผลยังไม่ลึก 
+มีแนวทางเบื้องต้น แต่
+เหตุผลไม่ชัด 
+แนวทางไม่ชัดหรือไม่
+เหมาะสม 
+ 
+SO/PLO 3 การสื่อสาร 
+ตัวชี้วัด 4 3 2 1 
+รูปแบบและล าดับการ
+น าเสนอ 
+เป็นระบบ ชัดเจน เหมาะกับผู้ฟัง
+ทางวิศวกรรม เข้าใจได้ดี มีติดขัดเล็กน้อย ล าดับยังไม่ดีหรืออธิบายไม่ชัด 
+สับสนและขาด
+โครงสร้าง และไม่
+เหมาะกับผู้ฟัง 
+การใช้รูป ตาราง กราฟ หรือ
+แผนภาพ 
+เหมาะสม อ่านง่าย และช่วย
+อธิบายงานได้ดี 
+ใช้ได้เหมาะสม แต่ยังปรับปรุง
+การจัดรูปได้ มีภาพประกอบน้อยหรือไม่ชัด ไม่มีหรือไม่ช่วย
+สื่อสาร 
+การใช้ภาษาและศัพท์เทคนิค ใช้ภาษาและศัพท์เทคนิคได้
+ถูกต้อง กระชับ และชัดเจน 
+มีข้อผิดพลาดเล็กน้อย แต่ไม่
+กระทบความเข้าใจ 
+มีข้อผิดพลาดหลายจุด ท าให้
+บางส่วนไม่ชัดเจน 
+ใช้ภาษาไม่ถูกต้องจน
+ท าให้สื่อสาร
+สาระส าคัญไม่ได้ 
+การพูดและภาษากาย พูดชัดเจน มั่นใจ ใช้ภาษากาย
+เหมาะสม และควบคุมเวลาได้ดี 
+สื่อสารได้ดี มีความติดขัด
+เล็กน้อย 
+พูดไม่ต่อเนื่อง ภาษากายหรือการ
+ควบคุมเวลาไม่เหมาะสม 
+พูดไม่ชัดเจน ขาด
+ความพร้อม และไม่
+
+--- PAGE 2 ---
+ตัวชี้วัด 4 3 2 1 
+สามารถสื่อสารได้
+อย่างมีประสิทธิภาพ 
+ 
+SO/PLO 7 การเรียนรู้ด้วยตนเองและการใช้ความรู้ใหม่ 
+ตัวชี้วัด 4 3 2 1 
+การระบุความรู้ที่ต้องเรียนรู้
+เพิ่มเติม 
+ระบุช่องว่างความรู้และวิธีเรียนรู้ได้ชัดเจน ระบุความรู้เพิ่มเติมได้บางส่วน เห็นความจ าเป็นเพียง
+เล็กน้อย 
+ไม่แสดงการเรียนรู้
+เพิ่มเติม 
+การค้นคว้าข้อมูลที่เกี่ยวข้อง ใช้แหล่งข้อมูลที่น่าเชื่อถือ เช่น มาตรฐาน 
+คู่มือ บทความ หรือ datasheet 
+ใช้ข้อมูลที่เกี่ยวข้อง แต่ยังต้อง
+ปรับคุณภาพแหล่งอ้างอิง 
+ใช้ข้อมูลจ ากัดหรือไม่
+เชื่อมกับงาน 
+ไม่มีหลักฐานการ
+ค้นคว้า 
+การพิจารณาประเด็นปัจจุบัน
+และทางเลือกใหม่ 
+เชื่อมโยงเทคโนโลยี มาตรฐาน ความยั่งยืน 
+หรือ AI กับโครงงานได้ดี 
+กล่าวถึงประเด็นปัจจุบันได้
+บางส่วน 
+กล่าวถึงแบบทั่วไป ไม่พิจารณาประเด็น
+ปัจจุบัน 
+การเลือกใช้เครื่องมือและ
+ทรัพยากร 
+เลือกใช้เครื่องมือได้เหมาะสมและ
+เปรียบเทียบผลกับวิธีอื่นได้ 
+เลือกใช้เครื่องมือได้เหมาะสม
+และอธิบายเหตุผลได้ 
+ใช้เครื่องมือได้ แต่ยัง
+ขาดเหตุผลหรือการ
+เปรียบเทียบ 
+เลือกใช้เครื่องมือไม่
+เหมาะสมหรือใช้งาน
+ไม่ได้ 
+ 
+ประเมินผลปลายภาค Final assessment 
+SO/PLO 2 การออกแบบทางวิศวกรรม  
+ตัวชี้วัด 4 3 2 1 
+ระบุปัญหา ความต้องการ และ
+ข้อก าหนดของงานออกแบบ 
+ชัดเจน วัดผลได้ และสอดคล้องกับ
+บริบทจริง 
+ค่อนข้างชัดเจน แต่บางข้อ
+ยังไม่สมบูรณ์ ยังทั่วไปหรือวัดผลได้ไม่ชัด ไม่ชัดเจนหรือไม่
+สัมพันธ์กับโครงงาน 
+ระบุข้อจ ากัดและเกณฑ์ประเมิน
+ทางเลือก 
+ครอบคลุมด้านเทคนิค ต้นทุน ความ
+ปลอดภัย สังคม และสิ่งแวดล้อม 
+ระบุข้อจ ากัดหลักได้ แต่
+ยังไม่ครบทุกมิติ 
+ระบุได้บางส่วน แต่ยังไม่
+เชื่อมกับการออกแบบ 
+ไม่ระบุข้อจ ากัดหรือ
+เกณฑ์ประเมิน 
+เสนอแนวทางแก้ปัญหาและให้
+เหตุผล 
+เปรียบเทียบทางเลือกและเลือกแนวทาง
+ได้อย่างมีเหตุผล 
+มีแนวทางที่เหมาะสม แต่
+เหตุผลยังไม่ลึก 
+มีแนวทางเบื้องต้น แต่
+เหตุผลไม่ชัด 
+แนวทางไม่ชัดหรือไม่
+เหมาะสม 
+ 
+  
+
+--- PAGE 3 ---
+SO/PLO 3 การสื่อสาร  
+ตัวชี้วัด 4 3 2 1 
+รูปแบบและล าดับการ
+น าเสนอ 
+เป็นระบบ ชัดเจน เหมาะกับผู้ฟัง
+ทางวิศวกรรม เข้าใจได้ดี มีติดขัดเล็กน้อย ล าดับยังไม่ดีหรืออธิบายไม่ชัด 
+สับสนและขาด
+โครงสร้าง และไม่
+เหมาะกับผู้ฟัง 
+การใช้รูป ตาราง กราฟ หรือ
+แผนภาพ 
+เหมาะสม อ่านง่าย และช่วย
+อธิบายงานได้ดี 
+ใช้ได้เหมาะสม แต่ยังปรับปรุง
+การจัดรูปได้ มีภาพประกอบน้อยหรือไม่ชัด ไม่มีหรือไม่ช่วย
+สื่อสาร 
+การใช้ภาษาและศัพท์เทคนิค ใช้ภาษาและศัพท์เทคนิคได้
+ถูกต้อง กระชับ และชัดเจน 
+มีข้อผิดพลาดเล็กน้อย แต่ไม่
+กระทบความเข้าใจ 
+มีข้อผิดพลาดหลายจุด ท าให้
+บางส่วนไม่ชัดเจน 
+ใช้ภาษาไม่ถูกต้องจน
+ท าให้สื่อสาร
+สาระส าคัญไม่ได้ 
+การพูดและภาษากาย พูดชัดเจน มั่นใจ ใช้ภาษากาย
+เหมาะสม และควบคุมเวลาได้ดี 
+สื่อสารได้ดี มีความติดขัด
+เล็กน้อย 
+พูดไม่ต่อเนื่อง ภาษากายหรือการ
+ควบคุมเวลาไม่เหมาะสม 
+พูดไม่ชัดเจน ขาด
+ความพร้อม และไม่
+สามารถสื่อสารได้
+อย่างมีประสิทธิภาพ 
+ 
+ 
+SO/PLO 4 จริยธรรมและความรับผิดชอบทางวิชาชีพ  
+ตัวชี้วัด 4 3 2 1 
+พิจารณาจริยธรรมและความ
+รับผิดชอบทางวิศวกรรม 
+เชื่อมโยงกับความปลอดภัย มาตรฐาน ความ
+น่าเชื่อถือ และผู้ใช้งานได้ชัดเจน 
+กล่าวถึงประเด็นส าคัญ
+ได้ แต่ยังไม่ลึก กล่าวถึงเพียงทั่วไป ไม่กล่าวถึง 
+วิเคราะห์ด้านเศรษฐศาสตร์ มีการประเมินต้นทุน ความคุ้มค่า หรือความ
+เป็นไปได้ 
+มีการกล่าวถึงต้นทุน
+เบื้องต้น 
+กล่าวถึงต้นทุนแต่ไม่
+วิเคราะห์ 
+ไม่พิจารณาด้าน
+เศรษฐศาสตร์ 
+พิจารณาผลกระทบต่อสังคมและ
+สิ่งแวดล้อม วิเคราะห์และน าไปใช้ประกอบการออกแบบ ระบุประเด็นได้บางส่วน กล่าวถึงแบบทั่วไป ไม่พิจารณา 
+ 
+SO/PLO 6 การทดลอง การวิเคราะห์ข้อมูล และการสรุปผล  
+ตัวชี้วัด 4 3 2 1 
+การใช้เครื่องมือและการ
+ปฏิบัติงาน 
+ใช้เครื่องมือได้เหมาะสม ปลอดภัย 
+และมีขั้นตอนชัดเจน 
+ใช้เครื่องมือได้เหมาะสม แต่
+รายละเอียดบางส่วนยังไม่ครบ 
+อธิบายการใช้เครื่องมือ
+ได้บางส่วน 
+ไม่แสดงหลักฐานการใช้
+เครื่องมือที่เหมาะสม 
+แผนการเก็บข้อมูล ระบุตัวแปร อุปกรณ์ วิธีทดลอง และ
+เงื่อนไขได้ชัดเจน 
+ระบุข้อมูลหลักได้ แต่ยังขาด
+รายละเอียดบางส่วน 
+แผนเก็บข้อมูลยังไม่
+ครบ ไม่มีแผนเก็บข้อมูลที่ชัดเจน 
+การวิเคราะห์และ
+ตรวจสอบผล 
+มีข้อมูลเบื้องต้น การวิเคราะห์ และ
+การตรวจสอบผลที่เหมาะสม มีการวิเคราะห์เบื้องต้น แต่ยังไม่ลึก มีข้อมูลจ ากัดหรือ
+สรุปผลยังไม่ชัด ไม่มีการวิเคราะห์ข้อมูล 
+
+--- PAGE 4 ---
+SO/PLO 7 การเรียนรู้ด้วยตนเองและการใช้ความรู้ใหม่ 
+ตัวชี้วัด 4 3 2 1 
+การระบุความรู้ที่ต้องเรียนรู้
+เพิ่มเติม 
+ระบุช่องว่างความรู้และวิธีเรียนรู้ได้ชัดเจน ระบุความรู้เพิ่มเติมได้บางส่วน เห็นความจ าเป็นเพียง
+เล็กน้อย 
+ไม่แสดงการเรียนรู้
+เพิ่มเติม 
+การค้นคว้าข้อมูลที่เกี่ยวข้อง ใช้แหล่งข้อมูลที่น่าเชื่อถือ เช่น มาตรฐาน 
+คู่มือ บทความ หรือ datasheet 
+ใช้ข้อมูลที่เกี่ยวข้อง แต่ยังต้อง
+ปรับคุณภาพแหล่งอ้างอิง 
+ใช้ข้อมูลจ ากัดหรือไม่
+เชื่อมกับงาน 
+ไม่มีหลักฐานการ
+ค้นคว้า 
+การพิจารณาประเด็นปัจจุบัน
+และทางเลือกใหม่ 
+เชื่อมโยงเทคโนโลยี มาตรฐาน ความยั่งยืน 
+หรือ AI กับโครงงานได้ดี 
+กล่าวถึงประเด็นปัจจุบันได้
+บางส่วน 
+กล่าวถึงแบบทั่วไป ไม่พิจารณาประเด็น
+ปัจจุบัน 
+การเลือกใช้เครื่องมือและ
+ทรัพยากร 
+เลือกใช้เครื่องมือได้เหมาะสมและ
+เปรียบเทียบผลกับวิธีอื่นได้ 
+เลือกใช้เครื่องมือได้เหมาะสม
+และอธิบายเหตุผลได้ 
+ใช้เครื่องมือได้ แต่ยัง
+ขาดเหตุผลหรือการ
+เปรียบเทียบ 
+เลือกใช้เครื่องมือไม่
+เหมาะสมหรือใช้งาน
+ไม่ได้ 
+ 
+ 
+ประเมินผลรายงาน Report assessment 
+SO/PLO 2 – SO/PLO 7 
+ 
+  
+
+--- PAGE 5 ---
+Rubric การประเมินคะแนนเก็บโดยอาจารย์ที่ปรึกษา 
+วิชาโครงงานวิศวกรรม / Capstone Design Project 
+คะแนนรวม 70% 
+ระดับคะแนน 
+คะแนน ระดับ ความหมาย 
+4 ดีมาก ท าได้ครบถ้วน ชัดเจน มีหลักฐาน และมีเหตุผลทางวิศวกรรม 
+3 ดี ท าได้เหมาะสม มีข้อบกพร่องเล็กน้อย 
+2 พอใช้ ท าได้บางส่วน แต่ยังไม่ชัดเจนหรือไม่ต่อเนื่อง 
+1 ต้องปรับปรุง ท าได้น้อย ขาดหลักฐาน หรือไม่เป็นไปตามแผน 
+ 
+1. กระบวนการออกแบบและความก้าวหน้าของงาน 
+น ้าหนัก 25% 
+ระดับ เกณฑ์การประเมิน 
+4 
+ระบุปัญหา ความต้องการ ข้อก าหนด ข้อจ ากัด และเป้าหมายของโครงงานได้ชัดเจน มีการเปรียบเทียบทางเลือก อธิบายเหตุผลของแนวทางที่เลือก 
+และด าเนินงานก้าวหน้าตามแผนอย่างเป็นระบบ 
+3 ระบุปัญหาและแนวทางออกแบบได้ค่อนข้างชัดเจน มีแผนงานและความก้าวหน้าที่เหมาะสม แต่การวิเคราะห์ทางเลือกหรือข้อจ ากัดยังไม่ครบถ้วน 
+2 ระบุปัญหาและแนวทางออกแบบได้บางส่วน แต่ข้อก าหนด ข้อจ ากัด แผนงาน หรือความก้าวหน้ายังไม่ชัดเจน 
+1 ปัญหาและแนวทางออกแบบไม่ชัดเจน ขาดแผนงาน หรือมีความก้าวหน้าน้อยมากเมื่อเทียบกับแผนที่ควรเป็น 
+ 
+2. การทดลอง การพัฒนา และการวิเคราะห์ผล 
+น ้าหนัก 20% 
+ระดับ เกณฑ์การประเมิน 
+4 
+มีการออกแบบการทดลอง การสร้างต้นแบบ การจ าลอง หรือการพัฒนาระบบที่เหมาะสม เลือกเครื่องมือและวิธีเก็บข้อมูลได้ถูกต้อง วิเคราะห์ผล
+อย่างมีเหตุผล และใช้ข้อมูลสนับสนุนการตัดสินใจทางวิศวกรรม 
+3 
+มีการทดลอง สร้างต้นแบบ จ าลอง หรือพัฒนาระบบได้เหมาะสมในระดับหนึ่ง มีข้อมูลและการวิเคราะห์เบื้องต้น แต่ยังขาดรายละเอียดหรือการ
+ตรวจสอบผลบางส่วน 
+2 มีการด าเนินการทดลองหรือพัฒนาระบบบางส่วน แต่ข้อมูลยังจ ากัด วิธีการยังไม่ชัดเจน หรือการวิเคราะห์ยังไม่เพียงพอ 
+1 ไม่มีหลักฐานที่ชัดเจนของการทดลอง การพัฒนา การเก็บข้อมูล หรือการวิเคราะห์ผลที่เหมาะสม 
+ 
+
+--- PAGE 6 ---
+3. ความรับผิดชอบและการท างานจริงของนักศึกษา 
+น ้าหนัก 15% 
+ระดับ เกณฑ์การประเมิน 
+4 
+เข้าพบอาจารย์ที่ปรึกษาอย่างสม ่าเสมอ เตรียมงานก่อนเข้าพบ รับผิดชอบงานที่ได้รับมอบหมาย ท างานร่วมกับทีมได้ดี แก้ปัญหาเชิงรุก และแสดง
+การเรียนรู้เพิ่มเติมด้วยตนเอง 
+3 มีความรับผิดชอบและท างานร่วมกับทีมได้ดีพอสมควร ส่งงานตามที่มอบหมายเป็นส่วนใหญ่ แต่อาจยังต้องได้รับการกระตุ้นหรือค าแนะน าบางครั้ง 
+2 การท างานไม่ต่อเนื่อง เข้าพบหรือส่งงานไม่สม ่าเสมอ มีส่วนร่วมกับทีมบางส่วน และยังต้องพึ่งพาการติดตามจากอาจารย์ที่ปรึกษา 
+1 ขาดความรับผิดชอบ ไม่เข้าพบตามนัด ไม่ส่งงานตามก าหนด หรือมีส่วนร่วมในโครงงานน้อยมาก 
+ 
+4. รายงานโครงงาน 
+น ้าหนัก 10% 
+ระดับ เกณฑ์การประเมิน 
+4 
+รายงานมีโครงสร้างถูกต้อง ครบถ้วน และเป็นระบบ อธิบายปัญหา ทฤษฎี วิธีด าเนินงาน ผลการทดลอง การวิเคราะห์ และข้อสรุปได้ชัดเจน ใช้
+ภาษาเชิงวิชาการ รูป ตาราง สมการ และเอกสารอ้างอิงได้เหมาะสม 
+3 รายงานมีองค์ประกอบหลักครบถ้วนและอ่านเข้าใจได้ดี แต่ยังมีข้อบกพร่องเล็กน้อยด้านความลึกของเนื้อหา การจัดรูปแบบ ภาษา หรือการอ้างอิง 
+2 รายงานมีเนื้อหาบางส่วนครบถ้วน แต่ยังขาดความต่อเนื่อง การวิเคราะห์ไม่ชัดเจน รูปแบบไม่สม ่าเสมอ หรือการอ้างอิงยังไม่เหมาะสม 
+1 รายงานไม่สมบูรณ์ ขาดหัวข้อส าคัญ เนื้อหาไม่ชัดเจน มีข้อผิดพลาดมาก หรือไม่สะท้อนการด าเนินงานจริงของโครงงาน 
+ 
+สรุปน ้าหนักคะแนน 
+ด้านที่ประเมิน น ้าหนัก 
+1. กระบวนการออกแบบและความก้าวหน้าของงาน 25% 
+2. การทดลอง การพัฒนา และการวิเคราะห์ผล 20% 
+3. ความรับผิดชอบและการท างานจริงของนักศึกษา 15% 
+4. รายงานโครงงาน 10% 
+รวม 70% 
+ 
+
+===== Capstone_Report_Structure_Change_Announcement (1).pdf | pages=9 =====
+
+--- PAGE 1 ---
+ประกาศ:  การ ปรับปรุง โครงสราง รายงาน  Capstone  Design  Project 
+ANNOUNCEMENT:  Capstone  Design  Project  Report  —  Structure  
+Update 
+ถึง นักศึกษา และ ที่ ปรึกษา โครง งาน ทุก ทาน  —  ภาค วิชา ได ปรับ โครงสราง รายงาน  Capstone  Design  
+Project
+ 
+ใหม
+ทั้งหมด
+ 
+เพื่อให
+สอดคลอง
+กับ
+รูป
+แบบ
+วิชาชีพ
+ตาม
+เกณฑ
+ 
+ABET
+ 
+EAC
+ 
+(ABET
+ 
+EAC
+ 
+Professional
+ 
+Format)
+ 
+เอกสาร
+ฉบับ
+นี้
+สรุป
+การ
+เปลี่ยนแปลง
+ทั้งหมด
+ 
+และ
+บอก
+ตำแหนง
+ที่
+ตอง
+ 
+'
+ยาย
+'
+ 
+เนื้อหา
+ที่
+เขียน
+ไว
+แลวไป
+ไว
+ใน
+หัวขอ
+ใหม
+ 
+To  all  students  and  advisors  —  the  department  has  fully  restructured  the  
+Capstone
+ 
+Design
+ 
+Project
+ 
+Report
+ 
+to
+ 
+match
+ 
+the
+ 
+ABET
+ 
+EAC
+ 
+Professional
+ 
+Format.
+ 
+This
+ 
+document
+ 
+summarizes
+ 
+every
+ 
+change
+ 
+and
+ 
+tells
+ 
+you
+ 
+exactly
+ 
+where
+ 
+to
+ 
+move
+ 
+content
+ 
+you've
+ 
+already
+ 
+written.
+ 
+✓  สรุป สั้น  ๆ  /  TL;DR
+  
+•  หาก ยัง ไม เริ่ม เขียน:  ใช  TEMPLATE  ฉบับ ใหม ได เลย  ไม ตอง อาน ราย ละเอียด ดาน ลาง  /  If  you  haven't  started  writing:  just  use  the  new  TEMPLATE  —  no  
+need  to  read  the  details  below
+ 
+•  หาก เขียน ไป แลว บาง สวน:  อาน ตาราง  ' ยาย เนื้อหา ไป ที่ไหน '  ใน หนา ถัด ไป  เพื่อ ยาย ของ เดิม ไป หัวขอ ใหม  /  If  you've  already  written  content:  read  the  
+migration  table  below  to  move  it  to  its  new  home
+ 
+•  ไฟล  TEMPLATE  และ  EXAMPLE  ทั้ง  DOCX  และ  LaTeX  ทุก ไฟลถูก อัปเดต แลว  ดาว นโหล ด ฉบับ ลา สุด กอน ทำ งาน ตอ  /  All  TEMPLATE  and  EXAMPLE  ﬁles  —  
+both  DOCX  and  LaTeX  —  have  been  updated.  Download  the  latest  version  before  continuing
+ 
+ 
+
+--- PAGE 2 ---
+1.  โครงสราง บท เดิม  เทียบ กับ  บท ใหม  /   1.  Old  Chapter  Structure  
+vs.  New  Chapter  Structure
+ 
+→  บท ใหม ทั้ง  8  บท ไม ตรง กับ บท เดิมที ละ บท  —  มี การ สลับ ลำดับ  เพิ่ม บท  และ ยาย เนื้อหา ขาม บท  กรุณา อาน ทั้ง ตาราง อยาง ละเอียด
+ 
+→  The  new  8  chapters  do  NOT  map  1-to-1  with  the  old  ones  —  chapters  were  reordered,  new  ones  added,  and  content  moved  across  
+chapters.  Read  the  whole  table  carefully.
+ 
+ 
+บท
+ โครงสราง เดิม  /  Old  Structure
+ โครงสราง ใหม  /  New  Structure
+ 
+1
+ 
+Introduction
+ 
+(บทนำ)
+ 
+Project
+ 
+Deﬁnition
+ 
+(นิยาม
+โครง
+งาน)
+ 
+2
+ 
+Literature
+ 
+Review
+ 
+&
+ 
+Standards
+ 
+Design
+ 
+Requirements
+ 
+and
+ 
+Constraints
+ 
+3
+ 
+Design
+ 
+Speciﬁcation
+ 
+★
+ 
+Conceptual
+ 
+Design
+ 
+4
+ 
+Design
+ 
+Process
+ 
+&
+ 
+Decision
+ 
+★
+ 
+Detailed
+ 
+Engineering
+ 
+Design
+ 
+5
+ 
+Implementation
+ 
+★
+ 
+Veriﬁcation
+ 
+and
+ 
+Validation
+ 
+6
+ 
+Testing
+ 
+&
+ 
+Results
+ 
+Engineering
+ 
+Impact
+ 
+Assessment
+ 
+(ใหม
+ทั้ง
+บท
+ 
+/
+ 
+entirely
+ 
+new)
+ 
+7
+ 
+Discussion
+ 
+&
+ 
+Conclusion
+ 
+Project
+ 
+Management
+ 
+and
+ 
+Teamwork
+ 
+(ใหม
+ทั้ง
+บท
+ 
+/
+ 
+entirely
+ 
+new)
+ 
+8
+ 
+Individual
+ 
+Contribution
+ 
+Conclusions
+ 
+and
+ 
+Recommendations
+ 
+—
+ 
+—
+ 
+Individual  Contribution  →  ยาย ไป  Appendix  D  (moved  to  
+Appendix
+ 
+D)
+ 
+สังเกต:  บท ที่  6  และ  7  ใหม  (Engineering  Impact  Assessment,  Project  Management  &  Teamwork)  ไม มี อยู ใน โครงสราง เดิม เลย  ตอง
+เขียน ใหม ทั้งหมด  —  ดู หัวขอ  3
+ 
+ 
+
+--- PAGE 3 ---
+2.  ยาย เนื้อหา เดิม ไป ที่ไหน  /   2.  Where  to  Move  Your  Existing  
+Content
+ 
+→  หาก เขียน หัวขอ เหลา นี้ ไว แลว ใน บท เดิม  ให คัด ลอก / ยาย ไป ยัง หัวขอ ใหม ตาม ตาราง  เนื้อหา สวน ใหญ นำ มา ใช ซ้ำ ได เกือบ ทั้งหมด  เพียง แค ยาย ตำแหนง
+ 
+→  If  you  already  wrote  these  sections  under  the  old  structure,  copy/move  the  content  to  the  new  section  per  this  table.  Most  content  is  
+reusable  as-is  —  it  just  needs  relocating.
+ 
+ 
+หัวขอ เดิม  /  Old  Section
+ →
+ หัวขอ ใหม  /  New  Section
+ 
+1.1
+ 
+Background
+ 
+→
+ 
+1.1
+ 
+Background
+ 
+(เหมือน
+เดิม
+ 
+/
+ 
+unchanged)
+ 
+1.2
+ 
+Objectives
+ 
+→
+ 
+1.4
+ 
+Objectives
+ 
+(เลข
+หัวขอ
+เปลี่ยน
+ 
+/
+ 
+renumbered)
+ 
+1.3
+ 
+Scope
+ 
+→
+ 
+1.5
+ 
+Scope
+ 
+(เลข
+หัวขอ
+เปลี่ยน
+ 
+/
+ 
+renumbered)
+ 
+2.1
+ 
+Related
+ 
+Work
+ 
+(Literature
+ 
+Review)
+ 
+→
+ 
+ไม มี หัวขอ เฉพาะ แลว  —  สรุป สั้น  ๆ  ผนวก ไว ใน  1.1  Background  แทน  (no  longer  a  
+dedicated
+ 
+section
+ 
+—
+ 
+fold
+ 
+a
+ 
+brief
+ 
+summary
+ 
+into
+ 
+1.1
+ 
+Background)
+ 
+2.2
+ 
+Relevant
+ 
+Engineering
+ 
+Standards
+ 
+→
+ 
+2.3
+ 
+Applicable
+ 
+Codes
+ 
+and
+ 
+Standards
+ 
+3.1
+ 
+Engineering
+ 
+Requirements
+ 
+&
+ 
+Speciﬁcations
+ 
+→
+ 
+2.2
+ 
+Engineering
+ 
+Requirements
+ 
+3.2.1–3.2.4
+ 
+Design
+ 
+Constraints
+ 
+(4
+ 
+ดาน)
+ 
+→
+ 
+2.4.1–2.4.4  Design  Constraints  (หัวขอ ยอย เดิม ทุก อัน  /  same  4  sub-sections,  same  
+content)
+ 
+3.3
+ 
+Success
+ 
+Criteria
+ 
+→
+ 
+2.5
+ 
+Design
+ 
+Criteria
+ 
+Summary
+ 
+4.1
+ 
+Design
+ 
+Alternatives
+ 
+→
+ 
+3.1
+ 
+Alternative
+ 
+Concepts
+ 
+4.2  Evaluation  Criteria  &  Selection  (decision  
+matrix)
+ 
+→
+ 
+3.3  Weighted  Decision  Matrix  +  3.4  Selected  Concept  (แยก เปน  2  หัวขอ  /  split  into  2  
+sections)
+ 
+5.1
+ 
+System
+ 
+Architecture
+ 
+→
+ 
+4.4
+ 
+Engineering
+ 
+Drawings
+ 
+(ยาย
+ 
+diagram
+ 
+มา
+ไว
+ที่
+นี่
+ 
+/
+ 
+move
+ 
+your
+ 
+block
+ 
+diagram
+ 
+here)
+ 
+5.2
+ 
+Subsystem
+ 
+Implementation
+ 
+Details
+ 
+→
+ 
+4.1  Design  Methodology  (สรุป ภาพ รวม)  +  เนื้อหา ราย ละเอียด กระจาย ไป ยัง  4.2–4.3  (details  
+distributed
+ 
+into
+ 
+4.2–4.3)
+ 
+6.1
+ 
+Test
+ 
+Methodology
+ 
+→
+ 
+5.2
+ 
+Testing
+ 
+Procedures
+ 
+
+--- PAGE 4 ---
+หัวขอ เดิม  /  Old  Section
+ →
+ หัวขอ ใหม  /  New  Section
+ 
+6.2
+ 
+Results
+ 
+vs.
+ 
+Design
+ 
+Speciﬁcations
+ 
+→
+ 
+5.4
+ 
+Requirement
+ 
+Compliance
+ 
+Matrix
+ 
+6.3
+ 
+Gap
+ 
+Analysis
+ 
+→
+ 
+5.5
+ 
+Design
+ 
+Review
+ 
+7.1
+ 
+Summary
+ 
+of
+ 
+Achievements
+ 
+→
+ 
+8.1
+ 
+Conclusions
+ 
+7.2
+ 
+Limitations
+ 
+→
+ 
+8.2  Achievement  of  Objectives  (ปรับ มุม มอง เปน เชิง บวก- ลบ ผสม  /  reframe  against  each  
+objective)
+ 
+7.3
+ 
+Future
+ 
+Work
+ 
+→
+ 
+8.4
+ 
+Future
+ 
+Improvements
+ 
+8.1–8.3
+ 
+Individual
+ 
+Contribution
+ 
+(แตละ
+คน)
+ 
+→
+ 
+Appendix  D  —  Project  Management  Documents  (ไม ใช บท แลว  ยาย ไป เปน ภาค ผนวก  /  
+no
+ 
+longer
+ 
+a
+ 
+chapter
+ 
+—
+ 
+moved
+ 
+to
+ 
+an
+ 
+appendix)
+ 
+ 
+
+--- PAGE 5 ---
+3.  หัวขอ ใหม ที่ ตอง เขียน เพิ่ม  /   3.  Brand-New  Sections  You  Need  
+to  Write
+ 
+→  หัวขอ เหลา นี้ ไม มี อยู ใน โครงสราง เดิม  ไม มี เนื้อหา ให ยาย  ตอง เขียน ขึ้น ใหม ทั้งหมด
+ 
+→  These  sections  did  not  exist  in  the  old  structure.  There  is  nothing  to  migrate  —  you  must  write  them  from  scratch.
+ 
+ 
+✕  เขียน ใหม ทั้งหมด  /  Write  From  Scratch
+  
+✕  1.2  Stakeholder  Analysis
+ 
+✕  1.3  Problem  Statement
+ 
+✕  1.6  Deliverables
+ 
+✕  1.7  Project  Schedule
+ 
+✕  2.1  Customer  Needs  Assessment
+ 
+✕  3.2  Preliminary  Evaluation
+ 
+✕  3.5  Risk  Assessment
+ 
+✕  4.2  Engineering  Analysis,  4.3  Design  Calculations,  4.5  Simulation  and  Modeling,  4.6  Final  Speciﬁcations
+ 
+✕  5.1  Veriﬁcation  Plan,  5.3  Test  Results  (แยก จาก  5.4  /  split  out  from  the  old  combined  section)
+ 
+✕  บท ที่  6  ทั้ง บท:  Engineering  Impact  Assessment  (6.1–6.5)  —  Economic,  Sustainability,  Health  &  Safety,  Social/Environmental,  Ethics
+ 
+✕  บท ที่  7  ทั้ง บท:  Project  Management  and  Teamwork  (7.1–7.4)
+ 
+✕  8.3  Recommendations
+ 
+✕  Appendix  E:  ABET  Student  Outcome  Mapping  (ตาราง  SO1–SO7  ครบ  23  PI)
+ 
+คำ แนะนำ:  เนื้อหา บาง สวน ของ บท ที่  6  (เชน  ตนทุน  BOM,  มาตรฐาน ความ ปลอดภัย)  อาจ นำ ขอมูล บาง สวน จาก หัวขอ  Design  Constraints  เดิม  
+(3.2.1–3.2.4)  มา ขยาย ความ ตอ ได  ไม ตอง คิด ขอมูล ใหม ทั้งหมด
+ 
+ 
+
+--- PAGE 6 ---
+4.  การ เปลี่ยนแปลง อื่น  ๆ  /   4.  Other  Changes
+ 
+4.1  หนา ปก  /   Title  Page 
+เปลี่ยน เปน รูป แบบ ทางการ มาก ขึ้น:  มี ชอง ใส ตรา สัญลักษณ มหาวิทยาลัย  และ หัวเรื่อง  'CAPSTONE  
+DESIGN  PROJECT  REPORT  (ABET  EAC  PROFESSIONAL  FORMAT)'  ตาม ที่ ภาค วิชา กำหนด  ราย
+ชื่อ นักศึกษา / รหัส / อาจารย ที่ ปรึกษา ยัง คง อยู เหมือน เดิม  
+4.2  บทคัดยอ  →  บท สรุป ผู บริหาร  /   Abstract  →  Executive  Summary 
+เปลี่ยน ชื่อ หัวขอ จาก  ' บทคัดยอ  /  Abstract'  เปน  ' บท สรุป ผู บริหาร  /  Executive  Summary'  เนื้อหา
+ที่ เขียน ไว ใช ตอ ได เลย  ไม ตอง เขียน ใหม  
+4.3  แถบ  ABET-Critical  →  หมายเหตุ สั้น  /   ABET-Critical  Banner  →  Inline  Note 
+แถบ สี เขียว มรกต ขนาด ใหญ  ' ⭐  ABET-CRITICAL  CHAPTER'  ใน บท เดิม ถูก แทน ที่ ดวย หมายเหตุ สั้น  ๆ  ใต หัวขอ บท  (เชน  ' 📌  หมายเหตุ  ABET:  บท นี้ คือ สัญญา ของ การ ออก แบบ  ครอบ คลุม  SO2...')  ซึ่ง
+ระบุ  Student  Outcome  (SO)  และ  Performance  Indicator  (PI)  ที่ ชัดเจน แทน การ อาง  ABET  
+Criterion  แบบ เดิม  
+4.4  กรอบ อางอิง  ABET  เปลี่ยน จาก  Criterion  เปน  SO/PI  ของ หลักสูตร  /   ABET  Framework:  
+Generic  Criteria  →  Program's  Official  SO/PI 
+✓  สำคัญ ที่สุด  /  Most  Important  Change
+  
+•  กอน หนา นี้ ใช  ABET  Criterion  ทั่วไป  (เชน  3(a),  3(b),  3(c))  ซึ่ง ไม ตรง กับ เอกสาร  Curriculum  Mapping  ของ ภาค วิชา  /  Previously  used  generic  ABET  
+Criterion  numbers  (e.g.  3(a),  3(b))  that  didn't  match  the  department's  ofﬁcial  curriculum  mapping
+ 
+•  ตอน นี้ ใช  SO1–SO7  และ  Performance  Indicators  (PI)  ทั้ง  23  ขอ  ตรง ตาม เอกสาร  PEO×PLO  Mapping  ของ หลักสูตร วิศวกรรม ไฟฟา  /  Now  uses  SO1–SO7  
+and  all  23  Performance  Indicators  (PIs),  matching  the  EE  program's  ofﬁcial  PEO×PLO  curriculum  mapping  document
+ 
+
+--- PAGE 7 ---
+•  Appendix  E  เปน ตาราง ใหม ทั้งหมด  ระบุ วา แตละ  PI  มี หลักฐาน อยู ใน หัวขอ ใด ของ รายงาน  —  บังคับ กรอก ให ครบ ทุก แถว  /  Appendix  E  is  an  entirely  new  
+table  showing  which  report  section  is  evidence  for  each  PI  —  mandatory,  must  be  ﬁlled  in  completely
+ 
+4.5  รูป แบบ ฟอน ตและ การ จัด หนา  /   Fonts  and  Page  Layout 
+ไม มี การ เปลี่ยนแปลง:  ยัง คง ใช  TH  Sarabun  New/Arial  (DOCX)  หรือ  Laksaman  (LaTeX),  การ
+จัด หนา  A4,  ระยะ ขอบ,  และ เลข หนา แบบ  ก- ข- ค  สำหรับ สวนหนา เหมือน เดิม ทุก ประการ  
+ 
+
+--- PAGE 8 ---
+5.  รายการ ตรวจ สอบ กอน ดำเนิน การ ตอ  /   5.  Action  Checklist
+ 
+✓  Checklist  /  Checklist
+  
+•  ดาว นโหล ด  TEMPLATE  และ  EXAMPLE  ฉบับ ลา สุด  (DOCX  หรือ  LaTeX  แลวแต ที่ ใช)  /  Download  the  latest  TEMPLATE  and  EXAMPLE  (DOCX  or  
+LaTeX,  whichever  you  use)
+ 
+•  เปด ตาราง ใน หัวขอ  2  เทียบ กับ ไฟลเดิม ของ ตน เอง  แลว  copy  เนื้อหา ไป วาง ใน หัวขอ ใหม ที่ ถูก ตอง  /  Open  the  migration  table  in  Section  2  next  to  your  
+existing  draft  and  copy  content  into  the  correct  new  sections
+ 
+•  เขียน หัวขอ ใหม ใน หัวขอ  3  ที่ ยัง ไม มี ใน ไฟลเดิม  โดย เฉพาะ บท ที่  6  และ  7  ที่ เปน บท ใหม ทั้ง บท  /  Write  the  brand-new  sections  from  Section  3,  especially  
+Chapters  6  and  7  which  are  entirely  new
+ 
+•  ยาย บันทึก สวน รวม ราย บุคคล  (Individual  Contribution)  จาก บท ที่  8  เดิม  ไป ไว ใน  Appendix  D  /  Move  your  Individual  Contribution  write-ups  from  
+the  old  Chapter  8  into  Appendix  D
+ 
+•  กรอก ตาราง  Appendix  E  (SO1–SO7,  23  PI)  ให ครบ ทุก แถว  โดย อางอิง ไป ยัง หัวขอ ที่ เปน หลักฐาน จริง  /  Fill  in  the  Appendix  E  table  (SO1–SO7,  23  PIs)  
+completely,  citing  the  actual  section  that  is  evidence  for  each
+ 
+•  หาก ใช  LaTeX:  ดาว นโหล ดไฟล  .zip  ใหม  เนื่องจาก มี การ แกไข ขอ ผิด พลาด การ จัด หนา  (ดู หัวขอ  6)  /  If  using  LaTeX:  re-download  the  .zip  —  layout  bugs  
+have  been  ﬁxed  (see  Section  6)
+ 
+ 
+
+--- PAGE 9 ---
+6.  สำหรับ ผู ใช  LaTeX  เทานั้น  /   6.  LaTeX  Users  Only
+ 
+→  หาก ดาว นโหล ดไฟล  LaTeX  กอน หนา นี้  พบ ขอ ผิด พลาด การ จัด หนา  2  จุด  ซึ่ง ได รับ การ แกไข แลว ใน ไฟลลา สุด:  (1)  ขอความ ใน วงเล็บ  [  ]  ใน บาง หัวขอ  (เชน  
+1.5–1.6)  เลื่อน ออก นอก ขอบ ซาย  และ  (2)  ตาราง  Appendix  E  ยาว เกินหนา และ ลน ขอบ ลาง
+ 
+→  If  you  downloaded  the  LaTeX  ﬁles  before  this  update,  two  layout  bugs  existed  which  are  now  ﬁxed:  (1)  bracketed  placeholder  text  in  
+some  sections  (e.g.  1.5–1.6)  was  pushed  outside  the  left  margin,  and  (2)  the  Appendix  E  table  ran  past  the  bottom  of  the  page.
+ 
+→  ไม ตอง แกไข อะไร เอง  เพียง ดาว นโหล ดไฟล  .zip  ใหม ทั้งไฟล  (TEMPLATE  และ / หรือ  EXAMPLE)  แลว อัปโหลด ทับ ใน  Overleaf/TeXPage
+ 
+→  No  manual  ﬁx  needed  —  just  re-download  the  full  .zip  (TEMPLATE  and/or  EXAMPLE)  and  re-upload  to  Overleaf/TeXPage,  replacing  
+your  old  copy.
+ 
+มี คำ ถาม เพิ่มเติม  ติดตอ ที่ ปรึกษา โครง งาน หรือ คณะ กรรมการ หลักสูตร
+ 
+Questions?  Contact  your  project  advisor  or  the  program  committee.
+ 
+
+===== ABET_Capstone_Report_TEMPLATE (2).pdf | pages=30 =====
+
+--- PAGE 1 ---
+[ตรา สัญลักษณ มหาวิทยาลัย  /  UNIVERSITY  LOGO]
+ 
+รายงาน โครง งาน ออก แบบ ทาง วิศวกรรม  
+CAPSTONE  DESIGN  PROJECT  REPORT  
+(รูป แบบ วิชาชีพ ตาม เกณฑ  ABET  EAC)
+ 
+(ABET  EAC  PROFESSIONAL  FORMAT)
+ 
+คณะ
+วิศวกรรมศาสตร
+ 
+มหาวิทยาลัย
+อุบลราชธานี
+ 
+Faculty  of  Engineering,  Ubon  Ratchathani  University
+ 
+ชื่อ โครง งาน  (Project  Title):
+ 
+[ชื่อ โครง งาน ภาษา ไทย] 
+English  Title:
+ 
+[Project  Title  in  English]
+ 
+ 
+ราย ชื่อ นักศึกษา  /  Student  Names  
+#
+ ชื่อ- สกุล  /  Name
+ รหัส นักศึกษา  /  ID
+ หนาที่  /  Role
+ 
+1
+ 
+[ชื่อ-
+สกุล
+ 
+/
+ 
+Name]
+ 
+[รหัส
+ 
+/
+ 
+ID]
+ 
+[หนาที่
+ 
+/
+ 
+Role]
+ 
+2
+ 
+[ชื่อ-
+สกุล
+ 
+/
+ 
+Name]
+ 
+[รหัส
+ 
+/
+ 
+ID]
+ 
+[หนาที่
+ 
+/
+ 
+Role]
+ 
+3
+ 
+[ชื่อ-
+สกุล
+ 
+/
+ 
+Name]
+ 
+[รหัส
+ 
+/
+ 
+ID]
+ 
+[หนาที่
+ 
+/
+ 
+Role]
+ 
+ 
+อาจารย ที่ ปรึกษา  /  Advisor:  [ชื่อ อาจารย ที่ ปรึกษา  /  Advisor  Name]  
+ปการศึกษา  /  Academic  Year:  [ปการศึกษา  25XX]  
+1
+ 
+
+--- PAGE 2 ---
+ 
+2
+ 
+
+--- PAGE 3 ---
+บท สรุป ผู บริหาร  /   Executive  Summary
+ 
+[สรุป เนื้อหา โครง งาน ภาษา ไทย  ไม เกิน  300  คำ  ครอบ คลุม:  ปญหา,  วิธีการ,  ผลลัพธ หลัก  (ตัวเลข),  
+ขอ
+สรุป
+ 
+/
+ 
+Thai
+ 
+summary,
+ 
+max
+ 
+300
+ 
+words:
+ 
+problem,
+ 
+method,
+ 
+key
+ 
+quantitative
+ 
+results,
+ 
+conclusion]
+ 
+คำ สำคัญ:  [คำ ที่  1,  คำ ที่  2,  คำ ที่  3]
+ 
+ 
+[English  executive  summary,  same  content  as  above  /  
+max
+ 
+300
+ 
+words]
+ 
+Keywords:  [keyword1,  keyword2,  keyword3]
+ 
+ 
+3
+ 
+
+--- PAGE 4 ---
+สารบัญ  /   Table  of  Contents
+ 
+→  ใน  Word:  อางอิง  →  สารบัญ  (References  →  Table  of  Contents)  แลว เลือก รูป แบบ อัตโนมัติ  ระบบ จะ ดึง หัวขอ จาก  Heading  1/2/3  ให อัตโนมัติ
+ 
+→  In  Word:  References  →  Table  of  Contents  →  Automatic  Table.  Word  will  pull  all  Heading  1/2/3  styles  automatically.
+ 
+→  อยา พิมพ สารบัญ เอง  —  ใช  auto-generated  ﬁeld  แลว กด  Update  Table  กอน สง งาน ทุก ครั้ง
+ 
+→  Do  not  type  the  ToC  manually  —  use  the  auto  ﬁeld  and  press  Update  Table  before  every  submission.
+ 
+ 
+[พื้นที่ นี้ จะ ถูก แทน ที่ ดวย สารบัญ อัตโนมัติ ของ  Word  /  This  area  will  be  replaced  by  Word's  
+auto-generated
+ 
+Table
+ 
+of
+ 
+Contents] 
+ 
+4
+ 
+
+--- PAGE 5 ---
+สารบัญ ตาราง  /   List  of  Tables
+ 
+→  ใช  Insert  Caption  บน ทุก ตาราง  (ค ลิ ก ขวา ที่ ตาราง  →  Insert  Caption  →  Table)  แลว สราง  List  of  Tables  จาก  References  →  Insert  Table  of  Figures  →  Caption  label:  Table
+ 
+→  Use  Insert  Caption  on  every  table,  then  References  →  Insert  Table  of  Figures  →  Caption  label:  Table.
+ 
+[รายการ ตาราง อัตโนมัติ  /  Auto-generated  List  of  Tables] 
+ 
+5
+ 
+
+--- PAGE 6 ---
+สารบัญ รูปภาพ  /   List  of  Figures
+ 
+→  เชน เดียว กับ ตาราง  แต ใช  Caption  label:  Figure
+ 
+→  Same  as  tables,  but  use  Caption  label:  Figure.
+ 
+[รายการ รูปภาพ อัตโนมัติ  /  Auto-generated  List  of  Figures] 
+ 
+6
+ 
+
+--- PAGE 7 ---
+บท ที่  1  นิยาม โครง งาน  /   Chapter  1:  Project  Definition
+ 
+→  บท นี้ ปู พื้น ให ผู อาน เขาใจ บริบท และ กรอบ ของ โครง งาน ทั้งหมด
+ 
+→  This  chapter  sets  the  context  and  framing  for  the  entire  project.
+ 
+1.1  ที่มา และ ความ สำคัญ  /   Background 
+📌  หมายเหตุ  ABET:  หัวขอ นี้ ควร แสดง หลักฐาน วา คนควา ขอมูล ดวย ตน เอง  (SO7-PI2)   /   This  section  should  show  
+evidence
+ 
+of
+ 
+independent
+ 
+research
+ 
+(SO7-PI2:
+ 
+finds
+ 
+information
+ 
+without
+ 
+guidance).
+ 
+→  อธิบาย ปญหา ที่ เกิด ขึ้น จริง  (Pain  Point)  วา ทำไม ตอง มี โครง งาน นี้
+ 
+→  Describe  the  real-world  problem  and  why  it  matters.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+1.2  การ วิเคราะห ผู มี สวนไดสวนเสีย  /   Stakeholder  Analysis 
+→  ระบุ ผู มี สวนไดสวนเสีย ทั้งหมด  (ผู ใช,  ลูกคา,  ผู
+ควบคุม กฎ ระเบียบ  ฯลฯ)  และ ความ ตองการ ของ
+แตละ กลุม
+ 
+→  Identify  all  stakeholders  (users,  
+customers,  regulators,  etc.)  and  their  
+speciﬁc  needs/interests.
+ 
+ผู มี สวนไดสวนเสีย  /  Stakeholder
+ ความ สนใจ / ความ ตองการ  /  Interest
+ อิทธิพล ตอ โครง งาน  /  Inﬂuence
+ 
+   
+   
+   
+1.3  การ ระบุ ปญหา  /   Problem  Statement 
+1
+ 
+
+--- PAGE 8 ---
+📌  หมายเหตุ  ABET:  หัวขอ นี้ คือ หลักฐาน หลัก ของ  SO1-PI1  (ความ เขาใจ ปญหา)   /   This  section  is  the  primary  
+evidence
+ 
+for
+ 
+SO1-PI1
+ 
+(understanding
+ 
+of
+ 
+the
+ 
+problem).
+ 
+→  เขียน ปญหา เปน ประโยค เดียว ที่ ชัดเจน  วัดผล ได  ไม ใช คำ อธิบาย ทั่วไป
+ 
+→  State  the  problem  in  one  clear,  speciﬁc,  measurable  sentence  —  not  a  vague  description.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+1.4  วัตถุ ประสงค  /   Objectives 
+→  ระบุ วัตถุ ประสงค เปน ขอ  ตอง สอดคลอง กับ  Engineering  Requirements  ใน บท ที่  2
+ 
+→  List  objectives  as  bullet  points.  Each  must  be  measurable  and  traceable  to  Ch.2  requirements.
+ 
+●  [เพื่อ ออก แบบ...  /  To  design...]  
+●  [เพื่อ พัฒนา...  /  To  develop...]  
+1.5  ขอบเขต  /   Scope 
+สิ่ง ที่ ทำ  (In  Scope): 
+●  [ระบุ ขอบเขต งาน  /  Describe  scope  item]  
+สิ่ง ที่ ไม ทำ  (Out  of  Scope): 
+●  [ระบุ สิ่ง ที่ ไม รวม อยู ใน โครง งาน  /  List  what  is  excluded]  
+1.6  ผล งาน สง มอบ  /   Deliverables 
+→  ระบุ สิ่ง ที่ จะ สง มอบ ทั้งหมด เมื่อ จบ โครง งาน  (ฮา รดแวร,  เอกสาร,  โคด  ฯลฯ)
+ 
+→  List  everything  that  will  be  delivered  at  project  completion  (hardware,  documentation,  code,  etc.).
+ 
+●  [รายการ สง มอบ  /  Deliverable  item]  
+1.7  แผน ดำเนิน งาน โครง งาน  /   Project  Schedule 
+2
+ 
+
+--- PAGE 9 ---
+→  แสดง แผนงาน แบบ  Gantt  Chart  หรือ  ตาราง
+ระบุ  milestone  พรอม กำหนด เวลา
+ 
+→  Show  a  Gantt  chart  or  milestone  table  
+with  dates.
+ 
+กิจกรรม  /  Task
+ เริ่ม  /  Start
+ สิ้นสุด  /  End
+ สถานะ  /  Status
+ 
+    
+    
+    
+ 
+3
+ 
+
+--- PAGE 10 ---
+บท ที่  2  ขอกำหนด และขอ จำกัด การ ออก แบบ  /   Chapter  2:  Design  
+Requirements
+ 
+and
+ 
+Constraints
+ 
+📌  หมายเหตุ  ABET:  บท นี้ คือ  ' สัญญา '  ของ การ ออก แบบ  ครอบ คลุม  SO2  (Design):  PI1  ขอกำหนด /specs  (2.1–2.2),  PI2  ขอ จำกัด และ เกณฑ  
+(2.4–2.5)
+  
+/
+  
+This
+ 
+chapter
+ 
+is
+ 
+the
+ 
+design
+ 
+contract,
+ 
+addressing
+ 
+SO2
+ 
+(Design):
+ 
+PI1
+ 
+needs
+ 
+statement/specs
+ 
+(2.1–2.2),
+ 
+PI2
+ 
+constraints
+ 
+&
+ 
+criteria
+ 
+(2.4–2.5).
+ 
+2.1  การ ประเมิน ความ ตองการ ของ ผู ใช  /   Customer  Needs  Assessment 
+→  แปลง ความ ตองการ ของ ผู ใช  (จาก หัวขอ  1.2)  ให เปนความ ตองการ เชิง คุณภาพ ที่ ชัดเจน  กอน แปลง เปน  engineering  requirements
+ 
+→  Translate  stakeholder  needs  (from  1.2)  into  clear  qualitative  needs  statements  before  converting  to  engineering  requirements.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+2.2  ขอกำหนด ทาง วิศวกรรม  /   Engineering  Requirements 
+✓  
+ตอง มี  
+/  
+Must  
+Inclu
+de
+  
+•  
+คาตัว
+เลข
+ที่วัด ได
+ทุก ขอ  
+เชน  ≥  
+90%,  
+<  500  
+mW  /  
+4
+ 
+
+--- PAGE 11 ---
+All  
+specs  
+must  
+be  
+quant
+itativ
+e
+ 
+•  
+หนวย
+วัด
+ชัดเจน
+ทุก ขอ  
+/  
+Units  
+specif
+ied  
+for  
+every  
+para
+meter
+ 
+•  เชื่อม
+โยง กับ  
+Custo
+mer  
+Need
+s  ใน
+หัวขอ  
+2.1  /  
+Trace
+able  
+to  
+5
+ 
+
+--- PAGE 12 ---
+Custo
+mer  
+Need
+s  in  
+2.1
+ 
+#
+ Parameter
+ Min
+ Max  /  Target
+ Unit
+ 
+1
+     
+2
+     
+3
+     
+2.3  มาตรฐาน และขอ บังคับ ที่ เกี่ยวของ  /   Applicable  Codes  and  Standards 
+✓  
+ตอง มี  
+/  
+Must  
+Inclu
+de
+  
+•  ชื่อ
+มาตรฐ
+า น เต็ม  
+พรอม
+เลข
+มาตรฐ
+า น  
+เชน  
+IEC  
+6
+ 
+
+--- PAGE 13 ---
+62368
+-1:201
+8  /  
+Full  
+stand
+ard  
+name  
++  
+numb
+er
+ 
+•  
+Claus
+e  หรือ  
+Sectio
+n  ที่ นำ
+มา ใช
+จริง  /  
+Specif
+ic  
+claus
+e  
+used
+ 
+•  อยาง
+นอย  3  
+มาตรฐ
+า น  /  
+Minim
+um  3  
+stand
+ards
+ 
+#
+ ชื่อ มาตรฐาน  /  Standard
+ เลข ที่  /  Number
+ การนำ มา ใช  /  Application
+ 
+7
+ 
+
+--- PAGE 14 ---
+1
+    
+2
+    
+3
+    
+2.4  ขอ จำกัด การ ออก แบบ  /   Design  Constraints 
+→  ครอบ คลุม ทุก ดาน:  เศรษฐศาสตร,  ความ ปลอดภัย,  เทคนิค,  สิ่งแวดลอม  ตาม  ABET  Criterion  5
+ 
+→  Cover  all  categories:  economic,  safety,  technical,  environmental  —  per  ABET  Criterion  5.
+ 
+2.4.1  ดาน เศรษฐศาสตร  /   Economic  Constraints 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+2.4.2  ดาน ความ ปลอดภัย และ สุขภาพ  /   Health  &  Safety  Constraints 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+2.4.3  ดาน เทคนิค และ กายภาพ  /   Technical  &  Physical  Constraints 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+2.4.4  ดาน สิ่งแวดลอม  /   Environmental  Constraints 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+2.5  สรุป เกณฑ การ ออก แบบ  /   Design  Criteria  Summary 
+→  สรุป เกณฑ ทั้งหมด จาก หัวขอ  2.2–2.4  เปน ตาราง เดียว  ใช อางอิง ใน บท ที่  3  และ  5
+ 
+→  Summarize  all  criteria  from  2.2–2.4  into  one  table,  used  for  reference  in  Ch.3  and  Ch.5.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+ 
+8
+ 
+
+--- PAGE 15 ---
+บท ที่  3  การ ออก แบบ เชิง แนว คิด  /   Chapter  3:  Conceptual  Design
+ 
+📌  หมายเหตุ  ABET:  บท นี้ แสดง กระบวนการ คิด เชิง วิศวกรรม  ครอบ คลุม  SO2-PI3  (เลือก และ ให เหตุผล),  SO7-PI3  (ประเมิน ทาง เลือก)   /   
+This
+ 
+chapter
+ 
+demonstrates
+ 
+engineering
+ 
+design
+ 
+process,
+ 
+addressing
+ 
+SO2-PI3
+ 
+(carries
+ 
+through
+ 
+to
+ 
+solution,
+ 
+justifies)
+ 
+and
+ 
+SO7-PI3
+ 
+(evaluates
+ 
+alternative
+ 
+solutions).
+ 
+3.1  แนว คิด ทาง เลือก  /   Alternative  Concepts 
+→  นำ เสนอ แนว คิด อยาง นอย  2  แบบ ที่ แตก
+ตาง กัน จริง  ไม ใช แบบ ดี กับ แบบ แย
+ 
+→  Present  ≥  2  genuinely  different  
+alternatives.  Both  must  be  
+technically  feasible.
+ 
+✕  หาม  /  Do  NOT
+  
+✕  ทาง เลือก  A  =  ดี,  ทาง เลือก  B  =  แย  /  
+Both  alternatives  must  be  genuinely  
+feasible
+ 
+หัวขอ  /  Aspect
+ แนว คิด  A  /  Concept  A
+ แนว คิด  B  /  Concept  B
+ 
+หลักการ
+ทำ
+งาน
+ 
+/
+ 
+Principle
+   
+ขอ
+ดี
+ 
+/
+ 
+Advantages
+   
+ขอ
+เสีย
+ 
+/
+ 
+Disadvantages
+   
+3.2  การ ประเมิน เบื้องตน  /   Preliminary  Evaluation 
+→  คัด กรอง แนว คิด เบื้องตน ดวย เกณฑ ผาน / ไม ผาน  (go/no-go)  กอน เขา สู  weighted  matrix
+ 
+→  Screen  concepts  with  pass/fail  (go/no-go)  criteria  before  the  weighted  matrix.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+9
+ 
+
+--- PAGE 16 ---
+3.3  ตาราง ตัดสินใจ แบบ ถวง น้ำหนัก  /   Weighted  Decision  Matrix 
+→  กำหนด เกณฑ และ น้ำหนัก กอน ให
+คะแนน
+ 
+→  Deﬁne  weights  ﬁrst,  then  
+score.
+ 
+เกณฑ  /  Criterion
+ น้ำหนัก  /  Weight
+ คะแนน  A
+ คะแนน  B
+ น้ำหนัก ×A
+ น้ำหนัก ×B
+ 
+      
+      
+รวม
+ 
+/
+ 
+Total
+      
+3.4  แนว คิด ที่ เลือก  /   Selected  Concept 
+→  อธิบาย เหตุผล ใน การ เลือก  เชื่อม กลับ ไป ที่ ผล จาก  decision  matrix
+ 
+→  Justify  the  selection,  referencing  the  decision  matrix  results.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+3.5  การ ประเมิน ความ เสี่ยง  /   Risk  Assessment 
+→  ระบุ ความ เสี่ยง ทาง เทคนิค ของ แนว
+คิด ที่ เลือก  พรอม แผน บรรเทา ความ เสี่ยง  
+(Mitigation  Plan)
+ 
+→  Identify  technical  risks  of  the  
+selected  concept,  with  mitigation  
+plans.
+ 
+ความ เสี่ยง  /  Risk
+ โอกาส  /  Likelihood
+ ผลก ระ ทบ  /  Impact
+ แผน บรรเทา  /  Mitigation
+ 
+    
+10
+ 
+
+--- PAGE 17 ---
+    
+ 
+11
+ 
+
+--- PAGE 18 ---
+บท ที่  4  การ ออก แบบ ทาง วิศวกรรม โดย ละเอียด  /   Chapter  4:  Detailed  
+Engineering
+ 
+Design
+ 
+📌  หมายเหตุ  ABET:  บท นี้ แสดง การ ประยุกต ใช ความ รู ทาง วิศวกรรม  ครอบ คลุม  SO1-PI2  (วิธีการ / แบบ จำลอง),  SO7-PI4  (เลือก และ
+เปรียบเทียบ
+เครื่องมือ)
+  
+/
+  
+This
+ 
+chapter
+ 
+demonstrates
+ 
+applied
+ 
+engineering
+ 
+knowledge,
+ 
+addressing
+ 
+SO1-PI2
+ 
+(solution
+ 
+model/procedure)
+ 
+and
+ 
+SO7-PI4
+ 
+(selects
+ 
+and
+ 
+compares
+ 
+tools).
+ 
+4.1  วิธีการ ออก แบบ  /   Design  Methodology 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+4.2  การ วิเคราะห ทาง วิศวกรรม  /   Engineering  Analysis 
+→  แสดง หลักการ  ทฤษฎี  หรือ แบบ จำลอง ทาง คณิตศาสตร ที่ ใช ใน การ ออก แบบ
+ 
+→  Show  governing  principles,  theory,  or  mathematical  models  used  in  the  design.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+4.3  การ คำนวณ การ ออก แบบ  /   Design  Calculations 
+✓  ตอง มี  /  Must  Include
+  
+•  สมการ พรอม ที่มา  และ ผลลัพธ ตัวเลข จริง  ไม ใช สัญลักษณ ลอย  ๆ  /  Equations  with  derivation  and  actual  numeric  results,  not  just  symbols
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+4.4  แบบ วิศวกรรม  /   Engineering  Drawings 
+→  แนบ แบบ  schematic/mechanical  drawing  ที่ มี มาตราสวน และ  dimension  ชัดเจน  ใส ใน บท นี้ หรือ อางอิง ไป ยัง  Appendix  B
+ 
+→  Attach  schematic/mechanical  drawings  with  clear  scale  and  dimensions  —  inline  here  or  referenced  to  Appendix  B.
+ 
+[แทรก แบบ วิศวกรรม ที่ นี่  /  
+Insert
+ 
+engineering
+ 
+drawing
+ 
+here]
+ 
+12
+ 
+
+--- PAGE 19 ---
+รูป
+ที่
+ 
+4.1:
+ 
+แบบ
+วิศวกรรม
+ของ
+ระบบ
+  
+/
+  
+Figure
+ 
+4.1:
+ 
+Engineering
+ 
+drawing
+ 
+of
+ 
+the
+ 
+system
+ 
+4.5  การ จำลอง และ สราง แบบ จำลอง  /   Simulation  and  Modeling 
+→  แสดง ผล จำลอง  (เชน  LTspice,  MATLAB,  FEA)  กอน สราง จริง  เพื่อ ยืนยัน การ ออก แบบ เชิง ทฤษฎี
+ 
+→  Show  simulation  results  (e.g.  LTspice,  MATLAB,  FEA)  prior  to  physical  build  to  validate  the  theoretical  design.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+4.6  ขอกำหนด ขั้น สุดทาย  /   Final  Specifications 
+→  สรุป ขอกำหนด สุดทาย หลัง ปรับปรุง จาก การ วิเคราะห และ จำลอง  เทียบ กับ ขอกำหนด ตั้งตน ใน บท ที่  2
+ 
+→  Summarize  ﬁnal  specs  after  analysis/simulation,  compared  against  the  original  Ch.2  requirements.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+ 
+13
+ 
+
+--- PAGE 20 ---
+บท ที่  5  การ พิสูจน ยืนยัน และ การ ตรวจ สอบ ความ ถูก ตอง  /   Chapter  5:  
+Verification
+ 
+and
+ 
+Validation
+ 
+📌  หมายเหตุ  ABET:  บท นี้ ตอบ คำ ถาม วา ระบบ บรรลุ ขอกำหนด ใน บท ที่  2  หรือ ไม  ครอบ คลุม  SO6  (Experimentation)  ทั้ง  3  PI  และ  SO1-PI3  
+(คำ
+ตอบ
+อยู
+ใน
+ขอ
+จำกัด)
+  
+/
+  
+This
+ 
+chapter
+ 
+confirms
+ 
+whether
+ 
+the
+ 
+system
+ 
+meets
+ 
+Ch.2
+ 
+requirements,
+ 
+addressing
+ 
+all
+ 
+3
+ 
+PIs
+ 
+of
+ 
+SO6
+ 
+(Experimentation)
+ 
+and
+ 
+SO1-PI3
+ 
+(solution
+ 
+appropriate
+ 
+within
+ 
+constraints).
+ 
+5.1  แผนการ พิสูจน ยืนยัน  /   Verification  Plan 
+→  ระบุ วา แตละ  requirement  ใน บท ที่  2.2  จะ ถูก ตรวจ สอบ ดวย วิธี ใด  (test,  analysis,  inspection,  demonstration)
+ 
+→  State  how  each  Ch.2.2  requirement  will  be  checked:  test,  analysis,  inspection,  or  demonstration.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+5.2  ขั้น ตอน การ ทดสอบ  /   Testing  Procedures 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+5.3  ผล การ ทดสอบ  /   Test  Results 
+✕  หาม  /  Do  NOT
+  
+✕  รายงาน เฉพาะ ผล ที่ ผาน  —  ตอง รายงาน ทุก ขอ  รวม ถึง ขอ ที่ ไม ผาน  /  Report  ALL  results,  including  failures
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+5.4  ตาราง ตรวจ สอบ ความ สอดคลอง กับ ขอกำหนด  /   Requirement  Compliance  Matrix 
+✓  ตอง มี  /  Must  Include
+  
+14
+ 
+
+--- PAGE 21 ---
+•  ทุก แถว ตอง มี  spec  value  และ  
+measured  value  คู่ กัน  พรอม  
+Pass/Fail  /  Every  row  needs  
+spec  vs.  measured  value  
+with  Pass/Fail
+ 
+Requirement  (Ch.2)
+ Spec
+ Measured
+ Pass/Fail
+ หมายเหตุ  /  Notes
+ 
+     
+     
+     
+5.5  การ ทบทวน การ ออก แบบ  /   Design  Review 
+→  สำหรับ ขอ ที่ ไม ผาน  ตอง อธิบาย สาเหตุ และ แนวทาง แกไข  การ ยอม รับ วา ผล ไม ตรง  spec  คือ  good  engineering
+ 
+→  For  failing  items,  explain  root  cause  and  ﬁx.  Honest  gap  analysis  shows  engineering  maturity.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+ 
+15
+ 
+
+--- PAGE 22 ---
+บท ที่  6  การ ประเมิน ผลก ระ ทบ ทาง วิศวกรรม  /   Chapter  6:  
+Engineering
+ 
+Impact
+ 
+Assessment
+ 
+📌  หมายเหตุ  ABET:  บท นี้ ครอบ คลุม  SO4  (Ethics)  ทั้ง  3  PI:  จริยธรรม  (6.5),  เศรษฐศาสตร  (6.1),  สิ่งแวดลอม / สังคม  (6.2,  6.4)   /   This  
+chapter
+ 
+covers
+ 
+all
+ 
+3
+ 
+PIs
+ 
+of
+ 
+SO4
+ 
+(Ethics):
+ 
+code
+ 
+of
+ 
+ethics
+ 
+(6.5),
+ 
+economic
+ 
+evaluation
+ 
+(6.1),
+ 
+environmental/social
+ 
+issues
+ 
+(6.2,
+ 
+6.4).
+ 
+6.1  การ วิเคราะห ทาง เศรษฐศาสตร  /   Economic  Analysis 
+→  วิเคราะห ตนทุน การ ผลิต  จุด คุม ทุน  หรือ มูลคา ทาง เศรษฐกิจ ของ โครง งาน
+ 
+→  Analyze  production  cost,  break-even  point,  or  economic  value  of  the  project.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+6.2  การ ประเมิน ความ ยั่งยืน  /   Sustainability  Assessment 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+6.3  การ ประเมิน สุขภาพ และ ความ ปลอดภัย  /   Health  and  Safety  Assessment 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+6.4  ผลก ระ ทบ ทาง สังคม และ สิ่งแวดลอม  /   Social  and  Environmental  Impact 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+6.5  ขอ พิจารณา ดาน จริยธรรม และ วิชาชีพ  /   Ethical  and  Professional  
+Considerations 
+→  อางอิง จรรยาบรรณ วิชาชีพ วิศวกร  (เชน  สภา วิศวกร แหง ประเทศ ไทย)  ที่ เกี่ยวของ กับ การ ตัดสินใจ ใน โครง งาน
+ 
+→  Reference  relevant  professional  engineering  codes  of  ethics  (e.g.  Council  of  Engineers  Thailand)  applied  in  project  decisions.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+ 
+16
+ 
+
+--- PAGE 23 ---
+บท ที่  7  การ บริหาร โครง งาน และ การ ทำ งาน เปน ทีม  /   Chapter  7:  
+Project
+ 
+Management
+ 
+and
+ 
+Teamwork
+ 
+📌  หมายเหตุ  ABET:  บท นี้ ครอบ คลุม  SO5  (Teamwork)  ทั้ง  3  PI:  บทบาท / ภาวะ ผู นำ  (7.1),  เปาหมาย / แผนงาน  (7.2),  ความ รวมมือ / ความ นา
+เชื่อถือ
+ 
+(7.3–7.4)
+  
+/
+  
+This
+ 
+chapter
+ 
+covers
+ 
+all
+ 
+3
+ 
+PIs
+ 
+of
+ 
+SO5
+ 
+(Teamwork):
+ 
+roles/leadership
+ 
+(7.1),
+ 
+goals/work
+ 
+plan
+ 
+(7.2),
+ 
+collaborative
+ 
+environment/dependability
+ 
+(7.3–7.4).
+ 
+7.1  โครงสราง ทีม งาน  /   Team  Organization 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+7.2  บทบาท และ ความ รับผิดชอบ  /   Roles  and  Responsibilities 
+→  ระบุ บทบาท ของ สมาชิก แตละ คน  เชื่อม โยง กับ  Individual  Contribution  ใน  Appendix  D
+ 
+→  State  each  member's  role,  linked  to  Individual  Contribution  records  in  Appendix  D.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+7.3  การ ติดตาม และ ควบคุม โครง งาน  /   Project  Monitoring  and  Control 
+→  อธิบาย วิธี ติดตาม ความ คืบ หนา เทียบ กับ แผน ใน หัวขอ  1.7  และ การ ปรับ แผน เมื่อ เกิด ความ ลา ชา
+ 
+→  Describe  how  progress  was  tracked  against  the  1.7  schedule  and  how  delays  were  handled.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+7.4  บทเรียน ที่ ได รับ  /   Lessons  Learned 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+ 
+17
+ 
+
+--- PAGE 24 ---
+บท ที่  8  บท สรุป และขอ เสนอ แนะ  /   Chapter  8:  Conclusions  and  
+Recommendations
+ 
+8.1  บท สรุป  /   Conclusions 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+8.2  ความ สำเร็จ ตาม วัตถุ ประสงค  /   Achievement  of  Objectives 
+→  ทวน วัตถุ ประสงค แตละ ขอ จาก บท ที่  1.4  และ ระบุ วา บรรลุ หรือ ไม  พรอม หลักฐาน
+ 
+→  Revisit  each  Ch.1.4  objective  and  state  whether  it  was  met,  with  evidence.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+8.3  ขอ เสนอ แนะ  /   Recommendations 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+8.4  แนวทาง การ ปรับปรุง ใน อนาคต  /   Future  Improvements 
+→  ระบุ สิ่ง ที่ จะ ทำ ตอ ได จริง  ไม ใช เพียง  ' ควร ทำ เพิ่มเติม '
+ 
+→  Be  speciﬁc  and  actionable,  not  vague.
+ 
+[เขียน เนื้อหา ที่ นี่  /  
+Write
+ 
+content
+ 
+here]
+ 
+ 
+18
+ 
+
+--- PAGE 25 ---
+เอกสาร อางอิง  /   References
+ 
+→  ใช รูป แบบ  IEEE  เทานั้น
+ 
+→  IEEE  format  only.
+ 
+●  [1]  [ผู แตง  /  Author],  "[ชื่อ บทความ  /  Title],"  [แหลง ที่มา  /  Source],  [ป  /  Year].  
+ 
+19
+ 
+
+--- PAGE 26 ---
+ภาค ผนวก  /   Appendices
+ 
+ภาค ผนวก  ก  การ คำนวณ โดย ละเอียด  /   Appendix  A:  Detailed  Calculations 
+[แนบ เอกสาร / ไฟลที่ เกี่ยวของ ที่ นี่  /  
+Attach
+ 
+related
+ 
+documents/files
+ 
+here]
+ 
+ภาค ผนวก  ข  แบบ วิศวกรรม  /   Appendix  B:  Engineering  Drawings 
+[แนบ เอกสาร / ไฟลที่ เกี่ยวของ ที่ นี่  /  
+Attach
+ 
+related
+ 
+documents/files
+ 
+here]
+ 
+ภาค ผนวก  ค  เอกสาร ขอมูล จำเพาะ  /   Appendix  C:  Datasheets  and  Specifications 
+[แนบ เอกสาร / ไฟลที่ เกี่ยวของ ที่ นี่  /  
+Attach
+ 
+related
+ 
+documents/files
+ 
+here]
+ 
+ภาค ผนวก  ง  เอกสาร การ บริหาร โครง งาน  /   Appendix  D:  Project  Management  
+Documents 
+[แนบ เอกสาร / ไฟลที่ เกี่ยวของ ที่ นี่  /  
+Attach
+ 
+related
+ 
+documents/files
+ 
+here]
+ 
+ภาค ผนวก  จ  การ เชื่อม โยง ผลลัพธ การ เรียน รู  ABET  /   Appendix  E:  ABET  Student  
+Outcome
+ 
+Mapping 
+→  ตาราง นี้ บังคับ  ไม
+ใช ทาง เลือก  —  ใช ระบุ
+วา แตละ หัวขอ ใน
+รายงาน เปน หลักฐาน
+ของ  Performance  
+Indicator  (PI)  ใด ของ
+แตละ  Student  
+Outcome  (SO)  โปรด
+กรอก คอลัมน  '
+หลักฐาน '  ให ชี้ เฉพาะ
+20
+ 
+
+--- PAGE 27 ---
+เจาะจง ไป ยัง บท / หัวขอ  
+ไม ใช กลาว รวม ทั้ง เลม
+ 
+→  This  table  is  
+mandatory,  not  
+optional.  It  shows  
+which  report  
+section  is  evidence  
+for  each  SO's  
+Performance  
+Indicator  (PI).  The  
+'Evidence'  column  
+must  point  to  a  
+speciﬁc  
+chapter/section,  
+not  the  whole  
+report  generically.
+ 
+→  ที่ ปรึกษา จะ ใช
+ตาราง นี้ ตรวจ สอบ วา
+รายงาน ครอบ คลุม  PI  
+ครบ ทุก ขอ กอน อนุมัติ  
+Final  Report
+ 
+→  Advisors  use  
+this  table  to  verify  
+all  PIs  are  covered  
+before  approving  
+the  Final  Report.
+ 
+SO
+ PI
+ Performance  Indicator
+ 
+หลักฐาน  (บท / หัวขอ)  /  Evidence  
+(Chapter/Section)
+ 
+SO1ProblemSolving
+ 
+PI1
+ 
+Shows
+ 
+understanding
+ 
+of
+ 
+the
+ 
+problem
+ 
+1.3
+ 
+Problem
+ 
+Statement
+ 
+21
+ 
+
+--- PAGE 28 ---
+ 
+PI2
+ 
+Chooses
+ 
+appropriate
+ 
+model/solution
+ 
+procedure
+ 
+4.1–4.2  Design  Methodology,  Engineering  
+Analysis
+ 
+ 
+PI3
+ 
+Solution
+ 
+appropriate
+ 
+within
+ 
+constraints
+ 
+4.6  Final  Speciﬁcations;  5.4  Compliance  
+Matrix
+ 
+SO2Design
+ 
+PI1
+ 
+Produces
+ 
+clear
+ 
+needs
+ 
+statement
+ 
+(specs)
+ 
+2.1–2.2  Customer  Needs,  Engineering  
+Requirements
+ 
+ 
+PI2
+ 
+Identiﬁes
+ 
+constraints;
+ 
+establishes
+ 
+criteria
+ 
+2.4–2.5  Design  Constraints,  Criteria  
+Summary
+ 
+ 
+PI3
+ 
+Carries
+ 
+through
+ 
+to
+ 
+solution
+ 
+and
+ 
+justiﬁes
+ 
+3.4
+ 
+Selected
+ 
+Concept
+ 
+SO3Communication
+ 
+PI1
+ 
+Technical
+ 
+writing
+ 
+style
+ 
+Whole
+ 
+report
+ 
+(written
+ 
+style)
+ 
+ 
+PI2
+ 
+Appropriate
+ 
+use
+ 
+of
+ 
+graphics
+ 
+4.4  Engineering  Drawings  +  ﬁgures/tables  
+throughout
+ 
+ 
+PI3
+ 
+Mechanics
+ 
+and
+ 
+grammar
+ 
+Whole
+ 
+report
+ 
+ 
+PI4
+ 
+Oral:
+ 
+body
+ 
+language,
+ 
+clarity
+ 
+Final  Defense  (oral  presentation  —  
+separate
+ 
+milestone)
+ 
+SO4Ethics
+ 
+PI1
+ 
+Knows
+ 
+code
+ 
+of
+ 
+ethics;
+ 
+evaluates
+ 
+ethical
+ 
+dimensions
+ 
+6.5  Ethical  and  Professional  
+Considerations
+ 
+ 
+PI2
+ 
+Evaluates
+ 
+economics
+ 
+of
+ 
+the
+ 
+solution
+ 
+6.1
+ 
+Economic
+ 
+Analysis
+ 
+ 
+PI3
+ 
+Identiﬁes
+ 
+environmental/social
+ 
+issues
+ 
+6.2  Sustainability;  6.4  Social  &  
+Environmental
+ 
+Impact
+ 
+SO5Teamwork
+ 
+PI1
+ 
+Roles
+ 
+including
+ 
+leadership
+ 
+7.1
+ 
+Team
+ 
+Organization
+ 
+ 
+PI2
+ 
+Establishes
+ 
+goals
+ 
+and
+ 
+work
+ 
+plan
+ 
+7.2  Roles  &  Responsibilities;  1.7  Project  
+Schedule
+ 
+ 
+PI3
+ 
+Collaborative
+ 
+environment,
+ 
+dependability
+ 
+7.3–7.4  Monitoring,  Lessons  Learned;  
+Appendix
+ 
+D
+ 
+22
+ 
+
+--- PAGE 29 ---
+SO6Experimentation
+ 
+PI1
+ 
+Good
+ 
+lab
+ 
+practice,
+ 
+operates
+ 
+instrumentation
+ 
+5.2
+ 
+Testing
+ 
+Procedures
+ 
+ 
+PI2
+ 
+Selects
+ 
+appropriate
+ 
+data/equipment/protocols
+ 
+5.1
+ 
+Veriﬁcation
+ 
+Plan
+ 
+ 
+PI3
+ 
+Analyzes,
+ 
+veriﬁes,
+ 
+validates
+ 
+results
+ 
+5.3–5.5  Test  Results,  Compliance  Matrix,  
+Design
+ 
+Review
+ 
+SO7LifelongLearning
+ 
+PI1
+ 
+Awareness
+ 
+education
+ 
+is
+ 
+continuous
+ 
+8.3–8.4  Recommendations,  Future  
+Improvements
+ 
+ 
+PI2
+ 
+Finds
+ 
+information
+ 
+without
+ 
+guidance
+ 
+1.1
+ 
+Background
+ 
+ 
+PI3
+ 
+Identiﬁes
+ 
+current
+ 
+issues,
+ 
+evaluates
+ 
+alternatives
+ 
+3.1
+ 
+Alternative
+ 
+Concepts
+ 
+ 
+PI4
+ 
+Selects/compares
+ 
+tools
+ 
+and
+ 
+techniques
+ 
+4.5
+ 
+Simulation
+ 
+and
+ 
+Modeling
+ 
+ 
+23
+ 
+
+--- PAGE 30 ---
+รายการ ตรวจ สอบ ตน เอง กอน สง  /   Self-Audit  Checklist  Before  
+Submission
+ 
+✓  ตอง ตรวจ กอน สง  /  Before  Submission  Checklist
+  
+•  บท ที่  2  มี  constraints  ครบ  4  ดาน  พรอม ตัวเลข ทุก ขอ  (SO2-PI2)  /  Ch.2  has  all  4  constraint  types,  quantitative  (SO2-PI2)
+ 
+•  บท ที่  3  มี  alternatives  ≥  2  แบบ  และ  weighted  decision  matrix  (SO7-PI3)  /  Ch.3  has  ≥  2  alternatives  and  weighted  decision  matrix  (SO7-PI3)
+ 
+•  บท ที่  4  มี การ คำนวณ จริง พรอม ผลลัพธ ตัวเลข  (SO1-PI2)  /  Ch.4  has  real  calculations  with  numeric  results  (SO1-PI2)
+ 
+•  บท ที่  5  มี  compliance  matrix  ครบ ทุก  requirement  รวม ขอ ที่ ไม ผาน  (SO6)  /  Ch.5  compliance  matrix  covers  all  requirements,  including  failures  
+(SO6)
+ 
+•  บท ที่  6  ครอบ คลุม ผลก ระ ทบ ครบ  5  ดาน  (SO4)  /  Ch.6  covers  all  5  impact  categories  (SO4)
+ 
+•  บท ที่  7  ระบุ บทบาท และ การ ติดตาม งาน ครบ  (SO5)  /  Ch.7  covers  roles  and  monitoring  completely  (SO5)
+ 
+•  บท ที่  8  เชื่อม โยง กลับ ไป ยัง วัตถุ ประสงค ใน บท ที่  1  (SO2-PI3)  /  Ch.8  links  back  to  Ch.1  objectives  (SO2-PI3)
+ 
+•  Appendix  E  มี  ABET  Student  Outcome  Mapping  ครบ ทั้ง  7  SO  /  23  PI  /  Appendix  E  has  complete  SO  mapping  for  all  7  SOs  /  23  PIs
+ 
+•  References  ใช รูป แบบ  IEEE  ทุก รายการ  /  All  references  in  IEEE  format
+ 
+•  ตรวจ การ สะกด  ไวยากรณ  และ รูป แบบ การ เขียน เชิง เทคนิค  (SO3-PI1/PI3)  /  Proofread  spelling,  grammar,  and  technical  writing  style  (SO3-PI1/PI3)
+ 
+ 
+24
+ 
+
+===== A19_capstone_design_2026_07_24 (1).pdf | pages=21 =====
+
+--- PAGE 1 ---
+1 
+ 
+ 
+ 
+รายงานโครงงานออกแบบทางวิศวกรรม 
+CAPSTONE DESIGN PROJECT REPORT 
+คณะวิศวกรรมศาสตร์ มหาวิทยาลัยอุบลราชธานี 
+Faculty of Engineering, Ubon Ratchathani University 
+ 
+ 
+ 
+ 
+ 
+รายชื่อนักศึกษา / Student Names 
+# ชื่อ-สกุล / Name รหัสนักศึกษา / ID หน้าที่ / Role 
+1 นางสาวฑิฆัมพร พิมพ์อ้น 66130041434 Project Management & 
+Evaluation 
+2 นายธนาวุฒิ ผิวขำ 66130042347 Battery Test System Design 
+& Software  
+3 นายธีระเทพ พิมพาลัย 66130042622 Backend & Dashboard  
+4 นายพันเลิศ มูลพันธ์ 66130043797 Hardware & Embedded 
+System  
+5 นายอนุสรณ์ หลักคำ 66130046095 Battery System Analysis & 
+Testing 
+ 
+ 
+ 
+ 
+ชื่อโครงงาน (Project Title): 
+การออกแบบพัฒนาระบบทดสอบสมรรถนะและประเมินสุขภาพแบตเตอรี่ 
+English Title: 
+(Design Development of a Battery Performance Testing and Health Assessment 
+System) 
+ 
+
+--- PAGE 2 ---
+2 
+อาจารย์ที่ปรึกษา / Advisor: ดร.อาทิตย์ ฤทธิแผลง 
+ลายมือชื่อ อาจารย์ที่ปรึกษา:  
+อาจารย์ที่ปรึกษาร่วม / Co-Advisor: ผศ.ดร. บงกช สุขอนันต์ 
+ปีการศึกษา / Academic Year: ปีการศึกษา 2569 
+
+
+--- PAGE 3 ---
+3 
+บทสรุปผู้บริหาร / Executive Summary 
+แบตเตอรี่ตะกั่วกรดขนาดเล็กสำหรับรถจักรยานยนต์เป็นชิ้นส่วนที่มีอัตราการเปลี่ยนสูงในประเทศไทย แต่การประเมินสุขภาพ 
+(State of Health, SoH) ของแบตเตอรี่มือสองหรือแบตเตอรี่ที่สงสัยว่าเสื่อมสภาพในเชิงพาณิชย์และห้องปฏิบัติการการศึกษา
+ส่วนใหญ่ ยังอาศัยเพียงการวัดแรงดันพักด้วยมัลติมิเตอร์ ซึ่งไม่สะท้อนความต้านทานภายในที่เพิ่มขึ้นจากการเสื่อมสภาพ ทำให้
+การคัดแยกแบตเตอรี่ดี/เสียคลาดเคลื่อน โครงงานนี้จึ งพัฒนา ASET Battery Tester ซึ่งเป็นสถานีทดสอบและคัดเกรด
+แบตเตอรี่อัตโนมัติหลายเคมี โดยนำฮาร์ดแวร์เดิมของภาควิชา (Power Supply GW Instek PSW 80-40.5, Electronic Load 
+PEL-3111) มาควบคุมผ่านโปรโตคอล SCPI ร่วมกับวงจร 4-Wire Kelvin Sensing เพื่อวัดความต้านทานภายใน (DCIR) ตาม
+มาตรฐาน IEC 61960 Clause 6.4 อย่างแม่นยำ ระบบใช้ Extended Kalman Filter ประมาณค่า State of Charge แบบ
+เรียลไทม์ และตัดเกรดแบตเตอรี่เป็น A/B/C/REJECT จากความสัมพันธ์ระหว่าง SoH กับการเติบโตของความต้านทานภายใน 
+(R0/R1) พร้อมระบบความปลอดภัยหลายชั้น ( SSR อัตโนมัติ, Circuit Breaker, E -STOP, ขีดจำกัดซอฟต์แวร์ 
+OVP/UVP/OTP) และเว็บแดชบอร์ดแสดงผลเรียลไทม์ผ่านระบบคลาวด์ ผลการพัฒนาถึงปัจจุบันประกอบด้วยโหมดทดสอบ
+อัตโนมัติ 4 รูปแบบ ได้แก่ (IEC 61960 Standard, Quick Scan, HPPC, Cycle Life) ผ่านชุดทดสอบอัตโนมัติมากกว่า 700 
+รายการ และได้ยืนยันการทำงาน กับฮาร์ดแวร์จริงกับแบตเตอรี่ FB FTZ6V (12V 5.3Ah VRLA AGM) โดยค่าความต้านทาน
+ภายในที่วัดได้ใกล้เคียงกับเครื่องมืออ้างอิง  
+คำสำคัญ: การคัดเกรดแบตเตอรี่, State of Health, ความต้านทานภายใน, IEC 61960, ระบบทดสอบอัตโนมัติ 
+Small lead-acid motorcycle batteries have a high replacement rate in Thailand, yet grading a used or suspect 
+battery's State of Health (SoH) in commercial and educational lab settings still typically relies on a single 
+multimeter resting-voltage reading, w hich does not reflect the internal resistance growth that accompanies 
+degradation and leads to unreliable good/bad sorting. This project develops the ASET Battery Tester, an 
+automated multi -chemistry battery grading and characterization station built entir ely on the department's 
+existing instruments (GW Instek PSW 80 -40.5 power supply, PEL -3111 electronic load), controlled via SCPI, 
+combined with a 4 -wire Kelvin sensing circuit to accurately measure DC internal resistance (DCIR) per IEC 
+61960 Clause 6.4. An  Extended Kalman Filter provides real -time State of Charge estimation, and the system 
+grades batteries A/B/C/REJECT from the relationship between SoH and ohmic/charge -transfer resistance 
+growth (R0/R1), backed by a multi -tier safety system (automatic SSR, circuit breaker, E -STOP, software 
+OVP/UVP/OTP limits) and a real -time cloud dashboard. Progress to date includes four automated test modes 
+(IEC 61960 Standard, Quick Scan, HPPC, Cycle Life), over 700 passing automated tests, and confirmed 
+operation on real hardware with an FB FTZ6V (12V 5.3Ah VRLA AGM) battery, with measured internal resistance 
+closely tracking a reference instrument.  
+Keywords: Battery grading, State of Health, Internal resistance, IEC 61960, Automated test system 
+ 
+
+--- PAGE 4 ---
+4 
+สารบัญ / Table of Contents 
+บทสรุปผู้บริหาร / Executive Summary ..................................................................................................................... 3 
+สารบัญ / Table of Contents .................................................................................................................................... 4 
+บทที่ 1  นิยามโครงงาน  /  Chapter 1: Project Definition ........................................................................................... 8 
+1.1  ที่มาและความส าคัญ  /  Background ........................................................................................................... 8 
+1.2  การวิเคราะห์ผู้มีส่วนได้ส่วนเสีย  /  Stakeholder Analysis .............................................................................. 8 
+1.3  การระบุปัญหา  /  Problem Statement ......................................................................................................... 9 
+1.4  วัตถุประสงค์  /  Objectives .......................................................................................................................... 9 
+1.5  ขอบเขต  /  Scope ....................................................................................................................................... 9 
+1.6  ผลงานส่งมอบ  /  Deliverables .................................................................................................................. 10 
+1.7  แผนด าเนินงานโครงงาน  /  Project Schedule ............................................................................................ 10 
+บทที่ 2  ข้อก าหนดและข้อจ ากัดการออกแบบ  /  Chapter 2: Design Requirements and Constraints ...................... 11 
+2.1  การประเมินความต้องการของผู้ใช้  /  Customer Needs Assessment ......................................................... 11 
+2.2  ข้อก าหนดทางวิศวกรรม  /  Engineering Requirements ............................................................................. 11 
+2.3  มาตรฐานและข้อบังคับที่เกี่ยวข้อง  /  Applicable Codes and Standards.................................................... 12 
+2.4  ข้อจ ากัดการออกแบบ  /  Design Constraints ............................................................................................. 12 
+2.4.1  ด้านเศรษฐศาสตร์  /  Economic Constraints ..................................................................................... 12 
+2.4.2  ด้านความปลอดภัยและสุขภาพ  /  Health & Safety Constraints ........................................................ 12 
+2.4.3  ด้านเทคนิคและกายภาพ  /  Technical & Physical Constraints .......................................................... 12 
+2.4.4  ด้านสิ่งแวดล้อม  /  Environmental Constraints ................................................................................. 12 
+2.5  สรุปเกณฑ์การออกแบบ  /  Design Criteria Summary ................................................................................ 13 
+บทที่ 3  การออกแบบเชิงแนวคิด  /  Chapter 3: Conceptual Design........................................................................ 14 
+3.1  แนวคิดทางเลือก  /  Alternative Concepts ................................................................................................. 14 
+3.2  การประเมินเบื้องต้น  /  Preliminary Evaluation .......................................................................................... 14 
+3.3  ตารางตัดสินใจแบบถ่วงน ้าหนัก  /  Weighted Decision Matrix .................................................................... 14 
+3.4  แนวคิดที่เลือก  /  Selected Concept .......................................................................................................... 15 
+3.5  การประเมินความเสี่ยง  /  Risk Assessment ............................................................................................... 15 
+บทที่ 4  การออกแบบทางวิศวกรรมโดยละเอียด  /  Chapter 4: Detailed Engineering Design .................................. 17 
+
+--- PAGE 5 ---
+5 
+4.1  วิธีการออกแบบ  /  Design Methodology ................................................................................................... 17 
+4.2  การวิเคราะห์ทางวิศวกรรม  /  Engineering Analysis ................................................................................... 17 
+4.3  การค านวณการออกแบบ  /  Design Calculations ...................................................................................... 17 
+4.4  แบบวิศวกรรม  /  Engineering Drawings ................................................................................................... 18 
+4.5  การจ าลองและสร้างแบบจ าลอง  /  Simulation and Modeling ..................................................................... 20 
+4.6  ข้อก าหนดขั้นสุดท้าย  /  Final Specifications .............................................................................................. 20 
+เอกสารอ้างอิง / References ................................................................................................................................... 21 
+ 
+ 
+
+--- PAGE 6 ---
+6 
+สารบัญตาราง / List of Tables 
+ตารางที่ 1.1: ผลการวิเคราะห์ผู้มีส่วนได้ส่วนเสีย ......................................................................................................... 8 
+ตารางที่ 1.2: แผนด าเนินงานโครงงาน ...................................................................................................................... 10 
+ตารางที่ 2.1: ข้อก าหนดทางวิศวกรรม ...................................................................................................................... 11 
+ตารางที่ 2.2: มาตรฐานและข้อบังคับที่เกี่ยวข้อง ........................................................................................................ 12 
+ตารางที่ 3.1: เปรียบเทียบแนวคิดทางเลือก ............................................................................................................... 14 
+ตารางที่ 3.2: ตารางตัดสินใจแบบถ่วงน ้าหนัก ........................................................................................................... 15 
+ตารางที่ 3.3: การประเมินความเสี่ยง ........................................................................................................................ 15 
+ 
+ 
+
+--- PAGE 7 ---
+7 
+สารบัญรูปภาพ / List of Figures 
+ภาพที่ 4.1: แผนภาพวงจรทดสอบ (4-Wire Kelvin Sensing) ..................................................................................... 19 
+ภาพที่ 4.2: สถาปัตยกรรมฮาร์ดแวร์ของระบบทดสอบจริง .......................................................................................... 20 
+ 
+ 
+
+--- PAGE 8 ---
+8 
+บทที่ 1 นิยามโครงงาน  / Chapter 1: Project Definition 
+1.1 ที่มาและความส าคัญ / Background 
+รถจักรยานยนต์เป็นยานพาหนะที่มีจ านวนใช้งานสูงที่สุดในประเทศไทย และแบตเตอรี่ตะกั่วกรดแบบ VRLA/AGM ขนาด 
+12V ที่ใช้สตาร์ทเครื่องยนต์ มีอัตราการเปลี่ยนทดแทนสูงตามอายุการใช้งาน  1–3 ปีอย่างไรก็ตาม การประเมินสุขภาพ
+แบตเตอรี่มือสองหรือแบตเตอรี่ที่สงสัยว่าเสื่อมสภาพในร้านซ่อม และห้องปฏิบัติการการศึกษาส่วนใหญ่ ยังอาศัยการวัด
+แรงดันพัก (Open-Circuit Voltage) ด้วยมัลติมิเตอร์เพียงอย่างเดียว ซึ่งไม่สามารถบ่งชี้ State of Health (SoH) หรือ ความ
+ต้านทานภายใน ( Internal Resistance) ที่เพิ่มขึ้นตามการเสื่อมสภาพได้ งานวิจัยด้าน Battery Diagnostics ยืนยันว่า
+ความต้านทานภายในที่เพิ่มขึ้น มีความสัมพันธ์เชิงเส้นโดยตรงกับการลดลงของความจุ (Capacity Fade) เนื่องจากกลไก
+ทางเคมีไฟฟ้าเดียวกันที่ท าให้ Impedance เพิ่มขึ้น ก็ท าให้ความจุลดลงพร้อมกัน [1][2]และมาตรฐานสากล IEC 61960 
+ได้ก าหนดวิธีวัดความต้านทานภายในแบบ Two-Pulse ไว้อย่างเป็นระบบใน Clause 6.4 [3] ในทางปฏิบัติ ห้องปฏิบัติการ
+ของภาควิชาวิศวกรรมไฟฟ้าและอิเล็กทรอนิกส์ มีเครื่องมือ Power Supply และ Electronic Load ระดับห้องปฏิบัติการ 
+(GW Instek PSW 80 -40.5 และ PEL-3111) ที่รองรับการควบคุมระยะไกลผ่านมาตรฐาน SCPI อยู่แล้ว แต่ยังไม่มี
+ซอฟต์แวร์ที่น าเครื่องมือเหล่านี้มาประกอบเป็นสถานีทดสอบแบตเตอรี่อัตโนมัติ ที่วัด SoH และความต้านทานภายในได้
+ตามมาตรฐาน พร้อมระบบความปลอดภัยส าหรับการทดสอบแบบไร้คนเฝ้าโครงงานนี้จึงมุ่งพัฒนาระบบดังกล่าวโดยใช้
+ฮาร์ดแวร์ที่มีอยู่แล้วทั้งหมด โดยไม่ต้องจัดซื้อเครื่องมือวัดเพิ่มเติม 
+1.2 การวิเคราะห์ผู้มีส่วนได้ส่วนเสีย / Stakeholder Analysis 
+ตารางที่ 1.1 : ผลการวิเคราะห์ผู้มีส่วนได้ส่วนเสีย  
+ผู้มีส่วนได้ส่วนเสีย / 
+Stakeholder ความสนใจ/ความต้องการ / Interest อิทธิพลต่อโครงงาน / Influence 
+ช่างเทคนิคห้องปฏิบัติการ 
+/ Lab Technician 
+ระบบใช้งานง่าย ปลอดภัย 
+ไม่ต้องเฝ้าระหว่างทดสอบยาวหลายชั่วโมง สูง — ผู้ใช้งานหลัก (Primary user) 
+ร้าน/ศูนย์บริการแบตเตอรี่ 
+/ Battery Retailer 
+คัดแยกแบตเตอรี่ดี/เสียได้รวดเร็ว ต้นทุนต ่า 
+ไม่ต้องซื้ออุปกรณ์เฉพาะทางราคาแพง ปานกลาง — ผู้รับประโยชน์ในอนาคต 
+อาจารย์ที่ปรึกษา/ภาควิชา 
+/ Advisor & Department 
+ผลงานตรงตามเกณฑ์ ABET วัดผลได้จริง 
+มีมาตรฐานอ้างอิงชัดเจน สูง — ผู้ประเมินโครงงาน 
+หน่วยงานมาตรฐาน (IEC) 
+/ Standards Body 
+วิธีวัดและตัดเกรดต้องสอดคล้องกับวิธีการที่
+มาตรฐานสากลก าหนด สูง — กรอบอ้างอิงทางเทคนิค 
+
+--- PAGE 9 ---
+9 
+1.3 การระบุปัญหา / Problem Statement 
+การประเมินสุขภาพแบตเตอรี่ตะกั่วกรด/ลิเธียมขนาดเล็กในเชิงพาณิชย์และห้องปฏิบัติการการศึกษาส่วนใหญ่ในปัจจุบัน 
+อาศัยการวัดแรงดันพักด้วยมัลติมิเตอร์เพียงอย่างเดียว ซึ่งไม่สามารถบ่งชี้  State of Health (SoH) หรือความต้านทาน
+ภายในที่แท้จริงได้ ท าให้การคัดแยกแบตเตอรี่ดี/เสียคลาดเคลื่อน และห้องปฏิบัติการที่มีเครื่องมือ  SCPI-controlled 
+Power Supply/Electronic Load อยู่แล้ว ยังไม่มีซอฟต์แวร์ที่น าเครื่องมือเหล่านี้มาท างานร่วมกันเป็นระบบทดสอบ
+อัตโนมัติที่ปลอดภัยและตรงตามมาตรฐาน IEC 61960 โครงงานนี้จึงมุ่งแก้ปัญหาด้วยสถานีทดสอบอัตโนมัติที่ใช้ฮาร์ดแวร์
+เดิมของภาควิชา โดยไม่มีค่าใช้จ่ายในการจัดซื้อเครื่องมือวัดเพิ่มเติม 
+1.4 วัตถุประสงค์ / Objectives 
+• เพื่อออกแบบและพัฒนาสถานีทดสอบแบตเตอรี่อัตโนมัติที่วัด SoH, DCIR และ CCA-proxy ได้ตามวิธีการที่
+มาตรฐาน IEC 61960 Clause 6.4 ก าหนด 
+• เพื่อพัฒนาอัลกอริทึมประมาณสถานะ (Extended Kalman Filter) ที่ประมาณค่า State of Charge แบบ
+เรียลไทม์ พร้อมค่าความไม่แน่นอน 
+• เพื่อพัฒนาระบบตัดเกรดอัตโนมัติ A/B/C/REJECT จากความสัมพันธ์ระหว่าง SoH และการเติบโตของความ
+ต้านทานภายใน (R0/R1) 
+• เพื่อออกแบบระบบความปลอดภัยหลายชั้น (SSR, Circuit Breaker, E-STOP, ขีดจ ากัดซอฟต์แวร์) ป้องกัน
+ความเสียหายระหว่างทดสอบอัตโนมัติไร้คนเฝ้า 
+• เพื่อทดสอบและยืนยันความแม่นย าของระบบเทียบกับฮาร์ดแวร์จริง (แบตเตอรี่ FB FTZ6V 12V 5.3Ah VRLA) 
+1.5 ขอบเขต / Scope 
+สิ่งที่ท า (In Scope) 
+• พัฒนาโปรแกรมควบคุมฮาร์ดแวร์ (PySide6 GUI มาตรฐาน ISA-101) ควบคุม PSW 80-40.5 และ PEL-
+3111 ผ่าน SCPI/PyVISA 
+• พัฒนาโหมดทดสอบอัตโนมัติ 4 รูปแบบ: IEC 61960 Standard, Quick Scan, HPPC Full Sequence, 
+Cycle Life Test 
+• พัฒนาเว็บแดชบอร์ดแสดงผลเรียลไทม์ผ่านระบบคลาวด์ (Microsoft Azure) 
+• ทดสอบกับแบตเตอรี่ตะกั่วกรดชนิด VRLA/AGM (YTZ6V, YTZ7V) เป็นหลัก 
+สิ่งที่ไม่ท า (Out of Scope) 
+• ไม่รวมการเก็บชุดข้อมูลขนาดใหญ่จากแบตเตอรี่จริงหลายลูกเพื่อฝึกโมเดล Machine Learning เชิงลึก 
+(เป็นงานต่อยอด) 
+
+--- PAGE 10 ---
+10 
+• ไม่รวมกระบวนการรับรองผลิตภัณฑ์ (Certification) กับหน่วยงานมาตรฐานอย่างเป็นทางการ 
+1.6 ผลงานส่งมอบ / Deliverables 
+• ซอฟต์แวร์ควบคุมและวิเคราะห์ (แพ็กเกจ Python aset_batt) พร้อมซอร์สโค้ดฉบับสมบูรณ์ 
+• เว็บแดชบอร์ดคลาวด์ (cloud_dashboard) ที่ deploy บน Microsoft Azure พร้อมใช้งาน 
+• Firmware ESP32 ส าหรับวัดอุณหภูมิแบบไม่สัมผัส (MLX90614) และควบคุม Solid-State Relay (SSR) 
+• รายงานผลการทดสอบและตาราง Requirement Compliance Matrix เทียบกับ IEC 61960 
+• ชุดทดสอบอัตโนมัติ (automated test suite) มากกว่า 700 รายการ ครอบคลุมทุกโมดูล 
+1.7 แผนด าเนินงานโครงงาน / Project Schedule 
+ตารางที่ 1.2 : แผนด าเนินงานโครงงาน  
+กิจกรรม / Task เริ่ม / Start สิ้นสุด / End สถานะ / Status 
+ออกแบบสถาปัตยกรรมซอฟต์แวร์และ GUI มาตรฐาน 
+ISA101 สัปดาห์ 1 สัปดาห์ 1 เสร็จสิ้น 
+พัฒนาเอนจินวิเคราะห์ (DCIR, ECM, EKF) และแท็บ 
+CHARACTERIZE สัปดาห์ 1 สัปดาห์ 3 เสร็จสิ้น 
+พัฒนาระบบความปลอดภัยหลายชั้น (SSR, E-STOP, 
+Alarm Log) สัปดาห์ 3 สัปดาห์ 4 เสร็จสิ้น 
+ทดสอบกับฮาร์ดแวร์จริงและปรับจูนความแม่นย าการ
+ตัดเกรด สัปดาห์ 3 สัปดาห์ 5 เสร็จสิ้น 
+ 
+
+--- PAGE 11 ---
+11 
+บทที่ 2  ข้อก าหนดและข้อจ ากัดการออกแบบ  / Chapter 2: Design 
+Requirements and Constraints 
+2.1 การประเมินความต้องการของผู้ใช้ / Customer Needs Assessment 
+จากการวิเคราะห์ผู้มีส่วนได้ส่วนเสียในหัวข้อ 1.2 พบความต้องการเชิงคุณภาพหลัก 3 ประการ (1) วัด SoH และความ
+ต้านทานภายในได้อย่างแม่นย า โดยไม่ต้องจัดซื้อเครื่องมือวัดเฉพาะทางเพิ่มเติม (2) ระบบต้องปลอดภัยต่อผู้ใช้งานและ
+ฮาร์ดแวร์ ระหว่างการทดสอบอัตโนมัติแบบไร้คนเฝ้าเป็นเวลานาน และ (3) สามารถเข้าถึงผลการทดสอบและสถานะการ
+ท างานจากระยะไกลผ่านเว็บ โดยไม่ต้องอยู่หน้าเครื่อง ความต้องการเหล่านี้ถูกแปลงเป็น Engineering Requirements 
+เชิงปริมาณในหัวข้อ 2.2 
+2.2 ข้อก าหนดทางวิศวกรรม / Engineering Requirements 
+ตารางที่ 2.1 : ข้อก าหนดทางวิศวกรรม  
+# Parameter Min Max / Target Unit 
+1 Measurement Sample Rate (SCPI PSU/Load 
+readback) 3 10 Hz 
+2 DCIR Measurement Repeatability (coefficient of 
+variation across steps) — 15 %CV 
+3 SoC Estimation Uncertainty (EKF, post-anchor settle) — ±5 % 
+4 SSR Relay Cutoff Response Time (charge stop → 
+relay OFF) — 1 s 
+5 Over-Temperature Trip Threshold (configurable) 45 60 °C 
+6 Discharge Cutoff Accuracy (6S lead-acid pack UVP) 10.4 10.6 V 
+7 DCIR Sampling-Latency Gate (reject a stale current 
+step) — 0.5 s 
+ 
+ 
+ 
+ 
+
+--- PAGE 12 ---
+12 
+2.3 มาตรฐานและข้อบังคับที่เกี่ยวข้อง / Applicable Codes and Standards  
+ตารางที่ 2.2 : มาตรฐานและข้อบังคับที่เกี่ยวข้อง  
+# มาตรฐาน / Standard เลขที่ / Number การน ามาใช้ / Application 
+1 
+Secondary cells for portable 
+applications — performance test 
+methods 
+IEC 61960, Cl. 6.4 วิธีวัด DCIR แบบ two-pulse 
+(ΔV/ΔI) ที่ระบบใช้จริงในโมดูล 
+2 Management of alarm systems for the 
+process industries 
+ISA-101.01 
+ (HMI convention) 
+รูปแบบหน้าจอ GUI และ Alarm Log 
+แบบ SCADA (event/state/ACK) 
+3 Lithium-ion cells — safety requirements IEC 62133-2 
+กรอบอ้างอิงด้านความปลอดภัยส าห
+รับการทดสอบแบตเตอรี่ลิเธียมในงา
+นต่อยอด (นอกขอบเขตปัจจุบัน) 
+2.4 ข้อจ ากัดการออกแบบ / Design Constraints 
+2.4.1 ด้านเศรษฐศาสตร์ / Economic Constraints 
+ระบบต้องใช้ฮาร์ดแวร์หลักที่ภาควิชามีอยู่แล้วทั้งหมด (Power Supply GW Instek PSW 80-40.5, Electronic Load PEL-
+3111) โดยไม่มีการจัดซื้อเครื่องมือวัดหรือเครื่องมือทดสอบเพิ่มเติม งบประมาณส่วนเพิ่มจ ากัดเฉพาะอุปกรณ์ราคา
+ประหยัด (ESP32, เซนเซอร์ MLX90614, Solid-State Relay, สายวัด Kelvin sensing) 
+2.4.2 ด้านความปลอดภัยและสุขภาพ / Health & Safety Constraints  
+ระบบต้องมีกลไกตัดไฟอัตโนมัติอย่างน้อย 2 ชั้นที่เป็นอิสระจากกัน (Solid-State Relay ควบคุมด้วยซอฟต์แวร์ และ Circuit 
+Breaker ทางกายภาพ) และปุ ่ ม E-STOP ที่ตัดฮาร์ดแวร์จริงได้ภายใน 1 วินาทีเมื่อผู้ควบคุมกด ค่าขีดจ ากัดความปลอดภัย 
+(OVP/UVP/OTP/UTP/Max Current) ต้องตั้งค่าและบันทึกไว้ในระบบ พร้อมแสดงผลแบบ pop-up กลางจอทันทีเมื่อมีการ
+ตัดการท างานฉุกเฉิน 
+2.4.3 ด้านเทคนิคและกายภาพ / Technical & Physical Constraints  
+อัตราการอ่านค่าจริงของเครื่องมือผ่าน SCPI ทาง USB ถูกจ ากัดที่ประมาณ 5–10 Hz (nominal 10 Hz และลดเหลือ
+ประมาณ 5 Hz ระหว่างการทดสอบ HPPC ที่ต้องอ่านค่าหลายค าสั่งต่อรอบ ไม่ใช่ 75 Hz ตามแผนเดิม) เนื่องจากไม่มีการ
+จัดซื้อฮาร์ดแวร์ ADC ความเร็วสูงแยกต่างหาก (ดูรายละเอียดการตัดสินใจในหัวข้อ 3.2–3.4) วงจร 4- Wire Kelvin 
+Sensing ต้องแยกสาย Force และ Sense ออกจากกันอย่างสมบูรณ์เพื่อขจัดผลของความต้านทานสายไฟออกจากค่า 
+DCIR ที่วัดได้ 
+ 
+
+--- PAGE 13 ---
+13 
+2.4.4 ด้านสิ่งแวดล้อม / Environmental Constraints 
+ระบบต้องรองรับการทดสอบภายใต้อุณหภูมิห้องปฏิบัติการปกติ ( 25–28°C) โดยมีการชดเชยผลของอุณหภูมิต่อค่าความ
+ต้านทานภายในด้วยแบบจ าลอง Arrhenius normalization เทียบเท่าอุณหภูมิอ้างอิง 25°C เพื่อไม่ให้อุณหภูมิห้องที่ต่างกัน
+ในแต่ละวันท าให้ผลตัดเกรดคลาดเคลื่อน 
+2.5 สรุปเกณฑ์การออกแบบ / Design Criteria Summary 
+• เกณฑ์ที่ 1: ระบบต้องวัดค่า DCIR ได้ด้วยวิธี two-pulse ตาม IEC 61960 Clause 6.4 โดยมี coefficient of 
+variation ระหว่างรอบวัดไม่เกิน 15% 
+• เกณฑ์ที่ 2: ระบบต้องตัดไฟอัตโนมัติ (SSR/Breaker/E-STOP) ได้ภายใน 1 
+วินาทีเมื่อค่าที่วัดเกินขีดจ ากัดความปลอดภัยที่ตั้งไว้ 
+• เกณฑ์ที่ 3: ค่า SoC ที่ประมาณด้วย EKF ต้องมีความไม่แน่นอนไม่เกิน ±5% หลังจากช่วง anchor settle 
+• เกณฑ์ที่ 4: ระบบต้องท างานได้ครบทุกโหมดทดสอบ (IEC 61960 / Quick Scan / HPPC / Cycle Life) 
+โดยไม่จัดซื้อฮาร์ดแวร์เพิ่มเติมจากที่ระบุในหัวข้อ 2.4.1 
+ 
+
+--- PAGE 14 ---
+14 
+บทที่ 3 การออกแบบเชิงแนวคิด / Chapter 3: Conceptual Design 
+3.1 แนวคิดทางเลือก / Alternative Concepts 
+ทีมงานพิจารณาแนวทางการวัดค่าทางไฟฟ้า 2 แนวคิด ที่แตกต่างกันจริง ก่อนตัดสินใจเลือกแนวทางที่ใช้ในระบบปัจจุบัน 
+ตารางที่ 3.1 : เปรียบเทียบแนวคิดทางเลือก  
+หัวข้อ / Aspect 
+แนวคิด A: DAQ 
+ความเร็วสูงเฉพาะทาง / High-Speed 
+Custom DAQ 
+แนวคิด B: ใช้เครื่องมือ SCPI เดิม / SCPI 
+Instrument Reuse 
+หลักการท างาน / 
+Principle 
+ต่อวงจร ADC ความละเอียดสูง (เช่น 
+INA226) วัดที่ขั้วแบตเตอรี่โดยตรงที่ 75 
+Hz พร้อมคุม Contactor ก าลังสูงเอง 
+ใช้ Power Supply/E-Load เดิม (GW Instek) 
+วัดและควบคุมผ่านค าสั่ง SCPI มาตรฐาน 
+อัตราการอ่านค่าจริง ~10 Hz 
+ข้อดี / 
+Advantages 
+อัตราสุ่มตัวอย่างสูง จับสัญญาณ ohmic 
+step ได้ละเอียดระดับ sub-100ms 
+ไม่ต้องจัดซื้อ/สร้างฮาร์ดแวร์เพิ่ม 
+ใช้ค่าที่สอบเทียบจากโรงงานแล้ว 
+ปลอดภัยกว่าเพราะผ่านการรับรองจากผู้ผลิต 
+ข้อเสีย / 
+Disadvantages 
+ต้องจัดซื้อ ADC/Contactor เพิ่ม 
+ต้องสอบเทียบเองและเพิ่มความเสี่ยงด้าน
+ความปลอดภัยจากการควบคุมก าลังสูงโด
+ยตรง 
+อัตราสุ่มจ ากัดที่ ~10 Hz ท าให้แยกความต้านทาน 
+Ohmic (R0) จาก Polarization (R1) ที่ sub-200ms 
+ไม่ได้ชัดเจน 
+3.2 การประเมินเบื้องต้น / Preliminary Evaluation 
+เมื่อคัดกรองด้วยเกณฑ์ผ่าน/ไม่ผ่าน (go/no-go) เทียบกับข้อจ ากัดด้านเศรษฐศาสตร์ในหัวข้อ 2.4.1 (ห้ามจัดซื้อเครื่องมือ
+เพิ่มเติม) พบว่า แนวคิด A ไม่ผ่านเกณฑ์ทันที เนื่องจากต้องจัดซื้อวงจร ADC และ Contactor เพิ่มเติม รวมถึงเพิ่มความ
+เสี่ยงด้านความปลอดภัยจากการควบคุมก าลังไฟ โดยตรงซึ่งขัดกับข้อจ ากัดด้านความปลอดภัยในหัวข้อ 2.4.2 ส่วน
+แนวคิด B ผ่านเกณฑ์ทั้งด้านงบประมาณและความปลอดภัย จึงน าเข้าสู่การประเมินแบบ ถ่วงน ้าหนักในหัวข้อ 3.3 เพื่อ
+ยืนยันการตัดสินใจอย่างเป็นระบบ  
+3.3 ตารางตัดสินใจแบบถ่วงน ้าหนัก / Weighted Decision Matrix 
+ทีมงานก าหนดเกณฑ์และน ้าหนักคะแนนไว้ล่วงหน้าก่อนเริ่มให้คะแนน โดยให้น ้าหนักสูงสุดกับต้นทุนและความปลอดภัย
+เนื่องจากเป็นข้อจ ากัดที่บังคับตามหัวข้อ 2.4 
+ 
+ 
+
+--- PAGE 15 ---
+15 
+ตารางที่ 3.2 : ตารางตัดสินใจแบบถ่วงน ้าหนัก  
+เกณฑ์ / Criterion น ้าหนัก / 
+Weight คะแนน A คะแนน B น ้าหนัก×A น ้าหนัก×B 
+ความแม่นย า/ประสิทธิภาพ / 
+Accuracy 0.35 8 6 2.80 2.10 
+ต้นทุน / Cost 0.30 3 9 0.90 2.70 
+ความปลอดภัย / Safety 0.20 5 9 1.00 1.80 
+ระยะเวลาพัฒนา / 
+Development Time 0.15 4 8 0.60 1.20 
+รวม / Total 1.00 — — 5.30 7.80 
+3.4 แนวคิดที่เลือก / Selected Concept 
+แนวคิด B (ใช้เครื่องมือ SCPI เดิม) ได้คะแนนรวมสูงกว่าอย่างชัดเจน (7.80 เทียบกับ 5.30) โดยเฉพาะด้าน ต้นทุน และ 
+ความปลอดภัย ซึ่งมีน ้าหนักรวมกันสูงถึง 0.50 ทีมงานจึงเลือกแนวคิด B และออกแบบเอนจินวิเคราะห์ให้ท างานได้ดีที่
+อัตราสุ่มตัวอย่างประมาณ 10 Hz แทนการเพิ่มความเร็วฮาร์ดแวร์ กล่าวคือ ใช้วิธีวัด DCIR แบบ Two-Pulse ที่ประมาณ 
+200 ms ต่อการก้าวกระโดดของกระแส (ตามมาตรฐาน IEC 61960) ร่วมกับการวิเคราะห์ค่าคงที่เวลา (τ ≈ 10–60 s 
+ตามค่าออกแบบ แต่วัดจริงกับแบตเตอรี่ FB FTZ6V ได้ประมาณ 4–5 s) จากช่วง Relaxation หลัง HPPC Pulse ด้วยการ 
+Fit สมการวงจรสมมูล 1-RC Thevenin ซึ่งสามารถแยก R₀ ออกจาก R₁ ได้แม่นย า แม้อัตราสุ่มตัวอย่างจะจ ากัดอยู่ที่ 10 
+Hz เนื่องจากค่าคงที่เวลาของปรากฏการณ์ Polarization ยาวกว่าคาบการสุ่มมาก 
+3.5 การประเมินความเสี่ยง / Risk Assessment 
+ตารางที่ 3.3 : การประเมินความเสี่ยง  
+ความเสี่ยง / Risk โอกาส / 
+Likelihood 
+ผลกระทบ 
+/ Impact แผนบรรเทา / Mitigation 
+อัตราสุ่ม 10 Hz ไม่พอแยก R0 จาก R1 ที่ sub-100ms สูง ปานกลาง 
+ใช้ DCIR เฉลี่ยจากหลาย step ร่วมกับ 
+ECM curve-fit จากช่วง RC-tail ของ HPPC 
+pulse ซึ่งสามารถแยกได้ดีที่ 10 Hz 
+USB/SCPI latency ท าให้อ่านค่า DCIR คลาดเคลื่อน 
+(rig stall) ปานกลาง สูง เพิ่ม dt-gating ทิ้งค่าที่ latency > 0.5s 
+พร้อมแจ้งเตือนคุณภาพข้อมูล 
+
+--- PAGE 16 ---
+16 
+ความเสี่ยง / Risk โอกาส / 
+Likelihood 
+ผลกระทบ 
+/ Impact แผนบรรเทา / Mitigation 
+แบตเตอรี่เสียหายจากความร้อน/แรงดัน 
+เกินระหว่างทดสอบไร้คนเฝ้า ต ่า สูง 
+ระบบความปลอดภัยหลายชั้น (SSR 
+อัตโนมัติ, Circuit Breaker, E-STOP, 
+ขีดจ ากัดซอฟต์แวร์) 
+ตัดเกรดผิดพลาดจากแบตเริ่มทดสอบขณะประจุไม่เต็ม ปานกลาง ปานกลาง 
+เพิ่ม guard ตรวจสอบ SoC เริ่มต้น 
+แจ้งเตือนเมื่อเริ่มทดสอบที่ SoC ต ่ากว่า 
+95% 
+ 
+
+--- PAGE 17 ---
+17 
+บทที่ 4 การออกแบบทางวิศวกรรมโดยละเอียด / Chapter 4: Detailed 
+Engineering Design 
+4.1 วิธีการออกแบบ / Design Methodology 
+ระบบซอฟต์แวร์แบ่งเป็น 2 โปรแกรม ที่ท างานร่วมกัน ได้แก่ (1) โปรแกรมห้องปฏิบัติการ (PySide6 GUI) ส าหรับควบคุม
+ฮาร์ดแวร์และวิเคราะห์ผลโดยตรง (2) เว็บแดชบอร์ดบนคลาวด์ ส าหรับรับข้อมูลจากโปรแกรมห้องปฏิบัติการและแสดงผล
+ระยะไกล แพ็กเกจ Python หลักแบ่งเป็นโมดูลตามหน้าที่ ได้แก่ core (แบบจ าลองแบตเตอรี่และ State 
+Estimator),hardware (ควบคุมอุปกรณ์จริงผ่าน SCPI และโหมดจ าลอง),acquisition (เอนจินวิเคราะห์และ worker เก็บ
+ข้อมูล),UI (หน้าจอ ISA-101) และ storage/services (บันทึกข้อมูลและส่งขึ้นคลาวด์) 
+4.2 การวิเคราะห์ทางวิศวกรรม / Engineering Analysis 
+แบบจ าลองหลักของระบบคือ วงจรสมมูล Thevenin แบบ 1-RC สูตรการค านวณตามสมการที่ 4.2.1 
+ 𝑉(𝑡) = 𝑉(𝑂𝐶) − 𝐼 (𝑅0 + 𝑅1(1 − 𝑒(−𝑡/(𝑅1𝐶1)))) (4.2.1) 
+โดย R0 คือความต้านทาน Ohmic (ประมาณด้วยการยืดค่าย้อนกลับไปที่ t=0 จากช่วง Relaxation), R1 และ C1 
+คือความต้านทานและความจุ ของปรากฏการณ์ Polarization/Charge-transfer ซึ่งได้จากการ fit สมการด้วยวิธี Trust 
+Region Reflective (scipy.optimize.curve_fit) 
+ความต้านทานภายในแบบ DCIR (two-pulse) ตาม IEC 61960 สูตรการค านวณตามสมการที่ 4.2.2 
+ 𝑅 = |(Δ𝑉)/(Δ𝐼)| (4.2.2) 
+ที่จุดแรกหลังการก้าวกระโดดของกระแส (≈200 ms ที่อัตราอ่านค่า 5 Hz) 
+Peukert's Law ส าหรับการปรับอัตราคายประจุ (Rate Normalization) สูตรการค านวณตามสมการที่ 4.2.3 
+ 𝐶 = (𝐶𝑝)/(𝐼(𝑘−1)) (4.2.3) 
+  โดย k ≈ 1.10–1.30 ส าหรับตะกั่วกรด และ ≈ 1.05 ส าหรับลิเธียม 
+การประมาณ State of Charge ใช้ Extended Kalman Filter ที่รวม Coulomb Counting 
+เข้ากับการปรับแก้ด้วยแรงดันวงจรเปิด (OCV correction) และการชดเชยผลของอุณหภูมิด้วยแบบจ าลอง Arrhenius 
+ส าหรับค่าความต้านทานภายใน เพื่อให้ค่าที่วัดในอุณหภูมิห้องต่างกันเทียบกันได้ที่ อุณหภูมิอ้างอิง 25°C 
+การประเมินสภาพแบตเตอรี่ (State of Health) ค านวณจากความจุที่วัดได้จริง โดยปรับให้เป็นอัตราคายประจุอ้างอิง
+ด้วยกฎ Peukert (สมการที่ 4.2.3) ก่อนเทียบกับความจุพิกัด สูตรการค านวณตามสมการที่ 4.2.4 
+ 𝑆𝑜𝐻 =
+𝐶𝑛𝑜𝑟𝑚
+𝐶𝑟𝑎𝑡𝑒𝑑
+× 100% (4.2.4) 
+
+--- PAGE 18 ---
+18 
+โดย Cnorm คือความจุที่ปรับด้วย Peukert แล้ว (ที่อัตราคายประจุอ้างอิง 0.2C) และ Crated คือความจุพิกัด จากนั้นระบบตัด
+เกรดอัตโนมัติจากค่า SoH ร่วมกับการเติบโตของความต้านทานภายในแบบแยกส่วน คือ R0 (ohmic) และ R1 (charge-
+transfer) เทียบกับค่าฐาน R0,base = 0.6·Rint และ R1,base = 0.4·Rint ดังนี้ — เกรด A เมื่อ SoH ≥ 90% และ R0/R0,base ≤ 
+1.3 และ R1/R1,base ≤ 1.4; เกรด B เมื่อ SoH ≥ 80% และอัตราส่วน ≤ 1.7 และ 1.8; เกรด C เมื่อ SoH ≥ 70% และ
+อัตราส่วน ≤ 2.5 และ 2.8; นอกเหนือจากนี้จัดเป็น REJECT (กรณีทดสอบ HPPC ที่วัด SoH ไม่ได้ จะตัดเกรดจากการ
+เติบโตของความต้านทานเพียงอย่างเดียว) 
+การประมาณสถานะประจุ (State of Charge) ใช้ Extended Kalman Filter บนเวกเตอร์สถานะ x = [SoC, V1]T โดย
+สมการเปลี่ยนสถานะ (State Transition) แสดงดังสมการที่ 4.2.5 และ 4.2.6 
+ 𝑆𝑜𝐶𝑘 = 𝑆𝑜𝐶𝑘−1 −
+𝜂𝛥𝑡
+𝑄𝑛
+𝐼𝑘−1 (4.2.5) 
+ 𝑉1,𝑘 = 𝑒−𝛥𝑡/𝜏𝑉1,𝑘−1 + 𝑅1(1 − 𝑒−𝛥𝑡/𝜏)𝐼𝑘−1 (4.2.6) 
+และสมการวัด (Measurement Model) ที่เชื่อมแรงดันขั้วแบตเตอรี่กับสถานะ แสดงดังสมการที่ 4.2.7 
+ 𝑉𝑘 = 𝑂𝐶𝑉(𝑆𝑜𝐶𝑘) − 𝑉1,𝑘 − 𝑅0𝐼𝑘 (4.2.7) 
+โดย η คือประสิทธิภาพคูลอมบ์ (Coulombic Efficiency), Qn คือความจุพิกัด, Δt คือคาบเวลาสุ่มตัวอย่าง และ τ = R1C1 
+คือค่าคงที่เวลาของวงจร RC นอกจากนี้ได้ชดเชยผลของอุณหภูมิต่อค่าความต้านทานภายในด้วยแบบจ าลอง Arrhenius 
+แสดงดังสมการที่ 4.2.8 
+ 𝑅(𝑇) = 𝑅𝑟𝑒𝑓 ∙ 𝑒𝑥𝑝[
+𝐸𝑎
+𝑅 (
+1
+𝑇 −
+1
+𝑇𝑟𝑒𝑓
+)] (4.2.8) 
+โดย Ea คือพลังงานกระตุ้น (Activation Energy), R คือค่าคงที่แก๊สสากล (Universal Gas Constant) โดย Ea/R ส าหรับ
+ตะกั่วกรด ≈ 2200 K และ Tref = 298.15 K (25°C) เพื่อให้ค่าความต้านทานที่วัดในอุณหภูมิห้องที่ต่างกันสามารถเทียบ
+กันได้ที่อุณหภูมิอ้างอิงเดียว (หากไม่มีค่า Ea/R ในโปรไฟล์ ระบบจะใช้การประมาณเชิงเส้นแทน) 
+4.3 การค านวณการออกแบบ / Design Calculations 
+ตัวอย่างการคำนวณค่า DCIR จากขั้นกระแสจริงระหว่างการทดสอบ HPPC: กำหนด ΔV = 150 mV และ ΔI = 5 A จะได้ 
+R₀ = |ΔV/ΔI| = 0.150/5 = 0.030 Ω = 30 mΩ ซึ่งใกล้เคียงกับค่าอ้างอิงที่วัดด้วยเครื่อง GBM-3080 (ACIR 38 mΩ) โดย
+ส่วนต่าง 8 mΩ อธิบายได้จากผลของการเสื่อมสภาพตามอายุและความแตกต่างระหว่างวิธีวัดแบบ AC (ACIR ที่ 1 kHz) กับ 
+DC (DCIR) 
+ตัวอย่างการคำนวณ Peukert-normalized capacity สำหรับแบตเตอรี่ YTZ6V (rated 5.3 Ah, k = 1.10): เมื่อดิสชาร์จที่ 
+1C (5.3 A) เทียบกับอัตราอ้างอิง 0.2C (1.06 A) จะได้ตัวคูณปรับค่า (5.3/1.06)^(1.10−1) = 5^0.10 ≈ 1.175 
+หมายความว่าความจุที่วัดได้จริงที่อัตราสูงต้องคูณด้วยประมาณ 1.175 เพื่อเทียบเท่าความจุที่อัตราอ้างอิง 
+
+--- PAGE 19 ---
+19 
+การคำนวณคาบการสุ่มตัวอย่าง: อัตราการอ่านค่าจาก SCPI ที่วัดได้จริงประมาณ 10 Hz หมายถึงคาบเวลาระหว่างตัวอย่าง T 
+= 1/10 = 100 ms ต่อรอบ ซึ่งกำหนดเป็นเกณฑ์ dt-gating สำหรับ DCIR ที่ 0.5 s (5 เท่าของคาบปกติ) เพื่อทิ้งค่าที่อ่านช้า
+ผิดปกติจากการหน่วงของ USB/SCPI ก่อนนำไปคำนวณ 
+4.4 แบบวิศวกรรม / Engineering Drawings 
+ภาพที่ 4.1 แสดงแผนภาพวงจรของสถานีทดสอบ ประกอบด้วย Power Supply (PSW), Electronic Load, Circuit 
+Breaker (CB), Solid-State Relay (SSR) ควบคุมผ่าน ESP32 GPIO16 และวงจร 4-Wire Kelvin Sensing (แยกสาย 
+Force กับ Sense ที่ขั้ว S+/S− ของทั้ง PSW และ Load) เพื่อขจัดผลของความต้านทานสายไฟออกจากค่า DCIR ที่วัดได้ 
+ส่วน ESP32 ตัวที่สองเชื่อมต่อกับเซนเซอร์ MLX90614 ส าหรับวัดอุณหภูมิผิวแบตเตอรี่แบบไม่สัมผัส  
+ 
+ภาพที่ 4.1: แผนภาพวงจรทดสอบ (4-Wire Kelvin Sensing) 
+
+
+--- PAGE 20 ---
+20 
+ 
+ภาพที่ 4.2: สถาปัตยกรรมฮาร์ดแวร์ของระบบทดสอบจริง 
+4.5 การจ าลองและสร้างแบบจ าลอง / Simulation and Modeling 
+ระบบพัฒนาโหมดจ าลองฮาร์ดแวร์ ( Hardware Controller) ที่จ าลองพฤติกรรมทางไฟฟ้าของแบตเตอรี่ รวมถึงการ
+ตอบสนองแบบ 1-RC ภายใต้โหลด เพื่อให้พัฒนาและทดสอบตรรกะซอฟต์แวร์ได้โดยไม่ต้องใช้ฮาร์ดแวร์จริงตลอดเวลา 
+และมี Replay Harness ที่น า CSV จากการทดสอบจริงย้อนกลับมารันผ่านเอนจินวิเคราะห์อีกครั้งแบบออฟไลน์ เพื่อยืนยัน
+ว่าการแก้ไขอัลกอริทึมในภายหลังไม่ท าให้ผลลัพธ์กับข้อมูลเดิมเปลี่ยนไปโดยไม่ตั้งใจ (Ablation Study) นอกจากนี้ยังมี
+ตัวเลือกเปรียบเทียบวิธีการประมาณค่า (Adaptive EKF เทียบกับ EKF มาตรฐาน, การอินทิเกรตแบบ trapezoidal เทียบ
+กับ rectangular) เพื่อประเมินผลกระทบของแต่ละวิธีต่อความแม่นย าก่อนเลือกใช้งานจริง 
+4.6 ข้อก าหนดขั้นสุดท้าย / Final Specifications 
+หลังจากด าเนินการออกแบบ พัฒนา และทดสอบระบบกับฮาร์ดแวร์จริง พบว่าระบบสามารถบรรลุข้อก าหนดทางวิศวกรรม
+ที่ก าหนดไว้ในบทที่ 2 ได้ครบถ้วน โดยระบบมีอัตราการอ่านข้อมูลผ่าน SCPI ได้ประมาณ 10 Hz ซึ่งเป็นไปตามเป้าหมายที่
+ก าหนดไว้ การวัดค่าความต้านทานภายในแบบ DCIR (R₀) ให้ผลลัพธ์ 30 mΩ เมื่อเปรียบเทียบกับเครื่องอ้างอิง GBM-
+3080 ที่วัดค่า ACIR ได้ 38 m Ω พบว่ามีความแตกต่างเพียง 8 m Ω ซึ่งอยู่ในเกณฑ์ที่ยอมรับได้ส าหรับการประเมิน
+สมรรถนะของแบตเตอรี่ านระบบความปลอดภัย พบว่า  Solid-State Relay (SSR) สามารถตอบสนองต่อค าสั่งตัดการ
+ท างานได้ภายในเวลาที่ก าหนด และได้รับการยืนยันการท างานร่วมกับฮาร์ดแวร์จริงเรียบร้อยแล้ว นอกจากนี้ ระบบยัง
+สามารถตรวจสอบและก าหนดทิศทางของกระแสชาร์จและคายประจุ (Sign Convention) ได้อย่างถูกต้อง โดยผ่านการ
+ทดสอบกับแบตเตอรี่ FB FTZ6V ในส่วนของการท างานอัตโนมัติ ระบบสามารถด าเนินการตามล าดับการทดสอบ 
+PREPARE → CHARGE → REST → TEST → ANALYZE ได้ครบทุกขั้นตอนโดยไม่ต้องอาศัยการควบคุมจาก
+ผู้ใช้งานระหว่างการทดสอบ และเมื่อตรวจสอบความถูกต้องของซอฟต์แวร์ด้วยชุดทดสอบอัตโนมัติ ( Automated Test 
+Suite) พบว่าผ่านการทดสอบครบ แสดงให้เห็นว่าระบบมีความถูกต้องและมีความพร้อมส าหรับการใช้งานจริง 
+
+
+--- PAGE 21 ---
+21 
+เอกสารอ้างอิง / References 
+[1] L. Chen, Z. Lü, W. Lin, J. Li, and H. Pan, "A new state-of-health estimation method for lithium-ion batteries 
+through the intrinsic relationship between ohmic internal resistance and capacity," Measurement, vol. 116, pp. 
+586–595, Feb. 2018. [Online]. Available: 
+https://www.sciencedirect.com/science/article/abs/pii/S0263224117307248 
+[2] A. Guha and A. Patra, "State of health estimation of lithium-ion batteries using capacity fade and internal 
+resistance growth models," IEEE Trans. Transp. Electrific., vol. 4, no. 1, pp. 135–146, Mar. 2018. [Online]. 
+Available: https://ieeexplore.ieee.org/document/8118185/ 
+[3] Secondary Cells and Batteries Containing Alkaline or Other Non-Acid Electrolytes—Secondary Lithium 
+Cells and Batteries for Portable Applications, IEC Standard 61960, 2nd ed., 2011. 
+[4] K. Khamphut and C. Phanjailue, "A 12-volt motorcycle battery condition assessment device," B.Eng. thesis, 
+Dept. Elect. Comput. Eng., Fac. Eng., Naresuan Univ., Phitsanulok, Thailand, 2016. 
+
+===== ABET_Capstone_Report_EXAMPLE_MPPT (1).pdf | pages=29 =====
+
+--- PAGE 1 ---
+[ตรา สัญลักษณ มหาวิทยาลัย  /  UNIVERSITY  LOGO]
+ 
+รายงาน โครง งาน ออก แบบ ทาง วิศวกรรม  
+CAPSTONE  DESIGN  PROJECT  REPORT  
+(รูป แบบ วิชาชีพ ตาม เกณฑ  ABET  EAC)
+ 
+(ABET  EAC  PROFESSIONAL  FORMAT)
+ 
+คณะ
+วิศวกรรมศาสตร
+ 
+มหาวิทยาลัย
+อุบลราชธานี
+ 
+Faculty  of  Engineering,  Ubon  Ratchathani  University
+ 
+ชื่อ โครง งาน  (Project  Title):
+ 
+ตัว ควบคุม จุด กำลัง ไฟฟา สูง สุด แบบ ปรับ ตัว สำหรับ แผง โซลา รเซลล ขนาด  200  วัตต 
+English  Title:
+ 
+Adaptive  Maximum  Power  Point  Tracking  (MPPT)  Controller  for  a  200  W  Solar  Panel
+ 
+ 
+ราย ชื่อ นักศึกษา  /  Student  Names  
+#
+ ชื่อ- สกุล  /  Name
+ รหัส นักศึกษา  /  ID
+ หนาที่  /  Role
+ 
+1
+ 
+นาย
+ศุภกิจ
+ 
+วงศ
+อินทร
+ 
+6503012345
+ 
+หัวหนา
+กลุม
+ 
+/
+ 
+MPPT
+ 
+Algorithm
+ 
+&
+ 
+Control
+ 
+2
+ 
+นางสาว
+ปาริชาต
+ 
+บุญ
+มี
+ 
+6503012346
+ 
+Power
+ 
+Electronics
+ 
+Hardware
+ 
+3
+ 
+นายธีรภัทร
+ 
+แสงจันทร
+ 
+6503012347
+ 
+Embedded
+ 
+Firmware
+ 
+&
+ 
+Testing
+ 
+ 
+อาจารย ที่ ปรึกษา  /  Advisor:  ผศ. ดร.  สม ชาย  พลังงาน ดี  
+1
+ 
+
+--- PAGE 2 ---
+ปการศึกษา  /  Academic  Year:  ปการศึกษา  2568  
+ 
+2
+ 
+
+--- PAGE 3 ---
+บท สรุป ผู บริหาร  /   Executive  Summary
+ 
+โครง งาน นี้ นำ เสนอ การ ออก แบบ และ สราง ตัว ควบคุม จุด กำลัง ไฟฟา สูง สุด  (MPPT)  แบบ ปรับ ตัว
+สำหรับ
+แผง
+โซลา
+รเซลล
+ขนาด
+ 
+200
+ 
+วัตต
+ 
+โดย
+มี
+เปาหมาย
+เพื่อ
+เพิ่ม
+ประสิทธิภาพ
+การ
+ติดตาม
+จุด
+กำลัง
+สูง
+สุด
+ให
+ไม
+นอย
+กวา
+รอย
+ละ
+ 
+98
+ 
+ภาย
+ใต
+สภาวะ
+เงา
+บาง
+สวน
+ 
+ระบบ
+ใช
+ขั้น
+ตอน
+วิธี
+ 
+Incremental
+ 
+Conductance
+ 
+รวม
+กับ
+ตัว
+แปลง
+ไฟฟากระแส
+ตรง
+ชนิด
+ 
+Synchronous
+ 
+Buck-Boost
+ 
+ควบคุม
+ดวย
+ไมโครคอ
+น
+โทรลเลอร
+ 
+STM32F103C8T6
+ 
+ผล
+การ
+ทดสอบ
+พบ
+วา
+ระบบ
+สามารถ
+ติดตาม
+จุด
+กำลัง
+สูง
+สุด
+ไดที่
+ประสิทธิภาพ
+เฉลี่ย
+รอย
+ละ
+ 
+98.3
+ 
+ใน
+สภาวะ
+แสง
+สม่ำเสมอ
+ 
+แต
+ใน
+สภาวะ
+เงา
+บาง
+สวน
+ที่
+มี
+จุด
+สูง
+สุด
+หลาย
+จุด
+ 
+ประสิทธิภาพ
+ลด
+ลง
+เหลือ
+รอย
+ละ
+ 
+91.4
+ 
+ซึ่ง
+ต่ำ
+กวา
+เปาหมาย
+ที่
+กำหนด
+ไว
+ 
+รายงาน
+ฉบับ
+นี้
+วิเคราะห
+สาเหตุ
+ของ
+ชอง
+วาง
+ดัง
+กลาว
+และ
+เสนอ
+แนวทาง
+ปรับปรุง
+สำหรับ
+การ
+พัฒนา
+ตอ
+ 
+ระบบ
+ผาน
+การ
+ทดสอบ
+ความ
+ปลอดภัย
+ตาม
+มาตรฐาน
+ 
+IEC
+ 
+62116
+ 
+และ
+มี
+ตนทุน
+การ
+ผลิต
+รวม
+ 
+2,847
+ 
+บาท
+ 
+ซึ่ง
+อยู
+ใน
+งบประมาณ
+ที่
+กำหนด
+ 
+คำ สำคัญ:  MPPT,  Incremental  Conductance,  ตัว แปลง ไฟฟากระแส ตรง,  พลังงาน แสงอาทิตย,  IEC  62116
+ 
+ 
+This  project  presents  the  design  and  implementation  of  an  adaptive  Maximum  
+Power
+ 
+Point
+ 
+Tracking
+ 
+(MPPT)
+ 
+controller
+ 
+for
+ 
+a
+ 
+200
+ 
+W
+ 
+solar
+ 
+panel,
+ 
+targeting
+ 
+a
+ 
+tracking
+ 
+efficiency
+ 
+of
+ 
+at
+ 
+least
+ 
+98%
+ 
+under
+ 
+partial-shading
+ 
+conditions.
+ 
+The
+ 
+system
+ 
+employs
+ 
+an
+ 
+Incremental
+ 
+Conductance
+ 
+algorithm
+ 
+combined
+ 
+with
+ 
+a
+ 
+synchronous
+ 
+buck-boost
+ 
+DC-DC
+ 
+converter,
+ 
+controlled
+ 
+by
+ 
+an
+ 
+STM32F103C8T6
+ 
+microcontroller.
+ 
+Test
+ 
+results
+ 
+show
+ 
+an
+ 
+average
+ 
+tracking
+ 
+efficiency
+ 
+of
+ 
+98.3%
+ 
+under
+ 
+uniform
+ 
+irradiance,
+ 
+but
+ 
+efficiency
+ 
+dropped
+ 
+to
+ 
+91.4%
+ 
+under
+ 
+partial-shading
+ 
+conditions
+ 
+with
+ 
+multiple
+ 
+local
+ 
+maxima
+ 
+—
+ 
+falling
+ 
+short
+ 
+of
+ 
+the
+ 
+target.
+ 
+This
+ 
+report
+ 
+analyzes
+ 
+the
+ 
+root
+ 
+cause
+ 
+and
+ 
+proposes
+ 
+improvements
+ 
+for
+ 
+future
+ 
+work.
+ 
+The
+ 
+system
+ 
+passed
+ 
+IEC
+ 
+62116
+ 
+anti-islanding
+ 
+testing
+ 
+at
+ 
+a
+ 
+total
+ 
+cost
+ 
+of
+ 
+2,847
+ 
+THB.
+ 
+3
+ 
+
+--- PAGE 4 ---
+Keywords:  MPPT,  Incremental  Conductance,  DC-DC  Converter,  Photovoltaic,  IEC  
+62116
+ 
+ 
+4
+ 
+
+--- PAGE 5 ---
+สารบัญ  /   Table  of  Contents
+ 
+→  ใน  Word:  อางอิง  →  สารบัญ  (References  →  Table  of  Contents)  แลว เลือก รูป แบบ อัตโนมัติ  ระบบ จะ ดึง หัวขอ จาก  Heading  1/2/3  ให อัตโนมัติ
+ 
+→  In  Word:  References  →  Table  of  Contents  →  Automatic  Table.  Word  will  pull  all  Heading  1/2/3  styles  automatically.
+ 
+→  อยา พิมพ สารบัญ เอง  —  ใช  auto-generated  ﬁeld  แลว กด  Update  Table  กอน สง งาน ทุก ครั้ง
+ 
+→  Do  not  type  the  ToC  manually  —  use  the  auto  ﬁeld  and  press  Update  Table  before  every  submission.
+ 
+ 
+[พื้นที่ นี้ จะ ถูก แทน ที่ ดวย สารบัญ อัตโนมัติ ของ  Word  /  This  area  will  be  replaced  by  Word's  
+auto-generated
+ 
+Table
+ 
+of
+ 
+Contents] 
+ 
+5
+ 
+
+--- PAGE 6 ---
+สารบัญ ตาราง  /   List  of  Tables
+ 
+→  ใช  Insert  Caption  บน ทุก ตาราง  (ค ลิ ก ขวา ที่ ตาราง  →  Insert  Caption  →  Table)  แลว สราง  List  of  Tables  จาก  References  →  Insert  Table  of  Figures  →  Caption  label:  Table
+ 
+→  Use  Insert  Caption  on  every  table,  then  References  →  Insert  Table  of  Figures  →  Caption  label:  Table.
+ 
+[รายการ ตาราง อัตโนมัติ  /  Auto-generated  List  of  Tables] 
+ 
+6
+ 
+
+--- PAGE 7 ---
+สารบัญ รูปภาพ  /   List  of  Figures
+ 
+→  เชน เดียว กับ ตาราง  แต ใช  Caption  label:  Figure
+ 
+→  Same  as  tables,  but  use  Caption  label:  Figure.
+ 
+[รายการ รูปภาพ อัตโนมัติ  /  Auto-generated  List  of  Figures] 
+ 
+7
+ 
+
+--- PAGE 8 ---
+บท ที่  1  นิยาม โครง งาน  /   Chapter  1:  Project  Definition
+ 
+1.1  ที่มา และ ความ สำคัญ  /   Background 
+📌  หมายเหตุ  ABET:  หัวขอ นี้ แสดง หลักฐาน การ คนควา ขอมูล ดวย ตน เอง  (SO7-PI2)   /   This  section  shows  evidence  of  
+independent
+ 
+research
+ 
+(SO7-PI2:
+ 
+finds
+ 
+information
+ 
+without
+ 
+guidance).
+ 
+ประเทศ ไทย มี ศักยภาพ พลังงาน แสงอาทิตย เฉลี่ย  18.2  MJ/m²/day  และ การ ติด ตั้ง ระบบ โซลา รเซลล
+ระดับ
+ครัวเรือน
+ขยาย
+ตัวอยาง
+รวดเร็ว
+ 
+อยางไรก็ตาม
+ 
+ตัว
+ควบคุม
+ประจุ
+ราคา
+ประหยัด
+ที่
+ใช
+ใน
+ตลาด
+สวน
+ใหญ
+ใช
+ขั้น
+ตอน
+วิธี
+ 
+Perturb
+ 
+&
+ 
+Observe
+ 
+(P&O)
+ 
+แบบ
+ดั้งเดิม
+ 
+ซึ่ง
+มี
+ปญหา
+การ
+สั่น
+คาง
+รอบ
+จุด
+กำลัง
+สูง
+สุด
+และ
+ติดตาม
+ผิด
+จุด
+เมื่อ
+เกิด
+เงา
+บาง
+สวน
+ 
+ทำให
+สูญ
+เสีย
+พลังงาน
+สะสม
+เฉลี่ย
+ 
+8–15%
+ 
+ตอ
+ป
+ตาม
+ขอมูล
+จาก
+งาน
+วิจัย
+ที่
+เกี่ยวของ
+ 
+[1]
+ 
+โครง
+งาน
+นี้
+จึง
+มุง
+พัฒนา
+ตัว
+ควบคุม
+ 
+MPPT
+ 
+แบบ
+ปรับ
+ตัว
+ที่
+ใช
+ขั้น
+ตอน
+วิธี
+ 
+Incremental
+ 
+Conductance
+ 
+ซึ่ง
+ลู
+เขา
+สู
+จุด
+กำลัง
+สูง
+สุด
+ได
+แมนยำ
+กวา
+ 
+โดย
+ใช
+ฮา
+รด
+แวรตนทุน
+ต่ำ
+ที่
+เหมาะ
+กับ
+ตลาด
+ครัวเรือน
+ไทย
+ 
+1.2  การ วิเคราะห ผู มี สวนไดสวนเสีย  /   Stakeholder  Analysis 
+ผู มี สวนไดสวนเสีย  /  Stakeholder
+ ความ สนใจ / ความ ตองการ  /  Interest
+ อิทธิพล ตอ โครง งาน  /  Inﬂuence
+ 
+เจาของ
+บาน
+ที่
+ติด
+ตั้ง
+โซลา
+รเซลล
+ 
+/
+ 
+Homeowner
+ 
+ตองการ
+ประสิทธิภาพ
+สูง
+สุด
+ 
+ราคา
+ยอมเยา
+ 
+ติด
+ตั้ง
+งาย
+ 
+สูง
+ 
+—
+ 
+ผู
+ใช
+งาน
+หลัก
+ 
+ผู
+จำหนาย
+อุปกรณ
+โซลา
+รเซลล
+ 
+/
+ 
+Retailer
+ 
+ตองการ
+ผลิตภัณฑ
+ที่
+แขงขัน
+ได
+ใน
+ตลาด
+ 
+ราคา
+ตนทุน
+ต่ำ
+ 
+ปานกลาง
+ 
+—
+ 
+ชอง
+ทาง
+จำหนาย
+ 
+หนวย
+งาน
+มาตรฐาน
+ 
+(กฟภ.
+/
+สมอ.)
+ 
+/
+ 
+Regulator
+ 
+ตองการ
+ความ
+ปลอดภัย
+ตาม
+ 
+IEC
+ 
+62116,
+ 
+IEC
+ 
+62109
+ 
+สูง
+ 
+—
+ 
+ขอบังคับ
+ดาน
+ความ
+ปลอดภัย
+ 
+1.3  การ ระบุ ปญหา  /   Problem  Statement 
+📌  หมายเหตุ  ABET:  หัวขอ นี้ คือ หลักฐาน หลัก ของ  SO1-PI1  (ความ เขาใจ ปญหา)   /   This  section  is  the  primary  
+evidence
+ 
+for
+ 
+SO1-PI1
+ 
+(understanding
+ 
+of
+ 
+the
+ 
+problem).
+ 
+ตัว ควบคุม ประจุ  PWM  ราคา ประหยัด ที่ มี ขาย ทั่วไป ใน ประเทศ ไทย ให ประสิทธิภาพ การ ติดตาม จุด
+กำลัง
+สูง
+สุด
+ต่ำ
+กวา
+ 
+90%
+ 
+และ
+ไม
+สามารถ
+รักษา
+ประสิทธิภาพ
+ได
+เมื่อ
+เกิด
+เงา
+บาง
+สวน
+ 
+ทำให
+ผู
+ใช
+งาน
+สูญ
+1
+ 
+
+--- PAGE 9 ---
+เสีย พลังงาน ที่ ผลิต ไดโดย ไม จำเปน  โครง งาน นี้ จึง มุง แก ปญหา ดวย ตัว ควบคุม  MPPT  แบบ ปรับ ตัว ที่
+ราคา
+ตนทุน
+ไม
+เกิน
+ 
+3,000
+ 
+บาท
+ 
+1.4  วัตถุ ประสงค  /   Objectives 
+●  เพื่อ ออก แบบ และ สราง ตัว ควบคุม  MPPT  ที่ มี ประสิทธิภาพ การ ติดตาม ไม นอย กวา รอย ละ  98  
+ภาย
+ใต
+สภาวะ
+แสง
+สม่ำเสมอ
+ 
+●  เพื่อ พัฒนา ขั้น ตอน วิธี ควบคุม ที่ ทนทาน ตอ สภาวะ เงา บาง สวน  โดย ลด ขอ ผิด พลาด จาก จุด สูง
+สุด
+ลวง
+ 
+●  เพื่อ ทดสอบ และ ยืนยัน วา ระบบ ผาน มาตรฐาน ความ ปลอดภัย  IEC  62116  หัวขอ  
+Anti-Islanding
+ 
+1.5  ขอบเขต  /   Scope 
+สิ่ง ที่ ทำ  (In  Scope): 
+●  ออก แบบ วงจร  Synchronous  Buck-Boost  Converter  กำลัง ไฟ  200  W  พรอม วงจร ขับ เก
+ต
+ 
+●  พัฒนา ขั้น ตอน วิธี  Incremental  Conductance  บน ไมโครคอ น โทรลเลอร  
+STM32F103C8T6
+ 
+สิ่ง ที่ ไม ทำ  (Out  of  Scope): 
+●  ไม รวม การ เชื่อม ตอ กับ ระบบ ไฟฟา แรง สูง  (Grid-Tie  Inverter)  —  เปน ระบบ  
+Off-Grid/Battery
+ 
+Charging
+ 
+เทานั้น
+ 
+1.6  ผล งาน สง มอบ  /   Deliverables 
+●  ตัว ควบคุม  MPPT  ตนแบบ พรอม กลอง กัน น้ำ  IP65  จำนวน  1  ชุด  
+2
+ 
+
+--- PAGE 10 ---
+●  ซอ รส โคดไมโครคอ น โทร ลเลอรพรอม เอกสาร ประกอบ  
+●  แบบ วงจร และ  PCB  Layout  ฉบับ สมบูรณ  
+●  รายงาน ผล การ ทดสอบ และ  Compliance  Matrix  
+1.7  แผน ดำเนิน งาน โครง งาน  /   Project  Schedule 
+กิจกรรม  /  Task
+ เริ่ม  /  Start
+ สิ้นสุด  /  End
+ สถานะ  /  Status
+ 
+ทบทวน
+วรรณกรรม
+และ
+กำหนด
+ 
+requirements
+ 
+สัปดาห
+ 
+1
+ 
+สัปดาห
+ 
+3
+ 
+เสร็จ
+สิ้น
+ 
+ออก
+แบบ
+แนว
+คิด
+และ
+ 
+decision
+ 
+matrix
+ 
+สัปดาห
+ 
+4
+ 
+สัปดาห
+ 
+6
+ 
+เสร็จ
+สิ้น
+ 
+ออก
+แบบ
+วงจร
+และ
+จำลอง
+ผล
+ 
+สัปดาห
+ 
+7
+ 
+สัปดาห
+ 
+10
+ 
+เสร็จ
+สิ้น
+ 
+สราง
+ตนแบบ
+และ
+ทดสอบ
+ 
+สัปดาห
+ 
+11
+ 
+สัปดาห
+ 
+14
+ 
+เสร็จ
+สิ้น
+ 
+ 
+3
+ 
+
+--- PAGE 11 ---
+บท ที่  2  ขอกำหนด และขอ จำกัด การ ออก แบบ  /   Chapter  2:  Design  
+Requirements
+ 
+and
+ 
+Constraints
+ 
+📌  หมายเหตุ  ABET:  บท นี้ คือ  ' สัญญา '  ของ การ ออก แบบ  ครอบ คลุม  SO2  (Design):  PI1  ขอกำหนด /specs  (2.1–2.2),  PI2  ขอ จำกัด และ เกณฑ  
+(2.4–2.5)
+  
+/
+  
+This
+ 
+chapter
+ 
+is
+ 
+the
+ 
+design
+ 
+contract,
+ 
+addressing
+ 
+SO2
+ 
+(Design):
+ 
+PI1
+ 
+needs
+ 
+statement/specs
+ 
+(2.1–2.2),
+ 
+PI2
+ 
+constraints
+ 
+&
+ 
+criteria
+ 
+(2.4–2.5).
+ 
+2.1  การ ประเมิน ความ ตองการ ของ ผู ใช  /   Customer  Needs  Assessment 
+จาก การ วิเคราะห ผู มี สวนไดสวนเสีย ใน หัวขอ  1.2  พบ ความ ตองการ เชิง คุณภาพ หลัก  3  ประการ:  (1)  
+ประสิทธิภาพ
+การ
+ติดตาม
+สูง
+และ
+คงที่
+แม
+มี
+เงา
+บาง
+สวน
+ 
+(2)
+ 
+ราคา
+ที่
+แขงขัน
+ได
+กับ
+ผลิตภัณฑ
+ใน
+ตลาด
+ 
+และ
+ 
+(3)
+ 
+ความ
+ปลอดภัย
+ตาม
+มาตรฐาน
+สากล
+ 
+ความ
+ตองการ
+เหลา
+นี้
+ถูก
+แปลง
+เปน
+ 
+Engineering
+ 
+Requirements
+ 
+เชิง
+ปริมาณ
+ใน
+หัวขอ
+ 
+2.2
+ 
+2.2  ขอกำหนด ทาง วิศวกรรม  /   Engineering  Requirements 
+#
+ Parameter
+ Min
+ Max  /  Target
+ Unit
+ 
+1
+ 
+Tracking
+ 
+Efﬁciency
+ 
+(uniform
+ 
+irradiance)
+ 
+98
+ 
+100
+ 
+%
+ 
+2
+ 
+Tracking
+ 
+Efﬁciency
+ 
+(partial
+ 
+shading)
+ 
+95
+ 
+100
+ 
+%
+ 
+3
+ 
+Output
+ 
+Voltage
+ 
+Ripple
+ 
+—
+ 
+50
+ 
+mV
+ 
+pp
+ 
+4
+ 
+Converter
+ 
+Switching
+ 
+Frequency
+ 
+50
+ 
+100
+ 
+kHz
+ 
+5
+ 
+Anti-Islanding
+ 
+Trip
+ 
+Time
+ 
+—
+ 
+2000
+ 
+ms
+ 
+2.3  มาตรฐาน และขอ บังคับ ที่ เกี่ยวของ  /   Applicable  Codes  and  Standards 
+#
+ มาตรฐาน  /  Standard
+ เลข ที่  /  Number
+ การนำ มา ใช  /  Application
+ 
+1
+ 
+Anti-Islanding
+ 
+Test
+ 
+Procedure
+ 
+IEC
+ 
+62116:2014,
+ 
+Cl.
+ 
+6.4.2
+ 
+ทดสอบ
+เวลา
+ตัด
+การ
+ทำ
+งาน
+ 
+≤
+ 
+2
+ 
+s
+ 
+2
+ 
+PV
+ 
+Power
+ 
+Systems
+ 
+Safety
+ 
+IEC
+ 
+62109-1:2010,
+ 
+Cl.
+ 
+4.7
+ 
+กำหนด
+ระยะ
+หาง
+ตัวนำ
+ 
+(Creepage)
+ 
+3
+ 
+Power
+ 
+Converter
+ 
+Safety
+ 
+IEC
+ 
+62368-1:2018,
+ 
+Table
+ 
+17
+ 
+จำกัด
+แรง
+ดัน
+สัมผัส
+ 
+≤
+ 
+42.4
+ 
+V
+ 
+peak
+ 
+4
+ 
+
+--- PAGE 12 ---
+2.4  ขอ จำกัด การ ออก แบบ  /   Design  Constraints 
+2.4.1  ดาน เศรษฐศาสตร  /   Economic  Constraints 
+งบประมาณ รวม ของ  Bill  of  Materials  (BOM)  ตอง ไม เกิน  3,000  บาท ตอ ชุด  เพื่อให แขงขัน ได กับ ตัว
+ควบคุม
+ประจุ
+ 
+PWM
+ 
+ราคา
+ประหยัด
+ 
+(1,200–1,800
+ 
+บาท)
+ 
+แต
+ให
+ประสิทธิภาพ
+สูง
+กวา
+อยาง
+มี
+นัย
+สำคัญ
+ 
+2.4.2  ดาน ความ ปลอดภัย และ สุขภาพ  /   Health  &  Safety  Constraints 
+แรง ดัน ไฟฟา ที่ ผู ใช งาน สัมผัส ได ตอง ไม เกิน  42.4  V  peak  ตาม  IEC  62368-1:2018  Table  17  วงจร
+ตอง
+มี
+ฟวส
+ปองกัน
+กระแส
+เกิน
+ที่
+พิกัด
+ 
+10
+ 
+A
+ 
+และ
+ระยะ
+หาง
+ตัวนำ
+ไม
+นอย
+กวา
+ 
+3.0
+ 
+mm
+ 
+ตาม
+ 
+IEC
+ 
+62109-1:2010
+ 
+Clause
+ 
+4.7
+ 
+2.4.3  ดาน เทคนิค และ กายภาพ  /   Technical  &  Physical  Constraints 
+ขนาด ตัว เครื่อง ไม เกิน  120×80×40  mm  น้ำหนัก ไม เกิน  300  g  ชวง อุณหภูมิ ใช งาน  0–50°C  แรง ดัน
+ไฟ
+เขา
+ 
+18–24
+ 
+V
+ 
+DC
+ 
+2.4.4  ดาน สิ่งแวดลอม  /   Environmental  Constraints 
+สวนประกอบ ทั้งหมด ตอง ปฏิบัติ ตาม มาตรฐาน  RoHS  ประสิทธิภาพ การ แปลง พลังงาน ของ วงจร ตอง
+ไม
+ต่ำ
+กวา
+ 
+95%
+ 
+เพื่อ
+ลด
+การ
+สูญ
+เสีย
+พลังงาน
+เปนความ
+รอน
+ 
+2.5  สรุป เกณฑ การ ออก แบบ  /   Design  Criteria  Summary 
+●  เกณฑ ที่  1:  ระบบ ตอง ติดตาม จุด กำลัง สูง สุด ไดที่ ประสิทธิภาพ เฉลี่ย  ≥  98%  ภาย ใต แสง เทียม  
+(Solar
+ 
+Simulator)
+ 
+ที่
+ 
+irradiance
+ 
+คงที่
+ 
+800
+ 
+W/m²
+ 
+เปน
+เวลา
+ 
+10
+ 
+นาที
+ 
+●  เกณฑ ที่  2:  ระบบ ตอง ตัด การ ทำ งาน ภายใน  2  วินาที เมื่อ ทดสอบ  Anti-Islanding  ตาม  IEC  
+62116:2014
+ 
+Clause
+ 
+6.4.2
+ 
+●  เกณฑ ที่  3:  แรง ดัน กระเพื่อม ที่ โหล ด  200  W  ตอง ไม เกิน  50  mV  peak-to-peak  
+ 
+5
+ 
+
+--- PAGE 13 ---
+บท ที่  3  การ ออก แบบ เชิง แนว คิด  /   Chapter  3:  Conceptual  Design
+ 
+📌  หมายเหตุ  ABET:  บท นี้ แสดง กระบวนการ คิด เชิง วิศวกรรม  ครอบ คลุม  SO2-PI3  (เลือก และ ให เหตุผล),  SO7-PI3  (ประเมิน ทาง เลือก)   /   
+This
+ 
+chapter
+ 
+demonstrates
+ 
+engineering
+ 
+design
+ 
+process,
+ 
+addressing
+ 
+SO2-PI3
+ 
+(carries
+ 
+through
+ 
+to
+ 
+solution,
+ 
+justifies)
+ 
+and
+ 
+SO7-PI3
+ 
+(evaluates
+ 
+alternative
+ 
+solutions).
+ 
+3.1  แนว คิด ทาง เลือก  /   Alternative  Concepts 
+ทีม งาน พิจารณา ขั้น ตอน วิธี  MPPT  สอง แบบ ที่ มีค วาม เปน ไป ได ทาง เทคนิค ทั้ง คู่:  
+หัวขอ  /  Aspect
+ แนว คิด  A:  Perturb  &  Observe
+ แนว คิด  B:  Incremental  Conductance
+ 
+หลักการ
+ทำ
+งาน
+ 
+/
+ 
+Principle
+ 
+รบกวน
+แรง
+ดัน
+แลว
+วัด
+การ
+เปลี่ยนแปลง
+กำลัง
+ 
+คำนวณ
+ 
+dI/dV
+ 
+เทียบ
+กับ
+ 
+-I/V
+ 
+หา
+จุด
+ 
+dP/dV=0
+ 
+โดย
+ตรง
+ 
+ประสิทธิภาพ
+ 
+/
+ 
+Performance
+ 
+95–96%,
+ 
+มี
+ปญหา
+สั่น
+คาง
+รอบ
+จุด
+สูง
+สุด
+ 
+98–99%,
+ 
+ลู
+เขา
+แมนยำ
+ 
+ไม
+สั่น
+คาง
+ 
+ตนทุน
+ 
+/
+ 
+Cost
+ 
+ต่ำ
+ 
+—
+ 
+ADC
+ 
+10-bit
+ 
+เพียงพอ
+ 
+ปานกลาง
+ 
+—
+ 
+ตองการ
+ 
+ADC
+ 
+12-bit
+ 
+ความ
+ซับซอน
+ 
+/
+ 
+Complexity
+ 
+ต่ำ
+ 
+—
+ 
+โคด
+ 
+~50
+ 
+บรรทัด
+ 
+ปานกลาง
+ 
+—
+ 
+โคด
+ 
+~150
+ 
+บรรทัด
+ 
+3.2  การ ประเมิน เบื้องตน  /   Preliminary  Evaluation 
+ทั้ง สอง แนว คิด ผาน เกณฑ คัด กรอง เบื้องตน  (go/no-go):  ทั้ง คู่ ใช  ADC  ที่ มี ใน ไมโครคอ น โทรลเลอร  
+STM32F103C8T6
+ 
+ไดโดย
+ไม
+ตอง
+เพิ่ม
+ฮา
+รด
+แวรภายนอก
+ 
+และ
+ทั้ง
+คู่
+คำนวณ
+เสร็จ
+ภายใน
+กรอบ
+เวลา
+ 
+10
+ 
+ms
+ 
+ตอ
+รอบ
+ซึ่ง
+เพียงพอ
+สำหรับ
+ความเร็ว
+การ
+เปลี่ยนแปลง
+ของ
+ 
+irradiance
+ 
+จึง
+นำ
+ทั้ง
+สอง
+แนว
+คิด
+เขา
+สู
+การ
+ประเมิน
+แบบ
+ถวง
+น้ำหนัก
+ใน
+หัวขอ
+ 
+3.3
+ 
+3.3  ตาราง ตัดสินใจ แบบ ถวง น้ำหนัก  /   Weighted  Decision  Matrix 
+ทีม งาน กำหนด เกณฑ และ น้ำหนัก คะแนน ไว ลวงหนา กอน เริ่ม ให คะแนน  โดย ให น้ำหนัก สูง สุด กับ  
+Performance
+ 
+เนื่องจาก
+เกณฑ
+ความ
+สำเร็จ
+ขอ
+ 
+1
+ 
+ใน
+หัวขอ
+ 
+2.5
+ 
+กำหนด
+เปาหมาย
+ประสิทธิภาพ
+ไว
+สูง
+ถึง
+ 
+98%:
+ 
+6
+ 
+
+--- PAGE 14 ---
+เกณฑ  /  Criterion
+ น้ำหนัก  /  Weight
+ คะแนน  A
+ คะแนน  B
+ น้ำหนัก ×A
+ น้ำหนัก ×B
+ 
+ประสิทธิภาพ
+ 
+/
+ 
+Performance
+ 
+0.40
+ 
+6
+ 
+9
+ 
+2.40
+ 
+3.60
+ 
+ตนทุน
+ 
+/
+ 
+Cost
+ 
+0.25
+ 
+9
+ 
+7
+ 
+2.25
+ 
+1.75
+ 
+ความ
+ปลอดภัย
+ 
+/
+ 
+Safety
+ 
+0.15
+ 
+7
+ 
+8
+ 
+1.05
+ 
+1.20
+ 
+ความ
+ซับซอน
+ 
+/
+ 
+Complexity
+ 
+0.20
+ 
+8
+ 
+6
+ 
+1.60
+ 
+1.20
+ 
+รวม
+ 
+/
+ 
+Total
+ 
+1.00
+ 
+—
+ 
+—
+ 
+7.30
+ 
+7.75
+ 
+3.4  แนว คิด ที่ เลือก  /   Selected  Concept 
+แนว คิด  B  (Incremental  Conductance)  ได คะแนน รวม สูง กวา  (7.75  เทียบ กับ  7.30)  โดย เฉพาะ
+ดาน
+ 
+Performance
+ 
+ซึ่ง
+มี
+น้ำหนัก
+สูง
+สุด
+ 
+(0.40)
+ 
+แม
+ 
+B
+ 
+จะ
+มีค
+วาม
+ซับซอน
+สูง
+กวา
+และ
+ตนทุน
+ 
+ADC
+ 
+สูง
+กวา
+เล็กนอย
+ 
+แต
+ยัง
+อยู
+ใน
+งบประมาณ
+ตาม
+ขอ
+จำกัด
+ 
+2.4.1
+ 
+(งบ
+รวม
+ 
+3,000
+ 
+บาท
+ 
+จริง
+ 
+2,847
+ 
+บาท)
+ 
+ทีม
+งาน
+จึง
+เลือก
+ใช
+ 
+Incremental
+ 
+Conductance
+ 
+เปน
+ขั้น
+ตอน
+วิธี
+หลัก
+ของ
+ระบบ
+ 
+3.5  การ ประเมิน ความ เสี่ยง  /   Risk  Assessment 
+ความ เสี่ยง  /  Risk
+ โอกาส  /  Likelihood
+ ผลก ระ ทบ  /  Impact
+ แผน บรรเทา  /  Mitigation
+ 
+Local  Maxima  ทำให  MPPT  ติด กับ ดัก
+ภาย
+ใต
+เงา
+บาง
+สวน
+ 
+สูง
+ 
+สูง  —  สูญ เสีย
+ประสิทธิภาพ
+ 
+เพิ่ม
+ 
+Global
+ 
+Scanning
+ 
+เปน
+ระยะ
+ 
+(ดู
+บท
+ที่
+ 
+8.4)
+ 
+dV  เขา ใกล ศูนย ทำให เกิด  division  by  
+zero
+ 
+ในโคด
+ 
+ปานกลาง
+ 
+สูง
+ 
+—
+ 
+ระบบ
+คาง
+ 
+เพิ่ม
+ 
+threshold
+ 
+check
+ 
+|dV|<0.001V
+ 
+ 
+7
+ 
+
+--- PAGE 15 ---
+บท ที่  4  การ ออก แบบ ทาง วิศวกรรม โดย ละเอียด  /   Chapter  4:  Detailed  
+Engineering
+ 
+Design
+ 
+📌  หมายเหตุ  ABET:  บท นี้ แสดง การ ประยุกต ใช ความ รู ทาง วิศวกรรม  ครอบ คลุม  SO1-PI2  (วิธีการ / แบบ จำลอง),  SO7-PI4  (เลือก และ
+เปรียบเทียบ
+เครื่องมือ)
+  
+/
+  
+This
+ 
+chapter
+ 
+demonstrates
+ 
+applied
+ 
+engineering
+ 
+knowledge,
+ 
+addressing
+ 
+SO1-PI2
+ 
+(solution
+ 
+model/procedure)
+ 
+and
+ 
+SO7-PI4
+ 
+(selects
+ 
+and
+ 
+compares
+ 
+tools).
+ 
+4.1  วิธีการ ออก แบบ  /   Design  Methodology 
+การ ออก แบบ แบง เปน  4  สวน หลัก ที่ พัฒนา คู่ ขนาน กัน:  (1)  วงจร เซน เซอรวัด แรง ดัน- กระแส  (2)  หนวย
+ประมวล
+ผล
+ 
+MPPT
+ 
+Algorithm
+ 
+บน
+ 
+STM32F103C8T6
+ 
+(3)
+ 
+วงจร
+กำลัง
+ 
+Synchronous
+ 
+Buck-Boost
+ 
+Converter
+ 
+และ
+ 
+(4)
+ 
+วงจร
+ปองกัน
+และ
+ตัด
+การ
+ทำ
+งาน
+ 
+(Anti-Islanding)
+ 
+แตละ
+สวน
+ได
+รับ
+มอบหมาย
+ให
+สมาชิก
+ทีม
+รับผิดชอบ
+ตาม
+ความ
+เชี่ยวชาญ
+ 
+(ดู
+ราย
+ละเอียด
+ใน
+หัวขอ
+ 
+7.2)
+ 
+4.2  การ วิเคราะห ทาง วิศวกรรม  /   Engineering  Analysis 
+เงื่อนไข การ ตัดสินใจ ของ  Incremental  Conductance  อางอิง จาก อนุพันธ ของ กำลัง ไฟฟา เทียบ กับ
+แรง
+ดัน:
+ 
+dP/dV
+ 
+=
+ 
+I
+ 
++
+ 
+V(dI/dV)
+ 
+=
+ 
+0
+ 
+ซึ่ง
+นำ
+ไป
+สู
+เงื่อนไข
+ 
+dI/dV
+ 
+=
+ 
+-I/V
+ 
+โดย
+ระบบ
+เปรียบเทียบ
+ 
+3
+ 
+กรณี:
+ 
+หาก
+ 
+dI/dV
+ 
+=
+ 
+-I/V
+ 
+แสดง
+วา
+อยู
+ที่
+จุด
+สูง
+สุด
+แลว
+ 
+(คง
+คา
+ 
+Duty
+ 
+Cycle);
+ 
+หาก
+ 
+dI/dV
+ 
+>
+ 
+-I/V
+ 
+ให
+เพิ่ม
+ 
+Duty
+ 
+Cycle;
+ 
+หาก
+ 
+dI/dV
+ 
+<
+ 
+-I/V
+ 
+ให
+ลด
+ 
+Duty
+ 
+Cycle
+ 
+4.3  การ คำนวณ การ ออก แบบ  /   Design  Calculations 
+เลือก ความถี่ ส วิ ต ชิ่ง  80  kHz  เพื่อ สมดุล ระหวาง ขนาด ตัว เหนี่ยว นำ กับ การ สูญ เสีย จาก การ ส วิ ต ชิ่ง  
+คำนวณ
+คาตัว
+เหนี่ยว
+นำ
+จาก
+ 
+L
+ 
+=
+ 
+(Vin
+ 
+×
+ 
+D)
+ 
+/
+ 
+(
+Δ
+I
+ 
+×
+ 
+fsw)
+ 
+โดย
+กำหนด
+ 
+Δ
+I
+ 
+=
+ 
+20%
+ 
+ของ
+กระแส
+เฉลี่ย
+ 
+(200W/20V
+ 
+=
+ 
+10A)
+ 
+ได
+ 
+L
+ 
+≈
+ 
+22
+ 
+µH
+ 
+จึง
+เลือก
+ใช
+ตัว
+เหนี่ยว
+นำ
+มาตรฐาน
+ 
+22
+ 
+µH/8A
+ 
+แบบ
+ 
+shielded
+ 
+เพื่อ
+ลด
+ 
+EMI
+ 
+4.4  แบบ วิศวกรรม  /   Engineering  Drawings 
+8
+ 
+
+--- PAGE 16 ---
+[แทรก  System  Block  Diagram  และ  Schematic  ที่ นี่  (ดู ฉบับ เต็ม ใน  Appendix  B)  /  
+Insert
+ 
+System
+ 
+Block
+ 
+Diagram
+ 
+and
+ 
+Schematic
+ 
+here
+ 
+(full
+ 
+version
+ 
+in
+ 
+Appendix
+ 
+B)]
+ 
+รูป ที่  4.1:  System  Block  Diagram  ของ ระบบ ตัว ควบคุม  MPPT   /   Figure  4.1:  System  Block  Diagram  of  the  
+MPPT
+ 
+controller
+ 
+4.5  การ จำลอง และ สราง แบบ จำลอง  /   Simulation  and  Modeling 
+ผล การ จำลอง วงจร กำลัง ดวย  LTspice  แสดง ประสิทธิภาพ วงจร  96.2%  ที่ โหล ด เต็ม  ซึ่ง สอดคลอง กับ
+ขอกำหนด
+ 
+2.4.4
+ 
+ที่
+ตั้ง
+เปา
+ไว
+ 
+≥
+ 
+95%
+ 
+การ
+จำลอง
+ยัง
+ใช
+ยืนยัน
+คา
+ 
+Output
+ 
+Ripple
+ 
+เชิง
+ทฤษฎี
+ที่
+ 
+35
+ 
+mV
+ 
+กอน
+เขา
+สู
+การ
+สราง
+จริง
+และ
+วัดผล
+ใน
+บท
+ที่
+ 
+5
+ 
+4.6  ขอกำหนด ขั้น สุดทาย  /   Final  Specifications 
+หลังจาก การ วิเคราะห และ จำลอง ผล  ขอกำหนด ใน หัวขอ  2.2  ยัง คง เดิม ทุก ขอ  ยกเวน ความถี่ ส วิ ต ชิ่ง ที่
+ปรับ
+จาก
+ชวง
+ 
+50–100
+ 
+kHz
+ 
+เปน
+คา
+คงที่
+ 
+80
+ 
+kHz
+ 
+เพื่อให
+ตรง
+กับ
+ผล
+การ
+จำลอง
+ที่
+ให
+ประสิทธิภาพ
+สูง
+สุด
+ 
+ 
+9
+ 
+
+--- PAGE 17 ---
+บท ที่  5  การ พิสูจน ยืนยัน และ การ ตรวจ สอบ ความ ถูก ตอง  /   Chapter  5:  
+Verification
+ 
+and
+ 
+Validation
+ 
+📌  หมายเหตุ  ABET:  บท นี้ ตอบ คำ ถาม วา ระบบ บรรลุ ขอกำหนด ใน บท ที่  2  หรือ ไม  ครอบ คลุม  SO6  (Experimentation)  ทั้ง  3  PI  และ  SO1-PI3  
+(คำ
+ตอบ
+อยู
+ใน
+ขอ
+จำกัด)
+  
+/
+  
+This
+ 
+chapter
+ 
+confirms
+ 
+whether
+ 
+the
+ 
+system
+ 
+meets
+ 
+Ch.2
+ 
+requirements,
+ 
+addressing
+ 
+all
+ 
+3
+ 
+PIs
+ 
+of
+ 
+SO6
+ 
+(Experimentation)
+ 
+and
+ 
+SO1-PI3
+ 
+(solution
+ 
+appropriate
+ 
+within
+ 
+constraints).
+ 
+5.1  แผนการ พิสูจน ยืนยัน  /   Verification  Plan 
+Requirement  (2.2)
+ วิธี ตรวจ สอบ  /  Method
+ 
+Tracking
+ 
+Efﬁciency
+ 
+Test
+ 
+—
+ 
+Solar
+ 
+Simulator
+ 
+Output
+ 
+Voltage
+ 
+Ripple
+ 
+Test
+ 
+—
+ 
+Oscilloscope
+ 
+measurement
+ 
+Anti-Islanding
+ 
+Trip
+ 
+Time
+ 
+Test
+ 
+—
+ 
+IEC
+ 
+62116
+ 
+procedure
+ 
+5.2  ขั้น ตอน การ ทดสอบ  /   Testing  Procedures 
+ทดสอบ  Tracking  Efﬁciency  ภาย ใต แสง เทียม  (Solar  Simulator,  Class  AAA)  ที่  irradiance  คงที่  
+800
+ 
+W/m²
+ 
+เปน
+เวลา
+ 
+10
+ 
+นาที
+ 
+สำหรับ
+สภาวะ
+เงา
+บาง
+สวน
+ 
+จำลอง
+ดวย
+การ
+บัง
+แผง
+ 
+30%
+ 
+ของ
+พื้นที่
+เพื่อ
+สราง
+ 
+Local
+ 
+Maxima
+ 
+สอง
+จุด
+ 
+ทดสอบ
+ 
+Anti-Islanding
+ 
+ตาม
+ขั้น
+ตอน
+มาตรฐาน
+ 
+IEC
+ 
+62116:2014
+ 
+Clause
+ 
+6.4.2
+ 
+วัด
+ 
+Output
+ 
+Ripple
+ 
+ดวย
+ออ
+ส
+ซิลโลสโค
+ป
+ 
+Tektronix
+ 
+TBS2104
+ 
+5.3  ผล การ ทดสอบ  /   Test  Results 
+จาก การ ทดสอบ  10  รอบ  ระบบ ติดตาม จุด กำลัง สูง สุด ไดที่ ประสิทธิภาพ เฉลี่ย  98.3%  ภาย ใต แสง
+สม่ำเสมอ
+ 
+แต
+ลด
+ลง
+เหลือ
+ 
+91.4%
+ 
+ภาย
+ใต
+สภาวะ
+เงา
+บาง
+สวน
+ 
+โดย
+ระบบ
+ติด
+กับ
+ดัก
+ที่
+ 
+Local
+ 
+Maximum
+ 
+ใน
+ 
+3
+ 
+จาก
+ 
+10
+ 
+รอบ
+ทดสอบ
+ 
+(30%)
+ 
+Anti-Islanding
+ 
+Trip
+ 
+Time
+ 
+เฉลี่ย
+อยู
+ที่
+ 
+1.8
+ 
+วินาที
+ 
+และ
+ 
+Output
+ 
+Ripple
+ 
+วัด
+ได
+ 
+38
+ 
+mV
+ 
+peak-to-peak
+ 
+ที่
+โหล
+ด
+เต็ม
+ 
+5.4  ตาราง ตรวจ สอบ ความ สอดคลอง กับ ขอกำหนด  /   Requirement  Compliance  Matrix 
+10
+ 
+
+--- PAGE 18 ---
+Requirement  (Ch.2)
+ Spec
+ Measured
+ Pass/Fail
+ หมายเหตุ  /  Notes
+ 
+Tracking
+ 
+Eff.
+ 
+(uniform)
+ 
+≥
+ 
+98%
+ 
+98.3%
+ 
+PASS
+ 
+เฉลี่ย
+จาก
+ 
+5
+ 
+รอบ
+ทดสอบ
+ 
+Tracking
+ 
+Eff.
+ 
+(partial
+ 
+shading)
+ 
+≥
+ 
+95%
+ 
+91.4%
+ 
+FAIL
+ 
+ต่ำ
+กวา
+เปา
+ 
+3.6pp
+ 
+—
+ 
+ดู
+ 
+5.5
+ 
+Output
+ 
+Voltage
+ 
+Ripple
+ 
+≤
+ 
+50
+ 
+mV
+ 
+pp
+ 
+38
+ 
+mV
+ 
+pp
+ 
+PASS
+ 
+วัด
+ที่
+โหล
+ด
+เต็ม
+ 
+200W
+ 
+Switching
+ 
+Frequency
+ 
+80
+ 
+kHz
+ 
+80
+ 
+kHz
+ 
+PASS
+ 
+คงที่
+ตาม
+การ
+ออก
+แบบ
+ 
+Anti-Islanding
+ 
+Trip
+ 
+Time
+ 
+≤
+ 
+2000
+ 
+ms
+ 
+1800
+ 
+ms
+ 
+PASS
+ 
+เฉลี่ย
+จาก
+ 
+10
+ 
+รอบ
+ทดสอบ
+ 
+5.5  การ ทบทวน การ ออก แบบ  /   Design  Review 
+ประสิทธิภาพ การ ติดตาม ภาย ใต สภาวะ เงา บาง สวน วัด ได  91.4%  ต่ำ กวา เปาหมาย  95%  สาเหตุ หลัก
+มา
+จาก
+ขั้น
+ตอน
+วิธี
+ 
+Incremental
+ 
+Conductance
+ 
+เปน
+วิธี
+ 
+Local
+ 
+Search
+ 
+ที่
+ออก
+แบบ
+มา
+สำหรับ
+เสน
+โคง
+ 
+P-V
+ 
+แบบ
+จุด
+สูง
+สุด
+เดียว
+ 
+เมื่อ
+เกิด
+เงา
+บาง
+สวน
+ทำให
+เสน
+โคง
+มี
+ 
+Local
+ 
+Maxima
+ 
+หลาย
+จุด
+ 
+ระบบ
+มี
+โอกาส
+ลู
+เขา
+สู
+จุด
+สูง
+สุด
+เฉพาะ
+ที่
+แทนที่จะ
+เปน
+จุด
+สูง
+สุด
+โดย
+รวม
+ 
+คิด
+เปนการ
+สูญ
+เสีย
+พลังงาน
+เฉลี่ย
+ 
+12%
+ 
+ใน
+รอบ
+ที่
+ติด
+กับ
+ดัก
+ 
+แนวทาง
+แกไข
+ที่
+เสนอ
+คือ
+เพิ่ม
+ขั้น
+ตอน
+ 
+Global
+ 
+Scanning
+ 
+เปน
+ระยะ
+ 
+(ทุก
+ 
+60
+ 
+วินาที)
+ 
+กอน
+กลับ
+เขา
+สู
+ 
+Incremental
+ 
+Conductance
+ 
+ดัง
+จะ
+กลาว
+ถึง
+ใน
+บท
+ที่
+ 
+8.4
+ 
+ 
+11
+ 
+
+--- PAGE 19 ---
+บท ที่  6  การ ประเมิน ผลก ระ ทบ ทาง วิศวกรรม  /   Chapter  6:  
+Engineering
+ 
+Impact
+ 
+Assessment
+ 
+📌  หมายเหตุ  ABET:  บท นี้ ครอบ คลุม  SO4  (Ethics)  ทั้ง  3  PI:  จริยธรรม  (6.5),  เศรษฐศาสตร  (6.1),  สิ่งแวดลอม / สังคม  (6.2,  6.4)   /   This  
+chapter
+ 
+covers
+ 
+all
+ 
+3
+ 
+PIs
+ 
+of
+ 
+SO4
+ 
+(Ethics):
+ 
+code
+ 
+of
+ 
+ethics
+ 
+(6.5),
+ 
+economic
+ 
+evaluation
+ 
+(6.1),
+ 
+environmental/social
+ 
+issues
+ 
+(6.2,
+ 
+6.4).
+ 
+6.1  การ วิเคราะห ทาง เศรษฐศาสตร  /   Economic  Analysis 
+ตนทุน รวม ของ ระบบ อยู ที่  2,847  บาท  ต่ำ กวาง บ ประมาณ ที่ กำหนด ไว  3,000  บาท  เมื่อ เทียบ กับ ตัว
+ควบคุม
+ประจุ
+ 
+PWM
+ 
+ทั่วไป
+ 
+(1,200–1,800
+ 
+บาท)
+ 
+ตนทุน
+ที่
+เพิ่ม
+ขึ้น
+ 
+1,047–1,647
+ 
+บาท
+ 
+ให
+ผล
+ตอบแทน
+ดาน
+พลังงาน
+ที่
+ประหยัด
+ได
+เพิ่ม
+ขึ้น
+ประมาณ
+ 
+8–12%
+ 
+ตอ
+ป
+ 
+ซึ่ง
+คาด
+วา
+จะ
+คืน
+ทุน
+ภายใน
+ 
+2–3
+ 
+ป
+สำหรับ
+การ
+ใช
+งาน
+ระดับ
+ครัวเรือน
+ 
+6.2  การ ประเมิน ความ ยั่งยืน  /   Sustainability  Assessment 
+ระบบ ชวย เพิ่ม ประสิทธิภาพ การ ใช พลังงาน แสงอาทิตย ซึ่ง เปน พลังงาน หมุนเวียน  ลด การ พึ่ง พา
+พลังงาน
+จาก
+เชื้อเพลิงฟอสซิล
+ 
+สวนประกอบ
+ทั้งหมด
+ปฏิบัติ
+ตาม
+มาตรฐาน
+ 
+RoHS
+ 
+และ
+เลือก
+ใช
+กระบวนการ
+บัดกรี
+แบบ
+ 
+Lead-Free
+ 
+เพื่อ
+ลด
+ผลก
+ระ
+ทบ
+ตอ
+สิ่งแวดลอม
+เมื่อ
+สิ้นสุด
+อายุ
+การ
+ใช
+งาน
+ 
+6.3  การ ประเมิน สุขภาพ และ ความ ปลอดภัย  /   Health  and  Safety  Assessment 
+ระบบ ผาน การ ทดสอบ  Anti-Islanding  ตาม  IEC  62116:2014  และ จำกัด แรง ดัน สัมผัส ไม เกิน  42.4  V  
+peak
+ 
+ตาม
+ 
+IEC
+ 
+62368-1:2018
+ 
+ลด
+ความ
+เสี่ยง
+จาก
+ไฟฟา
+ช็อตสำหรับ
+ผู
+ติด
+ตั้ง
+และ
+ผู
+ใช
+งาน
+ 
+วงจร
+ฟวส
+และ
+วงจร
+ตัด
+ 
+Overvoltage
+ 
+ทำ
+หนาที่
+เปนการ
+ปองกัน
+สอง
+ชั้น
+ 
+(Redundant
+ 
+Protection)
+ 
+6.4  ผลก ระ ทบ ทาง สังคม และ สิ่งแวดลอม  /   Social  and  Environmental  Impact 
+12
+ 
+
+--- PAGE 20 ---
+การ เพิ่ม ประสิทธิภาพ การ เก็บเกี่ยว พลังงาน แสงอาทิตย ใน ระดับ ครัวเรือน ชวย ลด ภาระ คา ไฟฟา ของ
+ประชาชน
+ใน
+พื้นที่
+ชนบท
+ภาค
+อีสาน
+ที่
+มี
+แสง
+แดด
+จัด
+ 
+และ
+สนับสนุน
+เปาหมาย
+การ
+พัฒนา
+พลังงาน
+สะอาด
+ของ
+ประเทศ
+ 
+6.5  ขอ พิจารณา ดาน จริยธรรม และ วิชาชีพ  /   Ethical  and  Professional  
+Considerations 
+ทีม งาน ยึด หลัก จรรยาบรรณ วิชาชีพ วิศวกรรม ของ สภา วิศวกร แหง ประเทศ ไทย ใน การ รายงาน ผลอ ยาง
+ตรง
+ไป
+ตรง
+มา
+ 
+รวม
+ถึง
+การ
+เปดเผย
+ขอ
+จำกัด
+ของ
+ระบบ
+ 
+(ประสิทธิภาพ
+ภาย
+ใต
+เงา
+บาง
+สวน
+ไม
+ผาน
+เกณฑ)
+ 
+แทนที่จะ
+ปกปด
+หรือ
+บิดเบือน
+ผล
+การ
+ทดสอบ
+ 
+ตาม
+หลัก
+ความ
+ซื่อสัตย
+ทาง
+วิชาชีพ
+ 
+ 
+13
+ 
+
+--- PAGE 21 ---
+บท ที่  7  การ บริหาร โครง งาน และ การ ทำ งาน เปน ทีม  /   Chapter  7:  
+Project
+ 
+Management
+ 
+and
+ 
+Teamwork
+ 
+📌  หมายเหตุ  ABET:  บท นี้ ครอบ คลุม  SO5  (Teamwork)  ทั้ง  3  PI:  บทบาท / ภาวะ ผู นำ  (7.1),  เปาหมาย / แผนงาน  (7.2),  ความ รวมมือ / ความ นา
+เชื่อถือ
+ 
+(7.3–7.4)
+  
+/
+  
+This
+ 
+chapter
+ 
+covers
+ 
+all
+ 
+3
+ 
+PIs
+ 
+of
+ 
+SO5
+ 
+(Teamwork):
+ 
+roles/leadership
+ 
+(7.1),
+ 
+goals/work
+ 
+plan
+ 
+(7.2),
+ 
+collaborative
+ 
+environment/dependability
+ 
+(7.3–7.4).
+ 
+7.1  โครงสราง ทีม งาน  /   Team  Organization 
+ทีม งาน ประกอบดวย สมาชิก  3  คน  แบง ความ รับผิดชอบ ตาม ความ เชี่ยวชาญ เฉพาะ ดาน  โดย มี นาย
+ศุภกิจ
+ 
+วงศ
+อินทร
+ 
+เปน
+หัวหนา
+กลุม
+ทำ
+หนาที่
+ประสานงา
+น
+และ
+ควบคุม
+ไทมไลน
+ 
+ประชุม
+ทีม
+ทุก
+สัปดาห
+ 
+และ
+ประชุม
+รวม
+กับ
+อาจารย
+ที่
+ปรึกษา
+ทุก
+ 
+2
+ 
+สัปดาห
+ 
+(บันทึก
+ใน
+ 
+Appendix
+ 
+D)
+ 
+7.2  บทบาท และ ความ รับผิดชอบ  /   Roles  and  Responsibilities 
+สมาชิก  /  Member
+ บทบาท  /  Role
+ สวน งาน หลัก  /  Main  Responsibility
+ 
+นาย
+ศุภกิจ
+ 
+วงศ
+อินทร
+ 
+หัวหนา
+กลุม
+ 
+/
+ 
+MPPT
+ 
+Algorithm
+ 
+ขั้น ตอน วิธี  Incremental  Conductance  (หัวขอ  4.2),  การ เปรียบเทียบ
+แนว
+คิด
+ 
+(บท
+ที่
+ 
+3)
+ 
+นางสาว
+ปาริชาต
+ 
+บุญ
+มี
+ 
+Power
+ 
+Electronics
+ 
+Hardware
+ 
+วงจร
+กำลัง
+ 
+Buck-Boost,
+ 
+PCB
+ 
+Layout,
+ 
+การ
+จำลอง
+ 
+LTspice
+ 
+(หัวขอ
+ 
+4.5)
+ 
+นายธีรภัทร
+ 
+แสงจันทร
+ 
+Embedded
+ 
+Firmware
+ 
+&
+ 
+Testing
+ 
+วงจร
+ 
+Anti-Islanding,
+ 
+การ
+ทดสอบ
+ทั้งหมด
+ใน
+บท
+ที่
+ 
+5
+ 
+7.3  การ ติดตาม และ ควบคุม โครง งาน  /   Project  Monitoring  and  Control 
+ทีม งาน ใช ตาราง  Gantt  Chart  จาก หัวขอ  1.7  เปน เครื่องมือ ติดตาม ความ คืบ หนา  พบ ความ ลา ชา  1  
+สัปดาห
+ใน
+ขั้น
+ตอน
+ออก
+แบบ
+วงจร
+ 
+เนื่องจาก
+ตอง
+ปรับ
+คาตัว
+เหนี่ยว
+นำ
+ใหม
+หลัง
+ผล
+จำลอง
+ครั้ง
+แรก
+ไม
+ผาน
+เกณฑ
+ 
+EMI
+ 
+ทีม
+งาน
+แกไข
+โดย
+เพิ่ม
+ชั่วโมง
+ทำ
+งาน
+ใน
+สัปดาห
+ถัด
+มา
+เพื่อให
+ทัน
+กำหนดการ
+ทดสอบ
+ 
+7.4  บทเรียน ที่ ได รับ  /   Lessons  Learned 
+14
+ 
+
+--- PAGE 22 ---
+ทีม งาน เรียน รู วาการ จำลอง ผล  (Ch.4.5)  กอน สราง จริง ชวย ประหยัด เวลา และ งบประมาณ อยาง มาก  
+เนื่องจาก
+พบ
+ปญหา
+ 
+EMI
+ 
+ตั้งแต
+ขั้น
+จำลอง
+แทนที่จะ
+พบ
+หลัง
+สราง
+ 
+PCB
+ 
+จริง
+แลว
+ 
+นอกจาก
+นี้
+การ
+กำหนด
+ 
+evaluation
+ 
+criteria
+ 
+กอน
+ตัดสินใจ
+เลือก
+แนว
+คิด
+ 
+(บท
+ที่
+ 
+3.3)
+ 
+ชวย
+ลด
+ความ
+ขัดแยง
+ภายใน
+ทีม
+เมื่อ
+ความ
+เห็น
+ไม
+ตรงกัน
+ 
+ 
+15
+ 
+
+--- PAGE 23 ---
+บท ที่  8  บท สรุป และขอ เสนอ แนะ  /   Chapter  8:  Conclusions  and  
+Recommendations
+ 
+8.1  บท สรุป  /   Conclusions 
+โครง งาน ออก แบบ และ สราง ตัว ควบคุม  MPPT  แบบ ปรับ ตัว สำหรับ แผง โซลา รเซลล  200W  สำเร็จ  โดย
+ใช
+ขั้น
+ตอน
+วิธี
+ 
+Incremental
+ 
+Conductance
+ 
+รวม
+กับ
+วงจร
+ 
+Synchronous
+ 
+Buck-Boost
+ 
+ระบบ
+ผาน
+เกณฑ
+ 
+4
+ 
+จาก
+ 
+5
+ 
+ขอกำหนด
+หลัก
+ 
+และ
+มี
+ตนทุน
+ต่ำ
+กวาง
+บ
+ประมาณ
+ที่
+ตั้ง
+ไว
+ 
+8.2  ความ สำเร็จ ตาม วัตถุ ประสงค  /   Achievement  of  Objectives 
+วัตถุ ประสงค  (1.4)
+ บรรลุ หรือ ไม  /  Achieved?
+ หลักฐาน  /  Evidence
+ 
+ประสิทธิภาพ
+ 
+≥98%
+ 
+ภาย
+ใต
+แสง
+สม่ำเสมอ
+ 
+บรรลุ
+ 
+/
+ 
+Yes
+ 
+วัด
+ได
+ 
+98.3%
+ 
+(หัวขอ
+ 
+5.4)
+ 
+ทนทาน
+ตอ
+เงา
+บาง
+สวน
+ 
+ไม
+บรรลุ
+เต็มที่
+ 
+/
+ 
+Partial
+ 
+วัด
+ได
+ 
+91.4%
+ 
+เทียบ
+เปา
+ 
+95%
+ 
+(หัวขอ
+ 
+5.5)
+ 
+ผาน
+มาตรฐาน
+ 
+IEC
+ 
+62116
+ 
+บรรลุ
+ 
+/
+ 
+Yes
+ 
+Trip
+ 
+time
+ 
+1.8s
+ 
+(หัวขอ
+ 
+5.4)
+ 
+8.3  ขอ เสนอ แนะ  /   Recommendations 
+แนะนำ ให โครง งาน ตอย อด เพิ่ม ขั้น ตอน  Global  Maximum  Power  Point  Tracking  (GMPPT)  เพื่อ
+รอง
+รับ
+สภาวะ
+เงา
+บาง
+สวน
+ที่
+ซับซอน
+กวา
+นี้
+ 
+และ
+ควร
+ทดสอบ
+ภาค
+สนาม
+ระยะ
+ยาว
+กอน
+นำ
+ไป
+ผลิต
+เชิง
+พาณิชย
+ 
+8.4  แนวทาง การ ปรับปรุง ใน อนาคต  /   Future  Improvements 
+●  เพิ่ม ขั้น ตอน  Global  Scanning  ทุก  60  วินาที กอน กลับ เขา สู  Incremental  Conductance  
+เพื่อ
+หลีก
+เลี่ยง
+ 
+Local
+ 
+Maxima
+ 
+คาด
+วา
+จะ
+เพิ่ม
+ประสิทธิภาพ
+ภาย
+ใต
+เงา
+บาง
+สวน
+ได
+ 
+3–5
+ 
+percentage
+ 
+points
+ 
+16
+ 
+
+--- PAGE 24 ---
+●  ทดสอบ ภาค สนาม ระยะ เวลา  30  วัน ติดตอ กัน เพื่อ ประเมิน ความ ทนทาน ภาย ใต สภาพ ภูมิ
+อากาศ
+จริง
+ใน
+ภาค
+อีสาน
+ 
+●  พัฒนา  Data  Logging  ผาน  SD  Card  เพื่อ เก็บ ขอมูล  Long-term  Performance  
+ 
+17
+ 
+
+--- PAGE 25 ---
+เอกสาร อางอิง  /   References
+ 
+●  [1]  N.  Femia,  G.  Petrone,  G.  Spagnuolo,  and  M.  Vitelli,  "Optimization  of  perturb  
+and
+ 
+observe
+ 
+maximum
+ 
+power
+ 
+point
+ 
+tracking
+ 
+method,"
+ 
+IEEE
+ 
+Trans.
+ 
+Power
+ 
+Electron.,
+ 
+vol.
+ 
+20,
+ 
+no.
+ 
+4,
+ 
+pp.
+ 
+963–973,
+ 
+2005.
+ 
+●  [2]  T.  Esram  and  P.  L.  Chapman,  "Comparison  of  photovoltaic  array  maximum  
+power
+ 
+point
+ 
+tracking
+ 
+techniques,"
+ 
+IEEE
+ 
+Trans.
+ 
+Energy
+ 
+Convers.,
+ 
+vol.
+ 
+22,
+ 
+no.
+ 
+2,
+ 
+pp.
+ 
+439–449,
+ 
+2007.
+ 
+●  [3]  Victron  Energy,  "SmartSolar  MPPT  75/15  Datasheet,"  2023.  
+●  [4]  IEC  62116:2014,  "Utility-interconnected  photovoltaic  inverters  —  Test  
+procedure
+ 
+of
+ 
+islanding
+ 
+prevention
+ 
+measures,"
+ 
+2014.
+ 
+●  [5]  IEC  62109-1:2010,  "Safety  of  power  converters  for  use  in  photovoltaic  
+power
+ 
+systems
+ 
+—
+ 
+Part
+ 
+1:
+ 
+General
+ 
+requirements,"
+ 
+2010.
+ 
+●  [6]  IEC  62368-1:2018,  "Audio/video,  information  and  communication  
+technology
+ 
+equipment
+ 
+—
+ 
+Part
+ 
+1:
+ 
+Safety
+ 
+requirements,"
+ 
+2018.
+ 
+ 
+18
+ 
+
+--- PAGE 26 ---
+ภาค ผนวก  /   Appendices
+ 
+ภาค ผนวก  ก  การ คำนวณ โดย ละเอียด  /   Appendix  A:  Detailed  Calculations 
+แนบ การ คำนวณ คาตัว เหนี่ยว นำ,  คา คา ปา ซิ เต อรเอาตพุ ต,  และ การ วิเคราะห  Loss  Budget  ฉบับ เต็ม  
+ภาค ผนวก  ข  แบบ วิศวกรรม  /   Appendix  B:  Engineering  Drawings 
+แนบ  Schematic  วงจร  Synchronous  Buck-Boost  Converter,  วงจร เซนเซอร  V/I,  และ วงจร  
+Gate
+ 
+Driver
+ 
+ฉบับ
+เต็ม
+ 
+(KiCad
+ 
+export,
+ 
+3
+ 
+หนา
+ 
+A3)
+ 
+ภาค ผนวก  ค  เอกสาร ขอมูล จำเพาะ  /   Appendix  C:  Datasheets  and  Specifications 
+แนบ  Datasheet  ของ  TPS55340,  IRLZ44N,  STM32F103C8T6  และ ตัว เหนี่ยว นำ  22µH  ที่ ใช ใน
+การ
+ออก
+แบบ
+ 
+ภาค ผนวก  ง  เอกสาร การ บริหาร โครง งาน  /   Appendix  D:  Project  Management  
+Documents 
+แนบ  Meeting  Log  รวม  12  ครั้ง ตลอด ภาค การ ศึกษา,  แบบ ฟอรม  Advisor  Sign-off  M0–M3  ที่ ลง
+นาม
+แลว,
+ 
+และ
+บันทึก
+สวน
+รวม
+ราย
+บุคคล
+ของ
+สมาชิก
+แตละ
+คน
+ดัง
+ตอ
+ไป
+นี้:
+ 
+บันทึก สวน รวม ราย บุคคล  /  Individual  Contribution  Record 
+นาย ศุภกิจ  วงศ อินทร  —  ผม รับผิดชอบ การ ออก แบบ และ เขียน โคดขั้น ตอน วิธี  Incremental  
+Conductance
+ 
+ทั้งหมด
+ 
+(หัวขอ
+ 
+4.2)
+ 
+รวม
+ถึง
+การ
+เปรียบเทียบ
+แนว
+คิด
+ใน
+บท
+ที่
+ 
+3
+ 
+ความ
+ทาทาย
+หลัก
+คือ
+การ
+จัดการ
+ 
+edge
+ 
+case
+ 
+เมื่อ
+ 
+dV
+ 
+เขา
+ใกล
+ศูนย
+ 
+ซึ่ง
+แกไข
+ดวย
+การ
+เพิ่ม
+เงื่อนไข
+ 
+threshold
+ 
+ที่
+ 
+|dV|
+ 
+<
+ 
+0.001V
+ 
+19
+ 
+
+--- PAGE 27 ---
+นางสาว ปาริชาต  บุญ มี  —  ดิฉัน รับผิดชอบ การ ออก แบบ วงจร กำลัง  Synchronous  Buck-Boost  
+Converter
+ 
+ทั้งหมด
+ 
+(หัวขอ
+ 
+4.3–4.5)
+ 
+งาน
+ที่
+ยาก
+ที่สุด
+คือ
+การ
+จัด
+วาง
+ 
+PCB
+ 
+Layout
+ 
+ให
+ลด
+ 
+EMI
+ 
+ซึ่ง
+แก
+ปญหา
+ดวย
+การ
+แยก
+ 
+Ground
+ 
+Plane
+ 
+ระหวาง
+ 
+Power
+ 
+และ
+ 
+Signal
+ 
+นายธีรภัทร  แสงจันทร  —  กระผม รับผิดชอบ วงจร ปองกัน และ ระบบ  Anti-Islanding  และ ออก แบบ /
+ดำเนิน
+การ
+ทดสอบ
+ทั้งหมด
+ใน
+บท
+ที่
+ 
+5
+ 
+จุด
+ที่
+ทาทาย
+ที่สุด
+คือ
+การ
+ปรับ
+เทียบ
+เกณฑ
+ตรวจ
+จับ
+ 
+Frequency
+ 
+Drift
+ 
+ให
+ไว
+พอที่
+จะ
+ตัด
+ภายใน
+ 
+2
+ 
+วินาที
+แต
+ไม
+ไว
+เกิน
+จน
+ตัด
+ผิด
+พลาด
+ 
+ภาค ผนวก  จ  การ เชื่อม โยง ผลลัพธ การ เรียน รู  ABET  /   Appendix  E:  ABET  Student  
+Outcome
+ 
+Mapping 
+ตาราง ดาน ลาง ระบุ ตำแหนง หลักฐาน ของ แตละ  Performance  Indicator  (PI)  ใน รายงาน ฉบับ นี้  ครบ
+ทั้ง
+ 
+7
+ 
+Student
+ 
+Outcomes
+ 
+(SO)
+ 
+ตาม
+เกณฑ
+ของ
+หลักสูตร:
+ 
+SO
+ PI
+ Performance  Indicator
+ 
+หลักฐาน ใน รายงาน นี้  /  Evidence  in  this  
+report
+ 
+SO1ProblemSolving
+ 
+PI1
+ 
+Shows
+ 
+understanding
+ 
+of
+ 
+the
+ 
+problem
+ 
+1.3  —  ปญหา ประสิทธิภาพ ต่ำ ของ ตัว ควบคุม
+ประจุ
+ 
+PWM
+ 
+ระบุ
+เปน
+ประโยค
+เดียว
+ชัดเจน
+ 
+ 
+PI2
+ 
+Chooses
+ 
+appropriate
+ 
+model/solution
+ 
+procedure
+ 
+4.1–4.2  —  เลือก  Incremental  Conductance  
+พรอม
+สมการ
+ 
+dP/dV=0
+ 
+ 
+PI3
+ 
+Solution
+ 
+appropriate
+ 
+within
+ 
+constraints
+ 
+4.6,  5.4  —  Final  spec  สอดคลอง กับ งบ  3,000  
+บาท
+ 
+และ
+ผาน
+ 
+4/5
+ 
+requirement
+ 
+SO2Design
+ 
+PI1
+ 
+Produces
+ 
+clear
+ 
+needs
+ 
+statement
+ 
+(specs)
+ 
+2.2  —  ตาราง  Engineering  Requirements  5  
+รายการ
+พรอม
+ตัวเลข
+ 
+ 
+PI2
+ 
+Identiﬁes
+ 
+constraints;
+ 
+establishes
+ 
+criteria
+ 
+2.4  —  ขอ จำกัด  4  ดาน;  2.5  —  เกณฑ ความ
+สำเร็จ
+ 
+3
+ 
+ขอ
+ 
+ 
+PI3
+ 
+Carries
+ 
+through
+ 
+to
+ 
+solution
+ 
+and
+ 
+justiﬁes
+ 
+3.4  —  เลือก  Incremental  Conductance  
+พรอม
+เหตุผล
+จาก
+ 
+decision
+ 
+matrix
+ 
+20
+ 
+
+--- PAGE 28 ---
+SO
+ PI
+ Performance  Indicator
+ 
+หลักฐาน ใน รายงาน นี้  /  Evidence  in  this  
+report
+ 
+SO3Communication
+ 
+PI1
+ 
+Technical
+ 
+writing
+ 
+style
+ 
+รายงาน ฉบับ เต็ม  —  รูป แบบ วิชาการ สอง ภาษา
+ไทย
+/
+อังกฤษ
+ 
+ 
+PI2
+ 
+Appropriate
+ 
+use
+ 
+of
+ 
+graphics
+ 
+4.4  System  Block  Diagram;  5.4  ตาราง  
+Compliance
+ 
+Matrix
+ 
+ 
+PI3
+ 
+Mechanics
+ 
+and
+ 
+grammar
+ 
+รายงาน ฉบับ เต็ม  —  ผาน การ ตรวจ ทาน โดยที่
+ปรึกษา
+ 
+ 
+PI4
+ 
+Oral:
+ 
+body
+ 
+language,
+ 
+clarity
+ 
+Final  Defense  —  การนำ เสนอ ปากเปลา  (ไม อยู
+ใน
+เลม
+รายงาน)
+ 
+SO4Ethics
+ 
+PI1
+ 
+Knows
+ 
+code
+ 
+of
+ 
+ethics;
+ 
+evaluates
+ 
+ethical
+ 
+dimensions
+ 
+6.5  —  อางอิง จรรยาบรรณ สภา วิศวกร  เปดเผย
+ผล
+ไม
+ผาน
+เกณฑ
+อยาง
+ตรง
+ไป
+ตรง
+มา
+ 
+ 
+PI2
+ 
+Evaluates
+ 
+economics
+ 
+of
+ 
+the
+ 
+solution
+ 
+6.1
+ 
+—
+ 
+ตนทุน
+ 
+2,847
+ 
+บาท
+ 
+จุด
+คุม
+ทุน
+ 
+2–3
+ 
+ป
+ 
+ 
+PI3
+ 
+Identiﬁes
+ 
+environmental/social
+ 
+issues
+ 
+6.2  RoHS/Lead-free;  6.4  ลด ภาระ คา ไฟ
+ครัวเรือน
+ชนบท
+ 
+SO5Teamwork
+ 
+PI1
+ 
+Roles
+ 
+including
+ 
+leadership
+ 
+7.1
+ 
+—
+ 
+นาย
+ศุภกิจ
+ 
+วงศ
+อินทร
+ 
+เปน
+หัวหนา
+กลุม
+ 
+ 
+PI2
+ 
+Establishes
+ 
+goals
+ 
+and
+ 
+work
+ 
+plan
+ 
+7.2
+ 
+ตาราง
+บทบาท;
+ 
+1.7
+ 
+Gantt
+ 
+schedule
+ 
+ 
+PI3
+ 
+Collaborative
+ 
+environment,
+ 
+dependability
+ 
+7.3–7.4  —  แก ปญหา ความ ลา ชา รวม กัน;  
+Appendix
+ 
+D
+ 
+บันทึก
+สวน
+รวม
+ 
+SO6Experimentation
+ 
+PI1
+ 
+Good
+ 
+lab
+ 
+practice,
+ 
+operates
+ 
+instrumentation
+ 
+5.2  —  ใช  Solar  Simulator  Class  AAA,  
+Tektronix
+ 
+TBS2104
+ 
+ 
+PI2
+ 
+Selects
+ 
+appropriate
+ 
+data/equipment/protocols
+ 
+5.1  —  Veriﬁcation  Plan  ระบุ วิธี ตรวจ สอบ
+แตละ
+ 
+requirement
+ 
+ 
+PI3
+ 
+Analyzes,
+ 
+veriﬁes,
+ 
+validates
+ 
+results
+ 
+5.3–5.5  —  ผล ทดสอบ  10  รอบ,  compliance  
+matrix,
+ 
+gap
+ 
+analysis
+ 
+21
+ 
+
+--- PAGE 29 ---
+SO
+ PI
+ Performance  Indicator
+ 
+หลักฐาน ใน รายงาน นี้  /  Evidence  in  this  
+report
+ 
+SO7LifelongLearning
+ 
+PI1
+ 
+Awareness
+ 
+education
+ 
+is
+ 
+continuous
+ 
+8.3–8.4  —  เสนอ  GMPPT  และ  PSO  สำหรับ
+พัฒนา
+ตอ
+ 
+ 
+PI2
+ 
+Finds
+ 
+information
+ 
+without
+ 
+guidance
+ 
+1.1  —  คนควา สถิติ พลังงาน แสงอาทิตย ไทยและ
+งาน
+วิจัย
+อางอิง
+ 
+[1][2]
+ 
+ 
+PI3
+ 
+Identiﬁes
+ 
+current
+ 
+issues,
+ 
+evaluates
+ 
+alternatives
+ 
+3.1  —  เปรียบเทียบ  P&O  กับ  Incremental  
+Conductance
+ 
+ 
+PI4
+ 
+Selects/compares
+ 
+tools
+ 
+and
+ 
+techniques
+ 
+4.5
+ 
+—
+ 
+เลือก
+ใช
+ 
+LTspice
+ 
+จำลอง
+ผล
+กอน
+สราง
+จริง
+ 
+ 
+22
+ 

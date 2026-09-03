@@ -154,12 +154,60 @@ def finalize_session_metadata(csv_path: str, outcome: str = "completed",
             "ended_at": datetime.now().isoformat(timespec="seconds"),
             "end_reason": reason or outcome,
         })
+        # Preserve the achieved timing by phase, beside the sequence's target
+        # rate in ``protocol``.  A nominal 10 Hz setting is not evidence that
+        # the instruments actually delivered 10 Hz during a pulse.
+        meta["sampling_summary"] = _sampling_summary(csv_path)
         if os.path.exists(csv_path):
             meta["sha256"] = DataHandler._hash_file(csv_path)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error("Could not finalize session metadata for %s: %s", csv_path, e)
+
+
+def _sampling_summary(csv_path: str) -> dict:
+    """Return compact, per-phase timing evidence for a completed CSV.
+
+    This intentionally uses only the standard library: it executes once after
+    the file is closed, so it cannot disturb a time-critical acquisition loop.
+    """
+    # Timing compliance must be calculated from usable samples only.  Keeping
+    # INVALID/GAP counts separately exposes an acquisition fault without
+    # allowing malformed rows to make a phase appear better timed than it was.
+    phases: dict[str, list[float]] = {}
+    quality: dict[str, int] = {}
+    try:
+        with open(csv_path, encoding="utf-8-sig", newline="") as f:
+            for row in csv.DictReader(f):
+                label = (row.get("Phase") or row.get("Mode") or "UNLABELLED").strip()
+                try:
+                    elapsed = float(row.get("Elapsed_s", "nan"))
+                except (TypeError, ValueError):
+                    continue
+                q = (row.get("Sample_Quality") or "UNKNOWN").strip().upper()
+                if math.isfinite(elapsed) and q == "VALID":
+                    phases.setdefault(label, []).append(elapsed)
+                quality[q] = quality.get(q, 0) + 1
+    except OSError:
+        return {}
+
+    by_phase = {}
+    for label, values in phases.items():
+        values.sort()
+        dt = [b - a for a, b in zip(values, values[1:]) if b >= a]
+        if dt:
+            dt.sort()
+            by_phase[label] = {
+                "samples": len(values),
+                "median_dt_s": round(dt[len(dt) // 2], 4),
+                "p95_dt_s": round(dt[min(len(dt) - 1, math.ceil(len(dt) * 0.95) - 1)], 4),
+                "max_dt_s": round(dt[-1], 4),
+                "dt_over_0p5s": sum(1 for value in dt if value > 0.5),
+            }
+        else:
+            by_phase[label] = {"samples": len(values)}
+    return {"by_phase": by_phase, "quality_counts": quality}
 
 # ---------------------------------------------------------------------------
 # Cloud-push helpers (used by cloud_push.py)
@@ -492,10 +540,23 @@ class DataHandler:
             try:
                 phase = phase or mode
                 mode = mode or phase
+                # Do not silently promote a missing phase or an impossible
+                # instrument reading into valid experimental evidence.  The row
+                # is retained for audit/replay, but downstream grading can see
+                # that it must not be used as a measurement anchor.
+                invalid_notes = []
+                if not str(phase or "").strip():
+                    invalid_notes.append("missing_phase")
+                if not math.isfinite(v) or v <= 0.0:
+                    invalid_notes.append("invalid_voltage")
+                if invalid_notes:
+                    sample_quality = "INVALID"
+                    sample_note = (sample_note + "; " if sample_note else "") + "; ".join(invalid_notes)
                 if (expected_dt_s and self._last_row_elapsed > -1e8
                         and elapsed_s - self._last_row_elapsed > expected_dt_s * 2.5):
                     gap = elapsed_s - self._last_row_elapsed
-                    sample_quality = "GAP"
+                    if sample_quality == "VALID":
+                        sample_quality = "GAP"
                     sample_note = (sample_note + "; " if sample_note else "") + \
                         f"sample_gap_s={gap:.3f}"
                 capacity_text = "" if capacity_ah is None or not math.isfinite(capacity_ah) \

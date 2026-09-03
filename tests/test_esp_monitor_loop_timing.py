@@ -69,6 +69,7 @@ class TestEspMonitorLoopTiming(unittest.TestCase):
         pct = working_pct_calls[0].args[1]
         self.assertGreaterEqual(pct, 0.0)
         self.assertLessEqual(pct, 100.0)
+        hw.esp_serial.write.assert_any_call(b"TEMP\n")
 
 
 if __name__ == "__main__":

@@ -103,14 +103,14 @@ class SettingsDialog(QDialog):
         # a menu nobody found (and, separately, this dialog was unreachable
         # via that menu until the NameError below was fixed — see dialogs.py).
 
-        # 3. PDF Reporting
+        # 3. Experiment reporting
         lbl_pdf = QLabel("REPORTS")
         lbl_pdf.setStyleSheet("font-weight: bold; color: #a1a6ab; margin-top: 10px;")
         lay.addWidget(lbl_pdf)
         
-        btn_pdf = QPushButton("Generate PDF Report")
-        btn_pdf.clicked.connect(self._on_pdf)
-        lay.addWidget(btn_pdf)
+        btn_report = QPushButton("Export Experiment Report (Word + PDF)")
+        btn_report.clicked.connect(self._on_pdf)
+        lay.addWidget(btn_report)
 
         lay.addStretch(1)
         btn_box = QHBoxLayout()
@@ -150,6 +150,7 @@ from aset_batt.ui.widgets import (
     _btn, _hline, QtRootShim,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
     _PdfNotifier, _PdfTask, _WordNotifier, _WordTask,
+    _ReportPackageNotifier, _ReportPackageTask,
 )
 from aset_batt.ui.report_html import format_seq_result, build_results_html
 from aset_batt.ui.zones import ZonesMixin
@@ -202,6 +203,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMi
         self._pdf_notifier.finished.connect(self._on_pdf_finished)
         self._word_notifier = _WordNotifier()
         self._word_notifier.finished.connect(self._on_word_finished)
+        self._report_notifier = _ReportPackageNotifier()
+        self._report_notifier.finished.connect(self._on_report_finished)
         self._headless = os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen"
 
         self.iec_standard = IEC61960Standard(

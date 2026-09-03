@@ -85,6 +85,8 @@ logger = logging.getLogger(__name__)
 _EN50342_END_V_PER_CELL = 1.75
 _EN50342_RATE_TOL = 0.15       # ±15% around In still counts as the reference rate
 _EN50342_END_V_TOL = 0.06      # V/cell tolerance on the configured cutoff
+_NEAR_CUTOFF_MARGIN_V = 0.35
+_NEAR_CUTOFF_SAMPLE_HZ = 10.0
 
 def en50342_capacity_conditions(chemistry: str, c_test: float, pack_min_v: float,
                                 cells_series: int, skip_charge: bool,
@@ -250,7 +252,7 @@ class IecCapacityMixin:
             def _ocv_progress(elapsed, v, dv_mv, st):
                 dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
                 status(f"PREPARE: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
-                self.controller._log_sample(v, 0.0, mode="OCV")
+                self.controller._log_sample(v, 0.0, mode="OCV", expected_dt_s=5.0)
                 self.update_display(v, 0.0, self.controller.estimator.soc,
                                     self.controller.estimator.rin)
 
@@ -344,7 +346,7 @@ class IecCapacityMixin:
                     # estimator.update()), so it's safe to call during this loop.
                     try:
                         v_r, i_r, _ = self.hw.read_vi()
-                        self.controller._log_sample(v_r, i_r, mode="REST")
+                        self.controller._log_sample(v_r, i_r, mode="REST", expected_dt_s=10.0)
                         self.update_display(v_r, i_r, self.controller.estimator.soc,
                                             self.controller.estimator.rin, self.hw.current_temp)
                     except Exception as e:
@@ -365,7 +367,7 @@ class IecCapacityMixin:
                 def _post_rest_progress(elapsed, v, dv_mv, st):
                     dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
                     status(f"REST: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
-                    self.controller._log_sample(v, 0.0, mode="REST")
+                    self.controller._log_sample(v, 0.0, mode="REST", expected_dt_s=5.0)
                     self.update_display(v, 0.0, self.controller.estimator.soc,
                                         self.controller.estimator.rin)
 
@@ -405,14 +407,15 @@ class IecCapacityMixin:
             # stale (same root cause already fixed for the HPPC sequence).
             try:
                 v3_0, i3_0 = self.hw.read_measurements(prefer_load_v=True)
-                self.controller._log_sample(v3_0, i3_0, mode="MAIN_DISCHARGE")
+                self.controller._log_sample(v3_0, i3_0, mode="MAIN_DISCHARGE",
+                                            expected_dt_s=5.0)
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             # Estimate discharge duration from SoC and C-rate (seconds) — SoH- and
             # starting-SoC-aware, see _estimate_discharge_s.
             _dis_est = self._estimate_discharge_s(i_dis)
-            _cutoff_confirm_n = 0
+            near_cutoff = False
             while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
@@ -423,7 +426,11 @@ class IecCapacityMixin:
                     dt = now - last_log
                     last_log = now
                     state3 = self.controller.estimator.update(v3, i3, dt=dt, temp=temp3)
-                    self.controller._log_sample(v3, i3, mode="MAIN_DISCHARGE")
+                    near_cutoff = v3 <= pack_min + _NEAR_CUTOFF_MARGIN_V
+                    discharge_mode = "NEAR_CUTOFF" if near_cutoff else "MAIN_DISCHARGE"
+                    expected_dt = (1.0 / _NEAR_CUTOFF_SAMPLE_HZ if near_cutoff else 5.0)
+                    self.controller._log_sample(v3, i3, mode=discharge_mode,
+                                                expected_dt_s=expected_dt)
                     # _log_sample feeds CSV/cloud only — the sequence intentionally
                     # stopped the shared monitor loop in _seq_common_start() (to avoid
                     # double-counting the estimator), so nothing else feeds the live
@@ -435,15 +442,15 @@ class IecCapacityMixin:
                     self.sig_phase_progress.emit(elapsed_d, _dis_est)
                     if not self._seq_check_otp(temp3):
                         break
-                    # Same debounce as worker.py's CC_DISCHARGE cutoff check — 5
-                    # consecutive at/below-cutoff samples, not just one.
-                    _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v3 <= pack_min else 0
-                    if _cutoff_confirm_n >= 5:
+                    # Capacity reference must stop at its first valid measured
+                    # crossing; five 5-second confirmations can materially bias Ah.
+                    if v3 <= pack_min:
                         break
                 except Exception as e:
                     self.sig_alarm.emit(f"[AUTO] discharge read error: {e}")
                     break
-                if not self._seq_sleep(5.0):
+                if not self._seq_sleep(1.0 / _NEAR_CUTOFF_SAMPLE_HZ
+                                       if near_cutoff else 5.0):
                     break
             self.hw.set_load(False)
             self.sig_phase_progress.emit(0, 0)

@@ -71,6 +71,7 @@ from aset_batt.ui.widgets import (
     _btn, _hline, QtRootShim,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
     _PdfNotifier, _PdfTask, _WordNotifier, _WordTask,
+    _ReportPackageNotifier, _ReportPackageTask,
 )
 from aset_batt.ui.report_html import format_seq_result, build_results_html
 from aset_batt.ui.zones import ZonesMixin
@@ -393,49 +394,44 @@ class DialogsMixin:
         except Exception as e:
             import logging
             logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
-    def _on_pdf_report(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save PDF Report", "battery_report.pdf", "PDF (*.pdf)")
-        if not path:
-            return
-        self.btn_pdf.setEnabled(False)
-        self.btn_pdf.setText("Generating...")
-        task = _PdfTask(self._pdf_notifier, path, self.config, self.estimator,
-                        self._last_analysis, self._last_csv or self.config.system.csv_filepath)
-        self.thread_pool.start(task)
-    def _on_pdf_finished(self, ok: bool, payload: str):
-        self.btn_pdf.setEnabled(True)
-        self.btn_pdf.setText("Generate PDF Report")
-        if ok:
-            self._log_alarm(f"PDF generated: {payload}")
-            if not self._headless:
-                QMessageBox.information(self, "PDF Report", f"Saved:\n{payload}")
-        else:
-            self._log_alarm(f"PDF failed: {payload}")
-            if not self._headless:
-                QMessageBox.critical(self, "PDF Report", payload)
-    def _on_word_report(self):
+    def _on_export_report(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Word Experiment Report", "battery_experiment_report.docx", "Word document (*.docx)")
+            self, "Save Experiment Report Package", "battery_experiment_report",
+            "Report package (*.docx *.pdf)")
         if not path:
             return
-        if not path.lower().endswith(".docx"):
-            path += ".docx"
-        self.btn_word.setEnabled(False)
-        self.btn_word.setText("Generating Word report…")
-        task = _WordTask(self._word_notifier, path, self.config, self.estimator,
-                         self._last_analysis, self._last_csv or self.config.system.csv_filepath)
+        self.btn_report.setEnabled(False)
+        self.btn_report.setText("Generating Word + PDF…")
+        task = _ReportPackageTask(
+            self._report_notifier, path, self.config, self.estimator,
+            self._last_analysis, self._last_csv or self.config.system.csv_filepath)
         self.thread_pool.start(task)
-    def _on_word_finished(self, ok: bool, payload: str):
-        self.btn_word.setEnabled(True)
-        self.btn_word.setText("Export Word Experiment Report")
+
+    # Compatibility entry points for menu/sequence actions retained elsewhere.
+    def _on_pdf_report(self):
+        self._on_export_report()
+
+    def _on_word_report(self):
+        self._on_export_report()
+
+    def _on_report_finished(self, ok: bool, payload: str):
+        self.btn_report.setEnabled(True)
+        self.btn_report.setText("Export Experiment Report (Word + PDF)")
         if ok:
-            self._log_alarm(f"Word report generated: {payload}")
+            self._log_alarm(f"Experiment report package generated: {payload}")
             if not self._headless:
-                QMessageBox.information(self, "Word Experiment Report", f"Saved:\n{payload}")
+                QMessageBox.information(self, "Experiment Report", f"Saved:\n{payload}")
         else:
-            self._log_alarm(f"Word report failed: {payload}")
+            self._log_alarm(f"Experiment report failed: {payload}")
             if not self._headless:
-                QMessageBox.critical(self, "Word Experiment Report", payload)
+                QMessageBox.critical(self, "Experiment Report", payload)
+
+    # Deprecated callbacks can still be reached by an old queued signal.
+    def _on_pdf_finished(self, ok: bool, payload: str):
+        self._on_report_finished(ok, payload)
+
+    def _on_word_finished(self, ok: bool, payload: str):
+        self._on_report_finished(ok, payload)
     def _on_soh_trend(self):
         """Parse all sessions for SoH, show a matplotlib window with timeline."""
         import threading

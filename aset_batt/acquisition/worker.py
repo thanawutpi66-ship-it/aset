@@ -217,7 +217,10 @@ class AcquisitionWorker(QObject):
                     _s2 = time.perf_counter()
                     try:
                         st = self.estimator.update(v, i, dt=dt, temp=temp)
-                        soc = st.get("soc", float("nan"))
+                        # Do not publish the estimator's internal 50% seed before
+                        # OCV/endpoint calibration establishes actual SoC.
+                        soc = (st.get("soc", float("nan")) if getattr(
+                            self.estimator, "soc_is_initialized", True) else float("nan"))
                         rin_mohm = st.get("rin", float("nan")) * 1000.0
                         rin_calibrated = bool(st.get("rin_calibrated", False))
                     except Exception as e:

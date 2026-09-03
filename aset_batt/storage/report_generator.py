@@ -131,8 +131,10 @@ def generate_pdf_report(path, config, estimator=None, analysis=None, csv_path=No
     if analysis is not None:
         if isinstance(analysis, dict):
             _grade = analysis.get("grade", "?")
+            _quick_grade = analysis.get("quick_grade", "REVIEW")
             _conf = analysis.get("confidence", 0.0)
             _soh = analysis.get("soh", 0.0)
+            _soh_est = analysis.get("soh_est", _soh)
             _cap = analysis.get("capacity_ah", 0.0)
             _dcir = analysis.get("dcir_mohm", 0.0)
             _r0 = analysis.get("r0_mohm", 0.0)
@@ -145,8 +147,10 @@ def generate_pdf_report(path, config, estimator=None, analysis=None, csv_path=No
         elif getattr(analysis, "success", False):
             f = analysis.features
             _grade = analysis.grade
+            _quick_grade = "N/A"
             _conf = analysis.confidence
             _soh = getattr(f, "soh_pct", 0.0)
+            _soh_est = _soh
             _cap = getattr(f, "capacity_ah", 0.0)
             _dcir = getattr(f, "r0_mohm", 0.0) + getattr(f, "rp_mohm", 0.0)
             _r0 = getattr(f, "r0_mohm", 0.0)
@@ -162,8 +166,10 @@ def generate_pdf_report(path, config, estimator=None, analysis=None, csv_path=No
         if _show:
             story.append(Paragraph("AI Grading Result", h2))
             grade_rows = [
-                ["Grade", f"{_grade}  ({_conf * 100:.0f}% confidence)"],
-                ["SoH", f"{_soh:.1f} %"],
+                ["Quick Scan Grade", str(_quick_grade)],
+                ["Peukert-corrected SoH", f"{_soh_est:.1f} %"],
+                ["Verified Grade", f"{_grade}  ({_conf * 100:.0f}% confidence)"],
+                ["Observed 1C capacity fraction", f"{_soh:.1f} %"],
                 ["Capacity", f"{_cap:.3f} Ah"],
                 ["DCIR", f"{_dcir:.2f} mΩ"],
                 ["R0 (ohmic)", f"{_r0:.2f} mΩ"],

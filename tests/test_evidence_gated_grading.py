@@ -42,6 +42,8 @@ class TestEvidenceGatedGrading(unittest.TestCase):
         result = _run(5.3)
         self.assertEqual(result["capacity_grade"], "REVIEW")
         self.assertEqual(result["grade"], "REVIEW")
+        self.assertEqual(result["quick_grade"], "A")
+        self.assertTrue(result["quick_gradeable"])
         self.assertFalse(result["capacity_gradeable"])
         self.assertIn("not the C10 reference", " ".join(result["quality_warnings"]))
 

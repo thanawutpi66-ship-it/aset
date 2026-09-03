@@ -247,7 +247,10 @@ class TestControlMixin:
         if v_lbl:
             self.metric_labels["Voltage"][0].setText(f'{row["v"]:.2f} {self.metric_labels["Voltage"][1]}')
             self.metric_labels["Current"][0].setText(f'{row["i"]:.3f} {self.metric_labels["Current"][1]}')
-            if row.get("soc") == row.get("soc"):  # not NaN
+            soc_is_initialized = getattr(getattr(self, "estimator", None), "soc_is_initialized", True)
+            if not soc_is_initialized:
+                self.metric_labels["SoC"][0].setText(f'— {self.metric_labels["SoC"][1]}')
+            elif row.get("soc") == row.get("soc"):  # not NaN
                 _u = self.metric_labels["SoC"][1]
                 _std = row.get("soc_std", getattr(getattr(self, "estimator", None), "soc_std", None))
                 if _std is not None and _std == _std:

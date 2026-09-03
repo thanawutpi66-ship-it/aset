@@ -344,13 +344,13 @@ class BaseSequenceMixin:
             msg.setText(body)
             msg.setIcon(QMessageBox.Icon.Information)
             msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-            export_word = msg.addButton("Export Word Report", QMessageBox.ButtonRole.ActionRole)
+            export_word = msg.addButton("Export Report (Word + PDF)", QMessageBox.ButtonRole.ActionRole)
             export_word.setToolTip(
                 "Create the editable Chapter 5 evidence report from this completed session")
 
             def _export_then_close():
                 msg.close()
-                self._on_word_report()
+                self._on_export_report()
 
             export_word.clicked.connect(_export_then_close)
             msg.setWindowModality(Qt.WindowModality.NonModal)
@@ -458,6 +458,11 @@ class BaseSequenceMixin:
         # _on_run_test's guard: a sequence owns the estimator exclusively while it runs.
         if self.controller and self.controller.monitor_running:
             self.controller.stop_monitor()
+        if self.controller:
+            # A sequence is the single writer of phase-labelled rows.  The
+            # monitor loop honours this immediately even if it was already
+            # inside a slow SCPI read when stop_monitor() was called.
+            self.controller.sequence_logging_owned = True
         # capture the test name for the always-visible phase banner
         self._current_test_name = self.cb_workflow_type.currentText().split("(")[0].strip()
         self.lbl_phase_banner.setText(f"▶  {self._current_test_name}  ·  เริ่ม...")

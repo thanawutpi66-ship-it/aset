@@ -1,0 +1,1911 @@
+[
+  {
+    "name": "A19_capstone_design_merged.docx",
+    "paragraph_count": 334,
+    "nonempty_paragraph_count": 213,
+    "paragraph_style_counts": {
+      "normal": 137,
+      "Heading 1": 13,
+      "Heading 2": 52,
+      "Heading 3": 11
+    },
+    "headings": [
+      {
+        "index": 21,
+        "style": "Heading 1",
+        "text": "บทสรุปผู้บริหาร / Executive Summary"
+      },
+      {
+        "index": 27,
+        "style": "Heading 1",
+        "text": "สารบัญ / Table of Contents"
+      },
+      {
+        "index": 29,
+        "style": "Heading 1",
+        "text": "สารบัญตาราง / List of Tables"
+      },
+      {
+        "index": 31,
+        "style": "Heading 1",
+        "text": "สารบัญรูปภาพ / List of Figures"
+      },
+      {
+        "index": 33,
+        "style": "Heading 1",
+        "text": "บทที่ 1 นิยามโครงงาน / Chapter 1: Project Definition"
+      },
+      {
+        "index": 34,
+        "style": "Heading 2",
+        "text": "1.1 ที่มาและความสำคัญ / Background"
+      },
+      {
+        "index": 36,
+        "style": "Heading 2",
+        "text": "1.2 การวิเคราะห์ผู้มีส่วนได้ส่วนเสีย / Stakeholder Analysis"
+      },
+      {
+        "index": 38,
+        "style": "Heading 2",
+        "text": "1.3 การระบุปัญหา / Problem Statement"
+      },
+      {
+        "index": 40,
+        "style": "Heading 2",
+        "text": "1.4 วัตถุประสงค์ / Objectives"
+      },
+      {
+        "index": 41,
+        "style": "Heading 2",
+        "text": "เพื่อออกแบบและพัฒนาสถานีทดสอบแบตเตอรี่อัตโนมัติที่วัด SoH, DCIR และ CCA-proxy ได้ตามวิธีการที่มาตรฐาน IEC 61960 Clause 6.4 กำหนด"
+      },
+      {
+        "index": 42,
+        "style": "Heading 2",
+        "text": "เพื่อพัฒนาอัลกอริทึมประมาณสถานะ (Extended Kalman Filter) ที่ประมาณค่า State of Charge แบบเรียลไทม์ พร้อมค่าความไม่แน่นอน"
+      },
+      {
+        "index": 43,
+        "style": "Heading 2",
+        "text": "เพื่อพัฒนาระบบตัดเกรดอัตโนมัติ A/B/C/REJECT จากความสัมพันธ์ระหว่าง SoH และการเติบโตของความต้านทานภายใน (R0/R1)"
+      },
+      {
+        "index": 44,
+        "style": "Heading 2",
+        "text": "เพื่อออกแบบระบบความปลอดภัยหลายชั้น (SSR, Circuit Breaker, E-STOP, ขีดจำกัดซอฟต์แวร์) ป้องกันความเสียหายระหว่างทดสอบอัตโนมัติไร้คนเฝ้า"
+      },
+      {
+        "index": 45,
+        "style": "Heading 2",
+        "text": "เพื่อทดสอบและยืนยันความแม่นยำของระบบเทียบกับฮาร์ดแวร์จริง (แบตเตอรี่ YTZ6V 12V 5.3Ah VRLA)"
+      },
+      {
+        "index": 46,
+        "style": "Heading 2",
+        "text": "1.5 ขอบเขต / Scope"
+      },
+      {
+        "index": 55,
+        "style": "Heading 2",
+        "text": "1.6 ผลงานส่งมอบ / Deliverables"
+      },
+      {
+        "index": 61,
+        "style": "Heading 2",
+        "text": "1.7 แผนดำเนินงานโครงงาน / Project Schedule"
+      },
+      {
+        "index": 64,
+        "style": "Heading 1",
+        "text": "บทที่ 2 ข้อกำหนดและข้อจำกัดการออกแบบ / Chapter 2: Design Requirements and Constraints"
+      },
+      {
+        "index": 65,
+        "style": "Heading 2",
+        "text": "2.1 การประเมินความต้องการของผู้ใช้ / Customer Needs Assessment"
+      },
+      {
+        "index": 66,
+        "style": "Heading 2",
+        "text": "จากการวิเคราะห์ผู้มีส่วนได้ส่วนเสียในหัวข้อ 1.2 พบความต้องการเชิงคุณภาพหลัก 3 ประการ (1) วัด SoH และความต้านทานภายในได้อย่างแม่นยำ โดยไม่ต้องจัดซื้อเครื่องมือวัดเฉพาะทางเพิ่มเติม (2) ระบบต้องปลอดภัยต่อผู้ใช้งานและฮาร์ดแวร์ ระหว่างการทดสอบอัตโนมัติแบบไร้คนเฝ้าเป็นเวลานาน และ (3) สามารถเข้าถึงผลการทดสอบและสถานะการทำงานจากระยะไกลผ่านเว็บ โดยไม่ต้องอยู่หน้าเครื่อง ความต้องการเหล่านี้ถูกแปลงเป็น Engineering Requirements เชิงปริมาณในหัวข้อ 2.2"
+      },
+      {
+        "index": 67,
+        "style": "Heading 2",
+        "text": "2.2 ข้อกำหนดทางวิศวกรรม / Engineering Requirements"
+      },
+      {
+        "index": 73,
+        "style": "Heading 2",
+        "text": "2.3 มาตรฐานและข้อบังคับที่เกี่ยวข้อง / Applicable Codes and Standards"
+      },
+      {
+        "index": 75,
+        "style": "Heading 2",
+        "text": "2.4 ข้อจำกัดการออกแบบ / Design Constraints"
+      },
+      {
+        "index": 76,
+        "style": "Heading 3",
+        "text": "2.4.1 ด้านเศรษฐศาสตร์ / Economic Constraints"
+      },
+      {
+        "index": 77,
+        "style": "Heading 3",
+        "text": "ระบบต้องใช้ฮาร์ดแวร์หลักที่ภาควิชามีอยู่แล้วทั้งหมด (Power Supply GW Instek PSW 80-40.5, Electronic Load PEL-3111) โดยไม่มีการจัดซื้อเครื่องมือวัดหรือเครื่องมือทดสอบเพิ่มเติม งบประมาณส่วนเพิ่มจำกัดเฉพาะอุปกรณ์ราคาประหยัด (ESP32, เซนเซอร์ MLX90614, Solid-State Relay, สายวัด Kelvin sensing)"
+      },
+      {
+        "index": 78,
+        "style": "Heading 3",
+        "text": "2.4.2 ด้านความปลอดภัยและสุขภาพ / Health & Safety Constraints"
+      },
+      {
+        "index": 79,
+        "style": "Heading 3",
+        "text": "ระบบต้องมีกลไกตัดไฟอัตโนมัติอย่างน้อย 2 ชั้นที่เป็นอิสระจากกัน (Solid-State Relay ควบคุมด้วยซอฟต์แวร์ และ Circuit Breaker ทางกายภาพ) และปุ่ ม E-STOP ที่ตัดฮาร์ดแวร์จริงได้ภายใน 1 วินาทีเมื่อผู้ควบคุมกด ค่าขีดจำกัดความปลอดภัย (OVP/UVP/OTP/UTP/Max Current) ต้องตั้งค่าและบันทึกไว้ในระบบ พร้อมแสดงผลแบบ pop-up กลางจอทันทีเมื่อมีการตัดการทำงานฉุกเฉิน"
+      },
+      {
+        "index": 80,
+        "style": "Heading 3",
+        "text": "2.4.3 ด้านเทคนิคและกายภาพ / Technical & Physical Constraints"
+      },
+      {
+        "index": 83,
+        "style": "Heading 3",
+        "text": "2.4.4 ด้านสิ่งแวดล้อม / Environmental Constraints"
+      },
+      {
+        "index": 85,
+        "style": "Heading 2",
+        "text": "2.5 สรุปเกณฑ์การออกแบบ / Design Criteria Summary"
+      },
+      {
+        "index": 91,
+        "style": "Heading 1",
+        "text": "บทที่ 3 การออกแบบเชิงแนวคิด / Chapter 3: Conceptual Design"
+      },
+      {
+        "index": 92,
+        "style": "Heading 2",
+        "text": "3.1 แนวคิดทางเลือก / Alternative Concepts"
+      },
+      {
+        "index": 95,
+        "style": "Heading 2",
+        "text": "3.2 การประเมินเบื้องต้น / Preliminary Evaluation"
+      },
+      {
+        "index": 96,
+        "style": "Heading 2",
+        "text": "เมื่อคัดกรองด้วยเกณฑ์ผ่าน/ไม่ผ่าน (go/no-go) เทียบกับข้อจำกัดด้านเศรษฐศาสตร์ในหัวข้อ 2.4.1 (ห้ามจัดซื้อเครื่องมือเพิ่มเติม) พบว่า แนวคิด A ไม่ผ่านเกณฑ์ทันที เนื่องจากต้องจัดซื้อวงจร ADC และ Contactor เพิ่มเติม รวมถึงเพิ่มความเสี่ยงด้านความปลอดภัยจากการควบคุมกำลังไฟ โดยตรงซึ่งขัดกับข้อจำกัดด้านความปลอดภัยในหัวข้อ 2.4.2 ส่วนแนวคิด B ผ่านเกณฑ์ทั้งด้านงบประมาณและความปลอดภัย จึงนำเข้าสู่การประเมินแบบ ถ่วงน้ำหนักในหัวข้อ 3.3 เพื่อยืนยันการตัดสินใจอย่างเป็นระบบ"
+      },
+      {
+        "index": 97,
+        "style": "Heading 2",
+        "text": "3.3 ตารางตัดสินใจแบบถ่วงน้ำหนัก / Weighted Decision Matrix"
+      },
+      {
+        "index": 102,
+        "style": "Heading 2",
+        "text": "3.4 แนวคิดที่เลือก / Selected Concept"
+      },
+      {
+        "index": 104,
+        "style": "Heading 2",
+        "text": "3.5 การประเมินความเสี่ยง / Risk Assessment"
+      },
+      {
+        "index": 108,
+        "style": "Heading 1",
+        "text": "บทที่ 4 การออกแบบทางวิศวกรรมโดยละเอียด / Chapter 4: Detailed Engineering Design"
+      },
+      {
+        "index": 109,
+        "style": "Heading 2",
+        "text": "4.1 วิธีการออกแบบ / Design Methodology"
+      },
+      {
+        "index": 110,
+        "style": "Heading 2",
+        "text": "ระบบซอฟต์แวร์แบ่งเป็น 2 โปรแกรม ที่ทำงานร่วมกัน ได้แก่ (1) โปรแกรมห้องปฏิบัติการ (PySide6 GUI) สำหรับควบคุมฮาร์ดแวร์และวิเคราะห์ผลโดยตรง (2) เว็บแดชบอร์ดบนคลาวด์ สำหรับรับข้อมูลจากโปรแกรมห้องปฏิบัติการและแสดงผลระยะไกล แพ็กเกจ Python หลักแบ่งเป็นโมดูลตามหน้าที่ ได้แก่ core (แบบจำลองแบตเตอรี่และ State Estimator),hardware (ควบคุมอุปกรณ์จริงผ่าน SCPI และโหมดจำลอง),acquisition (เอนจินวิเคราะห์และ worker เก็บข้อมูล),UI (หน้าจอ ISA-101) และ storage/services (บันทึกข้อมูลและส่งขึ้นคลาวด์)"
+      },
+      {
+        "index": 111,
+        "style": "Heading 2",
+        "text": "4.2 การวิเคราะห์ทางวิศวกรรม / Engineering Analysis"
+      },
+      {
+        "index": 133,
+        "style": "Heading 2",
+        "text": "4.3 การคำนวณการออกแบบ / Design Calculations"
+      },
+      {
+        "index": 134,
+        "style": "Heading 2",
+        "text": "ตัวอย่างการคำนวณค่า DCIR จากขั้นกระแสจริงระหว่างการทดสอบ HPPC: กำหนด ΔV = 150 mV และ ΔI = 5 A จะได้ R₀ = |ΔV/ΔI| = 0.150/5 = 0.030 Ω = 30 mΩ ซึ่งใกล้เคียงกับค่าอ้างอิงที่วัดด้วยเครื่อง GBM-3080 (ACIR 38 mΩ) โดยส่วนต่าง 8 mΩ อธิบายได้จากผลของการเสื่อมสภาพตามอายุและความแตกต่างระหว่างวิธีวัดแบบ AC (ACIR ที่ 1 kHz) กับ DC (DCIR)"
+      },
+      {
+        "index": 135,
+        "style": "Heading 2",
+        "text": "ตัวอย่างการคำนวณ Peukert-normalized capacity สำหรับแบตเตอรี่ YTZ6V (rated 5.3 Ah, k = 1.10): เมื่อดิสชาร์จที่ 1C (5.3 A) เทียบกับอัตราอ้างอิง 0.2C (1.06 A) จะได้ตัวคูณปรับค่า (5.3/1.06)^(1.10−1) = 5^0.10 ≈ 1.175 หมายความว่าความจุที่วัดได้จริงที่อัตราสูงต้องคูณด้วยประมาณ 1.175 เพื่อเทียบเท่าความจุที่อัตราอ้างอิง"
+      },
+      {
+        "index": 136,
+        "style": "Heading 2",
+        "text": "การคำนวณคาบการสุ่มตัวอย่าง: อัตราการอ่านค่าจาก SCPI ที่วัดได้จริงประมาณ 10 Hz หมายถึงคาบเวลาระหว่างตัวอย่าง T = 1/10 = 100 ms ต่อรอบ ซึ่งกำหนดเป็นเกณฑ์ dt-gating สำหรับ DCIR ที่ 0.5 s (5 เท่าของคาบปกติ) เพื่อทิ้งค่าที่อ่านช้าผิดปกติจากการหน่วงของ USB/SCPI ก่อนนำไปคำนวณ"
+      },
+      {
+        "index": 137,
+        "style": "Heading 2",
+        "text": "4.4 แบบวิศวกรรม / Engineering Drawings"
+      },
+      {
+        "index": 143,
+        "style": "Heading 2",
+        "text": "4.5 การจำลองและสร้างแบบจำลอง / Simulation and Modeling"
+      },
+      {
+        "index": 145,
+        "style": "Heading 2",
+        "text": "4.6 ข้อกำหนดขั้นสุดท้าย / Final Specifications"
+      },
+      {
+        "index": 147,
+        "style": "Heading 1",
+        "text": "บทที่ 5 การพิสูจน์ยืนยันและการตรวจสอบความถูกต้อง / Chapter 5: Verification and Validation"
+      },
+      {
+        "index": 148,
+        "style": "Heading 2",
+        "text": "5.1 แผนการพิสูจน์ยืนยัน / Verification Plan"
+      },
+      {
+        "index": 152,
+        "style": "Heading 2",
+        "text": "5.2 ขั้นตอนการทดสอบ / Testing Procedures"
+      },
+      {
+        "index": 158,
+        "style": "Heading 2",
+        "text": "5.3 ผลการทดสอบ / Test Results"
+      },
+      {
+        "index": 159,
+        "style": "Heading 3",
+        "text": "(1) อัตราการสุ่มตัวอย่างและการคัดกรองข้อมูล (Sample Rate & Latency Gate)"
+      },
+      {
+        "index": 165,
+        "style": "Heading 3",
+        "text": "(2) การสกัดพารามิเตอร์วงจรสมมูลและความสามารถในการทำซ้ำ (1-RC ECM & Repeatability)"
+      },
+      {
+        "index": 183,
+        "style": "Heading 3",
+        "text": "(3) ความแม่นยำของการประเมินสถานะประจุ (SoC Estimation Uncertainty)"
+      },
+      {
+        "index": 185,
+        "style": "Heading 3",
+        "text": "(4) ความเร็วในการสั่งตัดวงจร (System Cutoff Response Time)"
+      },
+      {
+        "index": 187,
+        "style": "Heading 3",
+        "text": "(5) การคัดเกรดแบตเตอรี่อัตโนมัติ (Battery Grading Output)"
+      },
+      {
+        "index": 189,
+        "style": "Heading 2",
+        "text": "5.4 ตารางตรวจสอบความสอดคล้องกับข้อกำหนด / Requirement Compliance Matrix"
+      },
+      {
+        "index": 192,
+        "style": "Heading 2",
+        "text": "5.5 การทบทวนการออกแบบ / Design Review"
+      },
+      {
+        "index": 210,
+        "style": "Heading 1",
+        "text": "บทที่ 6 การประเมินผลกระทบทางวิศวกรรม / Chapter 6: Engineering Impact Assessment"
+      },
+      {
+        "index": 211,
+        "style": "Heading 2",
+        "text": "6.1 การวิเคราะห์ทางเศรษฐศาสตร์ / Economic Analysis"
+      },
+      {
+        "index": 220,
+        "style": "Heading 2",
+        "text": "6.2 การประเมินความยั่งยืน / Sustainability Assessment"
+      },
+      {
+        "index": 226,
+        "style": "Heading 2",
+        "text": "6.3 การประเมินสุขภาพและความปลอดภัย / Health and Safety Assessment"
+      },
+      {
+        "index": 233,
+        "style": "Heading 2",
+        "text": "6.4 ผลกระทบทางสังคมและสิ่งแวดล้อม / Social and Environmental Impact"
+      },
+      {
+        "index": 238,
+        "style": "Heading 2",
+        "text": "6.5 ข้อพิจารณาด้านจริยธรรมและวิชาชีพ / Ethical and Professional Considerations"
+      },
+      {
+        "index": 250,
+        "style": "Heading 1",
+        "text": "บทที่ 7 การบริหารโครงงานและการทำงานเป็นทีม / Chapter 7: Project Management and Teamwork"
+      },
+      {
+        "index": 251,
+        "style": "Heading 2",
+        "text": "7.1 โครงสร้างทีมงาน / Team Organization"
+      },
+      {
+        "index": 255,
+        "style": "Heading 2",
+        "text": "7.2 บทบาทและความรับผิดชอบ / Roles and Responsibilities"
+      },
+      {
+        "index": 260,
+        "style": "Heading 2",
+        "text": "7.3 การติดตามและควบคุมโครงงาน / Project Monitoring and Control"
+      },
+      {
+        "index": 266,
+        "style": "Heading 2",
+        "text": "7.4 บทเรียนที่ได้รับ / Lessons Learned"
+      },
+      {
+        "index": 274,
+        "style": "Heading 1",
+        "text": "บทที่ 8 บทสรุปและข้อเสนอแนะ / Chapter 8: Conclusions and Recommendations"
+      },
+      {
+        "index": 275,
+        "style": "Heading 2",
+        "text": "8.1 บทสรุป / Conclusions"
+      },
+      {
+        "index": 282,
+        "style": "Heading 2",
+        "text": "8.2 ความสำเร็จตามวัตถุประสงค์ (Achievement of Objectives)"
+      },
+      {
+        "index": 286,
+        "style": "Heading 2",
+        "text": "8.3 ข้อเสนอแนะ / Recommendations"
+      },
+      {
+        "index": 298,
+        "style": "Heading 2",
+        "text": "8.4 แนวทางการปรับปรุงในอนาคต / Future Improvements"
+      },
+      {
+        "index": 327,
+        "style": "Heading 1",
+        "text": "เอกสารอ้างอิง / References"
+      }
+    ],
+    "paragraphs": [
+      {
+        "index": 3,
+        "style": "normal",
+        "text": "รายงานโครงงานออกแบบทางวิศวกรรม"
+      },
+      {
+        "index": 4,
+        "style": "normal",
+        "text": "CAPSTONE DESIGN PROJECT REPORT"
+      },
+      {
+        "index": 5,
+        "style": "normal",
+        "text": "คณะวิศวกรรมศาสตร์ มหาวิทยาลัยอุบลราชธานี"
+      },
+      {
+        "index": 6,
+        "style": "normal",
+        "text": "Faculty of Engineering, Ubon Ratchathani University"
+      },
+      {
+        "index": 12,
+        "style": "normal",
+        "text": "รายชื่อนักศึกษา / Student Names"
+      },
+      {
+        "index": 17,
+        "style": "normal",
+        "text": "อาจารย์ที่ปรึกษา / Advisor: ดร.อาทิตย์ ฤทธิแผลง"
+      },
+      {
+        "index": 18,
+        "style": "normal",
+        "text": "ลายมือชื่อ อาจารย์ที่ปรึกษา:"
+      },
+      {
+        "index": 19,
+        "style": "normal",
+        "text": "อาจารย์ที่ปรึกษาร่วม / Co-Advisor: ผศ.ดร. บงกช สุขอนันต์"
+      },
+      {
+        "index": 20,
+        "style": "normal",
+        "text": "ปีการศึกษา / Academic Year: ปีการศึกษา 2569"
+      },
+      {
+        "index": 21,
+        "style": "Heading 1",
+        "text": "บทสรุปผู้บริหาร / Executive Summary"
+      },
+      {
+        "index": 22,
+        "style": "normal",
+        "text": "แบตเตอรี่ตะกั่วกรดขนาดเล็กสำหรับรถจักรยานยนต์เป็นชิ้นส่วนที่มีอัตราการเปลี่ยนสูงในประเทศไทย แต่การประเมินสุขภาพ (State of Health, SoH) ของแบตเตอรี่มือสองหรือแบตเตอรี่ที่สงสัยว่าเสื่อมสภาพในเชิงพาณิชย์และห้องปฏิบัติการการศึกษาส่วนใหญ่ ยังอาศัยเพียงการวัดแรงดันพักด้วยมัลติมิเตอร์ ซึ่งไม่สะท้อนความต้านทานภายในที่เพิ่มขึ้นจากการเสื่อมสภาพ ทำให้การคัดแยกแบตเตอรี่ดี/เสียคลาดเคลื่อน โครงงานนี้จึงพัฒนา ASET Battery Tester ซึ่งเป็นสถานีทดสอบและคัดเกรดแบตเตอรี่อัตโนมัติหลายเคมี โดยนำฮาร์ดแวร์เดิมของภาควิชา (Power Supply GW Instek PSW 80-40.5, Electronic Load PEL-3111) มาควบคุมผ่านโปรโตคอล SCPI ร่วมกับวงจร 4-Wire Kelvin Sensing เพื่อวัดความ ต้านทานภายใน (DCIR) ตามมาตรฐาน IEC 61960 Clause 6.4 อย่างแม่นยำ ระบบใช้ Extended Kalman Filter ประมาณค่า State of Charge แบบเรียลไทม์ และตัดเกรดแบตเตอรี่เป็น A/B/C/REJECT จากความสัมพันธ์ระหว่าง SoH กับการเติบโตของความต้านทานภายใน (R0/R1) พร้อมระบบความปลอดภัยหลายชั้น (SSR อัตโนมัติ, Circuit Breaker, E-STOP, ขีดจำกัดซอฟต์แวร์ OVP/UVP/OTP) และเว็บแดชบอร์ดแสดงผลเรียลไทม์ผ่านระบบคลาวด์ ผลการพัฒนาถึงปัจจุบันประกอบด้วยโหมดทดสอบอัตโนมัติ 4 รูปแบบ ได้แก่ (IEC 61960 Standard, Quick Scan, HPPC, Cycle Life) ผ่านชุดทดสอบอัตโนมัติมากกว่า 700 รายการ และได้ยืนยันการทำงาน กับฮาร์ดแวร์จริงกับแบตเตอรี่ YTZ6V (12V 5.3Ah VRLA AGM) โดยค่าความต้านทานภายในที่วัดได้ใกล้เคียงกับเครื่องมืออ้างอิง"
+      },
+      {
+        "index": 23,
+        "style": "normal",
+        "text": "คำสำคัญ: การคัดเกรดแบตเตอรี่, State of Health, ความต้านทานภายใน, IEC 61960, ระบบทดสอบอัตโนมัติ"
+      },
+      {
+        "index": 24,
+        "style": "normal",
+        "text": "Small lead-acid motorcycle batteries have a high replacement rate in Thailand, yet grading a used or suspect battery's State of Health (SoH) in commercial and educational lab settings still typically relies on a single multimeter resting-voltage reading, which does not reflect the internal resistance growth that accompanies degradation and leads to unreliable good/bad sorting. This project develops the ASET Battery Tester, an automated multi-chemistry battery grading and characterization station built entirely on the department's existing instruments (GW Instek PSW 80-40.5 power supply, PEL-3111 electronic load), controlled via SCPI, combined with a 4-wire Kelvin sensing circuit to accurately measure DC internal resistance (DCIR) per IEC 61960 Clause 6.4. An Extended Kalman Filter provides real-time State of Charge estimation, and the system grades batteries A/B/C/REJECT from the relationship between SoH and ohmic/charge-transfer resistance growth (R0/R1), backed by a multi-tier safety system (automatic SSR, circuit breaker, E-STOP, software OVP/UVP/OTP limits) and a real-time cloud dashboard. Progress to date includes four automated test modes (IEC 61960 Standard, Quick Scan, HPPC, Cycle Life), over 700 passing automated tests, and confirmed operation on real hardware with an YTZ6V (12V 5.3Ah VRLA AGM) battery, with measured internal resistance closely tracking a reference instrument."
+      },
+      {
+        "index": 25,
+        "style": "normal",
+        "text": "Keywords: Battery grading, State of Health, Internal resistance, IEC 61960, Automated test system"
+      },
+      {
+        "index": 27,
+        "style": "Heading 1",
+        "text": "สารบัญ / Table of Contents"
+      },
+      {
+        "index": 29,
+        "style": "Heading 1",
+        "text": "สารบัญตาราง / List of Tables"
+      },
+      {
+        "index": 31,
+        "style": "Heading 1",
+        "text": "สารบัญรูปภาพ / List of Figures"
+      },
+      {
+        "index": 33,
+        "style": "Heading 1",
+        "text": "บทที่ 1 นิยามโครงงาน / Chapter 1: Project Definition"
+      },
+      {
+        "index": 34,
+        "style": "Heading 2",
+        "text": "1.1 ที่มาและความสำคัญ / Background"
+      },
+      {
+        "index": 35,
+        "style": "normal",
+        "text": "รถจักรยานยนต์เป็นยานพาหนะที่มีจำนวนใช้งานสูงที่สุดในประเทศไทย และแบตเตอรี่ตะกั่วกรดแบบ VRLA/AGM ขนาด 12V ที่ใช้สตาร์ทเครื่องยนต์ มีอัตราการเปลี่ยนทดแทนสูงตามอายุการใช้งาน 1–3 ปีอย่างไรก็ตาม การประเมินสุขภาพแบตเตอรี่มือสองหรือแบตเตอรี่ที่สงสัยว่าเสื่อมสภาพในร้านซ่อม และห้องปฏิบัติการการศึกษาส่วนใหญ่ ยังอาศัยการวัดแรงดันพัก (Open-Circuit Voltage) ด้วยมัลติมิเตอร์เพียงอย่างเดียว ซึ่งไม่สามารถบ่งชี้ State of Health (SoH) หรือ ความต้านทานภายใน (Internal Resistance) ที่เพิ่มขึ้นตามการเสื่อมสภาพได้ งานวิจัยด้าน Battery Diagnostics ยืนยันว่าความต้านทานภายในที่เพิ่มขึ้น มีความสัมพันธ์ เชิงเส้นโดยตรงกับการลดลงของความจุ (Capacity Fade) เนื่องจากกลไกทางเคมีไฟฟ้าเดียวกันที่ทำให้ Impedance เพิ่มขึ้น ก็ทำให้ความจุลดลงพร้อมกัน [1][2]และมาตรฐานสากล IEC 61960 ได้กำหนดวิธีวัดความต้านทานภายในแบบ Two-Pulse ไว้อย่างเป็นระบบใน Clause 6.4 [3] ในทางปฏิบัติ ห้องปฏิบัติการของภาควิชาวิศวกรรมไฟฟ้าและอิเล็กทรอนิกส์ มีเครื่องมือ Power Supply และ Electronic Load ระดับห้องปฏิบัติการ (GW Instek PSW 80-40.5 และ PEL-3111) ที่รองรับการควบคุมระยะไกลผ่านมาตรฐาน SCPI อยู่แล้ว แต่ยังไม่มีซอฟต์แวร์ที่นำเครื่องมือเหล่านี้มาประกอบเป็นสถานีทดสอบแบตเตอรี่อัตโนมัติ ที่วัด SoH และความต้านทานภายในได้ตามมาตรฐาน พร้อมระบบความปลอดภัยสำหรับการทดสอบแบบไร้คนเฝ้าโครงงานนี้จึงมุ่งพัฒนาระบบดังกล่าวโดยใช้ฮาร์ดแวร์ที่มีอยู่แล้วทั้งหมด โดยไม่ต้องจัดซื้อเครื่องมือวัดเพิ่มเติม"
+      },
+      {
+        "index": 36,
+        "style": "Heading 2",
+        "text": "1.2 การวิเคราะห์ผู้มีส่วนได้ส่วนเสีย / Stakeholder Analysis"
+      },
+      {
+        "index": 37,
+        "style": "normal",
+        "text": "ตารางที่ 1.1 : ผลการวิเคราะห์ผู้มีส่วนได้ส่วนเสีย"
+      },
+      {
+        "index": 38,
+        "style": "Heading 2",
+        "text": "1.3 การระบุปัญหา / Problem Statement"
+      },
+      {
+        "index": 39,
+        "style": "normal",
+        "text": "การประเมินสุขภาพแบตเตอรี่ตะกั่วกรด/ลิเธียมขนาดเล็กในเชิงพาณิชย์และห้องปฏิบัติการการศึกษาส่วนใหญ่ในปัจจุบัน อาศัยการวัดแรงดันพักด้วยมัลติมิเตอร์เพียงอย่างเดียว ซึ่งไม่สามารถบ่งชี้ State of Health (SoH) หรือความต้านทานภายในที่แท้จริงได้ ทำให้การคัดแยกแบตเตอรี่ดี/เสียคลาดเคลื่อน และห้องปฏิบัติการที่มีเครื่องมือ SCPI-controlled Power Supply/Electronic Load อยู่แล้ว ยังไม่มีซอฟต์แวร์ที่นำเครื่องมือเหล่านี้มาทำงานร่วมกันเป็นระบบทดสอบอัตโนมัติที่ปลอดภัยและตรงตามมาตรฐาน IEC 61960 โครงงานนี้จึงมุ่งแก้ปัญหาด้วยสถานีทดสอบอัตโนมัติที่ใช้ฮาร์ดแวร์เดิมของภาควิชา โดยไม่มีค่าใช้จ่ายในการจัดซื้อเครื่องมือวัดเพิ่มเติม"
+      },
+      {
+        "index": 40,
+        "style": "Heading 2",
+        "text": "1.4 วัตถุประสงค์ / Objectives"
+      },
+      {
+        "index": 41,
+        "style": "Heading 2",
+        "text": "เพื่อออกแบบและพัฒนาสถานีทดสอบแบตเตอรี่อัตโนมัติที่วัด SoH, DCIR และ CCA-proxy ได้ตามวิธีการที่มาตรฐาน IEC 61960 Clause 6.4 กำหนด"
+      },
+      {
+        "index": 42,
+        "style": "Heading 2",
+        "text": "เพื่อพัฒนาอัลกอริทึมประมาณสถานะ (Extended Kalman Filter) ที่ประมาณค่า State of Charge แบบเรียลไทม์ พร้อมค่าความไม่แน่นอน"
+      },
+      {
+        "index": 43,
+        "style": "Heading 2",
+        "text": "เพื่อพัฒนาระบบตัดเกรดอัตโนมัติ A/B/C/REJECT จากความสัมพันธ์ระหว่าง SoH และการเติบโตของความต้านทานภายใน (R0/R1)"
+      },
+      {
+        "index": 44,
+        "style": "Heading 2",
+        "text": "เพื่อออกแบบระบบความปลอดภัยหลายชั้น (SSR, Circuit Breaker, E-STOP, ขีดจำกัดซอฟต์แวร์) ป้องกันความเสียหายระหว่างทดสอบอัตโนมัติไร้คนเฝ้า"
+      },
+      {
+        "index": 45,
+        "style": "Heading 2",
+        "text": "เพื่อทดสอบและยืนยันความแม่นยำของระบบเทียบกับฮาร์ดแวร์จริง (แบตเตอรี่ YTZ6V 12V 5.3Ah VRLA)"
+      },
+      {
+        "index": 46,
+        "style": "Heading 2",
+        "text": "1.5 ขอบเขต / Scope"
+      },
+      {
+        "index": 47,
+        "style": "normal",
+        "text": "สิ่งที่ทำ (In Scope)"
+      },
+      {
+        "index": 48,
+        "style": "normal",
+        "text": "พัฒนาโปรแกรมควบคุมฮาร์ดแวร์ (PySide6 GUI มาตรฐาน ISA-101) ควบคุม PSW 80-40.5 และ PEL-3111 ผ่าน SCPI/PyVISA"
+      },
+      {
+        "index": 49,
+        "style": "normal",
+        "text": "พัฒนาโหมดทดสอบอัตโนมัติ 4 รูปแบบ: IEC 61960 Standard, Quick Scan, HPPC Full Sequence, Cycle Life Test"
+      },
+      {
+        "index": 50,
+        "style": "normal",
+        "text": "พัฒนาเว็บแดชบอร์ดแสดงผลเรียลไทม์ผ่านระบบคลาวด์ (Microsoft Azure)"
+      },
+      {
+        "index": 51,
+        "style": "normal",
+        "text": "ทดสอบกับแบตเตอรี่ตะกั่วกรดชนิด VRLA/AGM (YTZ6V, YTZ7V) เป็นหลัก"
+      },
+      {
+        "index": 52,
+        "style": "normal",
+        "text": "สิ่งที่ไม่ทำ (Out of Scope)"
+      },
+      {
+        "index": 53,
+        "style": "normal",
+        "text": "ไม่รวมการเก็บชุดข้อมูลขนาดใหญ่จากแบตเตอรี่จริงหลายลูกเพื่อฝึกโมเดล Machine Learning เชิงลึก (เป็นงานต่อยอด)"
+      },
+      {
+        "index": 54,
+        "style": "normal",
+        "text": "ไม่รวมกระบวนการรับรองผลิตภัณฑ์ (Certification) กับหน่วยงานมาตรฐานอย่างเป็นทางการ"
+      },
+      {
+        "index": 55,
+        "style": "Heading 2",
+        "text": "1.6 ผลงานส่งมอบ / Deliverables"
+      },
+      {
+        "index": 56,
+        "style": "normal",
+        "text": "ซอฟต์แวร์ควบคุมและวิเคราะห์ (แพ็กเกจ Python aset_batt) พร้อมซอร์สโค้ดฉบับสมบูรณ์"
+      },
+      {
+        "index": 57,
+        "style": "normal",
+        "text": "เว็บแดชบอร์ดคลาวด์ (cloud_dashboard) ที่ deploy บน Microsoft Azure พร้อมใช้งาน"
+      },
+      {
+        "index": 58,
+        "style": "normal",
+        "text": "Firmware ESP32 สำหรับวัดอุณหภูมิแบบไม่สัมผัส (MLX90614) และควบคุม Solid-State Relay (SSR)"
+      },
+      {
+        "index": 59,
+        "style": "normal",
+        "text": "รายงานผลการทดสอบและตาราง Requirement Compliance Matrix เทียบกับ IEC 61960"
+      },
+      {
+        "index": 60,
+        "style": "normal",
+        "text": "ชุดทดสอบอัตโนมัติ (automated test suite) มากกว่า 700 รายการ ครอบคลุมทุกโมดูล"
+      },
+      {
+        "index": 61,
+        "style": "Heading 2",
+        "text": "1.7 แผนดำเนินงานโครงงาน / Project Schedule"
+      },
+      {
+        "index": 62,
+        "style": "normal",
+        "text": "ตารางที่ 1.2 : แผนดำเนินงานโครงงาน"
+      },
+      {
+        "index": 64,
+        "style": "Heading 1",
+        "text": "บทที่ 2 ข้อกำหนดและข้อจำกัดการออกแบบ / Chapter 2: Design Requirements and Constraints"
+      },
+      {
+        "index": 65,
+        "style": "Heading 2",
+        "text": "2.1 การประเมินความต้องการของผู้ใช้ / Customer Needs Assessment"
+      },
+      {
+        "index": 66,
+        "style": "Heading 2",
+        "text": "จากการวิเคราะห์ผู้มีส่วนได้ส่วนเสียในหัวข้อ 1.2 พบความต้องการเชิงคุณภาพหลัก 3 ประการ (1) วัด SoH และความต้านทานภายในได้อย่างแม่นยำ โดยไม่ต้องจัดซื้อเครื่องมือวัดเฉพาะทางเพิ่มเติม (2) ระบบต้องปลอดภัยต่อผู้ใช้งานและฮาร์ดแวร์ ระหว่างการทดสอบอัตโนมัติแบบไร้คนเฝ้าเป็นเวลานาน และ (3) สามารถเข้าถึงผลการทดสอบและสถานะการทำงานจากระยะไกลผ่านเว็บ โดยไม่ต้องอยู่หน้าเครื่อง ความต้องการเหล่านี้ถูกแปลงเป็น Engineering Requirements เชิงปริมาณในหัวข้อ 2.2"
+      },
+      {
+        "index": 67,
+        "style": "Heading 2",
+        "text": "2.2 ข้อกำหนดทางวิศวกรรม / Engineering Requirements"
+      },
+      {
+        "index": 68,
+        "style": "normal",
+        "text": "ตารางที่ 2.1 : ข้อกำหนดทางวิศวกรรม"
+      },
+      {
+        "index": 73,
+        "style": "Heading 2",
+        "text": "2.3 มาตรฐานและข้อบังคับที่เกี่ยวข้อง / Applicable Codes and Standards"
+      },
+      {
+        "index": 74,
+        "style": "normal",
+        "text": "ตารางที่ 2.2 : มาตรฐานและข้อบังคับที่เกี่ยวข้อง"
+      },
+      {
+        "index": 75,
+        "style": "Heading 2",
+        "text": "2.4 ข้อจำกัดการออกแบบ / Design Constraints"
+      },
+      {
+        "index": 76,
+        "style": "Heading 3",
+        "text": "2.4.1 ด้านเศรษฐศาสตร์ / Economic Constraints"
+      },
+      {
+        "index": 77,
+        "style": "Heading 3",
+        "text": "ระบบต้องใช้ฮาร์ดแวร์หลักที่ภาควิชามีอยู่แล้วทั้งหมด (Power Supply GW Instek PSW 80-40.5, Electronic Load PEL-3111) โดยไม่มีการจัดซื้อเครื่องมือวัดหรือเครื่องมือทดสอบเพิ่มเติม งบประมาณส่วนเพิ่มจำกัดเฉพาะอุปกรณ์ราคาประหยัด (ESP32, เซนเซอร์ MLX90614, Solid-State Relay, สายวัด Kelvin sensing)"
+      },
+      {
+        "index": 78,
+        "style": "Heading 3",
+        "text": "2.4.2 ด้านความปลอดภัยและสุขภาพ / Health & Safety Constraints"
+      },
+      {
+        "index": 79,
+        "style": "Heading 3",
+        "text": "ระบบต้องมีกลไกตัดไฟอัตโนมัติอย่างน้อย 2 ชั้นที่เป็นอิสระจากกัน (Solid-State Relay ควบคุมด้วยซอฟต์แวร์ และ Circuit Breaker ทางกายภาพ) และปุ่ ม E-STOP ที่ตัดฮาร์ดแวร์จริงได้ภายใน 1 วินาทีเมื่อผู้ควบคุมกด ค่าขีดจำกัดความปลอดภัย (OVP/UVP/OTP/UTP/Max Current) ต้องตั้งค่าและบันทึกไว้ในระบบ พร้อมแสดงผลแบบ pop-up กลางจอทันทีเมื่อมีการตัดการทำงานฉุกเฉิน"
+      },
+      {
+        "index": 80,
+        "style": "Heading 3",
+        "text": "2.4.3 ด้านเทคนิคและกายภาพ / Technical & Physical Constraints"
+      },
+      {
+        "index": 81,
+        "style": "normal",
+        "text": "อัตราการอ่านค่าจริงของเครื่องมือผ่าน SCPI ทาง USB ถูกจำกัดที่ประมาณ 5–10 Hz (nominal 10 Hz และลดเหลือประมาณ 5 Hz ระหว่างการทดสอบ HPPC ที่ต้องอ่านค่าหลายคำสั่งต่อรอบ ไม่ใช่ 75 Hz ตามแผนเดิม) เนื่องจากไม่มีการจัดซื้อฮาร์ดแวร์ ADC ความเร็วสูงแยกต่างหาก (ดูรายละเอียดการตัดสินใจในหัวข้อ 3.2–3.4) วงจร 4- Wire Kelvin Sensing ต้องแยกสาย Force และ Sense ออกจากกันอย่างสมบูรณ์เพื่อขจัดผลของความต้านทานสายไฟออกจากค่า DCIR ที่วัดได้"
+      },
+      {
+        "index": 83,
+        "style": "Heading 3",
+        "text": "2.4.4 ด้านสิ่งแวดล้อม / Environmental Constraints"
+      },
+      {
+        "index": 84,
+        "style": "normal",
+        "text": "ระบบต้องรองรับการทดสอบภายใต้อุณหภูมิห้องปฏิบัติการปกติ (25–28°C) โดยมีการชดเชยผลของอุณหภูมิต่อค่าความต้านทานภายในด้วยแบบจำลอง Arrhenius normalization เทียบเท่าอุณหภูมิอ้างอิง 25°C เพื่อไม่ให้อุณหภูมิห้องที่ต่างกันในแต่ละวันทำให้ผลตัดเกรดคลาดเคลื่อน"
+      },
+      {
+        "index": 85,
+        "style": "Heading 2",
+        "text": "2.5 สรุปเกณฑ์การออกแบบ / Design Criteria Summary"
+      },
+      {
+        "index": 86,
+        "style": "normal",
+        "text": "เกณฑ์ที่ 1: ระบบต้องวัดค่า DCIR ได้ด้วยวิธี two-pulse ตาม IEC 61960 Clause 6.4 โดยมี coefficient of variation ระหว่างรอบวัดไม่เกิน 15%"
+      },
+      {
+        "index": 87,
+        "style": "normal",
+        "text": "เกณฑ์ที่ 2: ระบบต้องตัดไฟอัตโนมัติ (SSR/Breaker/E-STOP) ได้ภายใน 1 วินาทีเมื่อค่าที่วัดเกินขีดจำกัดความปลอดภัยที่ตั้งไว้"
+      },
+      {
+        "index": 88,
+        "style": "normal",
+        "text": "เกณฑ์ที่ 3: ค่า SoC ที่ประมาณด้วย EKF ต้องมีความไม่แน่นอนไม่เกิน ±5% หลังจากช่วง anchor settle"
+      },
+      {
+        "index": 89,
+        "style": "normal",
+        "text": "เกณฑ์ที่ 4: ระบบต้องทำงานได้ครบทุกโหมดทดสอบ (IEC 61960 / Quick Scan / HPPC / Cycle Life) โดยไม่จัดซื้อฮาร์ดแวร์เพิ่มเติมจากที่ระบุในหัวข้อ 2.4.1"
+      },
+      {
+        "index": 91,
+        "style": "Heading 1",
+        "text": "บทที่ 3 การออกแบบเชิงแนวคิด / Chapter 3: Conceptual Design"
+      },
+      {
+        "index": 92,
+        "style": "Heading 2",
+        "text": "3.1 แนวคิดทางเลือก / Alternative Concepts"
+      },
+      {
+        "index": 93,
+        "style": "normal",
+        "text": "ทีมงานพิจารณาแนวทางการวัดค่าทางไฟฟ้า 2 แนวคิด ที่แตกต่างกันจริง ก่อนตัดสินใจเลือกแนวทางที่ใช้ในระบบปัจจุบัน"
+      },
+      {
+        "index": 94,
+        "style": "normal",
+        "text": "ตารางที่ 3.1 : เปรียบเทียบแนวคิดทางเลือก"
+      },
+      {
+        "index": 95,
+        "style": "Heading 2",
+        "text": "3.2 การประเมินเบื้องต้น / Preliminary Evaluation"
+      },
+      {
+        "index": 96,
+        "style": "Heading 2",
+        "text": "เมื่อคัดกรองด้วยเกณฑ์ผ่าน/ไม่ผ่าน (go/no-go) เทียบกับข้อจำกัดด้านเศรษฐศาสตร์ในหัวข้อ 2.4.1 (ห้ามจัดซื้อเครื่องมือเพิ่มเติม) พบว่า แนวคิด A ไม่ผ่านเกณฑ์ทันที เนื่องจากต้องจัดซื้อวงจร ADC และ Contactor เพิ่มเติม รวมถึงเพิ่มความเสี่ยงด้านความปลอดภัยจากการควบคุมกำลังไฟ โดยตรงซึ่งขัดกับข้อจำกัดด้านความปลอดภัยในหัวข้อ 2.4.2 ส่วนแนวคิด B ผ่านเกณฑ์ทั้งด้านงบประมาณและความปลอดภัย จึงนำเข้าสู่การประเมินแบบ ถ่วงน้ำหนักในหัวข้อ 3.3 เพื่อยืนยันการตัดสินใจอย่างเป็นระบบ"
+      },
+      {
+        "index": 97,
+        "style": "Heading 2",
+        "text": "3.3 ตารางตัดสินใจแบบถ่วงน้ำหนัก / Weighted Decision Matrix"
+      },
+      {
+        "index": 98,
+        "style": "normal",
+        "text": "ทีมงานกำหนดเกณฑ์และน้ำหนักคะแนนไว้ล่วงหน้าก่อนเริ่มให้คะแนน โดยให้น้ำหนักสูงสุดกับต้นทุนและความปลอดภัยเนื่องจากเป็นข้อจำกัดที่บังคับตามหัวข้อ 2.4"
+      },
+      {
+        "index": 101,
+        "style": "normal",
+        "text": "ตารางที่ 3.2 : ตารางตัดสินใจแบบถ่วงน้ำหนัก"
+      },
+      {
+        "index": 102,
+        "style": "Heading 2",
+        "text": "3.4 แนวคิดที่เลือก / Selected Concept"
+      },
+      {
+        "index": 103,
+        "style": "normal",
+        "text": "แนวคิด B (ใช้เครื่องมือ SCPI เดิม) ได้คะแนนรวมสูงกว่าอย่างชัดเจน (7.80 เทียบกับ 5.30) โดยเฉพาะด้าน ต้นทุน และ ความปลอดภัย ซึ่งมีน้ำหนักรวมกันสูงถึง 0.50 ทีมงานจึงเลือกแนวคิด B และออกแบบเอนจินวิเคราะห์ให้ทำงานได้ดีที่อัตราสุ่มตัวอย่างประมาณ 10 Hz แทนการเพิ่มความเร็วฮาร์ดแวร์ กล่าวคือ ใช้วิธีวัด DCIR แบบ Two-Pulse ที่ประมาณ 200 ms ต่อการก้าวกระโดดของกระแส (ตามมาตรฐาน IEC 61960) ร่วมกับการวิเคราะห์ค่าคงที่เวลา (τ ≈ 10–60 s ตามค่าออกแบบ แต่วัดจริงกับแบตเตอรี่ YTZ6V ได้ประมาณ 4–5 s) จากช่วง Relaxation หลัง HPPC Pulse ด้วยการ Fit สมการวงจรสมมูล 1-RC Thevenin ซึ่งสามารถแยก R₀ ออกจาก R₁ ได้แม่นยำ แม้อัตราสุ่มตัวอย่างจะจำกัดอยู่ที่ 10 Hz เนื่องจากค่าคงที่เวลาของปรากฏการณ์ Polarization ยาวกว่าคาบการสุ่มมาก"
+      },
+      {
+        "index": 104,
+        "style": "Heading 2",
+        "text": "3.5 การประเมินความเสี่ยง / Risk Assessment"
+      },
+      {
+        "index": 105,
+        "style": "normal",
+        "text": "ตารางที่ 3.3 : การประเมินความเสี่ยง"
+      },
+      {
+        "index": 108,
+        "style": "Heading 1",
+        "text": "บทที่ 4 การออกแบบทางวิศวกรรมโดยละเอียด / Chapter 4: Detailed Engineering Design"
+      },
+      {
+        "index": 109,
+        "style": "Heading 2",
+        "text": "4.1 วิธีการออกแบบ / Design Methodology"
+      },
+      {
+        "index": 110,
+        "style": "Heading 2",
+        "text": "ระบบซอฟต์แวร์แบ่งเป็น 2 โปรแกรม ที่ทำงานร่วมกัน ได้แก่ (1) โปรแกรมห้องปฏิบัติการ (PySide6 GUI) สำหรับควบคุมฮาร์ดแวร์และวิเคราะห์ผลโดยตรง (2) เว็บแดชบอร์ดบนคลาวด์ สำหรับรับข้อมูลจากโปรแกรมห้องปฏิบัติการและแสดงผลระยะไกล แพ็กเกจ Python หลักแบ่งเป็นโมดูลตามหน้าที่ ได้แก่ core (แบบจำลองแบตเตอรี่และ State Estimator),hardware (ควบคุมอุปกรณ์จริงผ่าน SCPI และโหมดจำลอง),acquisition (เอนจินวิเคราะห์และ worker เก็บข้อมูล),UI (หน้าจอ ISA-101) และ storage/services (บันทึกข้อมูลและส่งขึ้นคลาวด์)"
+      },
+      {
+        "index": 111,
+        "style": "Heading 2",
+        "text": "4.2 การวิเคราะห์ทางวิศวกรรม / Engineering Analysis"
+      },
+      {
+        "index": 112,
+        "style": "normal",
+        "text": "แบบจำลองหลักของระบบคือ วงจรสมมูล Thevenin แบบ 1-RC สูตรการคำนวณตามสมการที่ 4.2.1"
+      },
+      {
+        "index": 113,
+        "style": "normal",
+        "text": "(4.2.1)"
+      },
+      {
+        "index": 114,
+        "style": "normal",
+        "text": "โดย R0 คือความต้านทาน Ohmic (ประมาณด้วยการยืดค่าย้อนกลับไปที่ t=0 จากช่วง Relaxation), R1 และ C1 คือความต้านทานและความจุ ของปรากฏการณ์ Polarization/Charge-transfer ซึ่งได้จากการ fit สมการด้วยวิธี Trust Region Reflective (scipy.optimize.curve_fit)"
+      },
+      {
+        "index": 115,
+        "style": "normal",
+        "text": "ความต้านทานภายในแบบ DCIR (two-pulse) ตาม IEC 61960 สูตรการคำนวณตามสมการที่ 4.2.2"
+      },
+      {
+        "index": 116,
+        "style": "normal",
+        "text": "(4.2.2)"
+      },
+      {
+        "index": 117,
+        "style": "normal",
+        "text": "ที่จุดแรกหลังการก้าวกระโดดของกระแส (≈200 ms ที่อัตราอ่านค่า 5 Hz)"
+      },
+      {
+        "index": 118,
+        "style": "normal",
+        "text": "Peukert's Law สำหรับการปรับอัตราคายประจุ (Rate Normalization) สูตรการคำนวณตามสมการที่ 4.2.3"
+      },
+      {
+        "index": 119,
+        "style": "normal",
+        "text": "(4.2.3)"
+      },
+      {
+        "index": 120,
+        "style": "normal",
+        "text": "โดย k ≈ 1.10–1.30 สำหรับตะกั่วกรด และ ≈ 1.05 สำหรับลิเธียม"
+      },
+      {
+        "index": 121,
+        "style": "normal",
+        "text": "การประมาณ State of Charge ใช้ Extended Kalman Filter ที่รวม Coulomb Counting เข้ากับการปรับแก้ด้วยแรงดันวงจรเปิด (OCV correction) และการชดเชยผลของอุณหภูมิด้วยแบบจำลอง Arrhenius สำหรับค่าความต้านทานภายใน เพื่อให้ค่าที่วัดในอุณหภูมิห้องต่างกันเทียบกันได้ที่ อุณหภูมิอ้างอิง 25°C"
+      },
+      {
+        "index": 122,
+        "style": "normal",
+        "text": "การประเมินสภาพแบตเตอรี่ (State of Health) คำนวณจากความจุที่วัดได้จริง โดยปรับให้เป็นอัตราคายประจุอ้างอิงด้วยกฎ Peukert (สมการที่ 4.2.3) ก่อนเทียบกับความจุพิกัด สูตรการคำนวณตามสมการที่ 4.2.4"
+      },
+      {
+        "index": 123,
+        "style": "normal",
+        "text": "(4.2.4)"
+      },
+      {
+        "index": 124,
+        "style": "normal",
+        "text": "โดย Cnorm คือความจุที่ปรับด้วย Peukert แล้ว (ที่อัตราคายประจุอ้างอิง 0.2C) และ Crated คือความจุพิกัด จากนั้นระบบตัดเกรดอัตโนมัติจากค่า SoH ร่วมกับการเติบโตของความต้านทานภายในแบบแยกส่วน คือ R0 (ohmic) และ R1 (charge-transfer) เทียบกับค่าฐาน R0,base = 0.6·Rint และ R1,base = 0.4·Rint ดังนี้ — เกรด A เมื่อ SoH ≥ 90% และ R0/R0,base ≤ 1.3 และ R1/R1,base ≤ 1.4; เกรด B เมื่อ SoH ≥ 80% และอัตราส่วน ≤ 1.7 และ 1.8; เกรด C เมื่อ SoH ≥ 70% และอัตราส่วน ≤ 2.5 และ 2.8; นอกเหนือจากนี้จัดเป็น REJECT (กรณีทดสอบ HPPC ที่วัด SoH ไม่ได้ จะตัดเกรดจากการเติบโตของความต้านทานเพียงอย่างเดียว)"
+      },
+      {
+        "index": 125,
+        "style": "normal",
+        "text": "การประมาณสถานะประจุ (State of Charge) ใช้ Extended Kalman Filter บนเวกเตอร์สถานะ x = [SoC, V1]T โดยสมการเปลี่ยนสถานะ (State Transition) แสดงดังสมการที่ 4.2.5 และ 4.2.6"
+      },
+      {
+        "index": 126,
+        "style": "normal",
+        "text": "(4.2.5)"
+      },
+      {
+        "index": 127,
+        "style": "normal",
+        "text": "(4.2.6)"
+      },
+      {
+        "index": 128,
+        "style": "normal",
+        "text": "และสมการวัด (Measurement Model) ที่เชื่อมแรงดันขั้วแบตเตอรี่กับสถานะ แสดงดังสมการที่ 4.2.7"
+      },
+      {
+        "index": 129,
+        "style": "normal",
+        "text": "(4.2.7)"
+      },
+      {
+        "index": 130,
+        "style": "normal",
+        "text": "โดย η คือประสิทธิภาพคูลอมบ์ (Coulombic Efficiency), Qn คือความจุพิกัด, Δt คือคาบเวลาสุ่มตัวอย่าง และ τ = R1C1 คือค่าคงที่เวลาของวงจร RC นอกจากนี้ได้ชดเชยผลของอุณหภูมิต่อค่าความต้านทานภายในด้วยแบบจำลอง Arrhenius แสดงดังสมการที่ 4.2.8"
+      },
+      {
+        "index": 131,
+        "style": "normal",
+        "text": "(4.2.8)"
+      },
+      {
+        "index": 132,
+        "style": "normal",
+        "text": "โดย Ea คือพลังงานกระตุ้น (Activation Energy), R คือค่าคงที่แก๊สสากล (Universal Gas Constant) โดย Ea/R สำหรับตะกั่วกรด ≈ 2200 K และ Tref = 298.15 K (25°C) เพื่อให้ค่าความต้านทานที่วัดในอุณหภูมิห้องที่ต่างกันสามารถเทียบกันได้ที่อุณหภูมิอ้างอิงเดียว (หากไม่มีค่า Ea/R ในโปรไฟล์ ระบบจะใช้การประมาณเชิงเส้นแทน)"
+      },
+      {
+        "index": 133,
+        "style": "Heading 2",
+        "text": "4.3 การคำนวณการออกแบบ / Design Calculations"
+      },
+      {
+        "index": 134,
+        "style": "Heading 2",
+        "text": "ตัวอย่างการคำนวณค่า DCIR จากขั้นกระแสจริงระหว่างการทดสอบ HPPC: กำหนด ΔV = 150 mV และ ΔI = 5 A จะได้ R₀ = |ΔV/ΔI| = 0.150/5 = 0.030 Ω = 30 mΩ ซึ่งใกล้เคียงกับค่าอ้างอิงที่วัดด้วยเครื่อง GBM-3080 (ACIR 38 mΩ) โดยส่วนต่าง 8 mΩ อธิบายได้จากผลของการเสื่อมสภาพตามอายุและความแตกต่างระหว่างวิธีวัดแบบ AC (ACIR ที่ 1 kHz) กับ DC (DCIR)"
+      },
+      {
+        "index": 135,
+        "style": "Heading 2",
+        "text": "ตัวอย่างการคำนวณ Peukert-normalized capacity สำหรับแบตเตอรี่ YTZ6V (rated 5.3 Ah, k = 1.10): เมื่อดิสชาร์จที่ 1C (5.3 A) เทียบกับอัตราอ้างอิง 0.2C (1.06 A) จะได้ตัวคูณปรับค่า (5.3/1.06)^(1.10−1) = 5^0.10 ≈ 1.175 หมายความว่าความจุที่วัดได้จริงที่อัตราสูงต้องคูณด้วยประมาณ 1.175 เพื่อเทียบเท่าความจุที่อัตราอ้างอิง"
+      },
+      {
+        "index": 136,
+        "style": "Heading 2",
+        "text": "การคำนวณคาบการสุ่มตัวอย่าง: อัตราการอ่านค่าจาก SCPI ที่วัดได้จริงประมาณ 10 Hz หมายถึงคาบเวลาระหว่างตัวอย่าง T = 1/10 = 100 ms ต่อรอบ ซึ่งกำหนดเป็นเกณฑ์ dt-gating สำหรับ DCIR ที่ 0.5 s (5 เท่าของคาบปกติ) เพื่อทิ้งค่าที่อ่านช้าผิดปกติจากการหน่วงของ USB/SCPI ก่อนนำไปคำนวณ"
+      },
+      {
+        "index": 137,
+        "style": "Heading 2",
+        "text": "4.4 แบบวิศวกรรม / Engineering Drawings"
+      },
+      {
+        "index": 138,
+        "style": "normal",
+        "text": "ภาพที่ 4.1 แสดงแผนภาพวงจรของสถานีทดสอบ ประกอบด้วย Power Supply (PSW), Electronic Load, Circuit Breaker (CB), Solid-State Relay (SSR) ควบคุมผ่าน ESP32 GPIO16 และวงจร 4-Wire Kelvin Sensing (แยกสาย Force กับ Sense ที่ขั้ว S+/S− ของทั้ง PSW และ Load) เพื่อขจัดผลของความต้านทานสายไฟออกจากค่า DCIR ที่วัดได้ ส่วน ESP32 ตัวที่สองเชื่อมต่อกับเซนเซอร์ MLX90614 สำหรับวัดอุณหภูมิผิวแบตเตอรี่แบบไม่สัมผัส"
+      },
+      {
+        "index": 140,
+        "style": "normal",
+        "text": "ภาพที่ 4.1: แผนภาพวงจรทดสอบ (4-Wire Kelvin Sensing)"
+      },
+      {
+        "index": 142,
+        "style": "normal",
+        "text": "ภาพที่ 4.2: สถาปัตยกรรมฮาร์ดแวร์ของระบบทดสอบจริง"
+      },
+      {
+        "index": 143,
+        "style": "Heading 2",
+        "text": "4.5 การจำลองและสร้างแบบจำลอง / Simulation and Modeling"
+      },
+      {
+        "index": 144,
+        "style": "normal",
+        "text": "ระบบพัฒนาโหมดจำลองฮาร์ดแวร์ (Hardware Controller) ที่จำลองพฤติกรรมทางไฟฟ้าของแบตเตอรี่ รวมถึงการตอบสนองแบบ 1-RC ภายใต้โหลด เพื่อให้พัฒนาและทดสอบตรรกะซอฟต์แวร์ได้โดยไม่ต้องใช้ฮาร์ดแวร์จริงตลอดเวลา และมี Replay Harness ที่นำ CSV จากการทดสอบจริงย้อนกลับมารันผ่านเอนจินวิเคราะห์อีกครั้งแบบออฟไลน์ เพื่อยืนยันว่าการแก้ไขอัลกอริทึมในภายหลังไม่ทำให้ผลลัพธ์กับข้อมูลเดิมเปลี่ยนไปโดยไม่ตั้งใจ (Ablation Study) นอกจากนี้ยังมีตัวเลือกเปรียบเทียบวิธีการประมาณค่า (Adaptive EKF เทียบกับ EKF มาตรฐาน, การอินทิเกรตแบบ trapezoidal เทียบกับ rectangular) เพื่อประเมินผลกระทบของแต่ละวิธีต่อความแม่นยำก่อนเลือกใช้งานจริง"
+      },
+      {
+        "index": 145,
+        "style": "Heading 2",
+        "text": "4.6 ข้อกำหนดขั้นสุดท้าย / Final Specifications"
+      },
+      {
+        "index": 146,
+        "style": "normal",
+        "text": "หลังจากดำเนินการออกแบบ พัฒนา และทดสอบระบบกับฮาร์ดแวร์จริง พบว่าระบบสามารถบรรลุข้อกำหนดทางวิศวกรรมที่กำหนดไว้ในบทที่ 2 ได้ครบถ้วน โดยระบบมีอัตราการอ่านข้อมูลผ่าน SCPI ได้ประมาณ 10 Hz ซึ่งเป็นไปตามเป้าหมายที่กำหนดไว้ การวัดค่าความต้านทานภายในแบบ DCIR (R₀) ให้ผลลัพธ์ 30 mΩ เมื่อเปรียบเทียบกับเครื่องอ้างอิง GBM-3080 ที่วัดค่า ACIR ได้ 38 mΩ พบว่ามีความแตกต่างเพียง 8 mΩ ซึ่งอยู่ในเกณฑ์ที่ยอมรับได้สำหรับการประเมินสมรรถนะของแบตเตอรี่ านระบบความปลอดภัย พบว่า Solid-State Relay (SSR) สามารถตอบสนองต่อคำสั่งตัดการทำงานได้ภายในเวลาที่กำหนด และได้รับการยืนยันการทำงานร่วมกับฮาร์ดแวร์จริงเรียบร้อยแล้ว นอกจากนี้ ระบบยังสามารถตรวจสอบและกำหนดทิศทางของกระแสชาร์จและคายประจุ (Sign Convention) ได้อย่างถูกต้อง โดยผ่านการทดสอบกับแบตเตอรี่ YTZ6V ในส่วนของการทำงานอัตโนมัติ ระบบสามารถดำเนินการตามลำดับการทดสอบ PREPARE → CHARGE → REST → TEST → ANALYZE ได้ครบทุกขั้นตอนโดยไม่ต้องอาศัยการควบคุมจากผู้ใช้งานระหว่างการทดสอบ และเมื่อตรวจสอบความถูกต้องของซอฟต์แวร์ด้วยชุดทดสอบอัตโนมัติ (Automated Test Suite) พบว่าผ่านการทดสอบครบ แสดงให้เห็นว่าระบบมีความถูกต้องและมีความพร้อมสำหรับการใช้งานจริง"
+      },
+      {
+        "index": 147,
+        "style": "Heading 1",
+        "text": "บทที่ 5 การพิสูจน์ยืนยันและการตรวจสอบความถูกต้อง / Chapter 5: Verification and Validation"
+      },
+      {
+        "index": 148,
+        "style": "Heading 2",
+        "text": "5.1 แผนการพิสูจน์ยืนยัน / Verification Plan"
+      },
+      {
+        "index": 149,
+        "style": "normal",
+        "text": "แผนการพิสูจน์ยืนยันจัดทำขึ้นเพื่อทดสอบว่าระบบทดสอบสมรรถนะและประเมินสุขภาพแบตเตอรี่ (ASET Battery Tester) สามารถปฏิบัติงานได้ตามข้อกำหนดทางวิศวกรรมที่ระบุไว้ในหัวข้อ 2.2 โดยกำหนดวิธีการทดสอบ ดังนี้"
+      },
+      {
+        "index": 152,
+        "style": "Heading 2",
+        "text": "5.2 ขั้นตอนการทดสอบ / Testing Procedures"
+      },
+      {
+        "index": 153,
+        "style": "normal",
+        "text": "Measurement Sample Rate & Latency: รันระบบทดสอบตามปกติและบันทึก Timestamp ของข้อมูลที่อ่านจากอุปกรณ์ผ่าน SCPI/USB ลงในไฟล์ CSV จำนวน 1,000 แซมเปิล จากนั้นคำนวณช่วงเวลาระหว่างข้อมูลแต่ละจุด (Δt) เพื่อประเมิน Sample Rate และตรวจสอบจำนวนข้อมูลที่มีค่า Δt > 0.5 s ซึ่งจะถูกคัดออกด้วยกลไก dt-gating"
+      },
+      {
+        "index": 154,
+        "style": "normal",
+        "text": "DCIR & ECM Measurement: ใช้แบตเตอรี่ VRLA ที่มีสภาพแตกต่างกัน จำนวน 3 ลูก รันโหมด Quick Scan อัตโนมัติ ลูกละ 3 รอบ โดยใช้กระแส Pulse เพื่อสกัดพารามิเตอร์ของแบบจำลอง 1-RC Thevenin ECM ได้แก่ R₀, R₁, C₁ และ τ จากข้อมูลช่วง Relaxation ด้วยวิธี Curve-fitting จากนั้นคำนวณค่าเฉลี่ยและ Coefficient of Variation (%CV) ของ R₀ เพื่อประเมินความสามารถในการทำซ้ำของการวัด"
+      },
+      {
+        "index": 155,
+        "style": "normal",
+        "text": "State Estimation Uncertainty: วัดแรงดันวงจรเปิด (Open-Circuit Voltage: OCV) ของแบตเตอรี่หลังพักตัวก่อนเริ่มการทดสอบ และนำค่า OCV ไปใช้ในการประเมิน Initial SoC จากนั้นทำการคายประจุแบตเตอรี่จนสิ้นสุดการทดสอบ และใช้ปริมาณประจุที่วัดได้จากการคายประจุเป็นค่าอ้างอิง (Reference SoC) เพื่อนำมาเปรียบเทียบและคำนวณค่าความคลาดเคลื่อนของการประเมิน SoC"
+      },
+      {
+        "index": 156,
+        "style": "normal",
+        "text": "System Cutoff Response Time: ตั้งค่า OVP ให้ต่ำกว่าแรงดันแบตเตอรี่จริงเพื่อจำลองสภาวะ Fault จากนั้นเริ่มการทดสอบและใช้ Oscilloscope ตรวจวัดช่วงเวลาตั้งแต่ระบบตรวจพบ Fault และส่งคำสั่งจากซอฟต์แวร์ไปยัง ESP32 จนกระทั่ง SSR ตัดวงจรและกระแสโหลดลดลงเป็นศูนย์ โดยทำการทดสอบซ้ำ 3 ครั้ง"
+      },
+      {
+        "index": 157,
+        "style": "normal",
+        "text": "Over-Temperature Trip & Discharge Cutoff: ตั้งค่า Temperature Trip Threshold ที่ 45 °C และเพิ่มอุณหภูมิบริเวณที่ตรวจวัดด้วยเซนเซอร์ MLX90614 จนถึงจุดตัด เพื่อตรวจสอบการหยุดการทำงานและการแจ้งเตือนของระบบ จากนั้นตั้งค่า UVP = 10.5 V และรันโหมด Discharge จนระบบสั่งตัดการคายประจุ พร้อมใช้ Digital Multimeter วัดแรงดันที่ขั้วแบตเตอรี่ขณะเกิดการตัดวงจร เพื่อนำไปเปรียบเทียบกับช่วงแรงดันที่กำหนด"
+      },
+      {
+        "index": 158,
+        "style": "Heading 2",
+        "text": "5.3 ผลการทดสอบ / Test Results"
+      },
+      {
+        "index": 159,
+        "style": "Heading 3",
+        "text": "(1) อัตราการสุ่มตัวอย่างและการคัดกรองข้อมูล (Sample Rate & Latency Gate)"
+      },
+      {
+        "index": 160,
+        "style": "normal",
+        "text": "ระบบสื่อสารผ่าน SCPI/USB ซึ่งอาจได้รับผลกระทบจาก OS Interrupts (เช่น Windows USB Selective Suspend) ผลการวิเคราะห์ Timestamp จากไฟล์ battery_data.csv จำนวน 1,000 แซมเปิล แสดงในตารางที่ 5.1"
+      },
+      {
+        "index": 161,
+        "style": "normal",
+        "text": "ตารางที่ 5.1 สถิติอัตราการสุ่มตัวอย่าง (Sample Rate) และระบบ dt-gating"
+      },
+      {
+        "index": 163,
+        "style": "normal",
+        "text": "สรุปผล: ระบบสามารถอ่านค่าได้ที่ความเร็วเฉลี่ย 10 Hz และกลไก dt-gating สามารถดักจับและคัดทิ้งข้อมูลที่หน่วงเกิน 0.5s ได้ทั้งหมดอย่างแม่นยำ ผ่านเกณฑ์ (PASS)"
+      },
+      {
+        "index": 165,
+        "style": "Heading 3",
+        "text": "(2) การสกัดพารามิเตอร์วงจรสมมูลและความสามารถในการทำซ้ำ (1-RC ECM & Repeatability)"
+      },
+      {
+        "index": 166,
+        "style": "normal",
+        "text": "การตรวจสอบนี้แบ่งเป็นการตรวจสอบประสิทธิภาพการทำซ้ำของอัลกอริทึม Curve-fitting ในการสกัดพารามิเตอร์ทั้งหมดของแบบจำลอง 1-RC Thevenin (ตารางที่ 5.2) และการเปรียบเทียบค่าความต้านทานภายในที่ได้กับเครื่องวัดมาตรฐาน (ตารางที่ 5.3) โดยทำการทดสอบกับแบตเตอรี่ 3 สภาพ ลูกละ 3 รอบ"
+      },
+      {
+        "index": 167,
+        "style": "normal",
+        "text": "ตารางที่ 5.2 ข้อมูลการสกัดพารามิเตอร์ 1-RC ECM และความสามารถในการทำซ้ำ (Repeatability)"
+      },
+      {
+        "index": 178,
+        "style": "normal",
+        "text": "สรุปผล: อัลกอริทึม Curve-fitting มีเปอร์เซ็นต์ความคลาดเคลื่อนของการทำซ้ำ (%CV) ของ R₀ ต่ำกว่าเกณฑ์ 15% ในแบตเตอรี่ทุกสภาพ ผ่านเกณฑ์ (PASS)"
+      },
+      {
+        "index": 179,
+        "style": "normal",
+        "text": "(แทรกรูป: กราฟ Schematic ของแบบจำลอง 1-RC และกราฟการ Fitting ที่ทับซ้อนกันหลายเส้นจากโปรแกรม)"
+      },
+      {
+        "index": 181,
+        "style": "normal",
+        "text": "ตารางที่ 5.3 การเปรียบเทียบค่าความต้านทานภายใน (R₀) กับเครื่องวัดอ้างอิง (ACIR)"
+      },
+      {
+        "index": 182,
+        "style": "normal",
+        "text": "สรุปผล: เมื่อนำค่า Mean R₀ ไปเปรียบเทียบกับค่า ACIR อ้างอิง พบว่ามีทิศทางสอดคล้องกันอย่างชัดเจน โดยความต่าง (Error Offset) อยู่ในระดับที่สามารถอธิบายได้จากความแตกต่างของวิธีการวัดแบบ DC และ AC ผ่านเกณฑ์ (PASS)"
+      },
+      {
+        "index": 183,
+        "style": "Heading 3",
+        "text": "(3) ความแม่นยำของการประเมินสถานะประจุ (SoC Estimation Uncertainty)"
+      },
+      {
+        "index": 184,
+        "style": "normal",
+        "text": "สรุปผล: ค่า Error สูงสุดที่ประเมินได้จากแรงดันวงจรเปิด (Voc) อยู่ภายในเกณฑ์ ±5% เมื่อมีการพักแบตเตอรี่จนเสถียร ผ่านเกณฑ์ (PASS)"
+      },
+      {
+        "index": 185,
+        "style": "Heading 3",
+        "text": "(4) ความเร็วในการสั่งตัดวงจร (System Cutoff Response Time)"
+      },
+      {
+        "index": 186,
+        "style": "normal",
+        "text": "(แทรกรูป: ภาพถ่ายจอ Oscilloscope แสดงความหน่วง Δt และภาพหน้าจอ UI ที่แสดงแบนเนอร์แจ้งเตือน OVP และ E-STOP)"
+      },
+      {
+        "index": 187,
+        "style": "Heading 3",
+        "text": "(5) การคัดเกรดแบตเตอรี่อัตโนมัติ (Battery Grading Output)"
+      },
+      {
+        "index": 188,
+        "style": "normal",
+        "text": "สรุปผล: ระบบสามารถจำแนกสุขภาพแบตเตอรี่และแบ่งเกรดได้อย่างสมเหตุสมผลตามพฤติกรรมการเสื่อมสภาพทางเคมีไฟฟ้า ผ่านเกณฑ์ (PASS)"
+      },
+      {
+        "index": 189,
+        "style": "Heading 2",
+        "text": "5.4 ตารางตรวจสอบความสอดคล้องกับข้อกำหนด / Requirement Compliance Matrix"
+      },
+      {
+        "index": 190,
+        "style": "normal",
+        "text": "ตารางที่ 5.7 ตรวจสอบความสอดคล้องกับข้อกำหนดทางวิศวกรรมจากหัวข้อ 2.2 ทั้งระบบ"
+      },
+      {
+        "index": 192,
+        "style": "Heading 2",
+        "text": "5.5 การทบทวนการออกแบบ / Design Review"
+      },
+      {
+        "index": 195,
+        "style": "normal",
+        "text": "จากการทดสอบทั้งหมดพบว่า การพัฒนาระบบทดสอบสมรรถนะและประเมินสุขภาพแบตเตอรี่ (ASET Battery Tester) สามารถบรรลุวัตถุประสงค์ได้อย่างครบถ้วน การเลือกใช้เครื่องมือระดับห้องปฏิบัติการที่มีอยู่เดิม (SCPI Instruments) มาทำงานร่วมกับวงจร 4-Wire Kelvin Sensing และซอฟต์แวร์จัดการข้อมูล ทำให้ประหยัดงบประมาณและได้ข้อมูลที่มีความน่าเชื่อถือสูง จุดเด่นในการออกแบบคือการสร้างโหมด Quick Scan ขึ้นมาใช้งาน ซึ่งเป็นนวัตกรรมซอฟต์แวร์ที่ผสานจุดแข็งของการกระตุ้นแบบ HPPC (เพื่อสกัดพารามิเตอร์วงจรสมมูล 1-RC Thevenin) เข้ากับรูปแบบการดึงกระแสของมาตรฐาน IEC 61960 (เพื่อประเมิน SoC และ SoH) ภายในลูปการทดสอบเดียว ทำให้สามารถรวบรวมข้อมูลทุกมิติของแบตเตอรี่ได้อย่างรวดเร็วและแม่นยำ แม้จะมีข้อจำกัดด้านอัตราการสุ่มตัวอย่างผ่าน USB SCPI ที่ประมาณ 10 Hz แต่การใช้เทคนิคการวิเคราะห์เชิงตัวเลข (Curve-fitting จากช่วง Relaxation) ร่วมกับระบบคัดกรองข้อมูลหน่วง (dt-gating > 0.5s) ก็สามารถหักล้างข้อจำกัดดังกล่าวได้อย่างเด็ดขาด ในด้านความปลอดภัย การประเมินข้อจำกัดฮาร์ดแวร์ร่วมกับการประยุกต์ใช้การวัด OCV อย่างรัดกุม รวมกับการตัดสินใจสั่งตัดวงจรฮาร์ดแวร์ทั้งหมด (System Cutoff Response) ด้วยโปรแกรมภายในเวลา 1 วินาที เป็นการออกแบบ Defense-in-depth ที่ตอบโจทย์การทดสอบอัตโนมัติแบบไร้คนเฝ้าอย่างสมบูรณ์แบบ"
+      },
+      {
+        "index": 210,
+        "style": "Heading 1",
+        "text": "บทที่ 6 การประเมินผลกระทบทางวิศวกรรม / Chapter 6: Engineering Impact Assessment"
+      },
+      {
+        "index": 211,
+        "style": "Heading 2",
+        "text": "6.1 การวิเคราะห์ทางเศรษฐศาสตร์ / Economic Analysis"
+      },
+      {
+        "index": 213,
+        "style": "normal",
+        "text": "โครงงานการออกแบบและพัฒนาระบบทดสอบสมรรถนะและประเมินสุขภาพแบตเตอรี่มีแนวทางการออกแบบโดยนำอุปกรณ์ทดสอบที่มีอยู่เดิมในห้องปฏิบัติการมาประยุกต์ใช้ร่วมกับระบบ Hardware และ Software ที่พัฒนาขึ้นใหม่ เพื่อลดความจำเป็นในการจัดหาเครื่องมือทดสอบหลักเพิ่มเติมและเพิ่มความสามารถในการใช้งานทรัพยากรที่มีอยู่เดิม"
+      },
+      {
+        "index": 215,
+        "style": "normal",
+        "text": "ในส่วนของ Hardware ทีมได้พัฒนาและปรับปรุงระบบควบคุมการทดสอบ โดยมีการติดตั้ง Solid-State Relay (SSR) สำหรับควบคุมการจ่ายไฟในกระบวนการชาร์จ และติดตั้ง Circuit Breaker เพื่อเพิ่มการป้องกันระบบจากความผิดปกติทางไฟฟ้า นอกจากนี้ยังมีการพัฒนาระบบ Software และ Graphical User Interface (GUI) เพื่อใช้ควบคุมการทดสอบและจัดการข้อมูลที่ได้จากการทดลอง"
+      },
+      {
+        "index": 217,
+        "style": "normal",
+        "text": "แนวทางดังกล่าวช่วยให้สามารถใช้ทรัพยากรเดิมร่วมกับระบบที่พัฒนาขึ้นได้อย่างเหมาะสม อย่างไรก็ตาม ในระยะปัจจุบันยังไม่มีการจัดทำการวิเคราะห์ต้นทุนตลอดอายุการใช้งาน (Life Cycle Cost) หรือการเปรียบเทียบราคากับระบบทดสอบเชิงพาณิชย์อย่างเป็นระบบ ดังนั้นจึงยังไม่สามารถสรุปเป็นตัวเลขได้ว่าระบบที่พัฒนาขึ้นสามารถลดต้นทุนได้เป็นจำนวนเท่าใด"
+      },
+      {
+        "index": 219,
+        "style": "normal",
+        "text": "ผลกระทบทางเศรษฐศาสตร์ของโครงงานในระยะนี้จึงพิจารณาในด้าน การใช้ประโยชน์จากอุปกรณ์ที่มีอยู่เดิมและการลดความจำเป็นในการจัดหาเครื่องมือหลักเพิ่มเติม มากกว่าการกล่าวอ้างถึงการประหยัดต้นทุนในเชิงปริมาณ"
+      },
+      {
+        "index": 220,
+        "style": "Heading 2",
+        "text": "6.2 การประเมินความยั่งยืน / Sustainability Assessment"
+      },
+      {
+        "index": 221,
+        "style": "normal",
+        "text": "ระบบสามารถทดสอบสมรรถนะของแบตเตอรี่และนำข้อมูลที่ได้มาใช้ประกอบการจำแนกเกรดของแบตเตอรี่ตามเกณฑ์ที่กำหนดไว้ในระบบ การมีข้อมูลจากการทดสอบ เช่น Capacity, DCIR, Voltage, Current และ Temperature ช่วยให้สามารถประเมินสภาพของแบตเตอรี่จากข้อมูลการทำงานแทนการพิจารณาจากสภาพภายนอกเพียงอย่างเดียว"
+      },
+      {
+        "index": 222,
+        "style": "normal",
+        "text": "แนวทางดังกล่าวมีศักยภาพในการสนับสนุนการใช้แบตเตอรี่อย่างเหมาะสม โดยเฉพาะการแยกแบตเตอรี่ที่ยังมีสมรรถนะเพียงพอสำหรับการใช้งานออกจากแบตเตอรี่ที่มีสมรรถนะลดลง"
+      },
+      {
+        "index": 223,
+        "style": "normal",
+        "text": "อย่างไรก็ตาม การนำระบบไปใช้เพื่อสนับสนุนการตัดสินใจเกี่ยวกับอายุการใช้งานหรือการนำแบตเตอรี่ไปใช้งานต่อจำเป็นต้องอาศัยผลการทดสอบและการ Validation ที่เพียงพอ"
+      },
+      {
+        "index": 224,
+        "style": "normal",
+        "text": "สำหรับแบตเตอรี่ตะกั่วกรด การจัดการแบตเตอรี่เมื่อสิ้นอายุการใช้งานมีความสำคัญ เนื่องจากมีองค์ประกอบ เช่น ตะกั่วและกรดซัลฟิวริก ซึ่งจำเป็นต้องได้รับการจัดการอย่างเหมาะสม การรวบรวมและรีไซเคิลแบตเตอรี่จึงเป็นแนวทางสำคัญในการลดผลกระทบจากการจัดการแบตเตอรี่ที่ไม่เหมาะสม"
+      },
+      {
+        "index": 225,
+        "style": "normal",
+        "text": "ดังนั้น ผลกระทบด้านความยั่งยืนของโครงงานในปัจจุบันสามารถพิจารณาได้จากการสร้างเครื่องมือที่ช่วยให้สามารถทดสอบและจำแนกสภาพแบตเตอรี่จากข้อมูลได้อย่างเป็นระบบ ขณะที่ผลกระทบต่อการลดของเสียหรือการเพิ่มอายุการใช้งานแบตเตอรี่ในเชิงปริมาณยังต้องมีการศึกษาต่อในอนาคต"
+      },
+      {
+        "index": 226,
+        "style": "Heading 2",
+        "text": "6.3 การประเมินสุขภาพและความปลอดภัย / Health and Safety Assessment"
+      },
+      {
+        "index": 227,
+        "style": "normal",
+        "text": "การทดสอบแบตเตอรี่เกี่ยวข้องกับพลังงานไฟฟ้า กระแสไฟฟ้า ความร้อน และความผิดปกติที่อาจเกิดขึ้นระหว่างกระบวนการชาร์จและคายประจุ ดังนั้นระบบจึงได้รับการออกแบบโดยคำนึงถึงความปลอดภัยของผู้ปฏิบัติงานและอุปกรณ์ควบคู่กับการพัฒนาระบบทดสอบ"
+      },
+      {
+        "index": 229,
+        "style": "normal",
+        "text": "ระบบมีการติดตั้ง Solid-State Relay (SSR) สำหรับควบคุมการจ่ายไฟในกระบวนการชาร์จ และ Circuit Breaker สำหรับป้องกันความผิดปกติทางไฟฟ้า นอกจากนี้ยังมีการกำหนด Software Safety Limits สำหรับแรงดัน กระแส และอุณหภูมิ เพื่อควบคุมและหยุดการทดสอบเมื่อเกิดสภาวะผิดปกติ โดยระบบกำหนด Software Limits และ Hardware Interlock เป็นส่วนหนึ่งของโครงสร้างระบบป้องกัน"
+      },
+      {
+        "index": 231,
+        "style": "normal",
+        "text": "ด้านมาตรฐานความปลอดภัย โครงงานกำหนด IEC 62133 และ UL 1973 เป็นมาตรฐานอ้างอิง โดย IEC 62133-2 กำหนดข้อกำหนดและวิธีการทดสอบเพื่อความปลอดภัยของเซลล์และแบตเตอรี่ลิเธียมแบบปิดผนึกสำหรับการใช้งานแบบพกพา ส่วน UL 1973 ครอบคลุมข้อกำหนดด้านความปลอดภัยของระบบแบตเตอรี่สำหรับการใช้งานแบบ Stationary และ Motive Auxiliary Power และมีข้อกำหนดเฉพาะสำหรับแบตเตอรี่ประเภท Valve-Regulated Lead-Acid"
+      },
+      {
+        "index": 232,
+        "style": "normal",
+        "text": "การออกแบบระบบป้องกันดังกล่าวช่วยลดความเสี่ยงจากการทำงานของระบบภายใต้สภาวะผิดปกติ โดยทีมได้กำหนดการทดสอบ SSR Charging Control Circuit และ Hardware Protection System ภายใต้สภาวะการทดสอบจริงเพื่อประเมินการทำงานของระบบป้องกัน"
+      },
+      {
+        "index": 233,
+        "style": "Heading 2",
+        "text": "6.4 ผลกระทบทางสังคมและสิ่งแวดล้อม / Social and Environmental Impact"
+      },
+      {
+        "index": 238,
+        "style": "Heading 2",
+        "text": "6.5 ข้อพิจารณาด้านจริยธรรมและวิชาชีพ / Ethical and Professional Considerations"
+      },
+      {
+        "index": 239,
+        "style": "normal",
+        "text": "การดำเนินโครงงาน ให้ความสำคัญกับความซื่อสัตย์ทางวิศวกรรมและความถูกต้องของข้อมูล โดยผลการทดสอบจะนำเสนอและวิเคราะห์ตามข้อมูลที่ได้จากการทดลองจริง และมีการเก็บข้อมูลจากการทดสอบเพื่อใช้เป็นหลักฐานในการประเมินสมรรถนะและจำแนกเกรดแบตเตอรี่ ทั้งนี้ ทีมงานจะเปิดเผยข้อจำกัดของระบบและข้อมูลอย่างตรงไปตรงมา โดยเฉพาะจำนวนตัวอย่างที่ยังต้องเพิ่มและการพัฒนา Machine Learning ที่ยังอยู่ในขั้นตอนดำเนินงาน"
+      },
+      {
+        "index": 241,
+        "style": "normal",
+        "text": "นอกจากนี้ การประเมินและจำแนกเกรดแบตเตอรี่จะพิจารณาจากข้อมูลและเกณฑ์ที่กำหนดไว้ในโครงงาน โดยต้องแยกให้ชัดเจนระหว่าง ผลที่ได้จากการทดลองจริง ข้อสมมติฐาน และข้อเสนอแนะสำหรับการพัฒนาต่อไป เพื่อให้ผลการประเมินสามารถตรวจสอบย้อนกลับได้และไม่ทำให้ผู้ใช้งานเข้าใจความสามารถของระบบเกินกว่าขอบเขตที่ได้รับการทดสอบสอดคล้องกับความรับผิดชอบทางวิชาชีพของวิศวกร"
+      },
+      {
+        "index": 250,
+        "style": "Heading 1",
+        "text": "บทที่ 7 การบริหารโครงงานและการทำงานเป็นทีม / Chapter 7: Project Management and Teamwork"
+      },
+      {
+        "index": 251,
+        "style": "Heading 2",
+        "text": "7.1 โครงสร้างทีมงาน / Team Organization"
+      },
+      {
+        "index": 252,
+        "style": "normal",
+        "text": "ทีมงานประกอบด้วยสมาชิก 5 คน โดยแบ่งความรับผิดชอบตามลักษณะงานและส่วนประกอบของระบบ การทำงานแบ่งออกเป็นด้าน Battery System Analysis, Battery Test System Design, Hardware and Embedded System, Backend and Dashboard และ Testing, Evaluation and Documentation"
+      },
+      {
+        "index": 254,
+        "style": "normal",
+        "text": "โครงสร้างดังกล่าวช่วยให้สมาชิกสามารถรับผิดชอบงานในส่วนของตนเอง และประสานงานกับสมาชิกส่วนอื่นเมื่อจำเป็น เนื่องจากการทำงานของแต่ละส่วนมีความเชื่อมโยงกัน ตั้งแต่การทดสอบและเก็บข้อมูล ไปจนถึงการวิเคราะห์และประเมินผลแบตเตอรี่"
+      },
+      {
+        "index": 255,
+        "style": "Heading 2",
+        "text": "7.2 บทบาทและความรับผิดชอบ / Roles and Responsibilities"
+      },
+      {
+        "index": 256,
+        "style": "normal",
+        "text": "เพื่อให้การดำเนินโครงงานมีความชัดเจน ทีมได้กำหนดบทบาทและความรับผิดชอบของสมาชิกแต่ละคนดังแสดงในตารางที่ 7.1"
+      },
+      {
+        "index": 257,
+        "style": "normal",
+        "text": "ตารางที่ 7.1 บทบาทและความรับผิดชอบของสมาชิกในโครงงาน"
+      },
+      {
+        "index": 260,
+        "style": "Heading 2",
+        "text": "7.3 การติดตามและควบคุมโครงงาน / Project Monitoring and Control"
+      },
+      {
+        "index": 261,
+        "style": "normal",
+        "text": "ทีมมีการติดตามความก้าวหน้าของโครงงานเป็นรายสัปดาห์ โดยพิจารณาจากงานที่ได้รับมอบหมาย ผลการดำเนินงาน ปัญหาที่พบ และแผนการดำเนินงานในช่วงถัดไป เพื่อควบคุมทิศทางของโครงงานและปรับแผนให้เหมาะสมกับสถานการณ์จริง"
+      },
+      {
+        "index": 263,
+        "style": "normal",
+        "text": "ในระหว่างการพัฒนา ทีมสามารถดำเนินการพัฒนาและทดสอบ Hardware สำหรับวัดแรงดัน กระแส และอุณหภูมิ รวมถึงพัฒนาระบบเก็บและจัดเก็บข้อมูลจากการทดสอบแบตเตอรี่ได้ เมื่อพบข้อจำกัดด้านความเสถียรของการวัดและจำนวนตัวอย่างที่ยังจำกัด ทีมได้นำปัญหาดังกล่าวมาปรับแผนการดำเนินงาน โดยเพิ่มการเก็บข้อมูลเพื่อสนับสนุนการวิเคราะห์และการพัฒนา Machine Learning"
+      },
+      {
+        "index": 265,
+        "style": "normal",
+        "text": "การติดตามงานอย่างต่อเนื่องทำให้ทีมสามารถตรวจสอบความก้าวหน้าของแต่ละส่วน ระบุปัญหา และกำหนดงานที่ต้องดำเนินการเพิ่มเติมได้อย่างเป็นระบบ"
+      },
+      {
+        "index": 266,
+        "style": "Heading 2",
+        "text": "7.4 บทเรียนที่ได้รับ / Lessons Learned"
+      },
+      {
+        "index": 267,
+        "style": "normal",
+        "text": "ทีมได้เรียนรู้ว่าการพัฒนาระบบจำเป็นต้องประสานงานระหว่างหลายส่วน ทั้ง Hardware, Software, การเก็บข้อมูล และการวิเคราะห์แบตเตอรี่ โดยการเปลี่ยนแปลงในส่วนหนึ่งอาจส่งผลต่อการทำงานของส่วนอื่น จึงจำเป็นต้องมีการสื่อสารและตรวจสอบการทำงานร่วมกันอย่างต่อเนื่อง"
+      },
+      {
+        "index": 269,
+        "style": "normal",
+        "text": "นอกจากนี้ ทีมได้เรียนรู้ถึงความสำคัญของการวางแผนการทดลองและการจัดการข้อมูล เนื่องจากการทดสอบแบตเตอรี่ใช้เวลาและจำนวนตัวอย่างที่มีผลต่อความเพียงพอของ Dataset สำหรับการวิเคราะห์และพัฒนา Machine Learning"
+      },
+      {
+        "index": 271,
+        "style": "normal",
+        "text": "จากประสบการณ์ดังกล่าว ทีมจึงให้ความสำคัญกับการแบ่งหน้าที่อย่างชัดเจน การติดตามความก้าวหน้า การแก้ไขปัญหาร่วมกัน และการปรับแผนตามผลการดำเนินงานจริง เพื่อให้การพัฒนาโครงงานเป็นไปตามเป้าหมายที่กำหนดไว้"
+      },
+      {
+        "index": 274,
+        "style": "Heading 1",
+        "text": "บทที่ 8 บทสรุปและข้อเสนอแนะ / Chapter 8: Conclusions and Recommendations"
+      },
+      {
+        "index": 275,
+        "style": "Heading 2",
+        "text": "8.1 บทสรุป / Conclusions"
+      },
+      {
+        "index": 276,
+        "style": "normal",
+        "text": "โครงงาน\"การออกแบบพัฒนาระบบทดสอบสมรรถนะและประเมินสุขภาพแบตเตอรี่ (Design Development of a Battery Performance Testing and Health Assessment System)\" ได้ดำเนินการศึกษา ออกแบบ พัฒนา และทดสอบระบบสำหรับประเมินสมรรถนะและสุขภาพของแบตเตอรี่ โดยมุ่งเน้นการประยุกต์ใช้งานกับแบตเตอรี่ตะกั่ว-กรดชนิดปิดผนึกควบคุมวาล์วระบายแรงดัน (VRLA/AGM) สำหรับยานยนต์ เช่น รุ่น YTZ6V และ YTZ4V เพื่อแก้ไขข้อจำกัดด้านความแม่นยำ และความปลอดภัยในการทดสอบประเมินสุขภาพแบตเตอรี่แบบดั้งเดิม โดยผลการดำเนินงานสามารถสรุปสาระสำคัญตามขอบเขตของโครงงานได้ดังนี้"
+      },
+      {
+        "index": 277,
+        "style": "normal",
+        "text": "1. การพัฒนาโปรแกรมควบคุมเครื่องมือวัดและส่วนต่อประสานผู้ใช้: คณะผู้จัดทำได้พัฒนาซอฟต์แวร์ควบคุมการทำงานของฮาร์ดแวร์ด้วยภาษา Python และไลบรารี PySide6 ออกแบบหน้าจอแสดงผลตามมาตรฐานส่วนต่อประสานประสิทธิภาพสูงในงานอุตสาหกรรม (ISA-101 High-Performance HMI) ซึ่งสามารถควบคุมและสื่อสารกับแหล่งจ่ายไฟกระแสตรง (GW Instek PSW 80-40.5) และโหลดอิเล็กทรอนิกส์กระแสตรง (GW Instek PEL-3111) ผ่านโปรโตคอล SCPI บนมาตรฐาน PyVISA ได้อย่างมีเสถียรภาพและต่อเนื่อง"
+      },
+      {
+        "index": 278,
+        "style": "normal",
+        "text": "2. การพัฒนาโหมดการทดสอบอัตโนมัติ 4 รูปแบบ: ระบบได้รับการออกแบบให้รองรับกระบวนการทดสอบอัตโนมัติที่ครอบคลุมการประเมินสมรรถนะ ได้แก่ การทดสอบตามมาตรฐาน IEC 61960 (IEC 61960 Standard Test) เพื่อประเมินความจุจริงและความต้านทานภายในกระแสตรง (DCIR), การสแกนด่วน (Quick Scan Mode) สำหรับประเมินสุขภาพและสถานะเบื้องต้นในระยะเวลาอันสั้น, การทดสอบพัลส์กำลังไฟฟ้าแบบไฮบริด (HPPC Full Sequence) เพื่อสกัดพารามิเตอร์วงจรสมมูลทางไฟฟ้า (1-RC Equivalent Circuit Model), และการทดสอบอายุการใช้งานตามรอบ (Cycle Life Test) เพื่อศึกษาพฤติกรรมการเสื่อมสภาพจากการอัดและคายประจุซ้ำ"
+      },
+      {
+        "index": 279,
+        "style": "normal",
+        "text": "3. การประมาณสถานะและการคัดเกรดอัจฉริยะ: ระบบได้ประยุกต์ใช้อัลกอริทึมเอกซ์เทนเด็ดคัลมานฟิลเตอร์ (Extended Kalman Filter: EKF) ในการประมาณค่าสถานะประจุ (State of Charge: SoC) แบบเรียลไทม์ควบคู่กับการประเมินค่าความไม่แน่นอน (Uncertainty) ในรูปของเมทริกซ์ความแปรปรวนร่วม พร้อมทั้งมีระบบตัดสินใจจำแนกเกรดแบตเตอรี่ออกเป็นระดับ A, B, C และ REJECT โดยอัตโนมัติจากความสัมพันธ์ระหว่างสถานะสุขภาพ (SoH), อัตราการเพิ่มขึ้นของความต้านทานภายใน (R0 / R1), และค่าประมาณความสามารถในการจ่ายกระแสสตาร์ตเครื่องยนต์ (CCA-proxy)"
+      },
+      {
+        "index": 280,
+        "style": "normal",
+        "text": "4. ระบบความปลอดภัยและการรายงานผลผ่านคลาวด์: ระบบประกอบด้วยกลไกความปลอดภัย 4 ชั้น (ขีดจำกัดซอฟต์แวร์, ปุ่มหยุดฉุกเฉินซอฟต์แวร์ E-STOP, รีเลย์โซลิดสเตต SSR, และเบรกเกอร์วงจร) เพื่อให้สามารถทดสอบแบบอัตโนมัติได้อย่างปลอดภัยโดยไม่ต้องมีผู้ควบคุมเฝ้าตลอดเวลา นอกจากนี้ยังได้พัฒนาแดชบอร์ดบนระบบคลาวด์ Microsoft Azure สำหรับติดตามผลการทดสอบและแนวโน้มสัญญาณไฟฟ้าแบบเรียลไทม์ผ่านเครือข่ายอินเทอร์เน็ต"
+      },
+      {
+        "index": 282,
+        "style": "Heading 2",
+        "text": "8.2 ความสำเร็จตามวัตถุประสงค์ (Achievement of Objectives)"
+      },
+      {
+        "index": 286,
+        "style": "Heading 2",
+        "text": "8.3 ข้อเสนอแนะ / Recommendations"
+      },
+      {
+        "index": 287,
+        "style": "normal",
+        "text": "จากประสบการณ์และการเก็บข้อมูลระหว่างการติดตั้ง ทดสอบ และประเมินผลการทำงานของระบบ คณะผู้จัดทำมีข้อเสนอแนะเชิงปฏิบัติการสำหรับการนำระบบไปใช้งานหรือพัฒนาต่อยอดดังนี้"
+      },
+      {
+        "index": 288,
+        "style": "normal",
+        "text": "1. การจัดการกระบวนการเตรียมทดสอบและการคลายตัวของแรงดัน (Test Preparation & Relaxation Time Management): • การทดสอบในโหมดเต็มรูปแบบ (Full Sequence / Characterization Mode): แบตเตอรี่ชนิดตะกั่ว-กรดมีอัตราการเกิดปฏิกิริยาเคมีและการคืนตัวของแรงดันไฟฟ้าที่ค่อนข้างช้า ดังนั้นหลังจากผ่านกระบวนการชาร์จจนเต็ม ควรกำหนดให้ระบบมีระยะเวลาพักตัว (Resting Phase) อย่างน้อย 10–15 นาที หรือกำหนดเงื่อนไขให้อัตราการเปลี่ยนแปลงแรงดันต่อเวลาลดลงต่ำกว่าเกณฑ์ (ΔV/Δt < 1 mV/min) ก่อนเริ่มอ่านค่าแรงดันเปิดวงจร (OCV) เพื่อป้องกันความคลาดเคลื่อนในการกำหนดจุดอ้างอิงสถานะประจุเริ่มต้น"
+      },
+      {
+        "index": 289,
+        "style": "normal",
+        "text": "• การทดสอบในโหมดสแกนด่วน (Quick Scan Mode): เพื่อให้การประเมินสุขภาพแบตเตอรี่ทำได้อย่างรวดเร็วและแม่นยำ ควรนำแบตเตอรี่ที่ผ่านการประจุไฟจนเต็มและพักตัวมาเรียบร้อยแล้วมาต่อเข้ากับระบบทดสอบ ซึ่งจะช่วยให้สามารถสแกนวัดค่า DCIR และคัดเกรดได้ทันทีโดยไม่ต้องเสียเวลารอรอบการชาร์จใหม่"
+      },
+      {
+        "index": 290,
+        "style": "normal",
+        "text": "2. การต่อสายสัญญาณวัดแรงดันแบบ Remote Sensing (4-Wire Kelvin Sensing): เนื่องจากความต้านทานภายในของแบตเตอรี่มีขนาดเล็กมากในระดับมิลลิโอห์ม (R0 ≈ 30–40 mΩ) แรงดันตกคร่อมสายไฟหลักและจุดต่อทางไฟฟ้าจึงส่งผลกระทบโดยตรงต่อความแม่นยำ ดังนั้นจึงควรต่อสายตรวจวัดแรงดันแบบแยกอิสระ (Remote Sensing Wires) จำนวน 2 เส้น จากขั้ว Sense (S+/S-) ของแหล่งจ่ายไฟ (Power Supply) และโหลดอิเล็กทรอนิกส์ตรงไปยังขั้วแบตเตอรี่ เพื่อตัดผลกระทบของความต้านทานสายไฟ (Harness Resistance) ออกจากการคำนวณ DCIR และ R0 อย่างสมบูรณ์"
+      },
+      {
+        "index": 291,
+        "style": "normal",
+        "text": "3. การติดตั้งและตำแหน่งตรวจวัดของเซนเซอร์วัดอุณหภูมิผิว: การตรวจวัดอุณหภูมิด้วยเซนเซอร์อินฟราเรด (MLX90614) ควรติดตั้งขายึดให้อยู่ในระยะห่างประมาณ 1–2 เซนติเมตร เล็งตรงไปที่ ขั้วบวก (+) ของแบตเตอรี่ (เนื่องจากขั้วต่อเป็นจุดที่มีการส่งผ่านกระแสหลักและเกิดการสะสมความร้อนได้ชัดเจนที่สุด) และควรจัดวางตำแหน่งหลีกเลี่ยงกระแสลมระบายความร้อนจากพัดลมของเครื่องมือวัด เพื่อให้การวัดอุณหภูมิสะท้อนสภาวะความร้อนที่เกิดขึ้นจริงได้อย่างแม่นยำ"
+      },
+      {
+        "index": 292,
+        "style": "normal",
+        "text": "4. ข้อปฏิบัติด้านความปลอดภัยสำหรับการทดสอบระยะยาว: ก่อนเริ่มกระบวนการทดสอบรอบยาว (Cycle Life Test) แบบไร้ผู้ควบคุม ควรตรวจสอบความแน่นหนาของจุดต่อทางกลและทางไฟฟ้า ทดสอบการตอบสนองของปุ่มหยุดฉุกเฉิน (E-STOP) และตรวจเช็กสภาพภายนอกของแบตเตอรี่ว่าไม่มีรอยแตกร้าวหรือบวมผิดปกติเพื่อความปลอดภัยสูงสุด"
+      },
+      {
+        "index": 298,
+        "style": "Heading 2",
+        "text": "8.4 แนวทางการปรับปรุงในอนาคต / Future Improvements"
+      },
+      {
+        "index": 299,
+        "style": "normal",
+        "text": "เพื่อให้สอดคล้องกับขอบเขตของโครงงานในส่วนที่อยู่นอกเหนือการดำเนินงานระยะปัจจุบัน (Out of Scope) คณะผู้จัดทำขอเสนอแนวทางสำหรับการค้นคว้าวิจัยและพัฒนาปรับปรุงระบบในอนาคต ดังต่อไปนี้"
+      },
+      {
+        "index": 300,
+        "style": "normal",
+        "text": "1. การสร้างชุดข้อมูลขนาดใหญ่และการประยุกต์ใช้การเรียนรู้เชิงลึก (Deep Learning & Big Data Integration): ควรดำเนินการเก็บรวบรวมข้อมูลการทดสอบจากแบตเตอรี่จริงเป็นจำนวนมาก ทั้งแบตเตอรี่ใหม่ แบตเตอรี่ที่ผ่านการใช้งานจริงในยานพาหนะ และแบตเตอรี่ที่เสื่อมสภาพในรูปแบบต่างๆ เพื่อสร้างชุดข้อมูลมาตรฐานขนาดใหญ่ (Benchmark Dataset) และนำชุดข้อมูลดังกล่าวไปใช้ฝึกสอนโมเดลปัญญาประดิษฐ์หรือการเรียนรู้เชิงลึก เช่น โครงข่ายประสาทเทียมแบบ LSTM หรือ GRU เพื่อยกระดับความสามารถจากการจำแนกเกรดด้วยระบบกฎเกณฑ์ (Rule-based) ไปสู่การพยากรณ์แนวโน้มอายุการใช้งานที่เหลืออยู่ (Remaining Useful Life: RUL) ได้อย่างแม่นยำ"
+      },
+      {
+        "index": 301,
+        "style": "normal",
+        "text": "2.การเข้าสู่กระบวนการรับรองมาตรฐานอย่างเป็นทางการ (Standardization & Official Certification): ควรพัฒนาและสอบเทียบความถูกต้องของระบบร่วมกับห้องปฏิบัติการทดสอบมาตรฐานที่ได้รับการรับรองตามมาตรฐาน ISO/IEC 17025 เพื่อนำระบบเข้าสู่กระบวนการรับรองผลิตภัณฑ์ (Certification) กับหน่วยงานมาตรฐานอย่างเป็นทางการ ยืนยันความสอดคล้องของกระบวนการทดสอบตามมาตรฐาน IEC 61960 ในระดับสากล"
+      },
+      {
+        "index": 302,
+        "style": "normal",
+        "text": "3. การขยายขีดความสามารถของฮาร์ดแวร์สำหรับแบตเตอรี่พิกัดสูง: ดำเนินการต่อขนานโหลดอิเล็กทรอนิกส์เพิ่มเติมแบบ Master-Slave เพื่อเพิ่มพิกัดการดึงกระแสของระบบให้รองรับการทดสอบแบตเตอรี่ที่มีความจุสูงขึ้น (เช่น แบตเตอรี่รถยนต์หรือโมดูลแบตเตอรี่ลิเธียมขนาดใหญ่) ที่อัตราคายประจุ 1C ได้อย่างเต็มรูปแบบ พร้อมทั้งพัฒนาโมดูลตรวจวัดพัลส์ความเร็วสูงระดับไมโครวินาที (Fast-R0 Sensing) เพื่อให้สามารถแยกแยะค่าความต้านทานโอห์มมิกได้อย่างแม่นยำเทียบเท่าเครื่องวัดความต้านทานไฟฟ้ากระแสสลับ (ACIR) ระดับห้องปฏิบัติการ"
+      },
+      {
+        "index": 303,
+        "style": "normal",
+        "text": "4. การพัฒนาระบบคลาวด์และสถาปัตยกรรมฐานข้อมูลระยะยาว: ปรับปรุงระบบคลาวด์บน Microsoft Azure ให้บันทึกข้อมูลการทดสอบลงในฐานข้อมูลอนุกรมเวลา (Time-Series Database เช่น TimescaleDB หรือ InfluxDB) เพื่อรองรับการสืบค้นประวัติย้อนหลังและการประมวลผลข้อมูลขนาดใหญ่ รวมถึงเพิ่มระบบยืนยันตัวตนสำหรับการเข้าใช้งาน (User Authentication) และพัฒนาระบบแจ้งเตือนสถานะการทำงานหรือสภาวะวิกฤตผ่านแอปพลิเคชันบนสมาร์ตโฟน (เช่น Line Messaging API หรือ Telegram Bot) เพื่ออำนวยความสะดวกในการเฝ้าระวังทางไกล"
+      },
+      {
+        "index": 327,
+        "style": "Heading 1",
+        "text": "เอกสารอ้างอิง / References"
+      },
+      {
+        "index": 328,
+        "style": "normal",
+        "text": "[1] L. Chen, Z. Lü, W. Lin, J. Li, and H. Pan, \"A new state-of-health estimation method for lithium-ion batteries through the intrinsic relationship between ohmic internal resistance and capacity,\" Measurement, vol. 116, pp. 586–595, Feb. 2018. [Online]. Available: https://www.sciencedirect.com/science/article/abs/pii/S0263224117307248"
+      },
+      {
+        "index": 329,
+        "style": "normal",
+        "text": "[2] A. Guha and A. Patra, \"State of health estimation of lithium-ion batteries using capacity fade and internal resistance growth models,\" IEEE Trans. Transp. Electrific., vol. 4, no. 1, pp. 135–146, Mar. 2018. [Online]. Available: https://ieeexplore.ieee.org/document/8118185/"
+      },
+      {
+        "index": 330,
+        "style": "normal",
+        "text": "[3] Secondary Cells and Batteries Containing Alkaline or Other Non-Acid Electrolytes—Secondary Lithium Cells and Batteries for Portable Applications, IEC Standard 61960, 2nd ed., 2011."
+      },
+      {
+        "index": 331,
+        "style": "normal",
+        "text": "[4] K. Khamphut and C. Phanjailue, \"A 12-volt motorcycle battery condition assessment device,\" B.Eng. thesis, Dept. Elect. Comput. Eng., Fac. Eng., Naresuan Univ., Phitsanulok, Thailand, 2016."
+      },
+      {
+        "index": 332,
+        "style": "normal",
+        "text": "[1] International Electrotechnical Commission, IEC 62133-2:2017+A1:2021, Secondary cells and batteries containing alkaline or other non-acid electrolytes – Safety requirements for portable sealed secondary cells, and for batteries made from them, for use in portable applications – Part 2: Lithium systems, IEC, 2021. IEC 62133-2 – IEC Webstore"
+      },
+      {
+        "index": 333,
+        "style": "normal",
+        "text": "[2] UL Standards & Engagement, UL 1973, Batteries for Use in Stationary and Motive Auxiliary Power Applications, Edition 3. UL 1973 ครอบคลุม Battery Systems สำหรับ Stationary และ Motive Auxiliary Power และมี Annex H สำหรับ Vented และ Valve-Regulated Lead-Acid Batteries. UL 1973 – UL Standards & Engagement"
+      }
+    ],
+    "tables": [
+      {
+        "index": 0,
+        "rows": 6,
+        "cols": 4,
+        "preview": [
+          [
+            "#",
+            "ชื่อ-สกุล / Name",
+            "รหัสนักศึกษา / ID",
+            "หน้าที่ / Role"
+          ],
+          [
+            "1",
+            "นางสาวฑิฆัมพร พิมพ์อ้น",
+            "66130041434",
+            "Project Management & Evaluation"
+          ],
+          [
+            "2",
+            "นายธนาวุฒิ ผิวขำ",
+            "66130042347",
+            "Battery Test System Design & Software"
+          ]
+        ]
+      },
+      {
+        "index": 1,
+        "rows": 5,
+        "cols": 3,
+        "preview": [
+          [
+            "ผู้มีส่วนได้ส่วนเสีย / Stakeholder",
+            "ความสนใจ/ความต้องการ / Interest",
+            "อิทธิพลต่อโครงงาน / Influence"
+          ],
+          [
+            "ช่างเทคนิคห้องปฏิบัติการ / Lab Technician",
+            "ระบบใช้งานง่าย ปลอดภัย ไม่ต้องเฝ้าระหว่างทดสอบยาวหลายชั่วโมง",
+            "สูง — ผู้ใช้งานหลัก (Primary user)"
+          ],
+          [
+            "ร้าน/ศูนย์บริการแบตเตอรี่ / Battery Retailer",
+            "คัดแยกแบตเตอรี่ดี/เสียได้รวดเร็ว ต้นทุนต่ำ ไม่ต้องซื้ออุปกรณ์เฉพาะทางราคาแพง",
+            "ปานกลาง — ผู้รับประโยชน์ในอนาคต"
+          ]
+        ]
+      },
+      {
+        "index": 2,
+        "rows": 5,
+        "cols": 4,
+        "preview": [
+          [
+            "กิจกรรม / Task",
+            "เริ่ม / Start",
+            "สิ้นสุด / End",
+            "สถานะ / Status"
+          ],
+          [
+            "ออกแบบสถาปัตยกรรมซอฟต์แวร์และ GUI มาตรฐาน ISA101",
+            "สัปดาห์ 1",
+            "สัปดาห์ 1",
+            "เสร็จสิ้น"
+          ],
+          [
+            "พัฒนาเอนจินวิเคราะห์ (DCIR, ECM, EKF) และแท็บ CHARACTERIZE",
+            "สัปดาห์ 1",
+            "สัปดาห์ 3",
+            "เสร็จสิ้น"
+          ]
+        ]
+      },
+      {
+        "index": 3,
+        "rows": 8,
+        "cols": 5,
+        "preview": [
+          [
+            "#",
+            "Parameter",
+            "Min",
+            "Max / Target",
+            "Unit"
+          ],
+          [
+            "1",
+            "Measurement Sample Rate (SCPI PSU/Load readback)",
+            "3",
+            "10",
+            "Hz"
+          ],
+          [
+            "2",
+            "DCIR Measurement Repeatability (coefficient of variation across steps)",
+            "—",
+            "15",
+            "%CV"
+          ]
+        ]
+      },
+      {
+        "index": 4,
+        "rows": 4,
+        "cols": 4,
+        "preview": [
+          [
+            "#",
+            "มาตรฐาน / Standard",
+            "เลขที่ / Number",
+            "การนำมาใช้ / Application"
+          ],
+          [
+            "1",
+            "Secondary cells for portable applications — performance test methods",
+            "IEC 61960, Cl. 6.4",
+            "วิธีวัด DCIR แบบ two-pulse (ΔV/ΔI) ที่ระบบใช้จริงในโมดูล"
+          ],
+          [
+            "2",
+            "Management of alarm systems for the process industries",
+            "ISA-101.01 (HMI convention)",
+            "รูปแบบหน้าจอ GUI และ Alarm Log แบบ SCADA (event/state/ACK)"
+          ]
+        ]
+      },
+      {
+        "index": 5,
+        "rows": 4,
+        "cols": 3,
+        "preview": [
+          [
+            "หัวข้อ / Aspect",
+            "แนวคิด A: DAQ ความเร็วสูงเฉพาะทาง / High-Speed Custom DAQ",
+            "แนวคิด B: ใช้เครื่องมือ SCPI เดิม / SCPI Instrument Reuse"
+          ],
+          [
+            "หลักการทำงาน / Principle",
+            "ต่อวงจร ADC ความละเอียดสูง (เช่น INA226) วัดที่ขั้วแบตเตอรี่โดยตรงที่ 75 Hz พร้อมคุม Contactor กำลังสูงเอง",
+            "ใช้ Power Supply/E-Load เดิม (GW Instek) วัดและควบคุมผ่านคำสั่ง SCPI มาตรฐาน อัตราการอ่านค่าจริง ~10 Hz"
+          ],
+          [
+            "ข้อดี / Advantages",
+            "อัตราสุ่มตัวอย่างสูง จับสัญญาณ ohmic step ได้ละเอียดระดับ sub-100ms",
+            "ไม่ต้องจัดซื้อ/สร้างฮาร์ดแวร์เพิ่ม ใช้ค่าที่สอบเทียบจากโรงงานแล้ว ปลอดภัยกว่าเพราะผ่านการรับรองจากผู้ผลิต"
+          ]
+        ]
+      },
+      {
+        "index": 6,
+        "rows": 6,
+        "cols": 6,
+        "preview": [
+          [
+            "เกณฑ์ / Criterion",
+            "น้ำหนัก / Weight",
+            "คะแนน A",
+            "คะแนน B",
+            "น้ำหนัก×A",
+            "น้ำหนัก×B"
+          ],
+          [
+            "ความแม่นยำ/ประสิทธิภาพ / Accuracy",
+            "0.35",
+            "8",
+            "6",
+            "2.80",
+            "2.10"
+          ],
+          [
+            "ต้นทุน / Cost",
+            "0.30",
+            "3",
+            "9",
+            "0.90",
+            "2.70"
+          ]
+        ]
+      },
+      {
+        "index": 7,
+        "rows": 5,
+        "cols": 4,
+        "preview": [
+          [
+            "ความเสี่ยง / Risk",
+            "โอกาส / Likelihood",
+            "ผลกระทบ / Impact",
+            "แผนบรรเทา / Mitigation"
+          ],
+          [
+            "อัตราสุ่ม 10 Hz ไม่พอแยก R0 จาก R1 ที่ sub-100ms",
+            "สูง",
+            "ปานกลาง",
+            "ใช้ DCIR เฉลี่ยจากหลาย step ร่วมกับ ECM curve-fit จากช่วง RC-tail ของ HPPC pulse ซึ่งสามารถแยกได้ดีที่ 10 Hz"
+          ],
+          [
+            "USB/SCPI latency ทำให้อ่านค่า DCIR คลาดเคลื่อน (rig stall)",
+            "ปานกลาง",
+            "สูง",
+            "เพิ่ม dt-gating ทิ้งค่าที่ latency > 0.5s พร้อมแจ้งเตือนคุณภาพข้อมูล"
+          ]
+        ]
+      },
+      {
+        "index": 8,
+        "rows": 7,
+        "cols": 2,
+        "preview": [
+          [
+            "Requirement (2.2)",
+            "วิธีตรวจสอบ / Method"
+          ],
+          [
+            "1. Measurement Sample Rate & Latency Gate",
+            "Test — เก็บ Log ข้อมูล Δt 1,000 แซมเปิล เพื่อประเมินความเร็วเฉลี่ยและสถิติการทิ้งข้อมูล (dt-gating)"
+          ],
+          [
+            "2. DCIR Measurement Repeatability",
+            "Test — รันโหมด Quick Scan ซ้ำ 3 รอบต่อแบตเตอรี่ (ใช้ 3 ลูก) และคำนวณ %CV ของ R₀ พร้อมเทียบกับ ACIR"
+          ]
+        ]
+      },
+      {
+        "index": 9,
+        "rows": 6,
+        "cols": 3,
+        "preview": [
+          [
+            "พารามิเตอร์ที่ทดสอบ",
+            "ผลการวัด / สถิติ",
+            "เกณฑ์ที่ตั้งไว้"
+          ],
+          [
+            "จำนวนข้อมูลที่อ่านทั้งหมด (Samples)",
+            "1,000",
+            "-"
+          ],
+          [
+            "เวลาในการอ่านเฉลี่ย (Mean $\\Delta t$)",
+            "~100 ms (10 Hz)",
+            "3 - 10 Hz"
+          ]
+        ]
+      },
+      {
+        "index": 10,
+        "rows": 7,
+        "cols": 8,
+        "preview": [
+          [
+            "แบตเตอรี่ทดสอบ",
+            "รอบ / สถิติ",
+            "R₀ (mΩ)",
+            "R₁ (mΩ)",
+            "C₁ (F)",
+            "τ (s)",
+            "R² Fit"
+          ],
+          [
+            "ลูกที่ 1: YTZ6V (ใหม่)",
+            "Mean",
+            "[รอระบุ]",
+            "[รอระบุ]",
+            "[รอระบุ]",
+            "[รอระบุ]",
+            "[รอระบุ]"
+          ],
+          [
+            "ลูกที่ 1: YTZ6V (ใหม่)",
+            "",
+            "%CV",
+            "[รอระบุ]%",
+            "[รอระบุ]%",
+            "[รอระบุ]%",
+            "[รอระบุ]%",
+            "-"
+          ]
+        ]
+      },
+      {
+        "index": 11,
+        "rows": 4,
+        "cols": 4,
+        "preview": [
+          [
+            "แบตเตอรี่ทดสอบ",
+            "Mean R₀ (mΩ)",
+            "ACIR (mΩ)",
+            "ความต่าง (mΩ)"
+          ],
+          [
+            "ลูกที่ 1: YTZ6V (ใหม่)",
+            "[รอระบุ]",
+            "~30.0",
+            "[รอระบุ]"
+          ],
+          [
+            "ลูกที่ 2: YTZ6V (ใช้แล้ว)",
+            "[รอระบุ]",
+            "~38.0",
+            "[รอระบุ]"
+          ]
+        ]
+      },
+      {
+        "index": 12,
+        "rows": 5,
+        "cols": 5,
+        "preview": [
+          [
+            "สภาพแบตเตอรี่",
+            "Voc (V)",
+            "SoC-OCV (%)",
+            "True SoC (%)",
+            "Error (%)"
+          ],
+          [
+            "แบตเตอรี่ชาร์จเต็ม",
+            "[รอระบุ]",
+            "[รอระบุ]",
+            "[รอระบุ]",
+            "[รอระบุ]"
+          ],
+          [
+            "แบตเตอรี่ระดับกลาง",
+            "[รอระบุ]",
+            "[รอระบุ]",
+            "[รอระบุ]",
+            "[รอระบุ]"
+          ]
+        ]
+      },
+      {
+        "index": 13,
+        "rows": 6,
+        "cols": 4,
+        "preview": [
+          [
+            "การทดสอบจำลอง",
+            "เวลาตอบสนอง",
+            "เกณฑ์ (Target)",
+            "Pass/Fail"
+          ],
+          [
+            "OVP - ครั้งที่ 1",
+            "[รอระบุ] ms",
+            "≤ 1,000 ms",
+            "PASS"
+          ],
+          [
+            "OVP - ครั้งที่ 2",
+            "[รอระบุ] ms",
+            "≤ 1,000 ms",
+            "PASS"
+          ]
+        ]
+      },
+      {
+        "index": 14,
+        "rows": 4,
+        "cols": 5,
+        "preview": [
+          [
+            "แบตเตอรี่ทดสอบ",
+            "SoH (%)",
+            "R₀/R₀,base",
+            "เกรด (Grade)",
+            "Confidence"
+          ],
+          [
+            "ลูกที่ 1: YTZ6V (ใหม่)",
+            "[รอระบุ]",
+            "[รอระบุ]",
+            "[รอระบุ]",
+            "[รอระบุ]%"
+          ],
+          [
+            "ลูกที่ 2: YTZ6V (ใช้แล้ว)",
+            "[รอระบุ]",
+            "[รอระบุ]",
+            "[รอระบุ]",
+            "[รอระบุ]%"
+          ]
+        ]
+      },
+      {
+        "index": 15,
+        "rows": 8,
+        "cols": 5,
+        "preview": [
+          [
+            "Requirement (Ch.2)",
+            "Spec / Target",
+            "Measured",
+            "Pass/Fail",
+            "Notes"
+          ],
+          [
+            "Measurement Sample Rate",
+            "3 - 10 Hz",
+            "~10 Hz",
+            "PASS",
+            "ดูตาราง 5.1"
+          ],
+          [
+            "DCIR Measurement Repeatability",
+            "≤ 15 %CV",
+            "[รอระบุ] %",
+            "[รอระบุ]",
+            "สกัดแบบ 1-RC ECM (ดูตาราง 5.3)"
+          ]
+        ]
+      },
+      {
+        "index": 16,
+        "rows": 6,
+        "cols": 3,
+        "preview": [
+          [
+            "วัตถุประสงค์ (1.4)",
+            "การบรรลุผล (Achieved?)",
+            "หลักฐานเชิงประจักษ์ / Evidence"
+          ],
+          [
+            "1. เพื่อออกแบบและพัฒนาระบบทดสอบแบตเตอรี่อัตโนมัติที่วัด SoH, DCIR และ CCA-proxy ได้ตามวิธีการที่มาตรฐาน IEC 61960 Clause 6.4 กำหนด",
+            "ไม่บรรลุเต็มที่ (Partial)",
+            "DCIR: คำนวณด้วยวิธี Two-pulse ได้ตามมาตรฐาน IEC 61960 แต่จำกัดที่ 21A ตามพิกัดฮาร์ดแวร์ CCA-proxy: ประเมินผลเชิงสัมพัทธ์ได้ แต่ยังไม่ได้ทดสอบที่ -18°C ตามมาตรฐา"
+          ],
+          [
+            "2. เพื่อพัฒนาอัลกอริทึมประมาณสถานะ (Extended Kalman Filter) ที่ประมาณค่า State of Charge แบบเรียลไทม์ พร้อมค่าความไม่แน่นอน",
+            "บรรลุ (Yes)",
+            "SoC: อัลกอริทึม 1-RC EKF ทำงานเรียลไทม์ที่ 10 Hz รายงานค่า Uncertainty ≤ ±5% R²: การสกัดพารามิเตอร์วงจรสมมูล (1-RC ECM) มีค่าความสอดคล้องสูง (R² ≈ 0.998)"
+          ]
+        ]
+      }
+    ],
+    "sections": 1,
+    "relationships": {
+      "image": 5,
+      "hyperlink": 4,
+      "theme": 1,
+      "settings": 1,
+      "fontTable": 1,
+      "numbering": 1,
+      "footer": 1,
+      "styles": 1,
+      "customXml": 1
+    }
+  }
+]

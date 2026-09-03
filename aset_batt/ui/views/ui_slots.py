@@ -130,15 +130,24 @@ class UiSlotsMixin:
         import time
         rin_mohm = rin * 1000.0
         self._update_vi_temp_labels(v, i, temp)
-        # SoC: show the EKF's live estimate WITH its 1σ uncertainty (±%), read from the
-        # estimator covariance. Large ± early / on a flat plateau, tightening after an
-        # OCV/endpoint anchor — so the operator knows how much to trust the number.
+        # SoC's internal 50% seed keeps the estimator equations well-defined, but
+        # it is not a measurement. Hide SoC until an OCV/endpoint anchor makes it
+        # publishable, rather than making a placeholder look like a reading.
         soc_lbl, soc_unit = self.metric_labels["SoC"]
-        soc_std = getattr(getattr(self, "estimator", None), "soc_std", None)
-        if soc_std is not None and soc_std == soc_std:      # not None / NaN
-            soc_lbl.setText(f"{soc:.1f} ±{min(soc_std, 99):.0f} {soc_unit}")
+        soc_is_initialized = getattr(getattr(self, "estimator", None), "soc_is_initialized", True)
+        soc_display = soc if soc_is_initialized else float("nan")
+        if not soc_is_initialized:
+            soc_lbl.setText(f"— {soc_unit}")
+            if hasattr(self, "_lbl_soc_note"):
+                self._lbl_soc_note.setText("OCV calibration pending")
         else:
-            soc_lbl.setText(f"{soc:.1f} {soc_unit}")
+            soc_std = getattr(getattr(self, "estimator", None), "soc_std", None)
+            if soc_std is not None and soc_std == soc_std:  # not None / NaN
+                soc_lbl.setText(f"{soc:.1f} ±{min(soc_std, 99):.0f} {soc_unit}")
+            else:
+                soc_lbl.setText(f"{soc:.1f} {soc_unit}")
+            if hasattr(self, "_lbl_soc_note") and self._lbl_soc_note.text() == "OCV calibration pending":
+                self._lbl_soc_note.setText("")
         # Rin: a DC resistance reading needs current flowing. At rest, (OCV−V)/I is
         # undefined and explodes on the flat LFP plateau → keep "pending" rather than
         # show a wild number. The final analysis fills the proper R0+R1.
@@ -176,7 +185,7 @@ class UiSlotsMixin:
         self.buf_t.append(elapsed)
         self.buf_v.append(v)
         self.buf_i.append(i)
-        self.buf_soc.append(soc)
+        self.buf_soc.append(soc_display)
         self.buf_rin.append(rin_mohm)
         self.buf_temp.append(temp)
         self._trim_trend_buffers()
@@ -193,8 +202,9 @@ class UiSlotsMixin:
 
         self._set_temp_label_color(temp)
         i_dir = "CHG" if i < -self._I_IDLE else "DSG" if i > self._I_IDLE else "REST"
+        soc_text = f"{soc:.1f}%" if soc_is_initialized else "— (OCV pending)"
         self.status_label.setText(
-            f"V={v:.3f} V  I={abs(i):.3f} A ({i_dir})  SoC={soc:.1f}%  Rin={rin_mohm:.1f} mΩ  Temp={temp:.1f} °C"
+            f"V={v:.3f} V  I={abs(i):.3f} A ({i_dir})  SoC={soc_text}  Rin={rin_mohm:.1f} mΩ  Temp={temp:.1f} °C"
         )
     @Slot(float, float, float)
     def _slot_live_readback(self, v, i, temp):

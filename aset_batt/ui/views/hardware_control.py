@@ -432,6 +432,8 @@ class HardwareControlMixin:
                     on_progress=on_progress
                 )
                 temp = self.controller.hw.current_temp
+                self.update_display(v_final, 0.0, soc,
+                                    self.controller.estimator.rin, temp)
                 flag = "✓ settled" if result == "settled" else "⚠ timeout (ใช้ค่าล่าสุด)"
                 msg = (
                     f"OCV {flag}: {v_final:.3f} V  →  SoC {soc:.1f}%"

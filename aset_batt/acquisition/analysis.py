@@ -1110,7 +1110,8 @@ def _extract_ecm_metrics(
 
 def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                    profile: "BatteryProfile", is_hppc: bool, soh=None,
-                   soc_start=None, soc_series=None, fit_ecm=None, modes=None) -> dict:
+                   soc_start=None, soc_series=None, fit_ecm=None, modes=None,
+                   quick_scan: bool | None = None) -> dict:
     """Run the unified analysis on raw series → the standard results dict.
 
     ``fit_ecm``: whether to attempt a 1-RC/2-RC pulse fit at all. ``None``
@@ -1327,12 +1328,42 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         electrical_grade = "REVIEW"
         warnings.append("electrical grade withheld — " + "; ".join(electrical_reasons))
 
-    # ``grade`` remains the backward-compatible headline field, but is now the
-    # verified overall grade.  A proven REJECT in either valid dimension is
-    # decisive; every non-reject grade needs BOTH C10 capacity and electrical
-    # evidence.  Therefore Quick Scan can report an electrical A, but only
-    # reports Overall REVIEW until the C10 reference is available.
-    if "REJECT" in (capacity_grade, electrical_grade):
+    # Quick Scan is deliberately a 1C screen.  It can still make an immediate,
+    # explicitly model-based decision from Peukert-normalised capacity; that is
+    # useful to the operator and must not be confused with the verified C10
+    # grade below.  The phase signature keeps generic 1C data from receiving a
+    # Quick Scan label accidentally.
+    mode_set = {str(m or "").strip().upper() for m in (modes or [])}
+    is_quick_scan = (not is_hppc and (
+        bool(quick_scan) or {"MINI_PULSE", "MAIN_DISCHARGE"}.issubset(mode_set)
+    ))
+    quick_reasons = []
+    if not is_quick_scan:
+        quick_reasons.append("not a phase-labelled Quick Scan record")
+    if capacity_basis != "MAIN_DISCHARGE":
+        quick_reasons.append("missing MAIN_DISCHARGE capacity provenance")
+    if not full_start:
+        quick_reasons.append("start SoC is not verified full")
+    if not cutoff_ok:
+        quick_reasons.append("configured cut-off was not reached")
+    if is_charge_record:
+        quick_reasons.append("record is a charge, not a discharge")
+    if not np.isfinite(soh_est):
+        quick_reasons.append("Peukert-normalised SoH is unavailable")
+    quick_gradeable = not quick_reasons
+    quick_grade = _grade_from_soh(soh_est) if quick_gradeable else "REVIEW"
+    quick_grade_basis = (
+        "Peukert-corrected C10-equivalent SoH screening grade; not a measured C10 result"
+        if quick_gradeable else "; ".join(quick_reasons)
+    )
+
+    # ``grade`` remains the verified C10 headline for a phase-labelled Quick
+    # Scan.  Preserve the historical safety behaviour for other test records:
+    # a resolved electrical REJECT remains decisive there.
+    if is_quick_scan:
+        grade = (_worst_grade(capacity_grade, electrical_grade)
+                 if capacity_gradeable and electrical_gradeable else "REVIEW")
+    elif "REJECT" in (capacity_grade, electrical_grade):
         grade = "REJECT"
     elif capacity_gradeable and electrical_gradeable:
         grade = _worst_grade(capacity_grade, electrical_grade)
@@ -1351,6 +1382,7 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     if n_stale > 0:
         confidence *= 0.8
 
+    quick_confidence = confidence
     if not gradeable:
         confidence = 0.0
 
@@ -1360,12 +1392,12 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "GRADE DECISION product=%s chemistry=%s grade=%s confidence=%.2f "
         "soh=%s dcir_mohm=%.2f r0_mohm=%.2f r1_mohm=%.2f harness_r_mohm=%.2f "
         "n_steps=%d measured=%s ecm_identified=%s gradeable=%s "
-        "capacity_grade=%s electrical_grade=%s capacity_basis=%s warnings=%d",
+        "capacity_grade=%s electrical_grade=%s quick_grade=%s capacity_basis=%s warnings=%d",
         getattr(profile, "name", "?"), getattr(profile, "chemistry", "?"),
         grade, confidence, "nan" if np.isnan(soh) else f"{soh:.1f}",
         dcir * 1000.0, ecm["r0"] * 1000.0, ecm["r1"] * 1000.0, harness_r * 1000.0,
         n_steps, measured, ecm["ecm_identified"], gradeable,
-        capacity_grade, electrical_grade, capacity_basis, len(warnings),
+        capacity_grade, electrical_grade, quick_grade, capacity_basis, len(warnings),
     )
 
     ica_v, ica = Analytics.incremental_capacity(v, q)
@@ -1383,6 +1415,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "voltage_sag_v": sag, "cca_est_a": cca_est, "ocv_v": ocv,
         "grade": grade, "overall_grade": grade, "gradeable": gradeable,
         "overall_gradeable": gradeable,
+        "quick_grade": quick_grade, "quick_gradeable": quick_gradeable,
+        "quick_grade_basis": quick_grade_basis, "quick_grade_confidence": quick_confidence,
         "capacity_grade": capacity_grade, "capacity_gradeable": capacity_gradeable,
         "electrical_grade": electrical_grade, "electrical_gradeable": electrical_gradeable,
         "confidence": confidence, "quality_warnings": warnings, "temp_drift_c": temp_drift,
@@ -1415,7 +1449,13 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
 
 
 def _read_csv(path):
-    """Read a canonical (or lowercase) telemetry CSV → arrays + mode strings."""
+    """Read usable telemetry rows plus their acquisition-quality evidence.
+
+    INVALID rows are retained in the raw CSV for auditability but must never
+    influence electrical/capacity metrics.  GAP rows remain measurable data;
+    their phase is returned so the caller can withhold a grade if the gap is at
+    a pulse edge or near the discharge cut-off.
+    """
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
         # Skip metadata header lines starting with '#' (e.g. provenance metadata)
         lines = (line for line in f if not line.lstrip().startswith('#'))
@@ -1427,19 +1467,28 @@ def _read_csv(path):
 
         c_t, c_v, c_i = col("Elapsed_s"), col("Voltage_V"), col("Current_A")
         c_temp, c_cap, c_mode = col("Temperature_C"), col("Capacity_Ah"), col("Mode")
-        c_soc = col("SoC_pct")
+        c_soc, c_quality, c_phase = col("SoC_pct"), col("Sample_Quality"), col("Phase")
         T, V, I, TEMP, CAP, SOC, modes = [], [], [], [], [], [], []
+        quality = {"invalid_excluded": 0, "gap_phases": []}
         for r in reader:
             def num(c, default=float("nan")):
                 try:
                     return float(r[c]) if c else default
                 except (ValueError, TypeError, KeyError):
                     return default
+            row_quality = str(r.get(c_quality) or "VALID").strip().upper() if c_quality else "VALID"
+            if row_quality == "INVALID":
+                quality["invalid_excluded"] += 1
+                continue
+            mode = r[c_mode] if c_mode else ""
+            phase = r[c_phase] if c_phase else mode
+            if row_quality == "GAP":
+                quality["gap_phases"].append(str(phase or mode or "UNLABELLED").strip().upper())
             T.append(num(c_t)); V.append(num(c_v)); I.append(num(c_i))
             TEMP.append(num(c_temp, 25.0)); CAP.append(num(c_cap)); SOC.append(num(c_soc))
-            modes.append(r[c_mode] if c_mode else "")
+            modes.append(mode)
     return (np.asarray(T, float), np.asarray(V, float), np.asarray(I, float),
-            np.asarray(TEMP, float), np.asarray(CAP, float), np.asarray(SOC, float), modes)
+            np.asarray(TEMP, float), np.asarray(CAP, float), np.asarray(SOC, float), modes, quality)
 
 
 def _apply_session_outcome(csv_path: str, result: dict) -> dict:
@@ -1488,10 +1537,14 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
     setting ``force_hppc`` (which would incorrectly suppress SoH)."""
     if not csv_path or not os.path.exists(csv_path):
         raise FileNotFoundError(csv_path or "(no CSV)")
-    t, v, i, temp, cap, soc, modes = _read_csv(csv_path)
+    t, v, i, temp, cap, soc, modes, acquisition_quality = _read_csv(csv_path)
     if t.size < 2:
         raise ValueError("CSV has too few samples to analyse.")
     is_hppc = force_hppc or any("hppc" in (m or "").lower() for m in modes)
+    # New sessions expose the protocol through Mode/Phase.  Filename detection
+    # retains correct grading semantics when replaying legacy QuickScan files
+    # that predate phase provenance.
+    is_quick_scan = "quickscan" in os.path.basename(csv_path).lower()
     if np.all(np.isnan(cap)):                       # no capacity column → integrate
         dt = np.diff(t, prepend=t[0])
         cap = np.cumsum(np.clip(i, 0, None) * dt) / 3600.0
@@ -1528,7 +1581,21 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
     soc_series = soc if soc.size and not np.all(np.isnan(soc)) else None
     result = analyze_series(t, i, v, temp, cap, profile, is_hppc,
                             soc_start=soc_start, soc_series=soc_series,
-                            fit_ecm=fit_ecm, modes=modes)
+                            fit_ecm=fit_ecm, modes=modes, quick_scan=is_quick_scan)
+    invalid_n = acquisition_quality["invalid_excluded"]
+    if invalid_n:
+        result.setdefault("quality_warnings", []).append(
+            f"{invalid_n} INVALID CSV row(s) excluded before analysis")
+    critical_gap_phases = {"MINI_PULSE", "DISCHARGE_PULSE", "REGEN_PULSE",
+                           "NEAR_CUTOFF", "MAIN_DISCHARGE"}
+    critical_gaps = sorted(set(acquisition_quality["gap_phases"]) & critical_gap_phases)
+    if critical_gaps:
+        result.setdefault("quality_warnings", []).append(
+            "sampling GAP in critical phase(s): " + ", ".join(critical_gaps))
+        # A gap over a pulse edge corrupts DCIR/ECM; a gap around the cut-off
+        # corrupts capacity.  Preserve diagnostics, but never certify a grade.
+        result.update({"grade": "REVIEW", "overall_grade": "REVIEW",
+                       "gradeable": False, "overall_gradeable": False})
     return _apply_session_outcome(csv_path, result)
 
 
@@ -1578,7 +1645,8 @@ def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = Fa
 
 def analyze_series_mp(time_s, current_a, voltage_v, temp_c, capacity_series,
                       profile: BatteryProfile, is_hppc: bool, soh=None,
-                      soc_start=None, soc_series=None, fit_ecm=None, modes=None) -> dict:
+                      soc_start=None, soc_series=None, fit_ecm=None, modes=None,
+                      quick_scan: bool | None = None) -> dict:
     """Same result as analyze_series(), but off the calling thread's GIL — see
     analyze_csv_mp's docstring. AcquisitionWorker.run() (the Characterization /
     RUN TEST / HPPC-via-RUN-TEST QThread) calls this directly with its in-memory
@@ -1587,5 +1655,5 @@ def analyze_series_mp(time_s, current_a, voltage_v, temp_c, capacity_series,
     an extra throwaway CSV just to satisfy that wrapper's file-path signature."""
     future = _get_analysis_pool().submit(
         analyze_series, time_s, current_a, voltage_v, temp_c, capacity_series,
-        profile, is_hppc, soh, soc_start, soc_series, fit_ecm, modes)
+        profile, is_hppc, soh, soc_start, soc_series, fit_ecm, modes, quick_scan)
     return future.result()

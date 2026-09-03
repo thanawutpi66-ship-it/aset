@@ -439,6 +439,7 @@
       "safety_uvp_pack": 10.0,
       "mass_grams": 1900.0,
       "cca_a": 95.0,
+      "max_cont_discharge_a": 5.3,
       "peukert_k": 1.20,
       "notes": "YTZ6V มอเตอร์ไซค์ lead-acid AGM 12V 5.3Ah; charge 3-stage absorption 14.4V/float 13.65V",
       "measured_params": {
@@ -460,6 +461,7 @@
       "safety_uvp_pack": 10.0,
       "mass_grams": 1700.0,
       "cca_a": 90.0,
+      "max_cont_discharge_a": 5.3,
       "peukert_k": 1.20,
       "notes": "Furukawa Battery (FB) SUPER MF FTZ6V — Honda มอเตอร์ไซค์ VRLA AGM 12V 5.3Ah 90CCA.",
       "measured_params": {

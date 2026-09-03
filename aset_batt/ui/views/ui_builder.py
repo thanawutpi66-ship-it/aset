@@ -153,7 +153,7 @@ class UiBuilderMixin:
         m.addSeparator()
         m.addAction("Open Cloud Dashboard", self._on_open_dashboard)
         m.addSeparator()
-        m.addAction("Generate PDF Report", self._on_pdf_report)
+        m.addAction("Export Experiment Report (Word + PDF)", self._on_export_report)
         m.addSeparator()
         m.addAction("Preferences", self._on_open_settings)
 

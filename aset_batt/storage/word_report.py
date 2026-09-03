@@ -220,6 +220,8 @@ def _add_heading(doc, text: str, level: int):
 
 def _analysis_rows(analysis: dict) -> list[list[str]]:
     return [
+        ["Quick Scan Grade", str(analysis.get("quick_grade", "REVIEW")),
+         str(analysis.get("quick_grade_basis", "Not a Quick Scan record."))],
         ["Verified Overall Grade", str(analysis.get("overall_grade", analysis.get("grade", "REVIEW"))),
          "Valid only when both capacity and electrical evidence are available."],
         ["Capacity Grade", str(analysis.get("capacity_grade", "REVIEW")),
@@ -232,6 +234,8 @@ def _analysis_rows(analysis: dict) -> list[list[str]]:
          "Diagnostic estimate; not capacity acceptance by itself."],
         ["Observed capacity fraction", _fmt(analysis.get("soh"), 1, " %"),
          str(analysis.get("soh_basis", ""))],
+        ["Peukert-corrected SoH", _fmt(analysis.get("soh_est"), 1, " %"),
+         "Used for Quick Scan Grade; not a measured C10 capacity result."],
         ["DCIR @ edge", _fmt(analysis.get("dcir_mohm"), 2, " mΩ"),
          f"valid steps: {analysis.get('dcir_n_steps', 0)}"],
         ["ECM R0 / R1", f"{_fmt(analysis.get('r0_mohm'), 2, ' mΩ')} / {_fmt(analysis.get('r1_mohm'), 2, ' mΩ')}",
@@ -320,6 +324,8 @@ def generate_word_report(path, config, estimator=None, analysis=None, csv_path=N
         ["Chemistry / configuration", f"{b.battery_type}; {b.cells_series}S{b.cells_parallel}P"],
         ["Nominal voltage / rated capacity", f"{b.pack_nominal_voltage:.2f} V / {b.rated_capacity:.2f} Ah"],
         ["Raw CSV", os.path.basename(csv_path) if csv_path else "Not available"],
+        ["Session ID / CSV SHA-256", f"{meta.get('session_id', 'Not recorded')} / {meta.get('sha256', 'Not finalized')}"],
+        ["Protocol / analysis version", f"{(meta.get('protocol') or {}).get('id', 'Not recorded')} / {(meta.get('protocol') or {}).get('analysis_version', 'Not recorded')}"],
         ["Operator / software version", f"{meta.get('operator', 'Not recorded')} / {meta.get('app_version', 'Not recorded')}"],
         ["Samples / duration", f"{stats['samples']} / {_fmt(stats['duration_s'] / 60.0, 2, ' min')}"],
         ["Sampling interval / rate", f"{_fmt(stats['median_dt_s'], 3, ' s')} / {_fmt(stats['median_hz'], 2, ' Hz')}"],

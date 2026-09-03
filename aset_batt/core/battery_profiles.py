@@ -200,7 +200,7 @@ _DEFAULT_PRODUCTS: Dict[str, ProductProfile] = {
         nominal_voltage_per_cell=2.0, cells_series=6, cells_parallel=1,
         rated_capacity_ah=5.3, max_voltage_per_cell=2.45, min_voltage_per_cell=1.75,
         safety_ovp_pack=15.0, safety_uvp_pack=10.5,
-        mass_grams=900.0, cca_a=100.0,
+        mass_grams=900.0, cca_a=100.0, max_cont_discharge_a=5.3,
         notes="Yuasa YTZ6V มอเตอร์ไซค์ lead-acid AGM 12V 5.3Ah (10HR)",
     ),
     "YTZ7V (12V 7Ah VRLA)": ProductProfile(

@@ -17,6 +17,7 @@ def format_seq_result(res: dict) -> str:
     """Format an analyze_csv result dict into a short HTML string for the
     inline result card."""
     grade   = res.get("overall_grade", res.get("grade", "?"))
+    quick_grade = res.get("quick_grade", "REVIEW")
     capacity_grade = res.get("capacity_grade", "REVIEW")
     electrical_grade = res.get("electrical_grade", "REVIEW")
     soh     = res.get("soh", float("nan"))
@@ -32,7 +33,8 @@ def format_seq_result(res: dict) -> str:
     cap_str = f"{cap:.2f} Ah" if not math.isnan(cap) else "N/A"
     dcir_str = f"{dcir:.1f} mΩ" if not math.isnan(dcir) else "N/A"
     lines = [
-        f"<b>Verified Overall: {grade}</b>   SoH: {soh_str}   Cap: {cap_str}",
+        f"<b>Quick Scan Grade: {quick_grade}</b>   Peukert SoH: {res.get('soh_est', float('nan')):.1f}%",
+        f"Verified Overall: {grade}   Observed SoH: {soh_str}   Cap: {cap_str}",
         f"Capacity: {capacity_grade}   Electrical: {electrical_grade}",
         f"DCIR: {dcir_str}   Confidence: {conf*100:.0f}%",
     ]
@@ -61,6 +63,8 @@ def build_results_html(results: dict) -> str:
     capacity_grade = results.get("capacity_grade", "REVIEW")
     electrical_grade = results.get("electrical_grade", "REVIEW")
     capacity_basis = results.get("capacity_basis", "")
+    quick_grade = results.get("quick_grade", "REVIEW")
+    quick_basis = results.get("quick_grade_basis", "")
     warns = results.get("quality_warnings", [])
 
     def hdr(text):
@@ -94,6 +98,8 @@ def build_results_html(results: dict) -> str:
 
     # ── Summary ──
     parts.append(hdr("Summary"))
+    parts.append(row("Quick Scan Grade", quick_grade, "",
+                     quick_basis))
     parts.append(row(
         "Verified Overall Grade",
         f'<span style="color:{gc};font-size:14px">{grade}</span>',
@@ -101,8 +107,8 @@ def build_results_html(results: dict) -> str:
     ))
     parts.append(row("Observed capacity fraction", soh_txt, "%", soh_basis))
     if soh_est == soh_est and abs(soh_est - soh) > 1e-4:
-        parts.append(row("Rate/SoC capacity estimate", f"{soh_est:.1f}", "%",
-                         "diagnostic estimate; not used as capacity acceptance"))
+        parts.append(row("Peukert-corrected SoH", f"{soh_est:.1f}", "%",
+                         "used for Quick Scan Grade; not a measured C10 capacity result"))
     parts.append(row("Capacity Grade", capacity_grade, "",
                      "valid only for a phase-labelled full C10 discharge to cut-off"))
     parts.append(row("Electrical Grade", electrical_grade, "",

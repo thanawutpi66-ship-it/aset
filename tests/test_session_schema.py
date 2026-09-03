@@ -51,13 +51,20 @@ class TestSessionSchema(unittest.TestCase):
 
     def test_late_high_rate_sample_is_retained_and_flagged_as_gap(self):
         self.writer.log_row(0.000, 12.6, 5.0, 100.0, 42.0, 26.0,
-                            expected_dt_s=0.1)
+                            mode="MINI_PULSE", expected_dt_s=0.1)
         self.writer.log_row(0.500, 12.5, 5.0, 99.9, 42.0, 26.0,
-                            expected_dt_s=0.1)
+                            mode="MINI_PULSE", expected_dt_s=0.1)
         rows = self._rows()
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[1]["Sample_Quality"], "GAP")
         self.assertIn("sample_gap_s=0.500", rows[1]["Sample_Note"])
+
+    def test_invalid_voltage_or_missing_phase_is_retained_but_not_valid(self):
+        self.writer.log_row(0.0, 0.0, 0.0, 100.0, 42.0, 26.0)
+        row = self._rows()[0]
+        self.assertEqual(row["Sample_Quality"], "INVALID")
+        self.assertIn("missing_phase", row["Sample_Note"])
+        self.assertIn("invalid_voltage", row["Sample_Note"])
 
     def test_metadata_carries_the_same_session_identity_and_test_type(self):
         write_session_metadata(
@@ -94,6 +101,8 @@ class TestSessionSchema(unittest.TestCase):
         self.assertIn("ended_at", meta)
         self.assertTrue(meta["sha256"])
         self.assertEqual(meta["protocol"]["id"], "quick-scan-v2")
+        self.assertIn("sampling_summary", meta)
+        self.assertEqual(meta["sampling_summary"]["quality_counts"]["INVALID"], 1)
 
     def test_flush_makes_pending_rows_visible_without_closing_session(self):
         self.writer.log_row(0.1, 12.5, 5.0, 99.0, 42.0, 26.0)

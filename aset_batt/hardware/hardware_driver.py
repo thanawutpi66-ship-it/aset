@@ -40,6 +40,12 @@ def recommend_pel3111_ranges(max_current_a: float, pack_max_voltage_v: float,
 
 
 class HardwareController:
+    # The newer esp32_fast_r0 firmware returns MLX90614 temperature only after
+    # a ``TEMP`` request; the older esp32_temp_ssr firmware streams it.  Poll
+    # only when no parsed update has arrived, so both firmware variants work
+    # without adding serial traffic to the streaming variant.
+    _ESP_TEMP_REQUEST_INTERVAL_S = 1.0
+
     def __init__(self):
         self.rm = pyvisa.ResourceManager()
         self.psu_inst = None
@@ -755,6 +761,29 @@ class HardwareController:
                 return False
         return True
 
+    def request_temperature(self) -> bool:
+        """Request one ESP32 terminal-temperature sample when firmware is on-demand.
+
+        It is deliberately independent of ``PING``: PING proves that the
+        watchdog link is alive, whereas a parsed temperature proves that the
+        MLX90614/serial measurement path used by OTP is alive.
+        """
+        if not self.is_esp_connected or not self.esp_serial:
+            return False
+        try:
+            lock = getattr(self, "_esp_write_lock", None)
+            if lock is None:
+                self.esp_serial.write(b"TEMP\n")
+                self.esp_serial.flush()
+            else:
+                with lock:
+                    self.esp_serial.write(b"TEMP\n")
+                    self.esp_serial.flush()
+            return True
+        except Exception as exc:
+            logger.debug("ESP32 temperature request failed: %s", exc)
+            return False
+
     # Ordered list of patterns tried against each serial line.
     # Each pattern must have one capture group returning the numeric temperature.
     _ESP_TEMP_PATTERNS = [
@@ -786,6 +815,12 @@ class HardwareController:
 
     def _esp_monitor_loop(self, callback):
         self.last_esp_heartbeat = time.time()
+        # The fast ESP32 firmware is request/response: it emits ``#TEMP`` only
+        # after ``TEMP``.  Request once as the monitor starts, rather than
+        # waiting for the first stale interval; older streaming firmware
+        # harmlessly ignores the command and keeps publishing its own samples.
+        self.request_temperature()
+        last_temp_request = time.time()
         _unmatched_logged = set()   # avoid log-spamming the same unknown format
         _matched_once = False
         # Runs as its own daemon thread at 20 Hz (time.sleep(0.05)), continuously,
@@ -805,6 +840,14 @@ class HardwareController:
         while self.is_esp_connected:
             _iter_t0 = time.perf_counter()
             try:
+                # Do not request against the streaming firmware while it is
+                # healthy.  For the on-demand firmware, request every second
+                # until a parsed #TEMP line refreshes last_esp_heartbeat.
+                now = time.time()
+                if (now - self.last_esp_heartbeat >= self._ESP_TEMP_REQUEST_INTERVAL_S
+                        and now - last_temp_request >= self._ESP_TEMP_REQUEST_INTERVAL_S):
+                    self.request_temperature()
+                    last_temp_request = now
                 if self.esp_serial.in_waiting > 0:
                     line = self.esp_serial.readline().decode('utf-8', errors='ignore').strip()
                     if not line:

@@ -32,6 +32,11 @@ class AutoController:
 
         # System States
         self.monitor_running = False
+        # A sequence logs and updates the estimator itself.  This gate is
+        # separate from monitor_running because a monitor thread can be in a
+        # hardware read when a sequence starts; it must never append an
+        # unlabelled row into the sequence-owned CSV after that point.
+        self.sequence_logging_owned = False
         self.live_readback_running = False   # lightweight pre-test Connect readback
         self.is_charging = False
         self.safety_triggered = False
@@ -225,6 +230,7 @@ class AutoController:
         ตลอดไปหลัง sequence จบ ทำให้ sequence รอบถัดไปเผลอต่อท้ายไฟล์เดิม."""
         if self.data.is_recording:
             self.data.stop_logging(outcome, reason)
+        self.sequence_logging_owned = False
         self._start_time = None
         self._start_mono = None
         self.clear_recovery_state()
@@ -331,6 +337,12 @@ class AutoController:
         import time as _t
         if not self.hw.is_connected:
             raise HardwareError("Hardware must be connected to calibrate from OCV")
+
+        # A previous SoC (or the estimator's internal 50% seed) is not evidence
+        # for the pack currently settling. Keep it out of the UI/CSV until the
+        # final OCV anchor is established.
+        if hasattr(self.estimator, "invalidate_soc"):
+            self.estimator.invalidate_soc()
 
         chemistry = getattr(self.config.battery, "battery_type", "LiPO")
         min_rest, window, dv_thresh = self._OCV_SETTLE.get(
@@ -500,6 +512,12 @@ class AutoController:
         consec_errors = 0
         while self.monitor_running:
             loop_t0 = time.perf_counter()
+            # Sequence threads own both estimator input and CSV provenance.
+            # Waiting here rather than racing a last monitor iteration against
+            # the first OCV/mini-pulse row prevents blank Mode/Phase rows.
+            if self.sequence_logging_owned:
+                time.sleep(self._MONITOR_TARGET_PERIOD_S)
+                continue
             if self.hw.is_connected:
                 try:
                     # อ่านค่าจาก Hardware
@@ -589,6 +607,8 @@ class AutoController:
                     state = self.estimator.update(
                         v, i_net, dt=dt, temp=self.hw.current_temp
                     )
+                    soc_for_publish = (state["soc"] if getattr(
+                        self.estimator, "soc_is_initialized", True) else float("nan"))
 
                     # ส่งค่าไปอัปเดต UI (thread-safe ผ่าน root.after)
                     if self.ui and self.root:
@@ -605,7 +625,7 @@ class AutoController:
                             self.ui.update_display,
                             v,
                             i_net,
-                            state["soc"],
+                            soc_for_publish,
                             state["rin"],
                             self.hw.current_temp,
                             state["soh"],
@@ -618,7 +638,7 @@ class AutoController:
                                else time.time() - self._start_time)
                     self.data.log_row(
                         elapsed, v, i_net,
-                        state['soc'], state['rin'] * 1000,  # แปลงเป็น mOhm
+                        soc_for_publish, state['rin'] * 1000,  # NaN until OCV/endpoint anchor
                         self.hw.current_temp,
                         rin_calibrated=state.get('rin_calibrated', True),
                         voltage_source=voltage_source,
@@ -784,7 +804,8 @@ class AutoController:
             self._start_time = time.time()
             self._start_mono = time.perf_counter()
 
-    def _log_sample(self, voltage: float, current: float, mode: str = ""):
+    def _log_sample(self, voltage: float, current: float, mode: str = "",
+                    expected_dt_s: Optional[float] = None):
         """log หนึ่งแถว ใช้ค่า SoC/Rin ล่าสุดจาก estimator (สำหรับ IEC test ที่ไม่ผ่าน monitor loop)
 
         Rin still logs live every sample even before any real HPPC pulse has been fitted
@@ -796,15 +817,18 @@ class AutoController:
         try:
             calibrated = getattr(self.estimator, "_ecm_calibrated", True) or not getattr(
                 self.estimator, "use_ekf", True)
+            soc = (self.estimator.soc if getattr(self.estimator, "soc_is_initialized", True)
+                   else float("nan"))
             self.data.log_row(
                 (time.perf_counter() - self._start_mono
                  if self._start_mono is not None else time.time() - self._start_time),
                 voltage, current,
-                self.estimator.soc, self.estimator.rin * 1000.0,
+                soc, self.estimator.rin * 1000.0,
                 self.hw.current_temp, rin_calibrated=calibrated,
                 mode=mode, phase=mode,
                 voltage_source=getattr(self.hw, "last_voltage_source", "unknown"),
                 current_source=getattr(self.hw, "last_current_source", "unknown"),
+                expected_dt_s=expected_dt_s,
             )
         except Exception as e:
             logger.debug("log_sample error: %s", e)

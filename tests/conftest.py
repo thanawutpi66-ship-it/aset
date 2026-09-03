@@ -3,6 +3,7 @@ import os
 from unittest.mock import patch
 from aset_batt.storage.data_utils import DataHandler
 import datetime
+import uuid
 
 @pytest.fixture(autouse=True)
 def isolate_sessions_dir(tmp_path):
@@ -13,7 +14,10 @@ def isolate_sessions_dir(tmp_path):
             d.mkdir(exist_ok=True)
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             prefix = f"{label}_" if label else ""
-            return str(d / f"test_{prefix}{ts}.csv")
+            # Keep the fixture faithful to production's collision-proof path:
+            # several tests intentionally start two sessions in one wall-clock
+            # second and should not test a fixture artefact instead.
+            return str(d / f"test_{prefix}{ts}_{uuid.uuid4().hex[:8]}.csv")
         mock_make.side_effect = fake_make
         yield
 

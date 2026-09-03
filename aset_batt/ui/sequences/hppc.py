@@ -344,7 +344,8 @@ class HppcMixin:
                             int(elapsed), max(total_estimate, int(elapsed) + 30))
                     if st == "bleeding":
                         return
-                    self.controller._log_sample(v, 0.0)
+                    self.controller._log_sample(v, 0.0, mode="OCV_SETTLE",
+                                                expected_dt_s=5.0)
                     self.update_display(v, 0.0, self.controller.estimator.soc,
                                         self.controller.estimator.rin)
                 return _cb
@@ -576,14 +577,16 @@ class HppcMixin:
                         f"(target ~{target_level_soc:.0f}%)")
                     try:
                         v_pre, i_pre, _ = self.hw.read_vi()
-                        self.controller._log_sample(v_pre, i_pre)
+                        self.controller._log_sample(v_pre, i_pre, mode="SOC_SWEEP_DISCHARGE",
+                                                    expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
                     except Exception as e:
                         import logging
                         logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                     self.hw.set_load(True, str(i_pulse))
                     try:
                         v_s0, i_s0 = self.hw.read_measurements(prefer_load_v=True)
-                        self.controller._log_sample(v_s0, i_s0)
+                        self.controller._log_sample(v_s0, i_s0, mode="SOC_SWEEP_DISCHARGE",
+                                                    expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
                     except Exception as e:
                         import logging
                         logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
@@ -602,7 +605,8 @@ class HppcMixin:
                             state_s = self.controller.estimator.update(
                                 v_s, i_s, dt=max(1e-3, _upd_now - _upd_last), temp=temp_s)
                             _upd_last = _upd_now
-                            self.controller._log_sample(v_s, i_s)
+                            self.controller._log_sample(v_s, i_s, mode="SOC_SWEEP_DISCHARGE",
+                                                        expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
                             self.update_display(v_s, i_s, state_s["soc"], state_s["rin"], temp_s)
                             self._seq_kick_watchdog()
                             status(f"HPPC SoC-SWEEP: {v_s:.3f} V  SoC {state_s['soc']:.1f}% "
@@ -743,7 +747,8 @@ class HppcMixin:
                             v_r, 0.0, dt=max(1e-3, _upd_now - _upd_last),
                             temp=temp_h)
                         _upd_last = _upd_now
-                        self.controller._log_sample(v_r, 0.0)
+                        self.controller._log_sample(v_r, 0.0, mode="RELAX",
+                                                    expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
                         _relax_tail_v.append(v_r)
                         if len(_relax_tail_v) > 5:
                             _relax_tail_v.pop(0)
@@ -809,7 +814,8 @@ class HppcMixin:
                 # real pulses past the gate and dropping them as "stale" (n_stale).
                 try:
                     v_p0, i_p0 = self.hw.read_measurements(prefer_load_v=True)
-                    self.controller._log_sample(v_p0, i_p0)
+                    self.controller._log_sample(v_p0, i_p0, mode="DISCHARGE_PULSE",
+                                                expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
                 except Exception as e:
                     import logging
                     logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
@@ -884,7 +890,8 @@ class HppcMixin:
                             temp=temp_h)
                         _upd_last = _upd_now
                         _s1 = _t.perf_counter()
-                        self.controller._log_sample(v_p, i_p)
+                        self.controller._log_sample(v_p, i_p, mode="DISCHARGE_PULSE",
+                                                    expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
                         _t_log += _t.perf_counter() - _s1
                         _fit_t.append(_t.perf_counter() - _fit_t0)
                         _fit_i.append(i_p)
@@ -921,7 +928,8 @@ class HppcMixin:
                 # staleness gap and identify_dcir() sees no valid steps at all.
                 try:
                     v_r0, i_r0 = self.hw.read_measurements(prefer_load_v=False)
-                    self.controller._log_sample(v_r0, i_r0)
+                    self.controller._log_sample(v_r0, i_r0, mode="RELAX",
+                                                expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
                 except Exception as e:
                     import logging
                     logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
@@ -1057,7 +1065,8 @@ class HppcMixin:
                                     v_rg, 0.0, dt=max(1e-3, _upd_now - _upd_last),
                                     temp=temp_rg)
                                 _upd_last = _upd_now
-                                self.controller._log_sample(v_rg, 0.0)
+                                self.controller._log_sample(v_rg, 0.0, mode="REGEN_RELAX",
+                                                            expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
                                 _regen_tail_v.append(v_rg)
                                 if len(_regen_tail_v) > 5:
                                     _regen_tail_v.pop(0)
@@ -1089,7 +1098,8 @@ class HppcMixin:
                             self.hw.set_psu(True, str(hppc_regen_ceiling), str(i_regen))
                             try:
                                 v_rp0, i_rp0 = self.hw.read_measurements(prefer_load_v=False)
-                                self.controller._log_sample(v_rp0, i_rp0)
+                                self.controller._log_sample(v_rp0, i_rp0, mode="REGEN_PULSE",
+                                                            expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
                             except Exception as e:
                                 import logging
                                 logging.getLogger(__name__).error(
@@ -1114,7 +1124,8 @@ class HppcMixin:
                                         v_rp, i_rp, dt=max(1e-3, _upd_now - _upd_last),
                                         temp=temp_rp)
                                     _upd_last = _upd_now
-                                    self.controller._log_sample(v_rp, i_rp)
+                                    self.controller._log_sample(v_rp, i_rp, mode="REGEN_PULSE",
+                                                                expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
                                     self.update_display(v_rp, i_rp, state_rp["soc"], state_rp["rin"])
                                     self._seq_kick_watchdog()
                                     elapsed_h = int(_t.time() - _hppc_t0)
@@ -1138,7 +1149,8 @@ class HppcMixin:
                             self.hw.psu_off()
                             try:
                                 v_rp_end, i_rp_end = self.hw.read_measurements(prefer_load_v=False)
-                                self.controller._log_sample(v_rp_end, i_rp_end)
+                                self.controller._log_sample(v_rp_end, i_rp_end, mode="REGEN_RELAX",
+                                                            expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
                             except Exception as e:
                                 import logging
                                 logging.getLogger(__name__).error(

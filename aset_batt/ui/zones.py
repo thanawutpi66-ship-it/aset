@@ -69,7 +69,7 @@ from aset_batt.ui import theme
 from aset_batt.ui.widgets import (
     _btn, _hline, QtRootShim,
     MultiAxisTrend, SplitTrend, TripleTrend, TrendContainer,
-    _PdfNotifier, _PdfTask,
+    _PdfNotifier, _PdfTask, _ReportPackageNotifier, _ReportPackageTask,
 )
 from aset_batt.ui.report_html import format_seq_result, build_results_html
 
@@ -1112,13 +1112,10 @@ class ZonesMixin:
         self.btn_open_logs = _btn("Open Logs Folder", bg="PANEL2", hover="FIELD")
         self.btn_open_logs.clicked.connect(self._on_open_logs_folder)
         lay.addWidget(self.btn_open_logs)
-        self.btn_pdf = _btn("Generate PDF Report", bg="PANEL2", hover="FIELD")
-        self.btn_pdf.clicked.connect(self._on_pdf_report)
-        lay.addWidget(self.btn_pdf)
-        self.btn_word = _btn("Export Word Experiment Report", bg="INFO", fg="white", hover="#0d4a89")
-        self.btn_word.setToolTip("Export tables, figures, analysis, and evidence checklist for Chapter 5")
-        self.btn_word.clicked.connect(self._on_word_report)
-        lay.addWidget(self.btn_word)
+        self.btn_report = _btn("Export Experiment Report (Word + PDF)", bg="INFO", fg="white", hover="#0d4a89")
+        self.btn_report.setToolTip("Create matching editable Word and submission PDF reports from this session")
+        self.btn_report.clicked.connect(self._on_export_report)
+        lay.addWidget(self.btn_report)
         btn_dash = _btn("Open Cloud Dashboard", bg="PANEL2", hover="FIELD")
         btn_dash.clicked.connect(self._on_open_dashboard)
         lay.addWidget(btn_dash)
@@ -1344,7 +1341,7 @@ class ZonesMixin:
         # SoC, or any pending placeholder) would keep showing whatever color was
         # picked under the theme active at startup — invisible if that happens to
         # land on white-on-white after a light/dark switch.
-        is_pending = name in ("SoH", "Rin", "Grade")
+        is_pending = name in ("SoC", "SoH", "Rin", "Grade")
         val = QLabel("—" if is_pending else f"0.0 {unit}")
         val.setFont(QFont("Consolas", 19, QFont.Weight.Bold))
         theme.style(val, lambda: f"color:{theme.MUTED if is_pending else theme.TEXT}; border:0;")
