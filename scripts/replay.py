@@ -124,15 +124,13 @@ def run_config(name, cfg, t, v, i, tc, battery, rated, cells, soc_start):
     return out
 
 
-def metrics(soc_est, soc_true):
-    n = min(len(soc_est), len(soc_true))
-    if n == 0:
-        return float("nan"), float("nan"), float("nan")
-    errs = [soc_est[k] - soc_true[k] for k in range(n)]
-    rmse = math.sqrt(sum(e * e for e in errs) / n)
-    maxe = max(abs(e) for e in errs)
-    end_e = abs(errs[-1])
-    return rmse, maxe, end_e
+def metrics(soc_est, soc_true, elapsed_s=None):
+    """Compatibility wrapper around the shared validation metric contract."""
+    from aset_batt.core.validation_campaign import ekf_metrics
+    result = ekf_metrics(soc_est, soc_true, elapsed_s)
+    if result.get("n"):
+        result["end_error_pct"] = abs(result["error_pct"][-1])
+    return result
 
 
 def main():
@@ -145,6 +143,10 @@ def main():
     ap.add_argument("--soc-start", type=float, default=100.0, help="SoC at start (%%)")
     ap.add_argument("--keep-threshold", type=float, default=1.0,
                     help="keep a component if it cuts RMSE by >= this (abs %%)")
+    ap.add_argument("--validation-start-soc", type=float, default=None,
+                    help="start validation at the reference-SoC segment nearest this value (e.g. 80)")
+    ap.add_argument("--initial-offset-pct", type=float, default=0.0,
+                    help="deliberate EKF initial SoC offset in percentage points (use -10 for validation)")
     ap.add_argument("--csv-out", default=None, help="write per-sample SoC curves to CSV")
     args = ap.parse_args()
 
@@ -154,12 +156,24 @@ def main():
         sys.exit(1)
     soc_true, cap = ground_truth(t, i, args.cap_true, args.soc_start)
 
+    # A validation replay is judged after deliberate initialization error, not
+    # from an estimator handed its correct starting SoC.  Rebase elapsed time
+    # so reported convergence is meaningful for the selected segment.
+    if args.validation_start_soc is not None:
+        start_idx = min(range(len(soc_true)),
+                        key=lambda idx: abs(soc_true[idx] - args.validation_start_soc))
+        t0 = t[start_idx]
+        t, v, i, tc = (seq[start_idx:] for seq in (t, v, i, tc))
+        soc_true = soc_true[start_idx:]
+        t = [value - t0 for value in t]
+    estimator_start_soc = max(0.0, min(100.0, soc_true[0] + args.initial_offset_pct))
+
     print(f"\nReplay: {os.path.basename(args.csv)}  |  {len(t)} samples  |  "
           f"{t[-1]/3600:.2f} h  |  {args.battery} {args.cells}S {args.rated}Ah")
     print(f"Ground-truth capacity (integrated): {cap:.3f} Ah  "
           f"(SoH vs rated = {cap/args.rated*100:.1f}%)\n")
 
-    header = f"{'Config':<16}{'SoC RMSE %':>12}{'Max |err| %':>13}{'End err %':>11}"
+    header = f"{'Config':<16}{'MAE %':>9}{'RMSE %':>10}{'Max |err| %':>13}{'Conv. s':>10}"
     print(header); print("-" * len(header))
 
     results = {}
@@ -167,11 +181,14 @@ def main():
     for name, cfg in CONFIGS:
         try:
             est_soc = run_config(name, dict(cfg), t, v, i, tc,
-                                 args.battery, args.rated, args.cells, args.soc_start)
-            rmse, maxe, ende = metrics(est_soc, soc_true)
-            results[name] = rmse
+                                 args.battery, args.rated, args.cells, estimator_start_soc)
+            score = metrics(est_soc, soc_true, t)
+            results[name] = score["rmse_pct"]
             curves[name] = est_soc
-            print(f"{name:<16}{rmse:>12.2f}{maxe:>13.2f}{ende:>11.2f}")
+            conv = score.get("convergence_s")
+            conv_text = f"{conv:.1f}" if conv is not None else "N/A"
+            print(f"{name:<16}{score['mae_pct']:>9.2f}{score['rmse_pct']:>10.2f}"
+                  f"{score['max_error_pct']:>13.2f}{conv_text:>10}")
         except Exception as e:
             print(f"{name:<16}{'ERROR: ' + str(e):>36}")
 

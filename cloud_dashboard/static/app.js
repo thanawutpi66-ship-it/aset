@@ -373,6 +373,23 @@ function renderPayload(p, received_at) {
   
   const sn = (p.meta||{}).sn || (p.meta||{}).serial_number || (p.meta||{}).device_id || 'N/A';
   if ($('deviceSn')) $('deviceSn').textContent = escapeHtml(sn);
+  const campaign = (p.meta||{}).validation_campaign || {};
+  const validationCard = $('validationCard');
+  const validationLabel = $('validationLabel');
+  if (validationCard && validationLabel) {
+    if (campaign.enabled) {
+      const ambient = ((p.meta||{}).validation_evidence || {}).ambient || {};
+      const verdict = (a.validation_verdict || {});
+      const status = verdict.validation_ready ? 'ready' : 'provisional';
+      const thermal = ambient.available
+        ? (ambient.in_band ? 'ambient in band' : 'ambient out of band')
+        : 'ambient pending';
+      validationLabel.textContent = `${campaign.campaign_id || 'campaign'} · ${campaign.specimen_id || 'specimen'} · ${status} · ${thermal}`;
+      validationCard.hidden = false;
+    } else {
+      validationCard.hidden = true;
+    }
+  }
 
   const T = num(L, 'Temperature_C');
   $('tempTitle').textContent = T != null ? f(T, 2) + ' °C' : '-- °C';

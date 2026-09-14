@@ -1,6 +1,7 @@
 import threading
 import time
 import logging
+import os
 from typing import Optional, Dict, Any
 
 from aset_batt.services.service_locator import ServiceLocator
@@ -53,6 +54,7 @@ class AutoController:
         self._start_mono = None
         self._last_update_time = None  # ใช้คำนวณ dt จริงต่อรอบ (coulomb counting)
         self._temp_stale_warned = False  # one-shot guard for the stale-ESP32-temp alarm
+        self._validation_ssr_event_seen: set[float] = set()
 
         # Get event handler from service locator (registered after UI bootstrap)
         self.event_handler = None
@@ -830,6 +832,29 @@ class AutoController:
                 current_source=getattr(self.hw, "last_current_source", "unknown"),
                 expected_dt_s=expected_dt_s,
             )
+            # The current sample can only bound, never directly measure, SSR
+            # switching latency.  Record the first near-zero read after a
+            # successfully-issued OFF command while this session is active.
+            event = getattr(self.hw, "last_ssr_event", None)
+            if (isinstance(event, dict) and not event.get("state", True)
+                    and abs(float(current)) <= self._LOAD_NOISE_FLOOR_A
+                    and self._start_mono is not None):
+                command_t = event.get("command_monotonic_s")
+                if isinstance(command_t, (int, float)) and command_t >= self._start_mono:
+                    marker = float(command_t)
+                    if marker not in self._validation_ssr_event_seen:
+                        from aset_batt.storage.data_utils import record_session_event
+                        observed_elapsed = time.perf_counter() - self._start_mono
+                        record_session_event(
+                            self.data.current_path, "ssr_interruption_telemetry_bound", {
+                                "command_elapsed_s": marker - self._start_mono,
+                                "first_zero_sample_elapsed_s": observed_elapsed,
+                                "upper_bound_s": max(0.0, observed_elapsed - (marker - self._start_mono)),
+                                "current_a": float(current),
+                                "zero_current_threshold_a": self._LOAD_NOISE_FLOOR_A,
+                                "claim": "Observed command-to-next-near-zero-current upper bound; not relay switching time.",
+                            })
+                        self._validation_ssr_event_seen.add(marker)
         except Exception as e:
             logger.debug("log_sample error: %s", e)
 
@@ -859,6 +884,26 @@ class AutoController:
             return None
         if self.event_handler:
             self.event_handler.post_event(EventType.ANALYSIS_COMPLETED, res)
+        campaign = getattr(self.config.system, "validation_campaign", {}) or {}
+        if (campaign.get("enabled") and res.get("capacity_gradeable")
+                and res.get("capacity_basis") == "MAIN_DISCHARGE"):
+            # This is the only automatic calibration hand-off: a qualified C10
+            # result becomes the independent capacity ruler for later GITT,
+            # HPPC and EKF evidence of this in-memory campaign.
+            campaign = dict(campaign)
+            campaign["reference_capacity_ah"] = float(res.get("capacity_ah"))
+            related = dict(campaign.get("related_sessions") or {})
+            related["c10"] = os.path.basename(csv_path)
+            campaign["related_sessions"] = related
+            self.config.system.validation_campaign = campaign
+            try:
+                from aset_batt.storage.data_utils import record_session_event
+                record_session_event(csv_path, "c10_reference_qualified", {
+                    "capacity_ah": campaign["reference_capacity_ah"],
+                    "soh_pct": res.get("soh"), "capacity_basis": res.get("capacity_basis"),
+                })
+            except Exception as exc:
+                logger.warning("Could not record C10 validation reference: %s", exc)
         return res
 
     def _ocv_reset_after_rest(self, phase: str, rest_s: float = 30.0):

@@ -63,6 +63,10 @@ class HardwareController:
         # SSR (solid-state relay) safety cutoff on ESP32 GPIO16 — physically gates
         # power to PSU + load, independent of each instrument's own output relay.
         self.ssr_state = None              # None=unknown, True=ON, False=OFF
+        # Monotonic timestamp of the latest command that reached the ESP32.
+        # This supports an observed *telemetry-bound* interruption record; it
+        # is not a measurement of the SSR's physical switching time.
+        self.last_ssr_event: dict | None = None
         self._esp_write_lock = threading.Lock()   # guard writes vs. the read-only monitor thread
 
         # Combined-measurement capability per instrument (None=unknown, True/False=cached
@@ -740,6 +744,7 @@ class HardwareController:
                 logger.error("SSR command failed: %s", exc)
                 return False
         self.ssr_state = bool(state)
+        self.last_ssr_event = {"state": bool(state), "command_monotonic_s": time.perf_counter()}
         logger.info("SSR set to %s", "ON" if state else "OFF")
         return True
 

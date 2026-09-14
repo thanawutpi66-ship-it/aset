@@ -204,6 +204,14 @@ class IecCapacityMixin:
             "rest_min": self.spn_rest_min.value(),
             "test_crate": self.cb_test_crate.currentText(),
         }
+        campaign = getattr(self.config.system, "validation_campaign", {}) or {}
+        if campaign.get("enabled"):
+            # A validation campaign must not inherit a convenient routine
+            # setting such as skip-charge or a 1C screening discharge.  This
+            # snapshot is persisted in the protocol metadata below.
+            opts.update({"skip_charge": False, "skip_rest": False,
+                         "rest_min": 60, "test_crate": "0.1C",
+                         "validation_preset": "c10-reference-v1"})
         import threading
         threading.Thread(target=self._auto_sequence_thread, args=(opts,), daemon=True).start()
 

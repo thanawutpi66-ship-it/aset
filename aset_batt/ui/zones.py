@@ -1116,6 +1116,17 @@ class ZonesMixin:
         self.btn_report.setToolTip("Create matching editable Word and submission PDF reports from this session")
         self.btn_report.clicked.connect(self._on_export_report)
         lay.addWidget(self.btn_report)
+        self.lbl_validation_campaign = QLabel()
+        active_campaign = getattr(self.config.system, "validation_campaign", {}) or {}
+        if active_campaign.get("enabled"):
+            self.lbl_validation_campaign.setText(
+                f"Campaign: {active_campaign.get('campaign_id', '—')} · "
+                f"{active_campaign.get('specimen_id', '—')} · run {active_campaign.get('run_index', 1)}")
+        else:
+            self.lbl_validation_campaign.setText("Campaign: routine session (validation disabled)")
+        self.lbl_validation_campaign.setWordWrap(True)
+        theme.style(self.lbl_validation_campaign, lambda: f"color:{theme.MUTED}; font-size:10px;")
+        lay.addWidget(self.lbl_validation_campaign)
         btn_dash = _btn("Open Cloud Dashboard", bg="PANEL2", hover="FIELD")
         btn_dash.clicked.connect(self._on_open_dashboard)
         lay.addWidget(btn_dash)

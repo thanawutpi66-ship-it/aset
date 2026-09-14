@@ -178,6 +178,8 @@ def build_payload(csv_path, max_points, cached_analysis=None, config=None, csv_c
             "csv_sha256": session_meta.get("sha256", ""),
             "protocol_id": protocol.get("id", ""),
             "analysis_version": protocol.get("analysis_version", ""),
+            "validation_campaign": session_meta.get("validation_campaign"),
+            "validation_evidence": session_meta.get("validation_evidence"),
             "pushed_at": time.time(),
             **_meta_override,   # phase, test_mode, workflow (set by GUI)
         },

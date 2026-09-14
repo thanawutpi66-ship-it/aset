@@ -7,7 +7,7 @@ import unittest
 import json
 
 from aset_batt.storage.data_utils import (
-    DataHandler, SESSION_COLUMNS, write_session_metadata,
+    DataHandler, SESSION_COLUMNS, SESSION_SCHEMA_VERSION, write_session_metadata,
 )
 
 
@@ -39,7 +39,7 @@ class TestSessionSchema(unittest.TestCase):
             self.assertEqual(next(csv.reader(f)), SESSION_COLUMNS)
 
         row = self._rows()[0]
-        self.assertEqual(row["Schema_Version"], "2.0")
+        self.assertEqual(row["Schema_Version"], SESSION_SCHEMA_VERSION)
         self.assertEqual(row["Test_Type"], "QuickScan")
         self.assertEqual(row["Mode"], "MINI_PULSE")
         self.assertEqual(row["Phase"], "MINI_PULSE")
@@ -74,7 +74,7 @@ class TestSessionSchema(unittest.TestCase):
         )
         with open(self.path + ".meta.json", encoding="utf-8") as f:
             meta = json.load(f)
-        self.assertEqual(meta["schema_version"], "2.0")
+        self.assertEqual(meta["schema_version"], SESSION_SCHEMA_VERSION)
         self.assertEqual(meta["session_id"], self.writer.session_id)
         self.assertEqual(meta["test_type"], "QuickScan")
         self.assertEqual(meta["profile"], "Lead-Acid 12V (6S, 7Ah)")

@@ -99,6 +99,10 @@ class SystemConfig:
     # string falls back to the OS username at write time rather than at rest,
     # so it always reflects who was actually logged into Windows for that session.
     operator_name: str = ""
+    # Optional research-validation context.  Kept in SystemConfig so it is
+    # deliberately operator-controlled and copied into every new session
+    # sidecar; an empty/disabled value leaves routine production runs unchanged.
+    validation_campaign: Dict[str, Any] = None
 
     def __post_init__(self):
         if self.safety_limits is None:
@@ -109,6 +113,8 @@ class SystemConfig:
                 "max_temperature": 60.0,
                 "min_temperature": -10.0
             }
+        if self.validation_campaign is None:
+            self.validation_campaign = {"enabled": False}
 
 @dataclass
 class HardwareConfig:

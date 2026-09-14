@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # All new sessions use this schema, whether they are written by AutoController
 # sequences or the high-rate AcquisitionWorker.  Keep the original analysis
 # columns first so existing CSV readers remain compatible.
-SESSION_SCHEMA_VERSION = "2.0"
+SESSION_SCHEMA_VERSION = "2.1"
 SESSION_COLUMNS = [
     "Timestamp", "Elapsed_s", "Voltage_V", "Current_A", "SoC_pct",
     "Resistance_mOhm", "Temperature_C", "Rin_Calibrated", "Capacity_Ah",
@@ -100,6 +100,15 @@ def write_session_metadata(csv_path: str, config: Any = None, *,
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
         now = datetime.now().isoformat(timespec="seconds")
+        validation_campaign = None
+        try:
+            from aset_batt.core.validation_campaign import normalize_campaign
+            candidate = normalize_campaign(getattr(system, "validation_campaign", None))
+            if candidate["enabled"]:
+                validation_campaign = candidate
+        except Exception:
+            validation_campaign = None
+
         meta = {
             "schema_version": SESSION_SCHEMA_VERSION,
             "session_id": session_id,
@@ -122,6 +131,8 @@ def write_session_metadata(csv_path: str, config: Any = None, *,
             "harness_resistance_ohm": getattr(battery, "harness_resistance_ohm", None),
             "measured_params": measured_params,
         }
+        if validation_campaign is not None:
+            meta["validation_campaign"] = validation_campaign
         if extra:
             meta.update(extra)
         with open(csv_path + ".meta.json", "w", encoding="utf-8") as f:
@@ -158,12 +169,65 @@ def finalize_session_metadata(csv_path: str, outcome: str = "completed",
         # rate in ``protocol``.  A nominal 10 Hz setting is not evidence that
         # the instruments actually delivered 10 Hz during a pulse.
         meta["sampling_summary"] = _sampling_summary(csv_path)
+        campaign = meta.get("validation_campaign")
+        if isinstance(campaign, dict):
+            temperatures = _csv_temperature_values(csv_path)
+            try:
+                from aset_batt.core.validation_campaign import ambient_summary
+                meta["validation_evidence"] = {
+                    **(meta.get("validation_evidence") or {}),
+                    "ambient": ambient_summary(temperatures, campaign),
+                    "sampling": meta["sampling_summary"],
+                }
+            except Exception as exc:
+                logger.warning("Could not finalize validation evidence: %s", exc)
         if os.path.exists(csv_path):
             meta["sha256"] = DataHandler._hash_file(csv_path)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2, ensure_ascii=False)
     except Exception as e:
         logger.error("Could not finalize session metadata for %s: %s", csv_path, e)
+
+
+def _csv_temperature_values(csv_path: str) -> list[float]:
+    values: list[float] = []
+    try:
+        with open(csv_path, encoding="utf-8-sig", newline="") as handle:
+            for row in csv.DictReader(handle):
+                try:
+                    temp = float(row.get("Temperature_C", "nan"))
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(temp):
+                    values.append(temp)
+    except OSError:
+        pass
+    return values
+
+
+def record_session_event(csv_path: str, name: str, payload: dict) -> None:
+    """Append an auditable event to an active/finished session sidecar.
+
+    The helper is intentionally best-effort: an event log must never delay a
+    safety shutdown or telemetry loop.
+    """
+    if not csv_path:
+        return
+    path = csv_path + ".meta.json"
+    try:
+        with open(path, encoding="utf-8") as handle:
+            meta = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return
+    events = list(meta.get("events") or [])
+    events.append({"name": str(name), "recorded_at": datetime.now().isoformat(timespec="seconds"),
+                   "payload": dict(payload)})
+    meta["events"] = events
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(meta, handle, indent=2, ensure_ascii=False)
+    except OSError as exc:
+        logger.warning("Could not record session event %s: %s", name, exc)
 
 
 def _sampling_summary(csv_path: str) -> dict:

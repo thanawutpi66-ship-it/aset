@@ -395,6 +395,37 @@ class BaseSequenceMixin:
         sn_lay.addWidget(sn_input, 1)
         lay.addLayout(sn_lay)
 
+        # Research-validation identity is optional and kept separate from the
+        # battery serial number.  Turning it off produces the exact same
+        # routine session metadata as before.
+        from aset_batt.core.validation_campaign import normalize_campaign
+        campaign = normalize_campaign(getattr(self.config.system, "validation_campaign", None))
+        validation_enabled = QCheckBox("Research validation campaign")
+        validation_enabled.setChecked(campaign["enabled"])
+        lay.addWidget(validation_enabled)
+        campaign_form = QFormLayout()
+        campaign_id = QLineEdit(campaign["campaign_id"])
+        specimen_id = QLineEdit(campaign["specimen_id"])
+        expected_condition = QComboBox()
+        expected_condition.addItems(["", "Good", "Normal", "Degraded"])
+        expected_condition.setCurrentText(campaign["expected_condition"])
+        run_index = QSpinBox(); run_index.setRange(1, 999); run_index.setValue(campaign["run_index"])
+        ambient_target = QLineEdit(f"{campaign['ambient_target_c']:g}")
+        ambient_target.setValidator(QDoubleValidator(-20.0, 80.0, 1))
+        campaign_form.addRow("Campaign ID:", campaign_id)
+        campaign_form.addRow("Specimen ID:", specimen_id)
+        campaign_form.addRow("Expected condition:", expected_condition)
+        campaign_form.addRow("Run index:", run_index)
+        campaign_form.addRow("Ambient target (°C):", ambient_target)
+        campaign_hint = QLabel("Validation preset: full charge → settled 60 min rest → test · ambient ±3 °C")
+        campaign_hint.setWordWrap(True)
+        campaign_hint.setStyleSheet(f"color:{theme.MUTED}; font-size:10px;")
+        campaign_form.addRow(campaign_hint)
+        campaign_container = QWidget(); campaign_container.setLayout(campaign_form)
+        campaign_container.setVisible(campaign["enabled"])
+        validation_enabled.toggled.connect(campaign_container.setVisible)
+        lay.addWidget(campaign_container)
+
         # File location preview
         import datetime
         ts = datetime.datetime.now().strftime("%Y%m%d")
@@ -418,6 +449,31 @@ class BaseSequenceMixin:
                 QMessageBox.warning(dlg, "Missing S/N", "Please enter a Battery S/N to continue.")
                 return
             self.config.battery.serial_number = sn
+            if validation_enabled.isChecked():
+                try:
+                    target = float(ambient_target.text())
+                except ValueError:
+                    QMessageBox.warning(dlg, "Invalid ambient target", "Enter a valid ambient temperature.")
+                    return
+                candidate = normalize_campaign({
+                    "enabled": True, "campaign_id": campaign_id.text(),
+                    "specimen_id": specimen_id.text(),
+                    "expected_condition": expected_condition.currentText(),
+                    "run_index": run_index.value(), "ambient_target_c": target,
+                    "ambient_tolerance_c": 3.0,
+                })
+                if not candidate["campaign_id"] or not candidate["specimen_id"]:
+                    QMessageBox.warning(dlg, "Missing campaign identity",
+                                        "Campaign ID and specimen ID are required for validation sessions.")
+                    return
+                self.config.system.validation_campaign = candidate
+                if hasattr(self, "lbl_validation_campaign"):
+                    self.lbl_validation_campaign.setText(
+                        f"Campaign: {candidate['campaign_id']} · {candidate['specimen_id']} · run {candidate['run_index']}")
+            else:
+                self.config.system.validation_campaign = {"enabled": False}
+                if hasattr(self, "lbl_validation_campaign"):
+                    self.lbl_validation_campaign.setText("Campaign: routine session (validation disabled)")
             if hasattr(self, "ed_sn"):
                 self.ed_sn.setText(sn)
             # setText() with an unchanged string emits no textChanged, so the

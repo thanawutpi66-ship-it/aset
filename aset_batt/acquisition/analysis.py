@@ -1016,6 +1016,7 @@ def _extract_ecm_metrics(
         
     out = {
         "r0": dcir, "r1": 0.0, "c1": 0.0, "tau": 0.0, "r2_ecm_fit": 0.0,
+        "rmse_v": float("nan"),
         "r2_rc": 0.0, "c2": 0.0, "tau2": 0.0, "ri_total": dcir,
         "ecm_fit_t_s": float("nan"), "is_2rc": False, "ecm_identified": False,
         "r_0p1s": float("nan"), "r_1s": float("nan"), "r_10s": float("nan"),
@@ -1031,6 +1032,7 @@ def _extract_ecm_metrics(
         c1 = float(ecm["C1_farad"])
         tau = float(ecm.get("tau1_s", ecm.get("tau_s", 0.0)))
         r2_ecm_fit = float(ecm["r_squared"])
+        rmse_v = float(ecm.get("rmse_v", float("nan")))
         r2_rc = float(ecm.get("R2_ohm", 0.0))
         c2 = float(ecm.get("C2_farad", 0.0))
         tau2 = float(ecm.get("tau2_s", 0.0))
@@ -1096,6 +1098,7 @@ def _extract_ecm_metrics(
 
         out.update({
             "r0": r0, "r1": r1, "c1": c1, "tau": tau, "r2_ecm_fit": r2_ecm_fit,
+            "rmse_v": rmse_v,
             "r2_rc": r2_rc, "c2": c2, "tau2": tau2, "ri_total": ri_total,
             "ecm_fit_t_s": float(ecm.get("t_edge_s", float("nan"))),
             "is_2rc": is_2rc, "ecm_identified": True,
@@ -1427,6 +1430,7 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "r0_method": ecm["r0_method"],
         "r1_mohm": ecm["r1"] * 1000.0, "c1_farad": ecm["c1"], "tau_s": ecm["tau"],
         "ecm_identified": ecm["ecm_identified"], "ecm_r2": ecm["r2_ecm_fit"], "ecm_fit_t_s": ecm["ecm_fit_t_s"],
+        "ecm_rmse_mv": ecm["rmse_v"] * 1000.0,
         "ecm_model": "2RC" if ecm["is_2rc"] else "1RC",
         "r2_mohm": ecm["r2_rc"] * 1000.0, "c2_farad": ecm["c2"], "tau2_s": ecm["tau2"],
         # FreedomCAR-style DC resistance at 0.1/1/10 s (G5) — NaN when no ECM fit.
@@ -1511,6 +1515,19 @@ def _apply_session_outcome(csv_path: str, result: dict) -> dict:
     result["session_outcome"] = outcome
     result["session_end_reason"] = meta.get("end_reason", "")
     result["session_complete"] = outcome == "completed"
+    campaign = meta.get("validation_campaign")
+    if isinstance(campaign, dict) and campaign.get("enabled"):
+        evidence = meta.get("validation_evidence") or {}
+        try:
+            from aset_batt.core.validation_campaign import validation_verdict
+            result["validation_campaign"] = campaign
+            result["validation_verdict"] = validation_verdict(
+                campaign, evidence.get("ambient") or {}, evidence.get("sampling") or {},
+                bool(result.get("capacity_gradeable")),
+            )
+        except Exception as exc:
+            result.setdefault("quality_warnings", []).append(
+                f"validation evidence unavailable: {exc}")
     if outcome in {"aborted", "cancelled", "safety_tripped", "fault", "interrupted"}:
         warning = (f"session outcome is {outcome.replace('_', ' ')}"
                    + (f": {result['session_end_reason']}" if result["session_end_reason"] else ""))
@@ -1575,13 +1592,28 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
         # Ultimate fallback (e.g. no discharge at all or very start)
         if soc_start is None:
             soc_start = float(np.nanmax(soc))
-    # SoC_pct per sample — already parsed by _read_csv (previously only used for
-    # soc_start above); threaded through so identify_hppc_pulses() (HPPC only)
-    # can report which SoC level each pulse fired at (G1/G2 SoC-sweep support).
+    # Validation HPPC/GITT sessions use a C10-calibrated Ah ruler if the
+    # campaign already captured one.  Routine sessions retain their estimator
+    # SoC exactly as before.
     soc_series = soc if soc.size and not np.all(np.isnan(soc)) else None
+    reference_capacity_ah = None
+    try:
+        with open(csv_path + ".meta.json", encoding="utf-8") as handle:
+            campaign = (json.load(handle).get("validation_campaign") or {})
+        candidate = float(campaign.get("reference_capacity_ah"))
+        if campaign.get("enabled") and candidate > 0.0:
+            from aset_batt.core.validation_campaign import reference_soc_from_capacity
+            soc_series = np.asarray(reference_soc_from_capacity(cap, candidate), float)
+            soc_start = float(soc_series[0]) if soc_series.size else soc_start
+            reference_capacity_ah = candidate
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
     result = analyze_series(t, i, v, temp, cap, profile, is_hppc,
                             soc_start=soc_start, soc_series=soc_series,
                             fit_ecm=fit_ecm, modes=modes, quick_scan=is_quick_scan)
+    if reference_capacity_ah is not None:
+        result["reference_soc_source"] = "c10_capacity"
+        result["reference_capacity_ah"] = reference_capacity_ah
     invalid_n = acquisition_quality["invalid_excluded"]
     if invalid_n:
         result.setdefault("quality_warnings", []).append(

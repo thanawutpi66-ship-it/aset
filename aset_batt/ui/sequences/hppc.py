@@ -269,6 +269,13 @@ class HppcMixin:
             "soc_floor_pct": self.ed_hppc_soc_floor.text(),
             "regen_enabled": self.chk_hppc_regen.isChecked(),
         }
+        campaign = getattr(self.config.system, "validation_campaign", {}) or {}
+        if campaign.get("enabled"):
+            # Research map: five reference levels 100/80/60/40/20.  The
+            # routine UI defaults remain 10% so existing production use is
+            # unaffected.
+            opts.update({"soc_sweep_enabled": True, "soc_step_pct": "20",
+                         "soc_floor_pct": "20", "validation_preset": "hppc-map-v1"})
         import threading
         threading.Thread(target=self._hppc_seq_thread, args=(opts,), daemon=True).start()
 

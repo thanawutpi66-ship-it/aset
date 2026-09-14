@@ -756,6 +756,15 @@ class CharacterizeMixin:
             rated    = self.controller.config.battery.rated_capacity
             pack_min = self.controller.config.battery.pack_min_voltage
             cells    = self.controller.config.battery.cells_series
+            campaign = getattr(self.controller.config.system, "validation_campaign", {}) or {}
+            reference_capacity_ah = None
+            if campaign.get("enabled"):
+                try:
+                    reference_capacity_ah = float(campaign["reference_capacity_ah"])
+                except (KeyError, TypeError, ValueError):
+                    status("⚠ Validation GITT requires a qualified C10 reference first")
+                    self.sig_alarm.emit("[CHAR/GITT] validation blocked: missing qualified C10 reference")
+                    return
 
             # discharge current for 5% SoC in 36 min = 0.1C (exactly)
             i_dis   = round(0.1 * rated, 3)
@@ -767,6 +776,7 @@ class CharacterizeMixin:
 
             soc_points: list = []
             ocv_points: list = []   # V per cell
+            reference_ah_out = 0.0
 
             # OCV anchor before starting — no rest phase precedes this at all, so an
             # instant read here is the clearest case of "too-short rest": whatever
@@ -814,6 +824,8 @@ class CharacterizeMixin:
                             break
                         dt   = now - last
                         last = now
+                        if reference_capacity_ah is not None:
+                            reference_ah_out += max(0.0, float(i_meas)) * max(0.0, dt) / 3600.0
                         state = self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
                         # GITT never calls start_charge() so there's no monitor-loop
                         # safety net feeding CSV/cloud or the live graph — do it directly,
@@ -881,7 +893,12 @@ class CharacterizeMixin:
                     except Exception:
                         v_rest = v_window[-1] if v_window else 0.0
 
-                soc_now = getattr(self.controller.estimator, "soc", 0.0)
+                if reference_capacity_ah is not None:
+                    from aset_batt.core.validation_campaign import reference_soc_from_capacity
+                    soc_now = reference_soc_from_capacity(
+                        [reference_ah_out], reference_capacity_ah)[0]
+                else:
+                    soc_now = getattr(self.controller.estimator, "soc", 0.0)
                 ocv_cell = v_rest / cells if cells > 0 else v_rest
                 soc_points.append(soc_now)
                 ocv_points.append(ocv_cell)
@@ -901,6 +918,9 @@ class CharacterizeMixin:
                     "ocv_curve_measured": {str(k): v for k, v in table.items()},
                     "gitt_raw": list(zip(soc_points, ocv_points)),
                     "n_points": len(soc_points),
+                    "reference_soc_source": ("c10_capacity" if reference_capacity_ah is not None
+                                             else "estimator"),
+                    "reference_capacity_ah": reference_capacity_ah,
                 }
                 status(f"✓ OCV table สร้างแล้ว ({len(soc_points)} จุด วัดจริง)")
                 self.sig_alarm.emit(f"[CHAR/GITT] เสร็จสิ้น: OCV table {len(soc_points)} จุด")

@@ -239,7 +239,7 @@ def _analysis_rows(analysis: dict) -> list[list[str]]:
         ["DCIR @ edge", _fmt(analysis.get("dcir_mohm"), 2, " mΩ"),
          f"valid steps: {analysis.get('dcir_n_steps', 0)}"],
         ["ECM R0 / R1", f"{_fmt(analysis.get('r0_mohm'), 2, ' mΩ')} / {_fmt(analysis.get('r1_mohm'), 2, ' mΩ')}",
-         f"R²: {_fmt(analysis.get('ecm_r2'), 3)}"],
+         f"R²: {_fmt(analysis.get('ecm_r2'), 3)}; RMSE: {_fmt(analysis.get('ecm_rmse_mv'), 2, ' mV')}"],
     ]
 
 
@@ -331,6 +331,19 @@ def generate_word_report(path, config, estimator=None, analysis=None, csv_path=N
         ["Sampling interval / rate", f"{_fmt(stats['median_dt_s'], 3, ' s')} / {_fmt(stats['median_hz'], 2, ' Hz')}"],
         ["Recorded phases", ", ".join(stats["modes"]) if stats["modes"] else "Not recorded (legacy CSV)"],
     ], [2700, 6660])
+
+    campaign = meta.get("validation_campaign") or {}
+    evidence = meta.get("validation_evidence") or {}
+    if campaign.get("enabled"):
+        ambient = evidence.get("ambient") or {}
+        _add_heading(doc, "Validation Campaign Context", 2)
+        _add_table(doc, ["Field", "Recorded value"], [
+            ["Campaign / specimen / run", f"{campaign.get('campaign_id', 'N/A')} / {campaign.get('specimen_id', 'N/A')} / {campaign.get('run_index', 'N/A')}"],
+            ["Expected condition", campaign.get("expected_condition", "N/A")],
+            ["Preconditioning", campaign.get("preconditioning", "N/A")],
+            ["Ambient target / observed", f"{ambient.get('target_c', 'N/A')} ± {ambient.get('tolerance_c', 'N/A')} °C / {ambient.get('min_c', 'N/A')}–{ambient.get('max_c', 'N/A')} °C"],
+            ["Ambient comparable", "Yes" if ambient.get("in_band") else "No / incomplete"],
+        ], [2700, 6660])
 
     _add_heading(doc, "2. Analysis and Verification Summary", 1)
     if analysis_dict:
