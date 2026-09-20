@@ -9,6 +9,7 @@ each function is called — no special import ordering needed.
 """
 
 import math
+from html import escape
 
 from aset_batt.ui import theme
 
@@ -32,11 +33,18 @@ def format_seq_result(res: dict) -> str:
     soh_str = f"{soh:.1f}%" if not math.isnan(soh) else "N/A"
     cap_str = f"{cap:.2f} Ah" if not math.isnan(cap) else "N/A"
     dcir_str = f"{dcir:.1f} mΩ" if not math.isnan(dcir) else "N/A"
+    qsoh = res.get("quick_soh_est_pct", float("nan"))
+    qsoh_str = f"{qsoh:.1f}%" if math.isfinite(qsoh) else "N/A"
+    qcap = res.get("quick_capacity_est_ah")
+    qcap_str = f"{qcap:.2f} Ah" if qcap is not None else "N/A"
+    dcir_label = ("Measured DCIR" if res.get("dcir_measured")
+                  else "Profile Resistance (Fallback)")
     lines = [
-        f"<b>Quick Scan Grade: {quick_grade}</b>   Peukert SoH: {res.get('soh_est', float('nan')):.1f}%",
-        f"Verified Overall: {grade}   Observed SoH: {soh_str}   Cap: {cap_str}",
+        f"<b>Quick Screening Grade: {quick_grade}</b>   Quick SoH Estimate: {qsoh_str}",
+        f"Verified Overall: {grade}   Verified C10 SoH: {soh_str}   Measured Removed Charge: {cap_str}",
+        f"OCV-normalized Estimated Full Capacity: {qcap_str}",
         f"Capacity: {capacity_grade}   Electrical: {electrical_grade}",
-        f"DCIR: {dcir_str}   Confidence: {conf*100:.0f}%",
+        f"{dcir_label}: {dcir_str}   Confidence: {conf*100:.0f}%",
     ]
     if ecm and not math.isnan(r0):
         lines.append(
@@ -47,6 +55,8 @@ def format_seq_result(res: dict) -> str:
 
 def build_results_html(results: dict) -> str:
     """Rich HTML table for the analytics results pane."""
+    if results.get("analysis_layer") == "OFFLINE_CURRENT_REANALYSIS":
+        return _build_offline_legacy_results_html(results)
     grade = results.get("overall_grade", results["grade"])
     gc = {"A": theme.OK, "B": theme.INFO, "C": theme.WARN, "REJECT": theme.CRIT, "REVIEW": theme.NEUTRAL}.get(grade, theme.NEUTRAL)
     soh = results["soh"]
@@ -105,10 +115,18 @@ def build_results_html(results: dict) -> str:
         f'<span style="color:{gc};font-size:14px">{grade}</span>',
         (f'conf {conf * 100:.0f}% — requires valid capacity + electrical evidence')
     ))
-    parts.append(row("Observed capacity fraction", soh_txt, "%", soh_basis))
+    parts.append(row("Verified C10 SoH", soh_txt, "%", soh_basis))
     if soh_est == soh_est and abs(soh_est - soh) > 1e-4:
-        parts.append(row("Peukert-corrected SoH", f"{soh_est:.1f}", "%",
-                         "used for Quick Scan Grade; not a measured C10 capacity result"))
+        parts.append(row("Quick SoH Estimate", f"{soh_est:.1f}", "%",
+                         "OCV-interval and Peukert normalized; screening only"))
+    if results.get("quick_soh_est_pct") is not None or results.get("quick_peukert_k") is not None:
+        parts.append(row(
+            "Quick Peukert basis",
+            f"k={results.get('quick_peukert_k', results.get('peukert_k', 'N/A'))}",
+            "",
+            f"source={results.get('peukert_k_source', 'UNKNOWN')}; "
+            f"Iref={results.get('peukert_reference_current_a', results.get('reference_current_c10_a', 'N/A'))} A; "
+            f"Kp={results.get('peukert_factor', 'N/A')}"))
     parts.append(row("Capacity Grade", capacity_grade, "",
                      "valid only for a phase-labelled full C10 discharge to cut-off"))
     parts.append(row("Electrical Grade", electrical_grade, "",
@@ -120,7 +138,11 @@ def build_results_html(results: dict) -> str:
         cap_sub = f"rate-norm. {cap_norm:.3f} Ah @ k={k:.2f}, Ī={i_avg:.1f} A"
     cap_provenance = f"source: {capacity_basis}" if capacity_basis else ""
     cap_sub = "; ".join(x for x in (cap_sub, cap_provenance) if x)
-    parts.append(row("Discharged capacity", f"{cap_ah:.3f}", "Ah", cap_sub))
+    parts.append(row("Charge Removed", f"{cap_ah:.3f}", "Ah", cap_sub))
+    quick_cap = results.get("quick_capacity_est_ah")
+    parts.append(row("OCV-normalized Estimated Full Capacity",
+                     f"{quick_cap:.3f}" if quick_cap is not None else "N/A", "Ah",
+                     results.get("quick_capacity_est_status", "screening estimate")))
     parts.append(row("Rested OCV", f"{ocv:.3f}", "V"))
 
     # ── DCIR ──
@@ -129,10 +151,10 @@ def build_results_html(results: dict) -> str:
     step_sub = f"n={nstep} step{'s' if nstep != 1 else ''}" + (
         f"  {meas_hint}" if meas_hint else ""
     )
-    label = "DCIR" if nstep > 0 else "R_base"
+    label = "Measured DCIR" if results.get("dcir_measured", False) else "Profile Resistance (Fallback)"
     parts.append(row(label, f"{dcir:.2f} ± {dstd:.2f}", "mΩ", step_sub))
     parts.append(row("Voltage sag (load)", f"{results.get('voltage_sag_v', 0.0):.3f}", "V"))
-    parts.append(row("CCA proxy", f"{results.get('cca_est_a', 0.0):.0f}", "A",
+    parts.append(row("CCA Proxy", f"{results.get('cca_est_a', 0.0):.0f}", "A",
                      "(OCV − cutoff) / DCIR"))
     slope = results.get("dcir_slope_mohm")
     if slope is not None and slope == slope and results.get("dcir_slope_r2", 0) >= 0.9:
@@ -225,3 +247,71 @@ def build_results_html(results: dict) -> str:
 
     parts.append('</table>')
     return "".join(parts)
+
+
+def _build_offline_legacy_results_html(results: dict) -> str:
+    """Display historical provenance separately from offline raw reanalysis."""
+    hist = {k: v for k, v in (results.get("historical_result") or {}).items()
+            if v is not None}
+
+    def show(value, fmt="{}"):
+        if value is None:
+            return "N/A"
+        try:
+            if isinstance(value, float) and not math.isfinite(value):
+                return "N/A"
+            return fmt.format(value)
+        except (TypeError, ValueError):
+            return str(value)
+
+    rows = [
+        ("Compatibility", results.get("compatibility_status", "LEGACY_LIMITED")),
+        ("Dataset status", results.get("dataset_status", "LEGACY_LIMITED")),
+        ("Integrity / hash", results.get("integrity_status", "INTEGRITY_HASH_UNAVAILABLE")),
+        ("Current reanalysis status", results.get("current_reanalysis_status", "UNAVAILABLE")),
+        ("Electrical status", results.get("electrical_status", "UNAVAILABLE")),
+        ("Capacity status", results.get("capacity_basis_status", "UNAVAILABLE")),
+        ("Phase detection", results.get("phase_detection_source", "UNAVAILABLE")),
+        ("Measured DCIR", show(results.get("dcir_reanalyzed_mohm"), "{:.2f}") + " mΩ"),
+        ("DCIR latency", show(results.get("dcir_reanalyzed_latency_s"), "{:.3f}") + " s"),
+        ("Charge removed", show(results.get("charge_removed_ah"), "{:.3f}") + " Ah"),
+        ("C10-equivalent interval charge", show(results.get("c10_equivalent_interval_charge_ah"), "{:.3f}") + " Ah"),
+        ("Peukert exponent k", show(results.get("peukert_k"))),
+        ("Peukert source", results.get("peukert_k_source", "LEGACY_UNKNOWN")),
+        ("Peukert reference current", show(results.get("peukert_reference_current_a"), "{:.4f}") + " A"),
+        ("Peukert factor Kp", show(results.get("peukert_factor"), "{:.4f}")),
+        ("Reanalysis basis", results.get("peukert_reanalysis_basis", "UNKNOWN")),
+        ("Historical Peukert k", show(results.get("historical_peukert_k"))),
+        ("Historical Peukert source", results.get("historical_peukert_k_source", "LEGACY_UNKNOWN")),
+        ("Recorded start voltage", show(results.get("recorded_rest_voltage_v"), "{:.3f}") + " V"),
+        ("Validated start OCV", results.get("start_ocv_status", "UNAVAILABLE")),
+        ("Validated end OCV", results.get("end_ocv_status", "UNAVAILABLE")),
+        ("Current Quick SoH", "N/A"),
+        ("Reason", results.get("quick_soh_current_method_reason", "Insufficient current-method evidence")),
+    ]
+    out = ['<table width="100%" cellspacing="0" cellpadding="4" style="border-collapse:collapse;font-family:Segoe UI,Arial">']
+    info = results.get("file_information") or {}
+    out.append('<tr><th colspan="2" align="left">FILE INFORMATION</th></tr>')
+    for key, label in (("filename", "Filename"), ("session_id", "Session ID"),
+                       ("test_type", "Test Type"), ("acquisition_date", "Acquisition Date"),
+                       ("app_version", "App Version"), ("analysis_version", "Analysis Version"),
+                       ("size_bytes", "Size (bytes)")):
+        if info.get(key) is not None:
+            out.append(f'<tr><td>{label}</td><td>{escape(str(info[key]))}</td></tr>')
+    if hist:
+        out.append('<tr><th colspan="2" align="left">HISTORICAL RESULT</th></tr>')
+        labels = {"analysis_version": "Historical Algorithm", "capacity_basis_version": "Historical capacity basis version",
+                  "rated_capacity_ah": "Historical rated capacity", "capacity_ah": "Historical capacity",
+                  "soh": "Historical SoH", "quick_soh_est_pct": "Historical Quick SoH", "grade": "Historical grade"}
+        for key, label in labels.items():
+            if hist.get(key) is not None:
+                out.append(f'<tr><td>{label}</td><td>{escape(str(hist[key]))}</td></tr>')
+    out.append(f'<tr><th colspan="2" align="left">CURRENT REANALYSIS · {escape(str(results.get("dataset_status", "LEGACY_LIMITED")))}</th></tr>')
+    out.extend(f'<tr><td>{escape(str(label))}</td><td>{escape(str(value))}</td></tr>' for label, value in rows)
+    out.append('<tr><th colspan="2" align="left">EVIDENCE / NOTES</th></tr>')
+    notes = list(results.get("dataset_notes") or [])
+    if results.get("quick_soh_current_method_reason"):
+        notes.append(results["quick_soh_current_method_reason"])
+    out.extend(f'<tr><td colspan="2">{escape(str(note))}</td></tr>' for note in notes)
+    out.append('</table>')
+    return ''.join(out)

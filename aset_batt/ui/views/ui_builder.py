@@ -230,6 +230,10 @@ class UiBuilderMixin:
         self.btn_estop.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_estop.clicked.connect(self._on_estop)
         toolbar.addWidget(self.btn_estop)
+        self.btn_estop_reset = QPushButton("RESET E-STOP")
+        self.btn_estop_reset.setToolTip("Explicitly reset the E-STOP latch after all workers exit and OFF commands succeed")
+        self.btn_estop_reset.clicked.connect(self._on_estop_reset)
+        toolbar.addWidget(self.btn_estop_reset)
 
         # Global E-STOP Shortcut (Esc)
         from PySide6.QtGui import QKeySequence, QShortcut

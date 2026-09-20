@@ -90,6 +90,9 @@ class SystemConfig:
     cloud_push_interval: float = 5.0
     cloud_analysis_interval: float = 60.0
     ui_theme: str = "light"  # "light" or "dark" — read once at startup, before the GUI is built
+    # Quick Scan end-rest duration is configurable for benches that want to
+    # wait long enough to obtain a valid end OCV (LeadAcid default remains 60s).
+    quick_scan_tail_rest_s: float = 60.0
     safety_limits: Dict[str, float] = None
     # R3 (industrial-grade audit): who ran a given session — no operator identity
     # was captured anywhere before this, so a graded result could never be traced
@@ -138,14 +141,38 @@ class ConfigManager:
         self.battery = BatteryConfig()
         self.system = SystemConfig()
         self.hardware = HardwareConfig()
-        # G5 (industrial-grade audit): set when _load_config() had to fall back to
-        # defaults because the file was corrupt/unreadable — a silent fallback used
-        # to wipe out calibration (e.g. harness_resistance_ohm) with no indication
-        # to the operator beyond a log line nobody watches during normal use. The
-        # GUI launcher (aset_batt/app/run.py) checks this and shows a blocking
-        # warning dialog before the main window opens.
         self.load_error: Optional[str] = None
         self._load_config()
+
+    def effective_safety_limits(self) -> Dict[str, Any]:
+        """Resolve the active limits with explicit pack/cell provenance."""
+        raw = dict(self.system.safety_limits or {})
+        return {
+            "ovp_v": float(raw["max_voltage"]), "uvp_v": float(raw["min_voltage"]),
+            "ocp_a": float(raw["max_current"]), "otp_c": float(raw["max_temperature"]),
+            "utp_c": float(raw["min_temperature"]),
+            "basis": {"ovp_v": "pack", "uvp_v": "pack", "ocp_a": "pack",
+                       "otp_c": "ambient/sensor", "utp_c": "ambient/sensor"},
+            "source": "SystemConfig.safety_limits (product selection/manual override)",
+        }
+
+    def validate_effective_safety_limits(self) -> list[str]:
+        try:
+            limits = self.effective_safety_limits()
+            vals = [limits[k] for k in ("ovp_v", "uvp_v", "ocp_a", "otp_c", "utp_c")]
+            if not all(__import__("math").isfinite(v) for v in vals):
+                return ["Safety limits must be finite"]
+            errors = []
+            if limits["uvp_v"] >= limits["ovp_v"]:
+                errors.append("UVP must be below OVP")
+            nominal = float(self.battery.pack_nominal_voltage)
+            if not (limits["uvp_v"] < nominal < limits["ovp_v"]):
+                errors.append("Pack nominal voltage must lie between UVP and OVP")
+            if limits["ocp_a"] <= 0:
+                errors.append("OCP must be positive")
+            return errors
+        except (KeyError, TypeError, ValueError) as exc:
+            return [f"Invalid safety limits: {exc}"]
 
     def _load_config(self) -> None:
         """Load configuration from file with validation"""
@@ -188,6 +215,22 @@ class ConfigManager:
                 f"กรุณาตรวจสอบค่า calibration (harness_resistance_ohm ฯลฯ) ก่อนใช้งานเทสจริง"
             )
             self.save_config()
+
+        # Product rating basis is authoritative when explicitly supplied. This
+        # migrates stale saved YTZ6V 5.3Ah (20HR) selections to its C10 value
+        # in memory without rewriting the user's config file behind their back.
+        try:
+            from aset_batt.core import battery_profiles
+            product = battery_profiles.get_product(self.battery.product_name)
+            if product and product.capacity_10h_ah > 0.0:
+                if self.battery.rated_capacity != product.capacity_10h_ah:
+                    logger.warning(
+                        "Updating selected product %s rated capacity from %.3fAh to C10 %.3fAh",
+                        self.battery.product_name, self.battery.rated_capacity,
+                        product.capacity_10h_ah)
+                    self.battery.rated_capacity = product.capacity_10h_ah
+        except Exception as exc:
+            logger.warning("Product capacity-basis migration skipped: %s", exc)
 
     def _update_from_dict(self, obj: Any, data: Dict[str, Any]) -> None:
         """Update dataclass object from dictionary"""

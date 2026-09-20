@@ -78,12 +78,38 @@ from aset_batt.ui.characterize import CharacterizeMixin
 
 
 class HardwareControlMixin:
-    def _refresh_ports(self):
-        if self.hw is None:
+    def _submit_hardware_task(self, name, operation):
+        """Submit blocking GUI-initiated VISA/serial work to the single worker lane."""
+        if name in self._hardware_tasks:
+            raise RuntimeError(f"hardware task already active: {name}")
+        from aset_batt.ui.hardware_tasks import HardwareTask
+        task = HardwareTask(name, operation)
+        task.signals.finished.connect(self.sig_hw_task_done)
+        self._hardware_tasks[name] = task
+        self._hardware_pool.start(task)
+
+    def _request_watchdog(self):
+        if not getattr(self.hw, "is_esp_connected", False):
             return
-        try:
+        self._watchdog_requests = getattr(self, "_watchdog_requests", 0) + 1
+        if "watchdog" in self._hardware_tasks:
+            self._watchdog_skipped = getattr(self, "_watchdog_skipped", 0) + 1
+            return
+        self._submit_hardware_task("watchdog", self.hw.feed_watchdog)
+
+    def _refresh_ports(self):
+        if self.hw is None or self._hardware_ports_busy or self._hardware_connecting:
+            return
+        self._hardware_ports_busy = True
+        self.btn_connect.setEnabled(False)
+        def discover():
             visa = self.hw.get_visa_ports() if hasattr(self.hw, "get_visa_ports") else []
             coms = self.hw.get_com_ports() if hasattr(self.hw, "get_com_ports") else []
+            return visa, coms
+        self._submit_hardware_task("ports", discover)
+
+    def _apply_discovered_ports(self, visa, coms):
+        try:
             for cb, items in ((self.cb_psu, visa), (self.cb_load, visa), (self.cb_esp, coms)):
                 cb.clear()
                 cb.addItems(items)
@@ -102,6 +128,7 @@ class HardwareControlMixin:
                 self.cb_load.setCurrentIndex(1)
         except Exception as exc:
             logger.error("refresh ports: %s", exc)
+        self.btn_connect.setEnabled(bool(self.cb_psu.currentText() and self.cb_load.currentText()))
     def _refresh_battery_readout(self):
         b = self.config.battery
         self.lbl_battery_readout.setText(
@@ -149,86 +176,294 @@ class HardwareControlMixin:
         self._log_alarm(
             f"Safety limits saved — OVP {ovp:.2f}V, UVP {uvp:.2f}V, "
             f"OTP {otp:.1f}°C, UTP {utp:.1f}°C")
+
+    def _request_direct_poll(self):
+        """Queue at most one Direct-page read; the GUI timer never queries SCPI."""
+        import time
+        self._direct_poll_requests += 1
+        if (self._direct_poll_inflight or self._hardware_connecting
+                or self._hardware_disconnecting):
+            self._direct_poll_skipped += 1
+            return
+        self._direct_poll_inflight = True
+        self._direct_poll_started_at = time.perf_counter()
+        if self.rb_direct.isChecked() and self._direct_last_success_at is None:
+            self.status_label.setText("Direct readback pending")
+
+        def read_direct():
+            v, psu_i, load_i = self.hw.read_vi()
+            if load_i > 0.02:
+                i_net = load_i
+            elif getattr(self.hw, "_psu_output_on", False):
+                i_net = -psu_i
+            else:
+                i_net = psu_i
+            temp = getattr(self.hw, "current_temp", float("nan"))
+            temp_stale = bool(getattr(self.hw, "temp_is_stale", lambda: False)())
+            if temp_stale:
+                temp = float("nan")
+            return float(v), float(i_net), float(temp), time.perf_counter(), temp_stale
+
+        self._submit_hardware_task("direct_poll", read_direct)
+
+    def _mark_direct_stale_if_needed(self):
+        import time
+        if not self.rb_direct.isChecked():
+            return
+        last = self._direct_last_success_at
+        reference = last if last is not None else self._direct_poll_started_at
+        stale = bool(reference is not None
+                     and time.perf_counter() - reference > self._direct_stale_after_s)
+        self._direct_stale_notified = stale
+        if stale:
+            if last is None:
+                self.status_label.setText("Direct readback unavailable (>3 s; no successful sample)")
+            else:
+                self.status_label.setText("Direct readback stale (>3 s); last values retained")
+        elif last is not None:
+            self.status_label.setText(
+                "Readback current; ESP32 temperature is stale"
+                if self._direct_temp_stale else "Direct readback current")
+        elif self._direct_poll_inflight:
+            self.status_label.setText("Direct readback pending")
+
+    def direct_poll_diagnostics(self):
+        """Snapshot Direct poll counters and sample freshness for support/audit."""
+        import time
+        last = self._direct_last_success_at
+        age = max(0.0, time.perf_counter() - last) if last is not None else None
+        pending_age = None
+        if last is None and self._direct_poll_started_at is not None:
+            pending_age = max(0.0, time.perf_counter() - self._direct_poll_started_at)
+        stale = bool((age is not None and age > self._direct_stale_after_s)
+                     or (pending_age is not None and pending_age > self._direct_stale_after_s))
+        return {
+            "requested": self._direct_poll_requests,
+            "executed": self._direct_poll_executed,
+            "skipped_busy": self._direct_poll_skipped,
+            "in_flight": self._direct_poll_inflight,
+            "last_success_monotonic_s": last,
+            "last_success_age_s": age,
+            "pending_age_s": pending_age,
+            "stale_after_s": self._direct_stale_after_s,
+            "stale": stale,
+            "last_sample": self._direct_last_sample,
+        }
     def _on_connect(self):
+        if (self._hardware_connecting or self._hardware_disconnecting
+                or self._hardware_ports_busy or self._close_after_hardware_task
+                or self.operation_state.owns_hardware
+                or getattr(self, "_seq_running", threading.Event()).is_set()
+                or any(ev.is_set() for ev in getattr(self, "_char_running", {}).values())):
+            return
         psu, load, esp = self.cb_psu.currentText(), self.cb_load.currentText(), self.cb_esp.currentText()
         if not psu or not load:
             if not self._headless:
                 QMessageBox.warning(self, "Connect", "Select PSU and Load ports first")
             return
-        try:
-            self.hw.connect_instruments(psu, load)
-            self._load_calibration()
-            # G7 (industrial-grade audit): range-set + OVP/OCP/UVP protection +
-            # instrument hardening now live in ONE HardwareController method
-            # (apply_default_safety_protection) instead of being inlined here only
-            # — any other real-hardware entry point (a script, a test harness, a
-            # future alternate UI) gets the exact same backstop by calling it too,
-            # instead of silently getting none. MockHardwareController doesn't
-            # implement it (simulation has nothing to protect), hence the hasattr.
-            if hasattr(self.hw, "apply_default_safety_protection"):
-                result = self.hw.apply_default_safety_protection(
-                    max_current_a=self.config.battery.max_current,
-                    pack_max_voltage_v=self.config.battery.pack_max_voltage,
-                    min_voltage_v=self.config.system.safety_limits.get("min_voltage", 0.0),
-                )
-                for w in result.get("warnings", []):
-                    self._log_alarm(w)
-                info = result.get("info") or {}
-                if info.get("psu"):
-                    self._log_alarm(f"PSU: {info['psu']}")
-                if info.get("load"):
-                    self._log_alarm(f"Load: {info['load']}")
-            if esp:
-                baud = getattr(self.config.hardware, "serial_baudrate", 9600)
+        self._load_calibration()
+        self._hardware_connecting = True
+        self.btn_connect.setEnabled(False)
+        self.btn_disconnect.setEnabled(False)
+        self.status_label.setText("Connecting…")
+
+        def connect_hardware():
+            try:
+                self.hw.connect_instruments(psu, load)
+                setup = {}
+                if hasattr(self.hw, "apply_default_safety_protection"):
+                    setup = self.hw.apply_default_safety_protection(
+                        max_current_a=self.config.battery.max_current,
+                        pack_max_voltage_v=self.config.battery.pack_max_voltage,
+                        min_voltage_v=self.config.system.safety_limits.get("min_voltage", 0.0),
+                    ) or {}
+                esp_error = ""
+                if esp:
+                    try:
+                        baud = getattr(self.config.hardware, "serial_baudrate", 9600)
+                        self.hw.connect_esp32(esp, baudrate=baud)
+                        if hasattr(self.hw, "esp_connect_error"):
+                            self.hw.esp_connect_error = ""
+                    except Exception as exc:
+                        esp_error = str(exc)
+                        if hasattr(self.hw, "esp_connect_error"):
+                            self.hw.esp_connect_error = esp_error
+                return {"psu": psu, "load": load, "esp": esp,
+                        "setup": setup, "esp_error": esp_error}
+            except Exception:
                 try:
-                    self.hw.connect_esp32(esp, baudrate=baud)
-                    if hasattr(self.hw, "esp_connect_error"):
-                        self.hw.esp_connect_error = ""
-                except Exception as esp_exc:
-                    # ESP32 fail is non-fatal — store error so _slot_conn shows ✗
-                    if hasattr(self.hw, "esp_connect_error"):
-                        self.hw.esp_connect_error = str(esp_exc)
-                    self._log_alarm(f"ESP32 connect failed (non-fatal): {esp_exc}")
-            self.config.hardware.psu_port = psu
-            self.config.hardware.load_port = load
-            self.config.hardware.esp_port = esp
-            self.config.save_config()
-            self._update_connection_status()
-            # A successful reconnect is the operator's explicit "resume" action
-            # after an E-STOP/safety trip — nothing else ever resets the state
-            # pill from "ESTOP", so without this it stayed latched forever.
-            # (Connect is disabled while a test is running via the is_idle guard
-            # in _slot_profile_status, so this can't stomp a RUNNING state.)
-            self.set_profile_status("Idle")
-            self._log_alarm("Hardware connected.")
-            self._cloud_push_start()
-            if self.controller is not None:
-                self.controller.start_live_readback()
-        except Exception as exc:
-            # connect_error already set in hw.connect_instruments — let _slot_conn show ✗
-            self._update_connection_status()
-            if not self._headless:
-                QMessageBox.critical(self, "เชื่อมต่อล้มเหลว", str(exc))
+                    self.hw.disconnect_esp32()
+                except Exception:
+                    pass
+                try:
+                    self.hw.disconnect_instruments()
+                except Exception:
+                    pass
+                raise
+
+        self._submit_hardware_task("connect", connect_hardware)
+
     def _on_disconnect(self):
-        try:
-            if self.controller is not None:
-                self.controller.stop_live_readback()
-            self._cloud_push_stop()
+        if self._hardware_disconnecting or self._hardware_connecting:
+            return
+        if (self.operation_state.owns_hardware
+                or getattr(self.controller, "is_charging", False)
+                or getattr(self.controller, "monitor_running", False)
+                or getattr(self, "_test_thread", None) is not None
+                or (getattr(self, "_seq_thread", None) is not None
+                    and self._seq_thread.is_alive())
+                or any(t.is_alive() for t in getattr(self, "_char_threads", {}).values())):
+            self._log_alarm("HARDWARE_BUSY — wait for worker cleanup before disconnecting")
+            return
+        self._hardware_disconnecting = True
+        self._direct_poll_enabled = False
+        self.btn_disconnect.setEnabled(False)
+        self.btn_connect.setEnabled(False)
+        if self.controller is not None:
+            self.controller.stop_live_readback()
+        self._cloud_push_stop()
+
+        def disconnect_hardware():
             if hasattr(self.hw, "release_instrument_config"):
-                try:
-                    self.hw.release_instrument_config()
-                except Exception as e:
-                    import logging
-                    logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
+                self.hw.release_instrument_config()
             if hasattr(self.hw, "disconnect_instruments"):
                 self.hw.disconnect_instruments()
             if hasattr(self.hw, "disconnect_esp32"):
                 self.hw.disconnect_esp32()
+            return True
+
+        self._submit_hardware_task("disconnect", disconnect_hardware)
+
+    @Slot(str, object)
+    def _on_hardware_task_done(self, name, result):
+        self._hardware_tasks.pop(name, None)
+        ok = bool(result.get("ok"))
+        value = result.get("value")
+        if name == "ports":
+            self._hardware_ports_busy = False
+            if ok:
+                visa, coms = value
+                self._apply_discovered_ports(visa, coms)
+            else:
+                logger.error("Port discovery failed: %s", result.get("error"))
+                self._apply_discovered_ports([], [])
+            self.status_label.setText("Ready — connect hardware to begin")
+        elif name == "simulation_autoconnect":
+            if ok and value:
+                self._update_connection_status()
+                if self.controller is not None:
+                    self.controller.start_live_readback()
+                logger.info("Auto-connected mock hardware (simulation mode)")
+            elif not ok:
+                logger.warning("Simulation auto-connect failed: %s", result.get("error"))
+        elif name == "connect":
+            self._hardware_connecting = False
+            if ok:
+                setup = value.get("setup", {})
+                for warning in setup.get("warnings", []):
+                    self._log_alarm(warning)
+                info = setup.get("info") or {}
+                if info.get("psu"):
+                    self._log_alarm(f"PSU: {info['psu']}")
+                if info.get("load"):
+                    self._log_alarm(f"Load: {info['load']}")
+                esp_error = value.get("esp_error", "")
+                if esp_error:
+                    self._log_alarm(f"ESP32 connect failed (non-fatal): {esp_error}")
+                self.config.hardware.psu_port = value["psu"]
+                self.config.hardware.load_port = value["load"]
+                self.config.hardware.esp_port = value["esp"]
+                self.config.save_config()
+                self.set_profile_status("Idle")
+                self._log_alarm("Hardware connected.")
+                self._cloud_push_start()
+                if self.controller is not None and not self._close_after_hardware_task:
+                    self.controller.start_live_readback()
+            else:
+                self.hw.connect_error = result.get("error", "Hardware connection failed")
+                self._log_alarm(f"Hardware connection failed: {self.hw.connect_error}")
+                if not self._headless:
+                    QMessageBox.critical(self, "Connection Failed", self.hw.connect_error)
             self._update_connection_status()
-            self._log_alarm("Hardware disconnected.")
-        except Exception as exc:
-            if not self._headless:
-                QMessageBox.critical(self, "Disconnect Error", str(exc))
+            self.btn_disconnect.setEnabled(bool(getattr(self.hw, "is_connected", False)))
+            self.btn_connect.setEnabled(bool(self.cb_psu.currentText() and self.cb_load.currentText()))
+        elif name == "disconnect":
+            self._hardware_disconnecting = False
+            if not ok:
+                self._log_alarm(f"Disconnect failed: {result.get('error')}")
+            else:
+                self._log_alarm("Hardware disconnected.")
+            self._update_connection_status()
+            self.btn_connect.setEnabled(bool(self.cb_psu.currentText() and self.cb_load.currentText()))
+            self.btn_disconnect.setEnabled(bool(getattr(self.hw, "is_connected", False)))
+        elif name == "direct_poll":
+            self._direct_poll_inflight = False
+            self._direct_poll_executed += 1
+            if ok:
+                v, i, temp, sample_time, temp_stale = value
+                self._direct_last_success_at = sample_time
+                self._direct_last_sample = (v, i, temp)
+                self._direct_stale_notified = False
+                self._direct_temp_stale = bool(temp_stale)
+                if self.rb_direct.isChecked() and not self._hardware_disconnecting:
+                    soc = getattr(self.estimator, "soc", 0.0) if self.estimator else 0.0
+                    rin = getattr(self.estimator, "rin", 0.0) if self.estimator else 0.0
+                    self.update_live_readback(v, i, temp)
+                    self.update_display(v, i, soc, rin, temp)
+                    if temp_stale:
+                        self.status_label.setText("Readback current; ESP32 temperature is stale")
+                    else:
+                        self.status_label.setText("Direct readback current")
+            else:
+                logger.warning("Direct readback failed: %s", result.get("error"))
+                if self._direct_last_success_at is None:
+                    self.status_label.setText("Direct readback unavailable")
+            if self._close_after_hardware_task:
+                self.close()
+        elif name in ("manual_psu", "manual_load", "manual_ssr"):
+            self._set_manual_command_busy({"manual_psu":"psu", "manual_load":"load", "manual_ssr":"ssr"}[name], False)
+            if not ok:
+                self._log_alarm(f"{name} failed: {result.get('error')}")
+            elif not bool(value):
+                self._log_alarm(f"{name} command failed")
+            else:
+                self._log_alarm(f"{name} command completed")
+                if name == "manual_load":
+                    try:
+                        from aset_batt.storage.cloud_push import set_cloud_meta
+                        set_cloud_meta(phase="discharge" if value else "", test_mode="MANUAL" if value else "", workflow="Manual — Direct Load" if value else "")
+                    except Exception:
+                        pass
+                if bool(value):
+                    if hasattr(self, "_ensure_battery_sn"):
+                        self._ensure_battery_sn()
+                    self.sig_profile_status.emit("RUN", theme.INFO)
+            self._update_connection_status()
+        elif name == "psu_trip_query":
+            if ok:
+                self._psu_tripped = bool(value)
+                self.lbl_psu_trip.setText("Trip: ⛔ TRIPPED (OVP/OCP/OTP)" if value else "Trip: OK")
+                self.lbl_psu_trip.setStyleSheet(self._psu_trip_style())
+            else:
+                self._log_alarm(f"PSU trip query failed: {result.get('error')}")
+        elif name == "psu_trip_clear":
+            if ok:
+                cleared, tripped = value
+                self._log_alarm("PSU protection trip cleared (operator)." if cleared else "Clear PSU trip failed.")
+                self._psu_tripped = bool(tripped)
+                self.lbl_psu_trip.setText("Trip: ⛔ TRIPPED (OVP/OCP/OTP)" if tripped else "Trip: OK")
+                self.lbl_psu_trip.setStyleSheet(self._psu_trip_style())
+            else:
+                self._log_alarm(f"Clear PSU trip failed: {result.get('error')}")
+        elif name == "shutdown":
+            self._close_hardware_shutdown_done = True
+        elif name == "watchdog":
+            if not ok or not value:
+                self._watchdog_failures = getattr(self, "_watchdog_failures", 0) + 1
+                logger.warning("ESP32 watchdog heartbeat failed: %s", result.get("error"))
+        if self._close_after_hardware_task and not self._hardware_tasks:
+            self.close()
+
     def _on_ssr_manual_on(self):
         """Manual SSR override for diagnostics/recovery — normally the relay is
         driven automatically by set_psu()/charge state. This only closes the
@@ -248,25 +483,19 @@ class HardwareControlMixin:
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-        try:
-            self.hw.set_ssr(True)
-            self._log_alarm("SSR manual ON (operator override)")
-        except Exception as exc:
-            if not self._headless:
-                QMessageBox.critical(self, "SSR Error", str(exc))
-        self._update_connection_status()
+        self._queue_manual_ssr(True)
     def _on_ssr_manual_off(self):
         """Manual SSR cutoff — always safe (cuts power), no confirmation needed,
         same immediacy as E-STOP."""
         if not getattr(self.hw, "is_esp_connected", False):
             return
-        try:
-            self.hw.set_ssr(False)
-            self._log_alarm("SSR manual OFF (operator override)")
-        except Exception as exc:
-            if not self._headless:
-                QMessageBox.critical(self, "SSR Error", str(exc))
-        self._update_connection_status()
+        self._queue_manual_ssr(False)
+
+    def _queue_manual_ssr(self, on):
+        if "manual_ssr" in self._hardware_tasks:
+            return
+        self._set_manual_command_busy("ssr", True)
+        self._submit_hardware_task("manual_ssr", lambda: self.hw.set_ssr(bool(on)))
     def _on_direct_toggled(self, on: bool):
         if not on:
             return
@@ -285,6 +514,9 @@ class HardwareControlMixin:
             [self.rb_charge, self.rb_discharge, self.rb_hppc][min(idx, 2)].setChecked(True)
             return
         self.run_stack.setCurrentIndex(3)
+        if getattr(self.hw, "is_connected", False):
+            self._mark_direct_stale_if_needed()
+            self._request_direct_poll()
     def _psu_manual(self, on):
         # _seq_running alone missed RUN TEST (AcquisitionWorker) and CHARACTERIZE-tab
         # tests, which drive self.hw from their own background thread exactly like a
@@ -299,29 +531,15 @@ class HardwareControlMixin:
                                         f"{busy} — หยุดก่อนแล้วค่อยใช้ Direct Control")
                 return
         try:
-            if on:
-                ok = self.hw.set_psu(
-                    True,
-                    str(float(self.ed_psu_v.text())),
-                    str(float(self.ed_psu_i.text())),
-                )
-            else:
-                ok = self.hw.set_psu(False)
-            # G9 (industrial-grade audit): set_psu() now reports whether the SCPI
-            # write actually succeeded — a failed command used to just be logged,
-            # so the operator watching this exact button had no way to know the PSU
-            if not ok and not self._headless:
-                QMessageBox.warning(self, "PSU", "PSU command failed — see log for details")
-            elif ok:
-                if on or getattr(self.hw, "_psu_output_on", False) or getattr(self.hw, "_load_output_on", False):
-                    if hasattr(self, "_ensure_battery_sn"):
-                        self._ensure_battery_sn()
-                    self.sig_profile_status.emit("RUN", theme.INFO)
-                else:
-                    self.sig_profile_status.emit("IDLE", theme.NEUTRAL)
+            args = (True, str(float(self.ed_psu_v.text())), str(float(self.ed_psu_i.text()))) if on else (False,)
         except ValueError:
             if not self._headless:
                 QMessageBox.warning(self, "PSU", "Invalid voltage / current")
+            return
+        if "manual_psu" in self._hardware_tasks:
+            return
+        self._set_manual_command_busy("psu", True)
+        self._submit_hardware_task("manual_psu", lambda: self.hw.set_psu(*args))
     def _load_manual(self, on):
         # See _psu_manual's comment — same interlock gap, same fix.
         if on:
@@ -332,33 +550,19 @@ class HardwareControlMixin:
                                         f"{busy} — หยุดก่อนแล้วค่อยใช้ Direct Control")
                 return
         try:
-            ok = self.hw.set_load(on, str(float(self.ed_load_a.text())) if on else "0")
-            # G9 (industrial-grade audit): see _psu_manual's comment — same fix.
-            if not ok and not self._headless:
-                QMessageBox.warning(self, "Load", "Load command failed — see log for details")
-            elif ok:
-                if on or getattr(self.hw, "_psu_output_on", False) or getattr(self.hw, "_load_output_on", False):
-                    if hasattr(self, "_ensure_battery_sn"):
-                        self._ensure_battery_sn()
-                    self.sig_profile_status.emit("RUN", theme.INFO)
-                else:
-                    self.sig_profile_status.emit("IDLE", theme.NEUTRAL)
-            try:
-                from aset_batt.storage.cloud_push import set_cloud_meta
-                if on:
-                    set_cloud_meta(phase="discharge", test_mode="MANUAL", workflow="Manual — Direct Load", total_s=0)
-                else:
-                    set_cloud_meta(phase="", test_mode="", workflow="")
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
+            current = str(float(self.ed_load_a.text())) if on else "0"
         except ValueError:
             if not self._headless:
                 QMessageBox.warning(self, "Load", "Invalid current")
+            return
+        if "manual_load" in self._hardware_tasks:
+            return
+        self._set_manual_command_busy("load", True)
+        self._submit_hardware_task("manual_load", lambda: self.hw.set_load(on, current))
     def _on_check_psu_trip(self):
         if not hasattr(self.hw, "get_psu_protection_tripped"):
             return
-        tripped = self.hw.get_psu_protection_tripped()
+        tripped = bool(self.hw.get_psu_protection_tripped())
         self._psu_tripped = bool(tripped)
         self.lbl_psu_trip.setText(
             "Trip: ⛔ TRIPPED (OVP/OCP/OTP)" if tripped else "Trip: OK")
@@ -381,9 +585,52 @@ class HardwareControlMixin:
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-        ok = self.hw.clear_psu_protection()
-        self._log_alarm("PSU protection trip cleared (operator)." if ok else "Clear PSU trip failed.")
+        self.hw.clear_psu_protection()
         self._on_check_psu_trip()
+
+    def _set_manual_command_busy(self, kind, busy):
+        for attr in (f"btn_{kind}_on", f"btn_{kind}_off"):
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                btn.setEnabled(not busy)
+
+    def _on_check_load_trip(self):
+        if not hasattr(self.hw, "get_load_protection_tripped"):
+            return
+        try:
+            status = self.hw.get_load_protection_tripped()
+            if status is None:
+                self.lbl_load_trip.setText("Trip: UNKNOWN (status query failed)")
+                self.lbl_load_trip.setStyleSheet(f"color:{theme.CRIT}; font-weight:600;")
+                self._log_alarm("CRITICAL: PEL protection status unavailable")
+                return
+            tripped = bool(status)
+        except Exception as exc:
+            self.lbl_load_trip.setText("Trip: UNKNOWN (status query failed)")
+            self.lbl_load_trip.setStyleSheet(f"color:{theme.CRIT}; font-weight:600;")
+            self._log_alarm(f"CRITICAL: PEL protection status unavailable: {exc}")
+            return
+        self._load_tripped = tripped
+        self.lbl_load_trip.setText("Trip: ⛔ TRIPPED" if tripped else "Trip: OK")
+        self.lbl_load_trip.setStyleSheet(
+            f"color:{theme.CRIT if tripped else theme.OK}; font-weight:600;")
+
+    def _on_clear_load_trip(self):
+        if not hasattr(self.hw, "clear_load_protection"):
+            return
+        if not self._headless:
+            reply = QMessageBox.warning(
+                self, "Clear E-Load Protection Trip",
+                "Clear the PEL protection event only after investigating and correcting its cause?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        ok = bool(self.hw.clear_load_protection())
+        self._log_alarm("PEL protection trip cleared (operator)." if ok else
+                        "Clear PEL protection trip failed.")
+        self._on_check_load_trip()
     def _on_ocv_calibrate(self):
         """ปิด PSU+Load แล้วรอให้แรงดันนิ่ง (ΔV/Δt criterion) ก่อนคำนวณ SoC"""
         if self.controller is None or not getattr(self.hw, "is_connected", False):
@@ -448,6 +695,11 @@ class HardwareControlMixin:
                 self.sig_loading.emit("btn_ocv", False, "")
         threading.Thread(target=_run, daemon=True).start()
     def _on_estop(self):
+        self.operation_state.latch_estop()
+        # Invalidate queued monitor/worker display callbacks from the stopped
+        # operation before any safety shutdown I/O begins.
+        self._run_generation += 1
+        self._set_hardware_start_controls(False)
         if hasattr(self, "_seq_running"):
             self._seq_running.clear()
         for char_ev in getattr(self, "_char_running", {}).values():
@@ -479,11 +731,72 @@ class HardwareControlMixin:
             import logging
             logging.getLogger(__name__).error(f"Failed to play estop_siren.mp3: {e}")
 
+        # The relay is the independent physical cutoff. Command it before the
+        # acquisition worker can wait on its I/O mutex or a VISA transaction.
+        # The controller repeats this as part of its normal shutdown path.
+        try:
+            set_ssr = getattr(self.hw, "set_ssr", None)
+            if callable(set_ssr) and set_ssr(False) is False:
+                self.sig_alarm.emit("CRITICAL: E-STOP could not confirm SSR OFF")
+        except Exception as exc:
+            self.sig_alarm.emit(f"CRITICAL: E-STOP SSR OFF failed: {exc}")
+
         if self._test_worker:
             self._test_worker.emergency_stop()   # immediate instrument override
         if self.controller:
             self.controller._trigger_safety("E-STOP pressed by operator")
+            self.controller.stop_charge()
+            self.controller.stop_monitor()
+            self.controller.stop_live_readback()
         self._log_alarm("⛔ E-STOP issued.")
+
+    def _set_hardware_start_controls(self, enabled):
+        for name in ("btn_run_test", "btn_run_hppc", "btn_auto_seq", "btn_quick_scan",
+                     "btn_hppc_seq", "btn_cycle_life", "btn_char_pk_start",
+                     "btn_char_eta_start", "btn_char_gitt_start", "btn_char_cca_start",
+                     "btn_charge_start", "btn_start_monitor"):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.setEnabled(bool(enabled))
+
+    def _on_estop_reset(self):
+        """Explicitly clear the software latch only after all workers exit and OFF commands succeed."""
+        workers_exited = (
+            not self.operation_state.owns_hardware
+            and self._test_thread is None
+            and not (self._seq_thread and self._seq_thread.is_alive())
+            and not any(t.is_alive() for t in self._char_threads.values())
+            and not getattr(self.controller, "is_charging", False)
+            and not getattr(self.controller, "monitor_running", False)
+            and not getattr(self.controller, "live_readback_running", False)
+            and not (getattr(self.controller, "_charge_thread", None)
+                     and self.controller._charge_thread.is_alive())
+            and not (getattr(self.controller, "_monitor_thread", None)
+                     and self.controller._monitor_thread.is_alive())
+            and not (getattr(self.controller, "_live_readback_thread", None)
+                     and self.controller._live_readback_thread.is_alive())
+        )
+        if not workers_exited:
+            self._log_alarm("E_STOP_LATCHED — worker cleanup is still active")
+            return
+        try:
+            relay_ok = self.hw.set_ssr(False) if hasattr(self.hw, "set_ssr") else False
+            load_ok = self.hw.load_off()
+            psu_ok = self.hw.psu_off()
+            off_confirmed = (relay_ok is True and load_ok is True and psu_ok is True
+                             and getattr(self.hw, "ssr_state", False) is False)
+        except Exception as exc:
+            off_confirmed = False
+            self._log_alarm(f"SAFE_STATE_UNCONFIRMED — OFF command failed: {exc}")
+        if not self.operation_state.reset_estop(
+                workers_exited=workers_exited, outputs_off_confirmed=off_confirmed):
+            self._log_alarm("SAFE_STATE_UNCONFIRMED — E-STOP remains latched")
+            return
+        if self.controller is not None:
+            self.controller.safety_triggered = False
+        self._set_hardware_start_controls(True)
+        self.set_profile_status("IDLE")
+        self._log_alarm("E-STOP reset by operator; OFF commands succeeded")
 
     def _play_test_complete_sound(self):
         """~15s completion chime, played once for every mode's finish event

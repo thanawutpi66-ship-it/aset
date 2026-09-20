@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 _PROFILE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "battery_profiles.json")
+_REGISTRY_SOURCE = "BUILTIN_FALLBACK"
 
 
 @dataclass
@@ -75,6 +76,14 @@ class ProductProfile:
     cells_series: int
     cells_parallel: int
     rated_capacity_ah: float
+    # Explicit discharge-rate ratings. ``rated_capacity_ah`` is the selected
+    # C10/reference Ah when known; these fields prevent
+    # a 20-hour label from being silently interpreted as C10.
+    capacity_10h_ah: float = 0.0
+    capacity_20h_ah: float = 0.0
+    capacity_rating_basis: str = "UNKNOWN"
+    # Product label/display figure, separate from rate-qualified capacities.
+    product_display_capacity_ah: float = 0.0
     max_voltage_per_cell: float = 0.0    # 0 = ไม่ระบุ (ผู้เรียกจะไม่แก้ค่าเดิม)
     min_voltage_per_cell: float = 0.0
     safety_ovp_pack: float = 0.0         # over-voltage protection ระดับแพ็ค (V)
@@ -87,7 +96,9 @@ class ProductProfile:
     # ใช้เมื่อรุ่นนี้ต่างจากค่ากลางของเคมี เช่น hour-rate ต่าง (มอไซค์ 10HR vs standby 20HR)
     # หรือชนิดต่าง (AGM 1.10 vs flooded 1.2–1.6). i_rated = rated_capacity_ah / peukert_hr.
     peukert_k: float = 0.0
+    peukert_k_source: str = "PRODUCT_OVERRIDE_UNVERIFIED"
     peukert_hr: float = 0.0
+    peukert_change_history: list = field(default_factory=list)
     notes: str = ""
     # Characterisation results persisted by save_measured_params() (peukert_k,
     # internal_r_ohm, r0_fraction, ocv_curve_measured, ...). Read back via
@@ -198,10 +209,13 @@ _DEFAULT_PRODUCTS: Dict[str, ProductProfile] = {
     "YTZ6V (12V 5.3Ah VRLA)": ProductProfile(
         name="YTZ6V (12V 5.3Ah VRLA)", chemistry="LeadAcid",
         nominal_voltage_per_cell=2.0, cells_series=6, cells_parallel=1,
-        rated_capacity_ah=5.3, max_voltage_per_cell=2.45, min_voltage_per_cell=1.75,
+        rated_capacity_ah=5.0, capacity_10h_ah=5.0, capacity_20h_ah=5.3,
+        capacity_rating_basis="C10", product_display_capacity_ah=5.3,
+        peukert_hr=10.0, max_voltage_per_cell=2.45, min_voltage_per_cell=1.75,
         safety_ovp_pack=15.0, safety_uvp_pack=10.5,
-        mass_grams=900.0, cca_a=100.0, max_cont_discharge_a=5.3,
-        notes="Yuasa YTZ6V มอเตอร์ไซค์ lead-acid AGM 12V 5.3Ah (10HR)",
+        mass_grams=900.0, cca_a=90.0, max_cont_discharge_a=5.3,
+        peukert_k=1.16, peukert_k_source="PROVISIONAL_EMPIRICAL_UNVERIFIED",
+        notes="Yuasa YTZ6V C10 = 5.0Ah (10HR, 0.500A), C20 = 5.3Ah (20HR, 0.265A); Quick Scan 1C = 5.0A",
     ),
     "YTZ7V (12V 7Ah VRLA)": ProductProfile(
         name="YTZ7V (12V 7Ah VRLA)", chemistry="LeadAcid",
@@ -260,10 +274,12 @@ def _chemistry_from_dict(name: str, d: dict,
 
 def _load_registry() -> Tuple[Dict[str, ChemistryProfile], Dict[str, ProductProfile]]:
     """โหลด registry: เริ่มจาก default แล้ว merge ทับด้วยไฟล์ JSON ถ้ามี"""
+    global _REGISTRY_SOURCE
     chemistries = {k: v for k, v in _DEFAULT_CHEMISTRIES.items()}
     products = {k: v for k, v in _DEFAULT_PRODUCTS.items()}
 
     if not os.path.exists(_PROFILE_FILE):
+        _REGISTRY_SOURCE = "BUILTIN_FALLBACK"
         logger.info("battery_profiles.json not found — ใช้ built-in defaults")
         return chemistries, products
 
@@ -271,8 +287,11 @@ def _load_registry() -> Tuple[Dict[str, ChemistryProfile], Dict[str, ProductProf
         with open(_PROFILE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, IOError) as e:
+        _REGISTRY_SOURCE = "BUILTIN_FALLBACK"
         logger.error(f"โหลด battery_profiles.json ไม่ได้ ({e}) — ใช้ built-in defaults")
         return chemistries, products
+
+    _REGISTRY_SOURCE = "JSON_REGISTRY"
 
     for name, d in data.get("chemistries", {}).items():
         try:
@@ -335,6 +354,56 @@ def _load_registry() -> Tuple[Dict[str, ChemistryProfile], Dict[str, ProductProf
 
 
 _CHEMISTRIES, _PRODUCTS = _load_registry()
+
+
+def resolve_peukert_parameters(product_name: str = "", chemistry_name: str = "") -> dict:
+    """Resolve one effective k and reference rate with an explicit provenance tag.
+
+    A characterized value remains in measured_params until a future explicit
+    activation policy is implemented; it never silently supersedes profile data.
+    """
+    product = get_product(product_name) if product_name else None
+    requested_chemistry = chemistry_name or (product.chemistry if product else "")
+    known_chemistry = (_CHEMISTRY_ALIASES.get(requested_chemistry, requested_chemistry)
+                       in _CHEMISTRIES)
+    chemistry = get_chemistry(requested_chemistry)
+    measured = (getattr(product, "measured_params", {}) or {}) if product else {}
+    approved_k = measured.get("active_measured_peukert_k")
+    if measured.get("characterization_status") == "MEASURED_APPROVED" and approved_k is not None:
+        k = float(approved_k)
+        source = "MEASURED_APPROVED"
+    elif product is not None and float(getattr(product, "peukert_k", 0.0) or 0.0) > 0.0:
+        k = float(product.peukert_k)
+        source = str(getattr(product, "peukert_k_source", "PRODUCT_OVERRIDE_UNVERIFIED"))
+    elif _REGISTRY_SOURCE == "BUILTIN_FALLBACK":
+        k = float(chemistry.peukert_k)
+        source = "BUILTIN_FALLBACK"
+    elif not known_chemistry:
+        k = float(chemistry.peukert_k)
+        source = "GENERIC_PROFILE_FALLBACK"
+    else:
+        k = float(chemistry.peukert_k)
+        source = "CHEMISTRY_DEFAULT_ASSUMPTION"
+
+    if product is not None and float(getattr(product, "peukert_hr", 0.0) or 0.0) > 0.0:
+        reference_hr = float(product.peukert_hr)
+    else:
+        reference_hr = float(getattr(chemistry, "peukert_hr", 10.0) or 10.0)
+    reference_capacity_ah = (
+        float(product.capacity_10h_ah) if product and product.capacity_10h_ah > 0.0
+        else float(product.rated_capacity_ah) if product
+        else 0.0
+    )
+    reference_current_a = (reference_capacity_ah / reference_hr
+                           if reference_capacity_ah > 0.0 and reference_hr > 0.0
+                           else None)
+    return {
+        "peukert_k": k,
+        "peukert_k_source": source,
+        "peukert_reference_hr": reference_hr,
+        "peukert_reference_capacity_ah": reference_capacity_ah or None,
+        "peukert_reference_current_a": reference_current_a,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +484,60 @@ def save_measured_params(product_name: str, params: dict) -> bool:
     except Exception as exc:
         logger.error("Failed to save measured_params for '%s': %s", product_name, exc)
         return False
+
+
+def approve_measured_peukert(product_name: str, *, activation_method: str = "EXPLICIT_USER_APPROVAL") -> bool:
+    """Explicitly activate the stored characterization candidate.
+
+    The previous configured value is appended to an audit history. No operator
+    identity is inferred; the method records only the declared activation mode.
+    """
+    import datetime
+    product = get_product(product_name)
+    candidate = get_measured_params(product_name)
+    try:
+        candidate_k = float(candidate.get("characterized_peukert_k", candidate.get("peukert_k")))
+        if candidate_k <= 0.0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return False
+    now = datetime.datetime.now().astimezone().isoformat(timespec="milliseconds")
+    history = list((candidate.get("peukert_activation_history") or []))
+    history.append({
+        "old_k": float(product.peukert_k) if product and product.peukert_k else None,
+        "old_source": "PRODUCT_OVERRIDE_UNVERIFIED" if product and product.peukert_k else "CHEMISTRY_DEFAULT_ASSUMPTION",
+        "new_k": candidate_k,
+        "new_source": "MEASURED_APPROVED",
+        "product_name": product_name,
+        "reference_hr": candidate.get("characterization_reference_hr", candidate.get("peukert_hr")),
+        "reference_current_a": candidate.get("reference_current_a"),
+        "characterization_id": candidate.get("characterization_id"),
+        "activation_timestamp": now,
+        "activation_method": activation_method,
+        "activation_method_version": "peukert-activation-v1",
+    })
+    ok = save_measured_params(product_name, {
+        "active_measured_peukert_k": candidate_k,
+        "characterization_status": "MEASURED_APPROVED",
+        "peukert_activation_history": history,
+        "activation_timestamp": now,
+        "activation_method": activation_method,
+    })
+    if ok:
+        reload()
+    return ok
+
+
+def deactivate_measured_peukert(product_name: str, *, method: str = "EXPLICIT_USER_ROLLBACK") -> bool:
+    """Stop using an approved candidate while retaining its record/history."""
+    ok = save_measured_params(product_name, {
+        "active_measured_peukert_k": None,
+        "characterization_status": "MEASURED_PENDING_APPROVAL",
+        "deactivation_method": method,
+    })
+    if ok:
+        reload()
+    return ok
 
 
 def get_measured_params(product_name: str) -> dict:

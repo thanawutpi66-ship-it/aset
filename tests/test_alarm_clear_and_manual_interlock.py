@@ -25,6 +25,7 @@ from aset_batt.ui import theme
 theme.set_theme("light")
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QDeadlineTimer, QCoreApplication
 from aset_batt.core.config import ConfigManager
 from aset_batt.ui.isa101_views import BatteryQtWindow
 from aset_batt.hardware.mock_hardware import MockHardwareController
@@ -60,6 +61,11 @@ class TestAlarmClearConfirmation(unittest.TestCase):
 
 
 class TestManualControlsRespectBusyReason(unittest.TestCase):
+    @staticmethod
+    def _wait_for_call(mock, timeout_ms=2000):
+        deadline = QDeadlineTimer(timeout_ms)
+        while not mock.called and not deadline.hasExpired():
+            QCoreApplication.processEvents()
     def test_psu_manual_on_blocked_during_run_test(self):
         w = _make_window()
         try:
@@ -94,6 +100,7 @@ class TestManualControlsRespectBusyReason(unittest.TestCase):
             w._test_thread = object()
             w.hw.set_psu = MagicMock()
             w._psu_manual(False)
+            self._wait_for_call(w.hw.set_psu)
             w.hw.set_psu.assert_called_once()
         finally:
             w._test_thread = None
@@ -106,6 +113,7 @@ class TestManualControlsRespectBusyReason(unittest.TestCase):
             w.ed_psu_v.setText("12.0")
             w.ed_psu_i.setText("1.0")
             w._psu_manual(True)
+            self._wait_for_call(w.hw.set_psu)
             w.hw.set_psu.assert_called_once()
         finally:
             w.close()

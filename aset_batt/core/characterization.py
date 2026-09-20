@@ -3,7 +3,8 @@ Physics-based parameter identification from battery characterization experiments
 
 Three analysis functions correspond to the three CHARACTERIZE tab tests:
   fit_peukert_k      → multi-rate discharge data → Peukert exponent k
-  compute_coulomb_eta → charge/discharge Ah accounting → per-band efficiency
+  compute_coulomb_eta → legacy per-band efficiency (not used by START η)
+  integrate_coulomb_ah / evaluate_coulomb_efficiency → whole-cycle START η result
   build_ocv_table    → GITT rest voltages → standard OCV–SoC lookup table
 """
 import logging
@@ -73,6 +74,106 @@ def compute_coulomb_eta(ah_in_by_band, ah_out_by_band):
                 result.get('bulk') or 0, result.get('absorb') or 0,
                 result.get('full') or 0, result.get('overall') or 0)
     return result
+
+
+def integrate_coulomb_ah(times_s, currents_a, *, phase: str,
+                         expected_dt_s: float = 5.0,
+                         max_integrable_gap_s: float = 30.0) -> dict:
+    """Integrate measured Coulombs for one phase using actual timestamps.
+
+    The project's characterization reads use discharge-positive and charge-negative.
+    ``phase='charge'`` therefore integrates ``max(-I, 0)`` and ``phase='discharge'``
+    integrates ``max(I, 0)``. Short sampling gaps are integrated trapezoidally
+    from their measured endpoints and reported; gaps longer than 30 s are
+    excluded and make the phase invalid rather than silently bridged.
+    """
+    import math
+    ts = [float(x) for x in times_s]
+    currents = [float(x) for x in currents_a]
+    if len(ts) != len(currents):
+        raise ValueError("times_s and currents_a must have equal length")
+    if phase not in {"charge", "discharge"}:
+        raise ValueError("phase must be 'charge' or 'discharge'")
+    sign = -1.0 if phase == "charge" else 1.0
+    amps = [max(0.0, sign * i) if math.isfinite(i) else float("nan") for i in currents]
+    total_as = 0.0
+    positive_duration = 0.0
+    largest_dt = 0.0
+    gap_count = 0
+    gap_duration = 0.0
+    excluded_gap_count = 0
+    excluded_gap_duration = 0.0
+    invalid_interval_count = 0
+    for idx in range(1, len(ts)):
+        dt = ts[idx] - ts[idx - 1]
+        if not math.isfinite(dt) or dt <= 0.0:
+            invalid_interval_count += 1
+            continue
+        largest_dt = max(largest_dt, dt)
+        if dt > expected_dt_s * 2.5:
+            gap_count += 1
+            gap_duration += dt
+        if dt > max_integrable_gap_s or not math.isfinite(amps[idx - 1]) or not math.isfinite(amps[idx]):
+            excluded_gap_count += 1
+            excluded_gap_duration += dt
+            continue
+        total_as += 0.5 * (amps[idx - 1] + amps[idx]) * dt
+        positive_duration += dt
+    observed_span = max(0.0, ts[-1] - ts[0]) if len(ts) >= 2 else 0.0
+    missed_duration = max(0.0, observed_span - positive_duration)
+    gap_fraction = excluded_gap_duration / observed_span if observed_span > 0 else 1.0
+    valid = (len(ts) >= 2 and positive_duration > 0.0
+             and invalid_interval_count == 0 and gap_fraction <= 0.05)
+    return {
+        "ah": total_as / 3600.0,
+        "integration_duration_s": positive_duration,
+        "observed_duration_s": observed_span,
+        "sample_count": len(ts),
+        "largest_dt_s": largest_dt,
+        "gap_count": gap_count,
+        "gap_duration_s": gap_duration,
+        "missed_duration_s": missed_duration,
+        "integration_quality_status": "VALID" if valid else "SAMPLING_INVALID",
+        "valid": valid,
+    }
+
+
+def evaluate_coulomb_efficiency(q_in: dict, q_out: dict, *,
+                                conditioning_endpoint_valid: bool,
+                                full_charge_confirmed: bool,
+                                reference_cutoff_reached: bool,
+                                aborted: bool = False,
+                                abort_reason: str = "") -> dict:
+    """Gate whole-cycle Qout/Qin Coulombic efficiency without SoH or clamping."""
+    status = "VALID"
+    reasons = []
+    if aborted:
+        why = abort_reason.lower()
+        status = ("TEMPERATURE_ABORT" if any(x in why for x in ("temperature", "otp", "thermal"))
+                  else "SAFETY_ABORT" if any(x in why for x in ("ovp", "uvp", "safety"))
+                  else "CANCELLED" if "cancel" in why else "ERROR")
+        reasons.append(abort_reason or "sequence aborted")
+    elif not conditioning_endpoint_valid:
+        status, reasons = "CONDITIONING_INCOMPLETE", ["conditioning cutoff not reached"]
+    elif not full_charge_confirmed:
+        status, reasons = "FULL_CHARGE_NOT_CONFIRMED", ["verified taper termination not observed"]
+    elif not reference_cutoff_reached:
+        status, reasons = "CUTOFF_NOT_REACHED", ["reference discharge cutoff not reached"]
+    elif not q_in.get("valid") or not q_out.get("valid"):
+        status, reasons = "SAMPLING_INVALID", ["charge or discharge integration quality failed"]
+    elif q_in.get("ah", 0.0) <= 0.0 or q_out.get("ah", 0.0) <= 0.0:
+        status, reasons = "DATA_INSUFFICIENT", ["Qin and Qout must both be positive"]
+    eta = (100.0 * q_out["ah"] / q_in["ah"]
+           if q_in.get("ah", 0.0) > 0.0 and q_out.get("ah", 0.0) > 0.0 else None)
+    if eta is not None and eta <= 0.0 and status == "VALID":
+        status, reasons = "DATA_INSUFFICIENT", ["Coulombic efficiency must be positive"]
+    elif eta is not None and eta > 100.0 and status == "VALID":
+        status, reasons = "SUSPECT_RESULT", ["Coulombic efficiency exceeds 100%; review cycle boundaries and data"]
+    return {
+        "q_in_ah": q_in.get("ah"), "q_out_ah": q_out.get("ah"),
+        "eta_coulomb_pct": eta if status in {"VALID", "SUSPECT_RESULT"} else None,
+        "status": status, "valid": status == "VALID", "reasons": reasons,
+    }
 
 
 def build_ecm_table(soc_pct_list, r0_list, r1_list, c1_list):

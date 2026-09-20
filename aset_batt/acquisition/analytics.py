@@ -4,6 +4,7 @@ smoothing, plus the sorting-grade decision."""
 from __future__ import annotations
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 
 from aset_batt.acquisition.models import BatteryProfile
 
@@ -48,18 +49,28 @@ class Analytics:
         n = x.size
         if n < 2 * k + 1:
             return x.copy()
+        # NaN-pad each edge so nanmedian sees the same shorter windows as the
+        # original per-sample loop. The resulting (n, 2k+1) view avoids running
+        # two separate NumPy median reductions in Python for every point; this
+        # used to dominate post-test analysis on long, 10 Hz battery sessions.
+        padded = np.full(n + 2 * k, np.nan, dtype=float)
+        padded[k:k + n] = x
+        windows = sliding_window_view(padded, 2 * k + 1)
+        med = np.nanmedian(windows, axis=1)
+        mad = np.nanmedian(np.abs(windows - med[:, None]), axis=1)
+        # Padding NaNs stand for samples outside the signal, but NaNs inside
+        # the signal must retain np.median's original propagation behavior.
+        padded_nan_mask = np.zeros(n + 2 * k, dtype=bool)
+        padded_nan_mask[k:k + n] = np.isnan(x)
+        data_nan = sliding_window_view(padded_nan_mask, 2 * k + 1).any(axis=1)
+        med[data_nan] = np.nan
+        mad[data_nan] = np.nan
+        # When MAD=0 (all neighbours equal) use a noise floor of 1% of |median|
+        # or 1e-6 (whichever is larger) so an isolated spike is still caught.
+        mad = np.where(mad == 0, np.maximum(1e-6, 0.01 * np.abs(med)), mad)
         out = x.copy()
-        for i in range(n):
-            lo, hi = max(0, i - k), min(n, i + k + 1)
-            win = x[lo:hi]
-            med = float(np.median(win))
-            mad = float(np.median(np.abs(win - med)))
-            # When MAD=0 (all neighbours equal) use a noise floor of 1% of |median|
-            # or 1e-6 (whichever is larger) so an isolated spike is still caught.
-            if mad == 0:
-                mad = max(1e-6, 0.01 * abs(med))
-            if abs(x[i] - med) > n_sigma * 1.4826 * mad:
-                out[i] = med
+        replace = np.abs(x - med) > n_sigma * 1.4826 * mad
+        out[replace] = med[replace]
         return out
 
     @staticmethod

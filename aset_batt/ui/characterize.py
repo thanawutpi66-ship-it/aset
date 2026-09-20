@@ -143,8 +143,10 @@ class CharacterizeMixin:
         lay.addWidget(self._subheader("② Coulomb  η  — charge/discharge cycle"))
 
         self.lbl_char_eta = QLabel(
-            "Discharge → full charge (count Ah_in/band) → discharge 0.1C (count Ah_out)\n"
-            "ใช้เวลา: ~6–8 ชั่วโมง (ชาร์จ + discharge 0.1C)")
+            "Condition to loaded cutoff → rest → verified full charge → rest → "
+            "reference discharge to the same loaded cutoff. C10 = 0.500 A; "
+            "Qout is not capacity SoH.\n"
+            "Estimated duration depends on initial SoC and charge taper; may exceed 40 h.")
         self.lbl_char_eta.setWordWrap(True)
         theme.style(self.lbl_char_eta, lambda: f"color:{theme.MUTED}; font-size:10px;")
         lay.addWidget(self.lbl_char_eta)
@@ -212,7 +214,7 @@ class CharacterizeMixin:
         lay.addWidget(self.lbl_char_cca_status)
 
         row_cca = QHBoxLayout()
-        self.btn_char_cca_start  = _btn("START CCA", bg="OK", fg="white", hover="#266a2a")
+        self.btn_char_cca_start  = _btn("START CCA PROXY", bg="OK", fg="white", hover="#266a2a")
         self.btn_char_cca_cancel = _btn("CANCEL", bg="CRIT", fg="white", hover="#9b2020")
         self.btn_char_cca_cancel.setEnabled(False)
         self.btn_char_cca_start.clicked.connect(self._on_char_cca_start)
@@ -254,14 +256,14 @@ class CharacterizeMixin:
         import time
         from PySide6.QtCore import QEventLoop, QTimer
 
-        t_end = time.time() + seconds
+        t_end = time.perf_counter() + seconds
         loop = QEventLoop()
         timer = QTimer()
         timer.setSingleShot(True)
         timer.timeout.connect(loop.quit)
         
         while ev.is_set():
-            left = t_end - time.time()
+            left = t_end - time.perf_counter()
             if left <= 0:
                 return True
                 
@@ -290,6 +292,14 @@ class CharacterizeMixin:
         commanding a charge while another commands a discharge) to the same PSU/
         load. Every entry point below must check this before starting anything.
         """
+        if getattr(getattr(self, "operation_state", None), "state", None) is not None \
+                and self.operation_state.state.value == "ESTOP_LATCHED":
+            return "E_STOP_LATCHED — explicit reset required"
+        owner = getattr(getattr(self, "operation_state", None), "active", None)
+        if owner is not None:
+            return f"{owner.kind} worker still owns hardware"
+        if self._char_running.get("eta", _FalseEvent()).is_set():
+            return "Coulomb η cycle กำลังทำงานอยู่"
         if self._test_thread is not None:
             return "การทดสอบ Characterization (RUN TEST) กำลังทำงานอยู่"
         if self._seq_running.is_set():
@@ -298,15 +308,18 @@ class CharacterizeMixin:
             return "การทดสอบในแท็บ CHARACTERIZE กำลังทำงานอยู่"
         return None
 
-    def _char_guard(self) -> bool:
+    def _char_guard(self, test_id: str = "characterize") -> bool:
         """Return True if OK to start a new test.  Shows a warning if not."""
         if self.controller is None or not getattr(self.hw, "is_connected", False):
             if not self._headless:
                 QMessageBox.warning(self, "CHARACTERIZE", "Connect hardware first.")
             return False
-        # CHARACTERIZE-tab tests only need to check the worker/sequence (not each
-        # other) — per-test mutual exclusion among "pk"/"eta"/"gitt" is already
-        # handled individually via self._char_running at each test's own start.
+        if self._char_any_running():
+            if not self._headless:
+                QMessageBox.warning(self, "CHARACTERIZE", "Stop the active CHARACTERIZE test first.")
+            return False
+        # CHARACTERIZE tests share a controller, estimator, and instrument set;
+        # the guard above prevents overlapping acquisitions.
         busy = self._busy_reason(include_char=False)
         if busy:
             if not self._headless:
@@ -320,15 +333,49 @@ class CharacterizeMixin:
         # operator left "Start Monitor" running.
         if self.controller and self.controller.monitor_running:
             self.controller.stop_monitor()
-        # Only bump on the nothing-running -> running transition — a second
-        # CHARACTERIZE test (pk/eta/gitt/cca) joining an already-active one is
-        # intentionally allowed (see the comment above _busy_reason above) and
-        # must NOT invalidate its sibling's still-legitimate samples; this
-        # only needs to invalidate stragglers left over from a DIFFERENT,
-        # just-stopped Run Test/Sequence — see _slot_display.
-        if not self._char_any_running():
-            self._run_generation += 1
+        if self.controller:
+            self.controller.stop_live_readback()
+            monitor = getattr(self.controller, "_monitor_thread", None)
+            readback = getattr(self.controller, "_live_readback_thread", None)
+            if ((monitor is not None and monitor.is_alive())
+                    or (readback is not None and readback.is_alive())):
+                if not self._headless:
+                    QMessageBox.warning(self, "CHARACTERIZE", "Telemetry worker is still exiting; retry shortly.")
+                return False
+        if getattr(self.controller, "safety_triggered", False):
+            if not self._headless:
+                QMessageBox.warning(self, "CHARACTERIZE", "E_STOP_LATCHED — reset safety first.")
+            return False
+        lease = self.operation_state.claim(f"characterize:{test_id}")
+        if lease is None:
+            if not self._headless:
+                QMessageBox.warning(self, "CHARACTERIZE", "HARDWARE_BUSY — cleanup is still active.")
+            return False
+        if hasattr(self, "_ensure_battery_sn"):
+            self._ensure_battery_sn()
+        self._prepare_new_physical_session(f"characterize:{test_id}")
+        self._char_leases[test_id] = lease
+        self._operation_leases[lease.run_id] = lease
+        self.operation_state.running(lease)
+        self._run_generation += 1
         return True
+
+    def _spawn_char_worker(self, test_id: str, target):
+        lease = self._char_leases[test_id]
+
+        def run():
+            try:
+                target()
+            finally:
+                self.operation_state.cleanup(lease)
+                self.sig_operation_worker_exited.emit(lease.run_id)
+
+        thread = threading.Thread(target=run, name=f"aset-characterize-{test_id}", daemon=True)
+        lease.thread = thread
+        self._char_threads[test_id] = thread
+        self._operation_threads[lease.run_id] = thread
+        thread.start()
+        return thread
 
     def _char_check_safety(self, ev, temp) -> bool:
         """OTP + temperature-staleness abort for CHARACTERIZE threads. Returns
@@ -342,6 +389,43 @@ class CharacterizeMixin:
         และไม่มีการเช็ค OTP เลยด้วยซ้ำ (ดู docstring เดิมของ _seq_check_temp_stale
         ที่บันทึกว่า "needs its own wiring — out of scope") — นี่คือ wiring นั้น"""
         limit = self._otp_limit()
+        trip_fn = getattr(self.hw, "get_load_protection_tripped", None)
+        if "get_load_protection_tripped" not in getattr(type(self.hw), "__dict__", {}):
+            trip_fn = None
+        if callable(trip_fn):
+            try:
+                trip = trip_fn()
+            except Exception:
+                trip = None
+            if trip is None or bool(trip):
+                ev.clear()
+                reason = "LOAD_PROTECTION_STATUS_UNAVAILABLE" if trip is None else "LOAD_PROTECTION_TRIPPED"
+                self.sig_alarm.emit(f"[SAFETY] {reason} — CHARACTERIZE test aborted")
+                if self.controller:
+                    self.controller._trigger_safety(reason)
+                return False
+        stale_fn = getattr(self.hw, "temp_is_stale", None)
+        if callable(stale_fn):
+            info = self.hw.temperature_measurement() if hasattr(self.hw, "temperature_measurement") else None
+            invalid = isinstance(info, dict) and not info.get("temperature_valid", False)
+            # A short telemetry gap is tolerated and warned once. Once the
+            # configured stale escalation interval is exceeded, OTP is blind and
+            # the active characterization workflow must stop.
+            try:
+                sustained_stale = bool(stale_fn(getattr(self, "_SEQ_TEMP_STALE_TRIP_S", 60.0)))
+            except TypeError:
+                sustained_stale = bool(stale_fn())
+            if invalid or stale_fn():
+                if not getattr(ev, "_aset_stale_warned", False):
+                    self.sig_alarm.emit("[WARNING] ESP32 temperature telemetry is temporarily stale")
+                    ev._aset_stale_warned = True
+            if sustained_stale:
+                ev.clear()
+                reason = "TEMP_SENSOR_STALE — OTP protection unavailable, CHARACTERIZE test aborted"
+                self.sig_alarm.emit(f"[SAFETY] {reason}")
+                if self.controller:
+                    self.controller._trigger_safety(reason)
+                return False
         if temp is not None and not math.isnan(temp) and temp > limit:
             ev.clear()
             reason = f"OTP: {temp:.1f}°C > {limit:.0f}°C — CHARACTERIZE test aborted"
@@ -352,21 +436,6 @@ class CharacterizeMixin:
             if self.controller:
                 self.controller._trigger_safety(reason)
             return False
-        if getattr(self.hw, "temp_is_stale", None) and \
-                self.hw.temp_is_stale(self._SEQ_TEMP_STALE_TRIP_S):
-            ev.clear()
-            reason = (f"ESP32 temperature stale for {self._SEQ_TEMP_STALE_TRIP_S:.0f}s+ "
-                      "— OTP protection is blind, CHARACTERIZE test aborted")
-            self.sig_alarm.emit(f"[SAFETY] {reason}")
-            if self.controller:
-                self.controller._trigger_safety(reason)
-            return False
-        if not getattr(self, "_seq_temp_stale_warned", False) and \
-                getattr(self.hw, "temp_is_stale", None) and self.hw.temp_is_stale():
-            self._seq_temp_stale_warned = True
-            self.sig_alarm.emit(
-                "[WARNING] ESP32 temperature reading is stale — Rin/OCV temperature "
-                "compensation and OTP protection may not reflect the real battery.")
         return True
 
     def _char_hw_stop(self):
@@ -377,6 +446,22 @@ class CharacterizeMixin:
         except Exception as e:
             import logging
             logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
+
+    def _char_finalize_session(self, test_id: str, ev, result_key: str):
+        """Close the session owned by Peukert/GITT/CCA on every terminal path."""
+        if getattr(self.controller, "safety_triggered", False):
+            outcome, reason = "safety_tripped", "safety latch set during characterization"
+        elif not ev.is_set():
+            outcome, reason = "cancelled", "operator cancelled characterization"
+        elif result_key in self._char_results:
+            outcome, reason = "completed", f"{test_id} characterization completed"
+        else:
+            outcome, reason = "fault", f"{test_id} characterization ended without a result"
+        try:
+            if self.controller:
+                self.controller.end_session(outcome, reason)
+        except Exception:
+            logger.exception("%s session finalization failed", test_id)
         try:
             self.hw.load_off()
             self.hw.psu_off()
@@ -387,7 +472,7 @@ class CharacterizeMixin:
     # ── Peukert k ─────────────────────────────────────────────────────────────
 
     def _on_char_pk_start(self):
-        if not self._char_guard():
+        if not self._char_guard("pk"):
             return
         if self._char_running.get("pk", _FalseEvent()).is_set():
             return
@@ -398,9 +483,12 @@ class CharacterizeMixin:
         self.btn_char_pk_cancel.setEnabled(True)
         self.sig_char_update.emit("pk", "● กำลังทดสอบ Peukert k...")
         import threading as _th
-        _th.Thread(target=self._char_peukert_thread, daemon=True).start()
+        self._spawn_char_worker("pk", self._char_peukert_thread)
 
     def _on_char_pk_cancel(self):
+        lease = self._char_leases.get("pk")
+        if lease is not None:
+            self.operation_state.request_cancel(lease)
         if "pk" in self._char_running:
             self._char_running["pk"].clear()
         self._char_hw_stop()
@@ -422,6 +510,11 @@ class CharacterizeMixin:
         try:
             self.controller._ensure_logging(label="Peukert")
             rated    = self.controller.config.battery.rated_capacity
+            from aset_batt.core import battery_profiles
+            _product = battery_profiles.get_product(
+                self.controller.config.battery.product_name)
+            if _product and _product.capacity_10h_ah > 0.0:
+                rated = _product.capacity_10h_ah
             pack_min = self.controller.config.battery.pack_min_voltage
             c_rates  = [0.1, 0.2, 0.5, 1.0]
 
@@ -503,7 +596,7 @@ class CharacterizeMixin:
                 if not ev.is_set():
                     return
 
-                elapsed_s = time.time() - t0
+                elapsed_s = time.perf_counter() - t0
                 currents.append(i_test)
                 durations.append(elapsed_s)
                 status(f"({idx+1}/4) {c:g}C → {elapsed_s:.0f} s ✓")
@@ -518,11 +611,25 @@ class CharacterizeMixin:
             if len(currents) >= 2:
                 from aset_batt.core.characterization import fit_peukert_k
                 k, r2 = fit_peukert_k(currents, durations)
+                characterized_at = datetime.now().astimezone().isoformat(timespec="seconds")
+                characterization_hr = getattr(
+                    self.controller.estimator.battery_model.chemistry,
+                    "peukert_hr", 10.0)
                 self._char_results["pk"] = {
                     "peukert_k": k, "peukert_k_r2": r2,
-                    "peukert_hr": self.controller.config.battery.rated_capacity,
+                    "peukert_hr": characterization_hr,
+                    "characterization_timestamp": characterized_at,
+                    "characterization_status": "MEASURED_PENDING_APPROVAL",
                     "data": list(zip(currents, durations)),
                 }
+                from aset_batt.storage.data_utils import update_session_metadata
+                update_session_metadata(self.controller.data.current_path, {
+                    "characterized_peukert_k": k,
+                    "characterization_r2": r2,
+                    "characterization_reference_hr": characterization_hr,
+                    "characterization_timestamp": characterized_at,
+                    "characterization_status": "MEASURED_PENDING_APPROVAL",
+                })
                 status(f"✓ k = {k:.3f}  R² = {r2:.4f}")
                 self.sig_alarm.emit(f"[CHAR/Peukert] เสร็จสิ้น: k={k:.3f}  R²={r2:.4f}")
             else:
@@ -534,15 +641,20 @@ class CharacterizeMixin:
             logger.exception("Peukert thread error")
         finally:
             self._char_hw_stop()
+            self._char_finalize_session("Peukert", ev, "pk")
             ev.clear()
             self.sig_char_update.emit("pk", "__DONE__")
 
     # ── Coulomb η ─────────────────────────────────────────────────────────────
 
     def _on_char_eta_start(self):
-        if not self._char_guard():
+        if not self._char_guard("eta"):
             return
         if self._char_running.get("eta", _FalseEvent()).is_set():
+            return
+        if self._char_any_running():
+            if not self._headless:
+                QMessageBox.warning(self, "Coulomb η", "Stop other characterization runs first.")
             return
         ev = threading.Event()
         ev.set()
@@ -551,178 +663,494 @@ class CharacterizeMixin:
         self.btn_char_eta_cancel.setEnabled(True)
         self.sig_char_update.emit("eta", "● กำลังทดสอบ Coulomb η...")
         import threading as _th
-        _th.Thread(target=self._char_eta_thread, daemon=True).start()
+        self._spawn_char_worker("eta", self._char_eta_thread)
 
     def _on_char_eta_cancel(self):
+        lease = self._char_leases.get("eta")
+        if lease is not None:
+            self.operation_state.request_cancel(lease)
         if "eta" in self._char_running:
             self._char_running["eta"].clear()
+        if self.controller and getattr(self.controller, "is_charging", False):
+            self.controller.stop_charge()
         self._char_hw_stop()
 
     def _char_eta_thread(self):
-        """Background: full charge/discharge cycle → per-band coulomb efficiency."""
+        """Run a boundary-matched, incrementally logged coulomb-efficiency cycle."""
         import time
+        from aset_batt.core.characterization import (
+            evaluate_coulomb_efficiency, integrate_coulomb_ah,
+        )
+        from aset_batt.storage.data_utils import update_session_metadata
+
         ev = self._char_running["eta"]
+        controller = self.controller
+        config = controller.config
+        product_name = getattr(config.battery, "product_name", "") or ""
+        from aset_batt.core import battery_profiles
+        product = battery_profiles.get_product(product_name)
+        c10_ah = (float(product.capacity_10h_ah) if product and product.capacity_10h_ah > 0
+                  else float(config.battery.rated_capacity))
+        c20_ah = (float(product.capacity_20h_ah) if product else 0.0)
+        reference_a = c10_ah / 10.0
+        cutoff_v = float(product.safety_uvp_pack if product and product.safety_uvp_pack
+                         else config.battery.pack_min_voltage)
+        limits = config.system.safety_limits or {}
+        otp_limit = float(self._otp_limit())
+        ovp_limit = float(product.safety_ovp_pack if product and product.safety_ovp_pack
+                          else limits.get("max_voltage", float("inf")))
+        uvp_floor = float(limits.get("min_voltage", float("-inf")))
+        conditioning_limit_s = 1.5 * c10_ah / reference_a * 3600.0
+        discharge_limit_s = conditioning_limit_s
+        lower_rest_s = 300.0
+        post_charge_rest_s = 1800.0
+        phase_data = {"conditioning": [], "charge": [], "discharge": [],
+                      "CHARGE_CC": [], "CHARGE_CV": [], "CHARGE_TAPER": []}
+        phase_elapsed_s = {}
+        active_phase = ["INITIALIZING"]
+        temperatures = []
+        last_charge_sample = [None]
+        last_charge_checkpoint_phase = ["CHARGE_CC"]
+        started = time.perf_counter()
+        csv_path = ""
+        status_code = "ERROR"
+        reason = "unexpected exit"
+        conditioning_ok = False
+        full_charge_ok = False
+        cutoff_ok = False
+        q_in = {"ah": 0.0, "valid": False, "sample_count": 0}
+        q_out = {"ah": 0.0, "valid": False, "sample_count": 0}
+        eta_result = None
 
         def status(msg):
-            # see the same comment in _char_peukert_thread — no sig_alarm here,
-            # this fires every ~5s for hours (both the charge- and discharge-
-            # tracking loops). Milestones get their own explicit emit() below.
             self.sig_char_update.emit("eta", msg)
 
-        # SoC band boundaries (%) — must match _coulomb_eta in state_estimator
-        BULK_MAX = 75.0
-        ABS_MAX  = 90.0
+        def display_eta_result(result, code):
+            self._char_results["eta"] = {
+                "q_in_ah": result.get("q_in_ah"),
+                "q_out_ah": result.get("q_out_ah"),
+                "eta_coulomb_pct": result.get("eta_coulomb_pct"),
+                "reference_current_a": reference_a,
+                "charge_duration_s": sum(v for k, v in phase_elapsed_s.items()
+                                           if k.startswith("CHARGE_")),
+                "discharge_duration_s": phase_elapsed_s.get("REFERENCE_DISCHARGE", 0.0),
+                "status": code, "valid": result.get("valid", False),
+            }
+            try:
+                self._refresh_char_params()
+            except RuntimeError:
+                # The window may be closing while the daemon worker is finishing;
+                # keep file finalization independent from widget lifetime.
+                pass
 
-        def _band(soc):
-            if soc < BULK_MAX:
-                return "bulk"
-            if soc < ABS_MAX:
-                return "absorb"
-            return "full"
+        sample_counter = 0
+
+        def set_phase(phase):
+            active_phase[0] = phase
+            try:
+                controller.data.flush()
+                update_session_metadata(csv_path, {
+                    "current_phase": phase,
+                    "coulomb_eta_checkpoint_at": time.time(),
+                    "Qin_Ah": q_in.get("ah"), "Qout_Ah": q_out.get("ah"),
+                    "integration": {"Qin": q_in, "Qout": q_out},
+                })
+            except Exception:
+                logger.exception("Could not checkpoint Coulomb η metadata")
+
+        def sample(phase, prefer_load_v, previous, cumulative_ah):
+            nonlocal sample_counter
+            v, current = self.hw.read_measurements(prefer_load_v=prefer_load_v)
+            now = time.perf_counter()
+            temp = float(self.hw.current_temp)
+            if not self._char_check_safety(ev, temp):
+                raise RuntimeError("TEMPERATURE_ABORT")
+            if not math.isfinite(float(v)) or not math.isfinite(float(current)):
+                raise RuntimeError("non-finite measurement")
+            if phase in {"CHARGE_CC", "CHARGE_CV", "CHARGE_TAPER"} and float(v) >= ovp_limit:
+                controller._trigger_safety(f"η charge OVP: {v:.3f} V >= {ovp_limit:.3f} V")
+                ev.clear()
+                raise RuntimeError("OVP_ABORT")
+            # The product UVP is the normal, qualified discharge endpoint. A
+            # system-wide lower floor remains an emergency trip only when it is
+            # below that endpoint; an equal/higher floor must not pre-empt the
+            # five-sample product-cutoff confirmation.
+            if (phase in {"CONDITIONING_DISCHARGE", "REFERENCE_DISCHARGE"}
+                    and uvp_floor < cutoff_v and float(v) <= uvp_floor):
+                controller._trigger_safety(f"η discharge hardware UVP: {v:.3f} V <= {uvp_floor:.3f} V")
+                ev.clear()
+                raise RuntimeError("UVP_ABORT")
+            temperatures.append(temp)
+            if previous is not None:
+                prev_t, prev_i = previous
+                dt = now - prev_t
+                phase_elapsed_s[phase] = phase_elapsed_s.get(phase, 0.0) + dt
+                direction = -1.0 if phase in {"CHARGE_CC", "CHARGE_CV", "CHARGE_TAPER"} else 1.0
+                cumulative_ah += 0.5 * (max(0.0, direction * prev_i)
+                                        + max(0.0, direction * current)) * dt / 3600.0
+            state = controller.estimator.update(v, current, dt=(now - previous[0] if previous else 0.0), temp=temp)
+            controller._log_sample(v, current, mode=phase, expected_dt_s=5.0)
+            self.update_display(v, current, state.get("soc", 0.0), state["rin"], temp,
+                                state.get("soh"))
+            phase_data.setdefault(phase, []).append((now - started, current))
+            sample_counter += 1
+            if sample_counter % 12 == 0:
+                set_phase(phase)
+            return float(v), float(current), now, temp, cumulative_ah, state
+
+        def charge_sample(stage, voltage, current_in_a, note):
+            """Capture every charge-controller read, including the verified tail sample."""
+            nonlocal sample_counter
+            phase = {"bulk": "CHARGE_CC", "absorption": "CHARGE_CV",
+                     "float": "CHARGE_TAPER", "cc": "CHARGE_CC",
+                     "cv": "CHARGE_CV", "done": "CHARGE_TAPER"}.get(
+                         str(stage).lower(), "CHARGE_CV")
+            now = time.perf_counter()
+            temp = float(self.hw.current_temp)
+            if not self._char_check_safety(ev, temp):
+                return
+            if not math.isfinite(float(voltage)) or not math.isfinite(float(current_in_a)):
+                ev.clear()
+                raise RuntimeError("non-finite charge measurement")
+            if float(voltage) >= ovp_limit:
+                controller._trigger_safety(
+                    f"η charge OVP: {voltage:.3f} V >= {ovp_limit:.3f} V")
+                ev.clear()
+                raise RuntimeError("OVP_ABORT")
+            current = -float(current_in_a)
+            temperatures.append(temp)
+            phase_data.setdefault(phase, []).append((now - started, current))
+            sample_counter += 1
+            previous_charge = last_charge_sample[0]
+            if previous_charge is not None:
+                dt = now - previous_charge[0]
+                if 0.0 < dt <= 30.0:
+                    q_in["ah"] += 0.5 * (
+                        max(0.0, -previous_charge[1]) + max(0.0, -current)) * dt / 3600.0
+            q_in["sample_count"] += 1
+            last_charge_sample[0] = (now, current)
+            state = controller.estimator.update(
+                float(voltage), current,
+                dt=(now - previous_charge[0]) if previous_charge else 0.0,
+                temp=temp)
+            controller._log_sample(float(voltage), current, mode=phase, expected_dt_s=1.0)
+            if q_in["sample_count"] % 5 == 0:
+                self.update_display(float(voltage), current, state.get("soc", 0.0),
+                                    state["rin"], temp, state.get("soh"))
+                status(f"Charge {phase}: {voltage:.3f} V, {current:.3f} A, "
+                       f"Qin={q_in['ah']:.3f} Ah ({note})")
+            if phase != last_charge_checkpoint_phase[0]:
+                set_phase(phase)
+                last_charge_checkpoint_phase[0] = phase
 
         try:
-            self.controller._ensure_logging(label="CoulombEta")
-            rated    = self.controller.config.battery.rated_capacity
-            pack_min = self.controller.config.battery.pack_min_voltage
+            if controller.data.is_recording:
+                controller.end_session("interrupted", "closed before CoulombEfficiency session")
+            controller._ensure_logging(label="CoulombEfficiency", protocol={
+                "id": "coulomb-efficiency-v1",
+                "analysis_version": "coulomb-efficiency-v1",
+                "purpose": "boundary-matched Coulombic efficiency, Qout/Qin",
+                "phases": ["CONDITIONING_DISCHARGE", "LOWER_REST", "CHARGE_CC",
+                           "CHARGE_CV", "CHARGE_TAPER", "POST_CHARGE_REST",
+                           "REFERENCE_DISCHARGE", "FINAL_REST"],
+            })
+            csv_path = controller.data.current_path
+            update_session_metadata(csv_path, {
+                "test_type": "CoulombEfficiency",
+                "analysis_version": "coulomb-efficiency-v1",
+                "profile_version": "battery-profiles-v2",
+                "product_name": product_name,
+                "battery_type": config.battery.battery_type,
+                "battery_id": getattr(config.battery, "serial_number", ""),
+                "capacity_10h_ah": c10_ah,
+                "capacity_20h_ah": c20_ah or None,
+                "reference_rate_hr": 10,
+                "reference_discharge_current_a": reference_a,
+                "cutoff_voltage_v": cutoff_v,
+                "temperature_limit_c": otp_limit,
+                "conditioning_current_a": reference_a,
+                "charge_settings": {
+                    "strategy": battery_profiles.get_chemistry(config.battery.battery_type).charge.strategy,
+                    "bulk_c_rate": battery_profiles.get_chemistry(config.battery.battery_type).charge.bulk_c_rate,
+                    "absorption_voltage_per_cell": battery_profiles.get_chemistry(config.battery.battery_type).charge.absorption_voltage_per_cell,
+                    "tail_current_c_rate": battery_profiles.get_chemistry(config.battery.battery_type).charge.tail_current_c_rate,
+                    "stage_timeout_min": battery_profiles.get_chemistry(config.battery.battery_type).charge.stage_timeout_min,
+                },
+            })
 
-            # ── Phase 1: Charge to full; track Ah_in per SoC band ─────────
-            status("Phase 1/2: ชาร์จ (นับ Ah_in ต่อ band)...")
-            self.sig_alarm.emit("[CHAR/η] เริ่ม Phase 1/2: ชาร์จ")
-            ah_in  = {"bulk": 0.0, "absorb": 0.0, "full": 0.0}
-            self.controller.start_charge(strategy=None)
-            # This loop tracks Ah_in per SoC band itself (needs its own fine-grained
-            # estimator.update() calls), which would double-count against the shared
-            # monitor loop that start_charge() just restarted — stop it immediately
-            # (same guard as _char_peukert_thread, just earlier since this loop reads
-            # hardware through the CHARGE phase too, not only after).
-            if self.controller.monitor_running:
-                self.controller.stop_monitor()
-            # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
-            last = time.perf_counter()
-
-            while ev.is_set():
-                if not getattr(self.controller, "is_charging", False):
-                    break
-                try:
-                    v, i_ch = self.hw.read_measurements(prefer_load_v=False)
-                    now = time.perf_counter()   # stamp AT the measurement
-                    temp = self.hw.current_temp
-                    if not self._char_check_safety(ev, temp):
-                        break
-                    dt  = now - last
-                    last = now
-                    state = self.controller.estimator.update(v, i_ch, dt=dt, temp=temp)
-                    soc_now = state["soc"]
-                    # i_ch is negative during charging; accumulate absolute Ah
-                    dah = abs(i_ch) * dt / 3600.0
-                    ah_in[_band(soc_now)] += dah
-                    self.controller._log_sample(v, i_ch)
-                    self.update_display(v, i_ch, soc_now, state["rin"], temp, state.get("soh"))
-                    status(f"Charge: {v:.3f} V  SoC {soc_now:.0f}%  "
-                           f"Ah_in={sum(ah_in.values()):.3f}")
-                except Exception as exc:
-                    self.sig_alarm.emit(f"[CHAR/η] charge read error: {exc}")
-                    break
-                if not self._char_sleep(ev, 5.0):
-                    break
-
-            if not ev.is_set():
-                return
-
-            # ── rest 30 min (fixed protocol minimum) ───────────────────────
-            status("Phase 1/2 done. พักหลังชาร์จ 30 นาที...")
-            self.sig_alarm.emit(f"[CHAR/η] Phase 1/2 เสร็จ — Ah_in={sum(ah_in.values()):.3f}")
-            if not self._char_sleep(ev, 1800):
-                return
-
-            # OCV anchor with a real ΔV/Δt settle-check — the fixed 30-min timer
-            # above is a protocol minimum, not proof of settling.
-            def _post_charge_rest_progress(elapsed, v, dv_mv, st):
-                dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
-                status(f"OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
-                self.controller._log_sample(v, 0.0)
-                self.update_display(v, 0.0, self.controller.estimator.soc,
-                                    self.controller.estimator.rin)
-
-            soc_now, _, _ = self.controller.calibrate_from_ocv_stable(
-                on_progress=_post_charge_rest_progress,
-                cancel_check=ev.is_set,
-            )
-            if not ev.is_set():
-                return
-
-            # ── Phase 2: Discharge at 0.1C; track Ah_out per SoC band ─────
-            i_dis = round(0.1 * rated, 3)
-            status(f"Phase 2/2: discharge {i_dis:.3f} A (0.1C, นับ Ah_out)...")
-            self.sig_alarm.emit(f"[CHAR/η] เริ่ม Phase 2/2: discharge {i_dis:.3f} A")
-            ah_out = {"bulk": 0.0, "absorb": 0.0, "full": 0.0}
-            self.hw.set_load(True, i_dis)
-            # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
-            last = time.perf_counter()
-            _cutoff_confirm_n = 0
-
-            while ev.is_set():
-                try:
-                    v, i_meas = self.hw.read_measurements(prefer_load_v=True)
-                    now  = time.perf_counter()   # stamp AT the measurement
-                    temp = self.hw.current_temp
-                    if not self._char_check_safety(ev, temp):
-                        break
-                    dt   = now - last
-                    last = now
-                    state = self.controller.estimator.update(v, i_meas, dt=dt, temp=temp)
-                    soc_now = state["soc"]
-                    dah = abs(i_meas) * dt / 3600.0
-                    ah_out[_band(soc_now)] += dah
-                    self.controller._log_sample(v, i_meas)
-                    self.update_display(v, i_meas, soc_now, state["rin"], temp, state.get("soh"))
-                    status(f"Discharge: {v:.3f} V  SoC {soc_now:.0f}%  "
-                           f"Ah_out={sum(ah_out.values()):.3f}")
-                    # Same debounce as worker.py's CC_DISCHARGE cutoff check — 5
-                    # consecutive at/below-cutoff samples, not just one.
-                    _cutoff_confirm_n = (_cutoff_confirm_n + 1) if v <= pack_min else 0
-                    if _cutoff_confirm_n >= 5:
-                        break
-                except Exception as exc:
-                    self.sig_alarm.emit(f"[CHAR/η] discharge read error: {exc}")
+            # CONDITIONING_DISCHARGE establishes the common lower state; it is
+            # excluded from measured Qin and Qout. Same configured cutoff is used
+            # for the final reference discharge.
+            controller.hw.load_off()
+            controller.hw.psu_off()
+            set_phase("CONDITIONING_DISCHARGE")
+            status(f"Conditioning to loaded cutoff {cutoff_v:.2f} V at {reference_a:.3f} A...")
+            self.hw.set_load(True, reference_a)
+            t0 = time.perf_counter()
+            previous = None
+            cumulative = 0.0
+            cutoff_n = 0
+            while ev.is_set() and time.perf_counter() - t0 < conditioning_limit_s:
+                v, current, now, temp, cumulative, state = sample(
+                    "CONDITIONING_DISCHARGE", True, previous, cumulative)
+                previous = (now, current)
+                cutoff_n = cutoff_n + 1 if v <= cutoff_v else 0
+                status(f"Conditioning: {v:.3f} V, {current:.3f} A, {cumulative:.3f} Ah")
+                if cutoff_n >= 5:
+                    conditioning_ok = True
                     break
                 if not self._char_sleep(ev, 5.0):
                     break
-
-            self.hw.set_load(False)
+            self.hw.load_off()
+            self.hw.psu_off()
             if not ev.is_set():
-                return
+                status_code, reason = (("TEMPERATURE_ABORT", "safety trip during conditioning")
+                                       if getattr(controller, "safety_triggered", False)
+                                       else ("CANCELLED", "cancelled during conditioning"))
+                raise RuntimeError("CANCELLED")
+            if not conditioning_ok:
+                status_code, reason = "CONDITIONING_INCOMPLETE", "loaded cutoff not reached before timeout"
+                raise RuntimeError(reason)
 
-            # ── compute η ─────────────────────────────────────────────────
-            from aset_batt.core.characterization import compute_coulomb_eta
-            eta = compute_coulomb_eta(ah_in, ah_out)
+            # Verify the lower-state rest while both outputs remain off.
+            set_phase("LOWER_REST")
+            rest_until = time.perf_counter() + lower_rest_s
+            while ev.is_set() and time.perf_counter() < rest_until:
+                v, current, _, temp, _, _ = sample("LOWER_REST", False, None, 0.0)
+                if abs(current) > 0.05:
+                    raise RuntimeError("lower rest current was not near zero")
+                if not self._char_sleep(ev, min(5.0, max(0.0, rest_until - time.perf_counter()))):
+                    break
+            if not ev.is_set():
+                status_code, reason = (("TEMPERATURE_ABORT", "safety trip during lower rest")
+                                       if getattr(controller, "safety_triggered", False)
+                                       else ("CANCELLED", "cancelled during lower rest"))
+                raise RuntimeError("CANCELLED")
 
-            self._char_results["eta"] = {
-                "coulomb_eta_bulk":   eta.get("bulk"),
-                "coulomb_eta_absorb": eta.get("absorb"),
-                "coulomb_eta_full":   eta.get("full"),
-                "coulomb_eta_overall": eta.get("overall"),
-                "ah_in":  dict(ah_in),
-                "ah_out": dict(ah_out),
-            }
-            b = eta.get("bulk")   or 0
-            a = eta.get("absorb") or 0
-            f = eta.get("full")   or 0
-            status(f"✓ η bulk={b:.3f}  absorb={a:.3f}  full={f:.3f}")
-            self.sig_alarm.emit(f"[CHAR/η] เสร็จสิ้น: bulk={b:.3f} absorb={a:.3f} full={f:.3f}")
+            # Start Qin at charge-phase samples only; charge-positive Ah is
+            # derived from the project's negative charging-current convention.
+            set_phase("CHARGE_CC")
+            controller.last_charge_full_confirmed = False
+            controller._skip_ocv_reset = True
+            controller.stop_live_readback()
+            if not controller.start_charge(strategy=None, reuse_session=True,
+                                           sample_callback=charge_sample,
+                                           start_monitor=False):
+                raise RuntimeError("charge controller did not start")
+            if controller.monitor_running:
+                controller.stop_monitor()
+            while ev.is_set() and controller.is_charging:
+                if not self._char_sleep(ev, 0.5):
+                    break
+            charge_thread = getattr(controller, "_charge_thread", None)
+            if charge_thread is not None:
+                charge_thread.join(timeout=10.0)
+            # start_charge() starts the ordinary estimator monitor. This worker
+            # owns estimator updates and CSV rows for η, so stop that loop before
+            # sampling any following phase.
+            if controller.monitor_running:
+                controller.stop_monitor()
+            charge_error = getattr(controller, "last_charge_error", None)
+            if charge_error is not None:
+                from aset_batt.services.exceptions import HardwareError
+                is_communication_error = isinstance(charge_error, (OSError, HardwareError)) \
+                    or "visa" in type(charge_error).__name__.lower()
+                if is_communication_error:
+                    status_code = "ERROR"
+                    reason = f"communication failure during {active_phase[0]}: {charge_error}"
+                    raise RuntimeError(reason) from charge_error
+            if not ev.is_set():
+                controller.stop_charge()
+                status_code, reason = (("TEMPERATURE_ABORT", "safety trip during charge")
+                                       if getattr(controller, "safety_triggered", False)
+                                       else ("CANCELLED", "cancelled during charge"))
+                raise RuntimeError("CANCELLED")
+            if controller.is_charging:
+                controller.stop_charge()
+            if not getattr(controller, "last_charge_full_confirmed", False):
+                status_code, reason = "FULL_CHARGE_NOT_CONFIRMED", "charge ended without verified taper termination"
+                raise RuntimeError(reason)
+            full_charge_ok = True
+            q_in["valid"] = True
+            q_in = integrate_coulomb_ah(
+                [x[0] for x in phase_data["CHARGE_CC"] + phase_data["CHARGE_CV"] + phase_data["CHARGE_TAPER"]],
+                [x[1] for x in phase_data["CHARGE_CC"] + phase_data["CHARGE_CV"] + phase_data["CHARGE_TAPER"]],
+                phase="charge")
+            if not q_in["valid"]:
+                status_code, reason = "SAMPLING_INVALID", "charge sampling did not meet integration quality limits"
+                raise RuntimeError(reason)
+            set_phase("POST_CHARGE_REST")
+            self.hw.load_off()
+            self.hw.psu_off()
+            rest_until = time.perf_counter() + post_charge_rest_s
+            while ev.is_set() and time.perf_counter() < rest_until:
+                v, current, _, temp, _, _ = sample("POST_CHARGE_REST", False, None, 0.0)
+                if abs(current) > 0.05:
+                    raise RuntimeError("post-charge rest current was not near zero")
+                if not self._char_sleep(ev, min(5.0, max(0.0, rest_until - time.perf_counter()))):
+                    break
+            if not ev.is_set():
+                status_code, reason = (("TEMPERATURE_ABORT", "safety trip during post-charge rest")
+                                       if getattr(controller, "safety_triggered", False)
+                                       else ("CANCELLED", "cancelled during post-charge rest"))
+                raise RuntimeError("CANCELLED")
 
+            # Reference discharge begins from the verified full state and ends
+            # only after the same loaded cutoff used by conditioning.
+            set_phase("REFERENCE_DISCHARGE")
+            self.hw.set_load(True, reference_a)
+            t0 = time.perf_counter()
+            previous = None
+            cumulative = 0.0
+            cutoff_n = 0
+            while ev.is_set() and time.perf_counter() - t0 < discharge_limit_s:
+                v, current, now, temp, cumulative, state = sample(
+                    "REFERENCE_DISCHARGE", True, previous, cumulative)
+                previous = (now, current)
+                q_out["ah"] = cumulative
+                q_out["sample_count"] = len(phase_data["REFERENCE_DISCHARGE"])
+                q_out.update(integrate_coulomb_ah(
+                    [x[0] for x in phase_data["REFERENCE_DISCHARGE"]],
+                    [x[1] for x in phase_data["REFERENCE_DISCHARGE"]],
+                    phase="discharge"))
+                if abs(current - reference_a) > max(0.05, reference_a * 0.10):
+                    raise RuntimeError("measured reference current outside ±10% tolerance")
+                status(f"Reference discharge: {v:.3f} V, {current:.3f} A, Qout={cumulative:.3f} Ah")
+                cutoff_n = cutoff_n + 1 if v <= cutoff_v else 0
+                if cutoff_n >= 5:
+                    cutoff_ok = True
+                    break
+                if not self._char_sleep(ev, 5.0):
+                    break
+            self.hw.load_off()
+            if not ev.is_set():
+                status_code, reason = (("TEMPERATURE_ABORT", "safety trip during reference discharge")
+                                       if getattr(controller, "safety_triggered", False)
+                                       else ("CANCELLED", "cancelled during reference discharge"))
+                raise RuntimeError("CANCELLED")
+            if not cutoff_ok:
+                status_code, reason = "CUTOFF_NOT_REACHED", "reference discharge cutoff not reached before timeout"
+                raise RuntimeError(reason)
+            q_out = integrate_coulomb_ah(
+                [x[0] for x in phase_data["REFERENCE_DISCHARGE"]],
+                [x[1] for x in phase_data["REFERENCE_DISCHARGE"]], phase="discharge")
+            q_out["complete"] = bool(cutoff_ok)
+            if not q_out["valid"]:
+                status_code, reason = "SAMPLING_INVALID", "discharge sampling did not meet integration quality limits"
+                raise RuntimeError(reason)
+            eta_result = evaluate_coulomb_efficiency(
+                q_in, q_out, conditioning_endpoint_valid=conditioning_ok,
+                full_charge_confirmed=full_charge_ok,
+                reference_cutoff_reached=cutoff_ok)
+            status_code = eta_result["status"]
+            reason = "; ".join(eta_result["reasons"])
+            status(f"COULOMBIC EFFICIENCY: Qin={q_in['ah']:.3f} Ah, Qout={q_out['ah']:.3f} Ah, "
+                   f"η={eta_result['eta_coulomb_pct']:.2f}% ({status_code})")
+            display_eta_result(eta_result, status_code)
+            self.sig_alarm.emit("[CHAR/η] This is Coulombic efficiency, not capacity SoH.")
+            self.sig_alarm.emit(f"[CHAR/η] Valid cycle completed: Qin={q_in['ah']:.3f} Ah, "
+                                f"Qout={q_out['ah']:.3f} Ah, η={eta_result['eta_coulomb_pct']:.2f}%")
+            # End at the same lower state with both outputs off; retain an
+            # explicit final-rest phase and check measured current near zero.
+            set_phase("FINAL_REST")
+            self.hw.load_off()
+            self.hw.psu_off()
+            final_until = time.perf_counter() + 60.0
+            while ev.is_set() and time.perf_counter() < final_until:
+                _, current, _, _, _, _ = sample("FINAL_REST", False, None, 0.0)
+                if abs(current) > 0.05:
+                    raise RuntimeError("final rest current was not near zero")
+                if not self._char_sleep(ev, min(5.0, max(0.0, final_until - time.perf_counter()))):
+                    break
+            if not ev.is_set():
+                status_code, reason = ("TEMPERATURE_ABORT", "safety trip during final rest") \
+                    if getattr(controller, "safety_triggered", False) else ("CANCELLED", "cancelled during final rest")
+                eta_result = evaluate_coulomb_efficiency(
+                    q_in, q_out, conditioning_endpoint_valid=conditioning_ok,
+                    full_charge_confirmed=full_charge_ok, reference_cutoff_reached=cutoff_ok,
+                    aborted=True, abort_reason=reason)
+                display_eta_result(eta_result, status_code)
+                raise RuntimeError("CANCELLED")
         except Exception as exc:
-            self.sig_char_update.emit("eta", f"✗ Error: {exc}")
-            logger.exception("Eta thread error")
+            if str(exc) == "TEMPERATURE_ABORT":
+                status_code, reason = "TEMPERATURE_ABORT", "temperature limit or stale temperature trip"
+            elif str(exc) in {"OVP_ABORT", "UVP_ABORT"}:
+                status_code, reason = "ERROR", str(exc)
+            elif status_code == "ERROR" and getattr(controller, "safety_triggered", False):
+                status_code, reason = "SAFETY_ABORT", str(exc)
+            if status_code in {"ERROR", "CANCELLED", "TEMPERATURE_ABORT"} and str(exc) == "CANCELLED":
+                if status_code == "ERROR":
+                    status_code, reason = "CANCELLED", "cancelled"
+            elif status_code == "ERROR" and str(exc) != "unexpected exit":
+                reason = str(exc)
+            logger.exception("Coulomb η sequence stopped: %s", exc)
         finally:
             self._char_hw_stop()
+            # A measurement exception can leave either output enabled before
+            # control reaches the normal phase-end OFF commands. Always restore
+            # the instrument outputs here as well, including failures inside a
+            # load or charge acquisition call.
+            # All normal sequence code uses set_load(False); keep the same
+            # established controller interface here for cleanup on exceptions.
+            for output_off in (lambda: self.hw.set_load(False), self.hw.psu_off):
+                try:
+                    output_off()
+                except Exception:
+                    logger.exception("Coulomb η final output shutdown failed")
+            try:
+                if csv_path:
+                    controller.data.flush()
+                    q_out["complete"] = bool(cutoff_ok)
+                    if eta_result is None:
+                        eta_result = evaluate_coulomb_efficiency(
+                            q_in, q_out, conditioning_endpoint_valid=conditioning_ok,
+                            full_charge_confirmed=full_charge_ok,
+                            reference_cutoff_reached=cutoff_ok,
+                            aborted=True, abort_reason=reason or status_code)
+                    display_eta_result(eta_result, status_code)
+                    temps = [x for x in temperatures if math.isfinite(x)]
+                    update_session_metadata(csv_path, {
+                        "Qin_Ah": q_in.get("ah"), "Qout_Ah": q_out.get("ah"),
+                        "eta_coulomb_pct": eta_result.get("eta_coulomb_pct"),
+                        "eta_coulomb_valid": bool(eta_result.get("valid")),
+                        "eta_status": status_code,
+                        "termination_status": status_code,
+                        "termination_reason": reason or status_code,
+                        "termination_phase": active_phase[0],
+                        "termination_cause": ("cancellation" if status_code == "CANCELLED"
+                                               else "communication_failure"
+                                               if status_code == "ERROR" and "communication failure" in reason.lower()
+                                               else "safety" if status_code in {"TEMPERATURE_ABORT", "SAFETY_ABORT"}
+                                               else "protocol_or_measurement"),
+                        "eta_reasons": eta_result.get("reasons", []),
+                        "conditioning_endpoint_valid": conditioning_ok,
+                        "full_charge_confirmed": full_charge_ok,
+                        "reference_cutoff_reached": cutoff_ok,
+                        "reference_capacity_complete": bool(cutoff_ok),
+                        "charge_duration_s": sum(v for k, v in phase_elapsed_s.items()
+                                                   if k.startswith("CHARGE_")),
+                        "discharge_duration_s": phase_elapsed_s.get("REFERENCE_DISCHARGE", 0.0),
+                        "temperature_summary_c": ({"start": temps[0], "min": min(temps),
+                                                    "max": max(temps), "end": temps[-1]}
+                                                   if temps else None),
+                        "integration": {"Qin": q_in, "Qout": q_out},
+                        "capacity_interpretation": "Qout is measured charge under this test; not verified SoH",
+                    })
+                    outcome = ("completed" if status_code in {"VALID", "SUSPECT_RESULT"}
+                               else "safety_tripped" if status_code in {"TEMPERATURE_ABORT", "SAFETY_ABORT"}
+                               else "cancelled" if status_code == "CANCELLED"
+                               else "fault" if status_code in {"ERROR", "FULL_CHARGE_NOT_CONFIRMED"}
+                               else "aborted")
+                    controller.end_session(outcome, reason or status_code)
+            except Exception:
+                logger.exception("Coulomb η session finalization failed")
             ev.clear()
             self.sig_char_update.emit("eta", "__DONE__")
 
     # ── OCV–SoC GITT ──────────────────────────────────────────────────────────
 
     def _on_char_gitt_start(self):
-        if not self._char_guard():
+        if not self._char_guard("gitt"):
             return
         if self._char_running.get("gitt", _FalseEvent()).is_set():
             return
@@ -734,9 +1162,12 @@ class CharacterizeMixin:
         self.pgb_char_gitt.setValue(0)
         self.sig_char_update.emit("gitt", "● กำลังทดสอบ GITT OCV–SoC...")
         import threading as _th
-        _th.Thread(target=self._char_gitt_thread, daemon=True).start()
+        self._spawn_char_worker("gitt", self._char_gitt_thread)
 
     def _on_char_gitt_cancel(self):
+        lease = self._char_leases.get("gitt")
+        if lease is not None:
+            self.operation_state.request_cancel(lease)
         if "gitt" in self._char_running:
             self._char_running["gitt"].clear()
         self._char_hw_stop()
@@ -754,6 +1185,11 @@ class CharacterizeMixin:
         try:
             self.controller._ensure_logging(label="GITT")
             rated    = self.controller.config.battery.rated_capacity
+            from aset_batt.core import battery_profiles
+            _product = battery_profiles.get_product(
+                self.controller.config.battery.product_name)
+            if _product and _product.capacity_10h_ah > 0.0:
+                rated = _product.capacity_10h_ah
             pack_min = self.controller.config.battery.pack_min_voltage
             cells    = self.controller.config.battery.cells_series
             campaign = getattr(self.controller.config.system, "validation_campaign", {}) or {}
@@ -933,19 +1369,24 @@ class CharacterizeMixin:
             logger.exception("GITT thread error")
         finally:
             self._char_hw_stop()
+            self._char_finalize_session("GITT", ev, "gitt")
             ev.clear()
             self.sig_char_update.emit("gitt", "__DONE__")
 
     # ── CCA proxy ────────────────────────────────────────────────────────────
 
     def _on_char_cca_start(self):
-        if not self._char_guard():
+        if not self._char_guard("cca"):
             return
         if self._char_running.get("cca", _FalseEvent()).is_set():
             return
         prod = battery_profiles.get_product(self.cb_product.currentText())
         cca_a = getattr(prod, "cca_a", 0.0) if prod else 0.0
         if cca_a <= 0:
+            lease = self._char_leases.pop("cca", None)
+            if lease is not None:
+                self.operation_state.release(lease)
+                self._operation_leases.pop(lease.run_id, None)
             if not self._headless:
                 QMessageBox.warning(
                     self, "CCA Proxy",
@@ -958,9 +1399,12 @@ class CharacterizeMixin:
         self.btn_char_cca_cancel.setEnabled(True)
         self.sig_char_update.emit("cca", "● กำลังทดสอบ CCA proxy...")
         import threading as _th
-        _th.Thread(target=self._char_cca_thread, daemon=True).start()
+        self._spawn_char_worker("cca", self._char_cca_thread)
 
     def _on_char_cca_cancel(self):
+        lease = self._char_leases.get("cca")
+        if lease is not None:
+            self.operation_state.request_cancel(lease)
         if "cca" in self._char_running:
             self._char_running["cca"].clear()
         self._char_hw_stop()
@@ -1069,6 +1513,7 @@ class CharacterizeMixin:
             logger.exception("CCA thread error")
         finally:
             self._char_hw_stop()
+            self._char_finalize_session("CCA", ev, "cca")
             ev.clear()
             self.sig_char_update.emit("cca", "__DONE__")
 
@@ -1077,6 +1522,12 @@ class CharacterizeMixin:
     def _slot_char_update(self, test_id: str, msg: str):
         """Dispatch characterize thread messages to the correct UI widgets."""
         if msg == "__DONE__":
+            lease = getattr(self, "_char_leases", {}).get(test_id)
+            thread = getattr(self, "_char_threads", {}).get(test_id)
+            if lease is not None and thread is not None and thread.is_alive():
+                # The worker's finally has run, but ownership remains until its
+                # thread has actually returned.
+                return
             # re-enable start, disable cancel
             if test_id == "pk":
                 self.btn_char_pk_start.setEnabled(True)
@@ -1156,22 +1607,25 @@ class CharacterizeMixin:
             chem_name = getattr(self.controller.config.battery, "battery_type", "")
             chem = _bp.get_chemistry(chem_name)
 
-            # Peukert k
-            k_def  = chem.peukert_k
-            hr_def = chem.peukert_hr
+            # Active Peukert k follows the same product→chemistry resolver as
+            # the estimator and offline analysis profile.
+            active_pk = _bp.resolve_peukert_parameters(prod_name, chem_name)
+            k_def = active_pk["peukert_k"]
+            hr_def = active_pk["peukert_reference_hr"]
             pk_res = self._char_results.get("pk", {})
-            k_show = f"{pk_res['peukert_k']:.3f} (วัดแล้ว, R²={pk_res.get('peukert_k_r2',0):.3f})" \
-                     if pk_res else f"{k_def:.3f} (ค่า default)"
+            k_show = f"{k_def:.3f} ({active_pk['peukert_k_source']})"
+            measured_k = (pk_res.get("peukert_k") if pk_res else None)
 
             # Coulomb η
             eta_res = self._char_results.get("eta", {})
             if eta_res:
-                b = eta_res.get("coulomb_eta_bulk")   or 0
-                a = eta_res.get("coulomb_eta_absorb") or 0
-                f = eta_res.get("coulomb_eta_full")   or 0
-                eta_show = f"bulk={b:.3f}  absorb={a:.3f}  full={f:.3f} (วัดแล้ว)"
+                eta_value = eta_res.get("eta_coulomb_pct")
+                eta_show = (f"{eta_value:.2f}% ({eta_res.get('status', 'UNKNOWN')}); "
+                            f"Qin={eta_res.get('q_in_ah', 0):.3f} Ah, "
+                            f"Qout={eta_res.get('q_out_ah', 0):.3f} Ah") \
+                    if eta_value is not None else f"{eta_res.get('status', 'UNKNOWN')} (η unavailable)"
             else:
-                eta_show = "bulk=0.970  absorb=0.920  full=0.750 (ค่า default)"
+                eta_show = "No valid cycle measured"
 
             # OCV table
             gitt_res = self._char_results.get("gitt", {})
@@ -1182,7 +1636,7 @@ class CharacterizeMixin:
                 f"Profile: {prod_name or '(ไม่ได้เลือก)'}",
                 f"Peukert k  : {k_show}",
                 f"C-rate hour: {hr_def:.0f} HR",
-                f"Coulomb η  : {eta_show}",
+                f"Coulombic Efficiency: {eta_show}",
                 f"OCV table  : {ocv_show}",
             ]
 
@@ -1191,13 +1645,34 @@ class CharacterizeMixin:
                 mp = _bp.get_measured_params(prod_name)
                 if mp:
                     lines.append(f"On-disk    : วัดล่าสุด {mp.get('measured_date','?')}")
+                    if measured_k is None:
+                        measured_k = mp.get("characterized_peukert_k", mp.get("peukert_k"))
+                    if pk_res:
+                        measured_k = pk_res.get("peukert_k")
+            if measured_k is not None:
+                measured_r2 = (pk_res.get("peukert_k_r2") if pk_res else
+                               mp.get("peukert_k_r2", 0.0) if prod_name and mp else 0.0)
+                lines.append(
+                    f"Characterized candidate: {float(measured_k):.3f} "
+                    f"(R²={float(measured_r2 or 0.0):.3f}; pending approval, inactive)")
 
+            result = self._char_results.get("eta", {})
+            if result:
+                lines.extend([
+                    f"Reference discharge: {result.get('reference_current_a', 0.5):.3f} A (C10)",
+                    f"Charge duration: {result.get('charge_duration_s', 0.0) / 3600:.2f} h",
+                    f"Discharge duration: {result.get('discharge_duration_s', 0.0) / 3600:.2f} h",
+                    "This is Coulombic efficiency, not capacity SoH.",
+                ])
             self.txt_char_params.setPlainText("\n".join(lines))
         except Exception as exc:
             self.txt_char_params.setPlainText(f"(ไม่สามารถโหลด params: {exc})")
 
     def _on_char_save(self):
         """Save _char_results back to battery_profiles.json for the current product."""
+        if self._char_running.get("eta", _FalseEvent()).is_set():
+            QMessageBox.warning(self, "Save Profile", "Wait until the active η cycle finishes.")
+            return
         if not self._char_results:
             return
         try:
@@ -1211,16 +1686,17 @@ class CharacterizeMixin:
             pk_res = self._char_results.get("pk", {})
             if pk_res:
                 params["peukert_k"]    = round(pk_res["peukert_k"], 4)
+                params["characterized_peukert_k"] = round(pk_res["peukert_k"], 4)
                 params["peukert_k_r2"] = round(pk_res.get("peukert_k_r2", 0), 4)
                 params["peukert_hr"]   = pk_res.get("peukert_hr", 10.0)
+                params["peukert_k_source"] = "CHARACTERIZED_MEASURED"
+                params["characterization_timestamp"] = pk_res.get(
+                    "characterization_timestamp")
+                params["characterization_status"] = "MEASURED_PENDING_APPROVAL"
 
             eta_res = self._char_results.get("eta", {})
-            if eta_res:
-                for key in ("coulomb_eta_bulk", "coulomb_eta_absorb",
-                            "coulomb_eta_full", "coulomb_eta_overall"):
-                    v = eta_res.get(key)
-                    if v is not None:
-                        params[key] = round(v, 4)
+            # A cycle η measurement is session evidence, not a battery profile
+            # parameter. Its values and validity gates remain in CSV metadata.
 
             gitt_res = self._char_results.get("gitt", {})
             if gitt_res and "ocv_curve_measured" in gitt_res:

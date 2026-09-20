@@ -155,7 +155,7 @@ def _make_bound_window():
 
 
 class TestSeqCheckTempStaleEscalation(unittest.TestCase):
-    def test_brief_staleness_only_warns_returns_true(self):
+    def test_brief_staleness_faults_before_cached_temperature_is_used(self):
         win, ctrl, hw = _make_bound_window()
         try:
             win._seq_running.set()
@@ -165,8 +165,8 @@ class TestSeqCheckTempStaleEscalation(unittest.TestCase):
 
             result = win._seq_check_temp_stale()
 
-            self.assertTrue(result)
-            self.assertTrue(win._seq_running.is_set())   # not aborted
+            self.assertFalse(result)
+            self.assertFalse(win._seq_running.is_set())   # stale input is rejected
             self.assertTrue(any("stale" in a.lower() for a in alarms))
         finally:
             win.close()

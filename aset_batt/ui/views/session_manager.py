@@ -234,14 +234,63 @@ class SessionManagerMixin:
             subprocess.Popen(["open", logs_dir])
         else:
             subprocess.Popen(["xdg-open", logs_dir])
-    def _on_analyze_csv(self):
-        csv_path = self._last_csv or self.config.system.csv_filepath
+    def _on_analyze_csv(self, selected_path=None):
+        csv_path = selected_path or self._last_csv or self.config.system.csv_filepath
+        if not selected_path and not self._last_csv and not self._headless:
+            csv_path, _ = QFileDialog.getOpenFileName(
+                self, "Select CSV to Analyze", "",
+                "ASET CSV files (*.csv);;All files (*)")
+            if not csv_path:
+                return
+        data_handler = getattr(getattr(self, "controller", None), "data", None)
+        active_paths = set()
+        if getattr(data_handler, "is_recording", False):
+            current = getattr(data_handler, "current_path", None)
+            if current:
+                active_paths.add(current)
+        if getattr(self, "_test_thread", None) is not None and getattr(self, "_last_csv", None):
+            active_paths.add(self._last_csv)
+        current_key = os.path.normcase(os.path.abspath(csv_path)) if csv_path else None
+        if (current_key and any(os.path.normcase(os.path.abspath(p)) == current_key
+                                for p in active_paths)
+                and (self.operation_state.owns_hardware
+                     or getattr(self, "_test_thread", None) is not None)):
+            self._log_alarm("ACTIVE_SESSION_IN_PROGRESS — wait for acquisition cleanup before analysis")
+            self.lbl_analytics.setText("Analysis blocked: ACTIVE_SESSION_IN_PROGRESS")
+            return
+        if csv_path:
+            self._last_csv = csv_path
+            self.lbl_csv.setText(f"CSV: {os.path.basename(csv_path)}")
         if not csv_path or not os.path.exists(csv_path):
             if not self._headless:
                 QMessageBox.warning(self, "Analyze CSV",
                                     f"CSV not found:\n{csv_path}\n\nRun a test first.")
             return
         self.lbl_analytics.setText(f"Analyzing {os.path.basename(csv_path)}...")
+        try:
+            with open(csv_path, "r", encoding="utf-8-sig", newline="") as handle:
+                lines = (line for line in handle if not line.lstrip().startswith("#"))
+                reader = csv.DictReader(lines)
+                rows = list(reader)
+            def values(*names):
+                lookup = {str(key).strip().lower(): key for key in (reader.fieldnames or [])}
+                key = next((lookup[name.lower()] for name in names if name.lower() in lookup), None)
+                return [float(row[key]) if key and row.get(key) not in (None, "") else float("nan")
+                        for row in rows]
+            elapsed = values("Elapsed_s", "Time_s", "Time")
+            voltage = values("Voltage_V", "Voltage")
+            current = values("Current_A", "Current")
+            phases = [row.get("Phase") or row.get("Mode") or "" for row in rows]
+            self.plot_offline_csv.clear()
+            if elapsed and len(elapsed) == len(voltage):
+                self.plot_offline_csv.plot(elapsed, voltage, pen=pg.mkPen(theme.INFO, width=2), name="Voltage")
+                if current and len(current) == len(elapsed):
+                    current_plot = self.plot_offline_csv.plot(elapsed, current, pen=pg.mkPen(theme.WARN, width=1), name="Current")
+                    current_plot.setOpacity(0.75)
+                self.plot_offline_csv.setTitle(
+                    "Historical waveform" + (" · recorded phase labels" if any(phases) else " · phase labels inferred by analyzer"))
+        except Exception:
+            self.plot_offline_csv.clear()
         prof = self._acq_profile()
         # analyze_csv()'s own Mode-column auto-detection is dead in practice — the
         # CSV writer (DataHandler.log_row) never writes a Mode column, so without an
@@ -273,7 +322,8 @@ class SessionManagerMixin:
             from aset_batt.acquisition.analysis import analyze_csv_mp
             try:
                 res = analyze_csv_mp(csv_path, prof, force_hppc=force_hppc,
-                                     fit_ecm=fit_ecm or None)
+                                     fit_ecm=fit_ecm or None, offline_legacy=True)
+                res["_offline_review"] = True
             except Exception as e:
                 res = {"error": str(e)}
             self.sig_analysis_done.emit(res)   # → _slot_analysis_done → _on_test_finished

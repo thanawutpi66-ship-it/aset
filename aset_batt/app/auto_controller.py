@@ -2,6 +2,7 @@ import threading
 import time
 import logging
 import os
+import math
 from typing import Optional, Dict, Any
 
 from aset_batt.services.service_locator import ServiceLocator
@@ -33,15 +34,24 @@ class AutoController:
 
         # System States
         self.monitor_running = False
+        self._monitor_thread = None
+        self._monitor_generation = 0
         # A sequence logs and updates the estimator itself.  This gate is
         # separate from monitor_running because a monitor thread can be in a
         # hardware read when a sequence starts; it must never append an
         # unlabelled row into the sequence-owned CSV after that point.
         self.sequence_logging_owned = False
         self.live_readback_running = False   # lightweight pre-test Connect readback
+        self._live_readback_thread = None
+        self._live_readback_generation = 0
         self.is_charging = False
         self.safety_triggered = False
         self._charge_ctrl = None
+        self._charge_thread = None
+        self._charge_generation = 0
+        self.operation_state = None
+        self.last_charge_full_confirmed = False
+        self.last_charge_error = None
         self._shutdown_done = False   # กัน shutdown ทำงานซ้ำ (idempotent)
         self._skip_ocv_reset = False  # set by stop_charge() เพื่อข้าม OCV reset
 
@@ -158,12 +168,36 @@ class AutoController:
 
     def _emergency_shutdown(self):
         """Emergency shutdown of all systems"""
-        try:
-            self.hw.load_off()
-            self.hw.psu_off()   # also cuts the SSR relay (GPIO16) — see HardwareController.psu_off
-            logger.info("Emergency shutdown completed")
-        except Exception as e:
-            logger.error(f"Error during emergency shutdown: {e}")
+        # Cut the independent relay before waiting for either VISA command lock.
+        # A measurement can hold inst_lock until its configured VISA timeout; if
+        # SSR OFF is reached only through psu_off(), an E-STOP can leave the
+        # physical path energized for that entire wait.
+        failed = False
+        set_ssr = getattr(self.hw, "set_ssr", None)
+        if callable(set_ssr):
+            try:
+                if set_ssr(False) is False:
+                    failed = True
+                    logger.critical("Emergency shutdown: SSR OFF command was not confirmed")
+            except Exception:
+                failed = True
+                logger.exception("Emergency shutdown: SSR OFF command failed")
+
+        # Attempt both instrument outputs independently. A failure to stop one
+        # must not prevent the other output from receiving its OFF command.
+        for name in ("load_off", "psu_off"):
+            try:
+                if getattr(self.hw, name)() is False:
+                    failed = True
+                    logger.critical("Emergency shutdown: %s returned failure", name)
+            except Exception:
+                failed = True
+                logger.exception("Emergency shutdown: %s failed", name)
+
+        if failed:
+            logger.critical("Emergency shutdown incomplete; hardware safe state is unconfirmed")
+        else:
+            logger.info("Emergency shutdown commands issued")
 
     def set_ui(self, ui_instance):
         self.ui = ui_instance
@@ -190,6 +224,12 @@ class AutoController:
         เรียก stop_logging()) จะทำให้เทสมือครั้งที่สองในแอปเดียวกันเงียบๆ ไปเขียน
         ทับ/ต่อท้ายไฟล์เทสแรกพร้อมนาฬิกา elapsed ที่ค้างจากรันแรก.
         """
+        if self.monitor_running:
+            return True
+        if self._monitor_thread is not None and self._monitor_thread.is_alive():
+            return False
+        if self._live_readback_thread is not None and self._live_readback_thread.is_alive():
+            return False
         if not self.monitor_running:
             self.stop_live_readback()   # real monitor takes over V/I/temp display
             self._last_update_time = None
@@ -213,15 +253,23 @@ class AutoController:
                     write_session_metadata(
                         csv_path, self.config, session_id=self.data.session_id,
                         test_type=self.data.test_type,
+                        hardware=self.hw,
                         extra={"protocol": {"id": "manual-monitor-v1",
                                             "purpose": "operator live monitoring"}},
                     )   # R3: audit trail
-            threading.Thread(target=self._monitor_loop, daemon=True).start()
+            self._monitor_generation += 1
+            generation = self._monitor_generation
+            self._monitor_thread = threading.Thread(
+                target=self._monitor_loop, args=(generation,),
+                name=f"aset-monitor-{generation}", daemon=True)
+            self._monitor_thread.start()
+        return True
 
     def stop_monitor(self):
         """Stop the hardware monitoring loop"""
         if self.monitor_running:
             self.monitor_running = False
+            self._monitor_generation += 1
             logger.info("Monitor loop stopped by user")
 
     def end_session(self, outcome: str = "completed", reason: str = ""):
@@ -237,6 +285,23 @@ class AutoController:
         self._start_mono = None
         self.clear_recovery_state()
 
+    def begin_physical_session(self, test_type: str = ""):
+        """Reset per-run accounting without discarding the calibrated battery model.
+
+        A different battery/profile is reset by the UI identity contract; the same
+        pack keeps its valid SoC/SoH anchor until that workflow takes a new OCV
+        observation. This closes any abandoned recording before opening a new run.
+        """
+        if getattr(self.data, "is_recording", False):
+            self.end_session("interrupted", f"superseded by new session: {test_type}")
+        self._start_time = None
+        self._start_mono = None
+        self._last_update_time = None
+        self._temp_stale_warned = False
+        self.sequence_logging_owned = False
+        self.last_charge_full_confirmed = False
+        self.clear_recovery_state()
+
     # ------------------------------------------------------------------
     # Live readback — lightweight V/I/Temp display right after Connect, before
     # any test is running. No CSV logging, no state estimator (SoC/Rin need it).
@@ -245,15 +310,26 @@ class AutoController:
 
     def start_live_readback(self):
         if self.live_readback_running or self.monitor_running:
-            return
+            return True
+        if self._live_readback_thread is not None and self._live_readback_thread.is_alive():
+            return False
         self.live_readback_running = True
-        threading.Thread(target=self._live_readback_loop, daemon=True).start()
+        self._live_readback_generation += 1
+        generation = self._live_readback_generation
+        self._live_readback_thread = threading.Thread(
+            target=self._live_readback_loop, args=(generation,),
+            name=f"aset-readback-{generation}", daemon=True)
+        self._live_readback_thread.start()
+        return True
 
     def stop_live_readback(self):
         self.live_readback_running = False
+        self._live_readback_generation += 1
 
-    def _live_readback_loop(self):
-        while self.live_readback_running and not self.monitor_running:
+    def _live_readback_loop(self, generation=None):
+        generation = self._live_readback_generation if generation is None else generation
+        while (self.live_readback_running and not self.monitor_running
+               and generation == self._live_readback_generation):
             if self.hw.is_connected:
                 try:
                     v, psu_i, load_i = self.hw.read_vi()
@@ -272,14 +348,10 @@ class AutoController:
         self.live_readback_running = False
 
     def calibrate_from_ocv(self):
-        """Calibrate SoC from OCV reading when battery is rested"""
-        if not self.hw.is_connected:
-            raise HardwareError("Hardware must be connected to calibrate from OCV")
-
-        v, psu_i, load_i = self.hw.read_vi()
-        ocv_temp = self.hw.current_temp
-        soc = self.estimator.sync_with_ocv(v, ocv_temp)
-        logger.info(f"Calibrated SoC from OCV: {v:.3f}V @ {ocv_temp:.1f}°C -> {soc:.1f}%")
+        """Use the shared rest/current-validated OCV path; never instant-anchor."""
+        soc, _v, status = self.calibrate_from_ocv_stable()
+        if status != "VALID_OCV":
+            raise HardwareError(f"OCV anchor unavailable: {status}")
         return soc
 
     # Settling parameters per chemistry  (min_rest s, window s, ΔV threshold V)
@@ -292,6 +364,7 @@ class AutoController:
         "Li-ion":   ( 60,  30, 0.005),
         "LiPO":     ( 60,  30, 0.005),
     }
+    _OCV_MAX_ABS_CURRENT_A = 0.10  # accommodates instrument zero/noise; reject meaningful current
 
     # Lead-acid surface-charge bleed-off: standard practice (Battery University
     # BU-903, IEEE 450 guidance on stationary lead-acid maintenance testing) is to
@@ -310,7 +383,9 @@ class AutoController:
     _SURFACE_CHARGE_BLEED_SAFETY_MARGIN = 1.05
 
     def calibrate_from_ocv_stable(self, on_progress=None, cancel_check=None,
-                                  allow_bleed_off=True):
+                                  allow_bleed_off=True, min_rest_override=None,
+                                  max_rest_override=None, interval_override=None,
+                                  window_override=None, spread_override=None):
         """OCV calibration แบบ wait-for-settle ตามมาตรฐาน ΔV/Δt criterion.
 
         อ่านแรงดันทุก 5 วิ จนกว่าจะผ่านทั้งสองเงื่อนไข:
@@ -337,8 +412,20 @@ class AutoController:
         คืน (soc, voltage, status)
         """
         import time as _t
+        from aset_batt.acquisition.ocv_validation import (
+            evaluate_ocv_window, OCV_STATUS_MEASUREMENT_INVALID,
+            OCV_STATUS_OUT_OF_RANGE,
+        )
         if not self.hw.is_connected:
-            raise HardwareError("Hardware must be connected to calibrate from OCV")
+            return float("nan"), float("nan"), OCV_STATUS_MEASUREMENT_INVALID
+        try:
+            self.hw.psu_off()
+            self.hw.load_off()
+            if bool(getattr(self.hw, "_psu_output_on", False)):
+                raise RuntimeError("PSU output still reports ON")
+        except Exception as exc:
+            logger.warning("Could not confirm PSU/load OFF for OCV: %s", exc)
+            return float("nan"), float("nan"), OCV_STATUS_MEASUREMENT_INVALID
 
         # A previous SoC (or the estimator's internal 50% seed) is not evidence
         # for the pack currently settling. Keep it out of the UI/CSV until the
@@ -350,54 +437,72 @@ class AutoController:
         min_rest, window, dv_thresh = self._OCV_SETTLE.get(
             chemistry, self._OCV_SETTLE["LiPO"]
         )
-        timeout   = max(min_rest * 4, 900)   # สูงสุด 15 นาที
-        interval  = 5.0                       # อ่านทุก 5 วิ
+        if min_rest_override is not None:
+            min_rest = float(min_rest_override)
+        if window_override is not None:
+            window = float(window_override)
+        if spread_override is not None:
+            dv_thresh = float(spread_override)
+        timeout = (float(max_rest_override) if max_rest_override is not None
+                   else max(min_rest * 4, 900))
+        interval = (float(interval_override) if interval_override is not None else 5.0)
 
-        readings  = []   # [(timestamp, voltage), ...]
-        t_start   = _t.time()
+        readings  = []   # elapsed, voltage, measured current, temperature, validity
+        t_start   = _t.perf_counter()
         settled   = False
 
         while True:
             if cancel_check is not None and not cancel_check():
                 break
 
-            elapsed = _t.time() - t_start
-            if elapsed > timeout:
+            elapsed = _t.perf_counter() - t_start
+            if elapsed >= timeout:
                 break
 
             try:
-                v, _, _ = self.hw.read_vi()
+                v, psu_i, load_i = self.hw.read_vi()
+                temp = self.hw.current_temp
+                current = max(abs(float(psu_i)), abs(float(load_i)))
+                current_net = float(load_i) - float(psu_i)
+                temp_stale = getattr(self.hw, "temp_is_stale", lambda: False)()
+                valid_sample = (all(math.isfinite(float(x)) for x in (v, psu_i, load_i, temp))
+                                and float(v) > 0.0
+                                and not temp_stale
+                                and getattr(self.hw, "last_voltage_source", "unknown") != "unknown")
             except Exception as exc:
-                raise HardwareError(f"OCV read failed: {exc}")
+                logger.debug("OCV sample invalid: %s", exc)
+                v = current = current_net = temp = float("nan")
+                valid_sample = False
 
             self._raise_if_otp_tripped("during OCV settle")
 
-            now = _t.time()
-            readings.append((now, v))
-
-            # เก็บเฉพาะ readings ใน window
-            cutoff  = now - window
-            readings = [(t, val) for t, val in readings if t >= cutoff]
-            in_win  = [val for _, val in readings]
-            dv      = (max(in_win) - min(in_win)) if len(in_win) >= 2 else float("nan")
-
-            if elapsed < min_rest:
-                status = "waiting"
-            elif len(in_win) < 3 or dv != dv or dv >= dv_thresh:
-                status = "checking"
+            now = _t.perf_counter()
+            readings.append((elapsed, float(v), float(current), float(temp), valid_sample))
+            if elapsed >= min_rest and (elapsed - min_rest) % interval < 1.0:
+                result = evaluate_ocv_window(
+                    readings, outputs_off=True, min_rest_s=min_rest,
+                    window_s=window, max_spread_v=dv_thresh,
+                    max_abs_current_a=self._OCV_MAX_ABS_CURRENT_A, now_s=elapsed)
             else:
-                settled = True
-                status  = "settled"
+                result = {"valid": False, "status": "NOT_RESTED",
+                          "voltage_window_v": None}
+            dv = result["voltage_window_v"]
+            status = result["status"]
+            settled = bool(result["valid"])
 
             if on_progress:
-                on_progress(elapsed, v, dv * 1000 if dv == dv else float("nan"), status)
+                try:
+                    on_progress(elapsed, v, dv * 1000 if dv is not None else float("nan"),
+                                status, current_net, temp)
+                except TypeError:
+                    on_progress(elapsed, v, dv * 1000 if dv is not None else float("nan"), status)
 
             if settled:
                 break
 
             # sleep แบบ interruptible (ทุก 0.5s ตรวจ is_connected + cancel_check + OTP)
-            t_end = _t.time() + interval
-            while _t.time() < t_end:
+            t_end = _t.perf_counter() + interval
+            while _t.perf_counter() < t_end:
                 if not self.hw.is_connected:
                     raise HardwareError("Hardware disconnected during OCV settle")
                 if cancel_check is not None and not cancel_check():
@@ -405,21 +510,35 @@ class AutoController:
                 self._raise_if_otp_tripped("during OCV settle")
                 _t.sleep(0.5)
 
-        # อ่านค่าสุดท้าย + sync estimator
-        v_final, _, _ = self.hw.read_vi()
-        temp_final    = self.hw.current_temp
-        soc = self.estimator.sync_with_ocv(v_final, temp_final)
-        final_status  = "settled" if settled else "timeout"
-        logger.info(
-            "OCV stable: %.3fV @ %.1f°C → SoC %.1f%% (%s, elapsed %.0fs)",
-            v_final, temp_final, soc, final_status, _t.time() - t_start,
-        )
+        # Final sample independently passes the same measured-current gate.
+        try:
+            v_final, psu_i, load_i = self.hw.read_vi()
+            temp_final = self.hw.current_temp
+            current_final = max(abs(float(psu_i)), abs(float(load_i)))
+            current_net_final = float(load_i) - float(psu_i)
+            final_valid = (all(math.isfinite(float(x)) for x in
+                               (v_final, psu_i, load_i, temp_final)) and float(v_final) > 0.0
+                           and getattr(self.hw, "last_voltage_source", "unknown") != "unknown"
+                           and not getattr(self.hw, "temp_is_stale", lambda: False)())
+        except Exception:
+            v_final = temp_final = current_final = float("nan")
+            current_net_final = float("nan")
+            final_valid = False
+        elapsed_final = _t.perf_counter() - t_start
+        readings.append((elapsed_final, float(v_final), float(current_final),
+                         float(temp_final), final_valid))
+        result = evaluate_ocv_window(
+            readings, outputs_off=True, min_rest_s=min_rest, window_s=window,
+            max_spread_v=dv_thresh, max_abs_current_a=self._OCV_MAX_ABS_CURRENT_A,
+            now_s=elapsed_final)
+        final_status = result["status"]
         # Surface-charge / not-actually-at-equilibrium check — see
         # BatteryModel.ocv_out_of_range_mv's docstring. This settle window is
         # tuned for coulomb-counting drift (seconds-to-minutes), not for lead-acid
         # surface charge (hours) — a reading outside the curve's own calibrated
         # range is flat/stable within the window without being at true rest.
-        oor_mv = self.estimator.battery_model.ocv_out_of_range_mv(v_final, temp_final)
+        oor_mv = (self.estimator.battery_model.ocv_out_of_range_mv(v_final, temp_final)
+                  if final_valid else 0.0)
         if oor_mv != 0.0:
             msg = (f"OCV {v_final:.3f}V is {abs(oor_mv):.0f} mV "
                    f"{'above the 100%' if oor_mv > 0 else 'below the 0%'} point of the "
@@ -445,8 +564,30 @@ class AutoController:
                     return self.calibrate_from_ocv_stable(
                         on_progress=on_progress, cancel_check=cancel_check,
                         allow_bleed_off=False)
+            final_status = OCV_STATUS_OUT_OF_RANGE
+        if result["valid"] and final_status != OCV_STATUS_OUT_OF_RANGE:
+            soc = self.estimator.sync_with_ocv(v_final, temp_final)
+        else:
+            soc = float("nan")
+            if elapsed_final >= timeout:
+                if max_rest_override is not None:
+                    final_status = "OCV_TIMEOUT"
+                elif final_status not in {
+                        "CURRENT_NOT_ZERO", "VOLTAGE_UNSTABLE", "MEASUREMENT_INVALID"}:
+                    final_status = "TIMEOUT"
+        logger.info(
+            "OCV stable: %.3fV @ %.1f°C → SoC %s (%s, elapsed %.0fs)",
+            v_final, temp_final, f"{soc:.1f}%" if math.isfinite(soc) else "N/A",
+            final_status, _t.perf_counter() - t_start,
+        )
         if on_progress:
-            on_progress(_t.time() - t_start, v_final, 0.0, final_status)
+            try:
+                on_progress(elapsed_final, v_final,
+                            result["voltage_window_v"] * 1000.0
+                            if result["voltage_window_v"] is not None else float("nan"),
+                            final_status, current_net_final, temp_final)
+            except TypeError:
+                on_progress(elapsed_final, v_final, 0.0, final_status)
         return soc, v_final, final_status
 
     def _bleed_off_surface_charge(self, on_progress=None, cancel_check=None) -> bool:
@@ -470,8 +611,8 @@ class AutoController:
         try:
             if not self.hw.set_load(True, i_bleed):
                 return False
-            t0 = _t.time()
-            while _t.time() - t0 < self._SURFACE_CHARGE_BLEED_DURATION_S:
+            t0 = _t.perf_counter()
+            while _t.perf_counter() - t0 < self._SURFACE_CHARGE_BLEED_DURATION_S:
                 if cancel_check is not None and not cancel_check():
                     ok = False
                     break
@@ -488,9 +629,9 @@ class AutoController:
                         v, safety_floor)
                     break
                 if on_progress:
-                    on_progress(_t.time() - t0, v, float("nan"), "bleeding")
-                t_end = _t.time() + self._SURFACE_CHARGE_BLEED_POLL_S
-                while _t.time() < t_end:
+                    on_progress(_t.perf_counter() - t0, v, float("nan"), "bleeding")
+                t_end = _t.perf_counter() + self._SURFACE_CHARGE_BLEED_POLL_S
+                while _t.perf_counter() < t_end:
                     if cancel_check is not None and not cancel_check():
                         ok = False
                         break
@@ -509,10 +650,13 @@ class AutoController:
     _MONITOR_MAX_CONSEC_ERRORS = 5
     _MONITOR_TARGET_PERIOD_S = 0.1   # nominal 10 Hz
 
-    def _monitor_loop(self):
+    def _monitor_loop(self, generation=None):
         """ลูปอ่าน Voltage, Current และอัปเดต SoC/UI"""
+        if not hasattr(self, "_monitor_generation"):
+            self._monitor_generation = 0
+        generation = self._monitor_generation if generation is None else generation
         consec_errors = 0
-        while self.monitor_running:
+        while self.monitor_running and generation == self._monitor_generation:
             loop_t0 = time.perf_counter()
             # Sequence threads own both estimator input and CSV provenance.
             # Waiting here rather than racing a last monitor iteration against
@@ -557,7 +701,22 @@ class AutoController:
                     # voltage OVP/UVP is handled by the discharge test loop and
                     # ChargeController so we don't kill live monitoring on a
                     # low-voltage battery that is being charged.
-                    temp = self.hw.current_temp
+                    get_temp_info = getattr(self.hw, "temperature_measurement", None)
+                    if callable(get_temp_info):
+                        temp_info = get_temp_info()
+                    else:
+                        # Compatibility for third-party test/simulation HALs;
+                        # concrete HardwareController uses the authoritative API.
+                        stale = bool(getattr(self.hw, "temp_is_stale", lambda *_: True)())
+                        temp_info = {"temperature_c": float(self.hw.current_temp),
+                                     "temperature_valid": not stale and math.isfinite(float(self.hw.current_temp)),
+                                     "temperature_age_s": None,
+                                     "temperature_source": "legacy backend",
+                                     "temperature_status": "STALE" if stale else "VALID"}
+                    temp = temp_info["temperature_c"]
+                    if not temp_info["temperature_valid"]:
+                        self._trigger_safety(f"TEMP_SENSOR_{temp_info['temperature_status']}: OTP unavailable")
+                        break
                     # current_temp has no timestamp of its own — a serial glitch or a
                     # hung ESP32 would leave it silently frozen at an old value with
                     # nothing to distinguish it from a live reading, so the OTP check
@@ -604,7 +763,10 @@ class AutoController:
 
                     # อัปเดต State Estimator ด้วย dt จริงต่อรอบ
                     # `now` was already stamped right after read_vi() above.
-                    dt = (now - self._last_update_time) if self._last_update_time else self._DEFAULT_MONITOR_DT
+                    # No measured interval exists before the first readback.
+                    # StateEstimator treats dt=0 as a timestamp initializer and
+                    # performs no physical integration for that sample.
+                    dt = (now - self._last_update_time) if self._last_update_time else 0.0
                     self._last_update_time = now
                     state = self.estimator.update(
                         v, i_net, dt=dt, temp=self.hw.current_temp
@@ -636,8 +798,7 @@ class AutoController:
 
                     # คำนวณ elapsed seconds จากเวลาเริ่มต้น (monotonic — ดู _start_mono)
                     elapsed = (time.perf_counter() - self._start_mono
-                               if self._start_mono is not None
-                               else time.time() - self._start_time)
+                               if self._start_mono is not None else 0.0)
                     self.data.log_row(
                         elapsed, v, i_net,
                         soc_for_publish, state['rin'] * 1000,  # NaN until OCV/endpoint anchor
@@ -646,6 +807,9 @@ class AutoController:
                         voltage_source=voltage_source,
                         current_source=current_source,
                         expected_dt_s=self._DEFAULT_MONITOR_DT,
+                        temperature_status=temp_info["temperature_status"],
+                        temperature_age_s=temp_info["temperature_age_s"],
+                        temperature_source=temp_info["temperature_source"],
                     )
                     consec_errors = 0   # a clean read resets the retry budget
                 except SafetyError as e:
@@ -688,6 +852,19 @@ class AutoController:
         no-op forever after any unrecoverable error — the operator has no way to
         recover monitoring short of restarting the whole application."""
         self.monitor_running = False
+        self._monitor_thread = None
+        self._monitor_generation = 0
+        self._monitor_thread = None
+        self._monitor_generation = 0
+        # Losing telemetry while an output may be active removes the software
+        # safety feedback loop. Treat that as a safety trip and cut outputs;
+        # merely stopping monitor_running would leave manual/direct load output
+        # enabled with no further cutoff supervision.
+        self.safety_triggered = True
+        operation_state = getattr(self, "operation_state", None)
+        if operation_state is not None:
+            operation_state.latch_estop()
+        self._emergency_shutdown()
         if self.event_handler:
             self.event_handler.post_event(
                 EventType.SHOW_MESSAGE,
@@ -697,7 +874,8 @@ class AutoController:
     # ------------------------------------------------------------------
 
     def start_charge(self, float_hold_s: float = 0.0, strategy: str = None,
-                     bulk_c_rate_override: float = None, reuse_session: bool = False):
+                     bulk_c_rate_override: float = None, reuse_session: bool = False,
+                     sample_callback=None, start_monitor: bool = True):
         """เริ่มชาร์จ; strategy=None → เลือกตามเคมีของแบตอัตโนมัติ
         (LeadAcid → 3-stage, Lithium → CC-CV). ส่ง strategy เพื่อ override จาก dropdown:
         "three_stage" 또는 "cc_cv". રันใน thread แยก; monitor loop ยัง log+safety ระหว่างชาร์จ
@@ -708,28 +886,38 @@ class AutoController:
         if self.is_charging:
             logger.info("Charge already running")
             return False
+        if self._charge_thread is not None and self._charge_thread.is_alive():
+            logger.info("Previous charge worker is still cleaning up")
+            return False
         if not self.hw.is_connected:
             logger.error("Cannot charge: hardware not connected")
             return False
         if self.safety_triggered:
-            # Always allow charge to proceed regardless of starting voltage —
-            # deeply-discharged batteries need charging even at near-zero volts.
-            v_now = self.hw.read_vi()[0] if self.hw.is_connected else 0.0
-            logger.info("Auto-clearing safety for charge recovery (%.2fV)", v_now)
-            self.safety_triggered = False
+            logger.error("Cannot charge: E-STOP latch requires explicit operator reset")
+            return False
         if self.estimator is None or self.estimator.battery_model is None:
             logger.error("Cannot charge: battery model unavailable")
             return False
 
+        self.last_charge_error = None
+        self.last_charge_full_confirmed = False
         self.is_charging = True
-        if not self.monitor_running:
-            self.start_monitor(reuse_session=reuse_session)
-        threading.Thread(target=self._run_charge_loop,
-                         args=(float_hold_s, strategy, bulk_c_rate_override), daemon=True).start()
+        if not self.monitor_running and start_monitor:
+            if not self.start_monitor(reuse_session=reuse_session):
+                self.is_charging = False
+                return False
+        self._charge_generation += 1
+        generation = self._charge_generation
+        self._charge_thread = threading.Thread(
+            target=self._run_charge_loop,
+            args=(float_hold_s, strategy, bulk_c_rate_override, sample_callback, generation),
+            name=f"aset-charge-{generation}", daemon=True)
+        self._charge_thread.start()
         return True
 
     def _run_charge_loop(self, float_hold_s: float, strategy: str = None,
-                         bulk_c_rate_override: float = None):
+                         bulk_c_rate_override: float = None, sample_callback=None,
+                         generation=None):
         from aset_batt.core.charge_controller import ChargeController
         logger.info("Charge loop started (strategy=%s)", strategy or "auto")
         try:
@@ -742,9 +930,14 @@ class AutoController:
             # soc_initial is already correct.  A 2 s sync here would OVERWRITE that
             # anchor with a still-polarised voltage and re-introduce the same bug.
 
+            def on_update(stage, voltage, i_charge, note):
+                self._on_charge_update(stage, voltage, i_charge, note)
+                if sample_callback is not None:
+                    sample_callback(stage, voltage, i_charge, note)
+
             self._charge_ctrl = ChargeController(
                 self.hw, self.config, self.estimator.battery_model,
-                on_update=self._on_charge_update, strategy=strategy,
+                on_update=on_update, strategy=strategy,
                 bulk_c_rate_override=bulk_c_rate_override,
             )
             final_stage = self._charge_ctrl.run(
@@ -752,11 +945,16 @@ class AutoController:
                 float_hold_s=float_hold_s,
             )
             logger.info(f"Charge loop finished at stage: {final_stage}")
+            self.last_charge_full_confirmed = bool(
+                getattr(self._charge_ctrl, "full_charge_confirmed", False))
         except Exception as e:
+            self.last_charge_full_confirmed = False
+            self.last_charge_error = e
             logger.error(f"Charge loop error: {e}")
         finally:
-            self.is_charging = False
-            self._charge_ctrl = None
+            if generation is None or generation == self._charge_generation:
+                self.is_charging = False
+                self._charge_ctrl = None
             if not self._skip_ocv_reset:
                 self._ocv_reset_after_rest("charge")
             self._skip_ocv_reset = False
@@ -778,6 +976,7 @@ class AutoController:
         logger.info("Stopping charge")
         self._skip_ocv_reset = True   # ข้าม OCV rest เมื่อหยุดกลางคัน
         self.is_charging = False
+        self._charge_generation += 1
         if self._charge_ctrl is not None:
             self._charge_ctrl.stop()
         try:
@@ -800,6 +999,7 @@ class AutoController:
                 write_session_metadata(
                     csv_path, self.config, session_id=self.data.session_id,
                     test_type=self.data.test_type,
+                    hardware=self.hw,
                     extra={"protocol": protocol or {"id": f"{label or 'unknown'}-v1"}},
                 )   # R3: audit trail
         if self._start_time is None:
@@ -821,16 +1021,20 @@ class AutoController:
                 self.estimator, "use_ekf", True)
             soc = (self.estimator.soc if getattr(self.estimator, "soc_is_initialized", True)
                    else float("nan"))
+            temp_info = self.hw.temperature_measurement()
             self.data.log_row(
                 (time.perf_counter() - self._start_mono
-                 if self._start_mono is not None else time.time() - self._start_time),
+                 if self._start_mono is not None else 0.0),
                 voltage, current,
                 soc, self.estimator.rin * 1000.0,
-                self.hw.current_temp, rin_calibrated=calibrated,
+                temp_info["temperature_c"], rin_calibrated=calibrated,
                 mode=mode, phase=mode,
                 voltage_source=getattr(self.hw, "last_voltage_source", "unknown"),
                 current_source=getattr(self.hw, "last_current_source", "unknown"),
                 expected_dt_s=expected_dt_s,
+                temperature_status=temp_info["temperature_status"],
+                temperature_age_s=temp_info["temperature_age_s"],
+                temperature_source=temp_info["temperature_source"],
             )
             # The current sample can only bound, never directly measure, SSR
             # switching latency.  Record the first near-zero read after a
@@ -856,6 +1060,9 @@ class AutoController:
                             })
                         self._validation_ssr_event_seen.add(marker)
         except Exception as e:
+            from aset_batt.storage.data_utils import StorageError
+            if isinstance(e, StorageError):
+                raise
             logger.debug("log_sample error: %s", e)
 
     def _auto_analyze(self, force_hppc: bool = False, fit_ecm=None) -> dict | None:
@@ -884,6 +1091,49 @@ class AutoController:
             return None
         if self.event_handler:
             self.event_handler.post_event(EventType.ANALYSIS_COMPLETED, res)
+        if str(getattr(self.data, "test_type", "")).lower() == "quickscan":
+            try:
+                from aset_batt.storage.data_utils import update_session_metadata
+                update_session_metadata(csv_path, {
+                    "q_removed_ah": res.get("q_removed_ah"),
+                    "q_interval_removed_ah": res.get("q_interval_removed_ah"),
+                    "quick_mean_discharge_a": res.get("quick_mean_discharge_a"),
+                    "peukert_k": res.get("quick_peukert_k", res.get("peukert_k")),
+                    "peukert_k_source": res.get("peukert_k_source", "LEGACY_UNKNOWN"),
+                    "peukert_reference_hr": res.get("peukert_reference_hr"),
+                    "peukert_reference_current_a": res.get("reference_current_c10_a"),
+                    "peukert_factor": res.get("peukert_factor"),
+                    "peukert_formula_version": "peukert-power-law-v1",
+                    "reference_current_c10_a": res.get("reference_current_c10_a"),
+                    "q_c10_interval_equivalent_ah": res.get("q_c10_interval_equivalent_ah"),
+                    "soc_start": res.get("quick_soc_start_pct"),
+                    "soc_end": res.get("quick_soc_end_pct"),
+                    "ocv_start_soc_valid": res.get("quick_ocv_start_valid"),
+                    "ocv_end_soc_valid": res.get("quick_ocv_end_valid"),
+                    "quick_full_capacity_est_ah": res.get("quick_full_capacity_est_ah"),
+                    "quick_soh_est_pct": res.get("quick_soh_est_pct"),
+                    "quick_soh_status": res.get("quick_soh_status"),
+                    "quick_capacity_est_ah": res.get("quick_capacity_est_ah"),
+                    "quick_capacity_est_valid": res.get("quick_capacity_est_valid"),
+                    "quick_capacity_est_status": res.get("quick_capacity_est_status"),
+                    "quick_soh_est_valid": res.get("quick_soh_est_valid"),
+                    "dcir_mohm": res.get("dcir_mohm"),
+                    "dcir_valid": res.get("dcir_measured"),
+                    "dcir_latency_s": res.get("dcir_latency_s"),
+                    "dcir_source": res.get("dcir_source"),
+                    "dcir_phase": res.get("dcir_phase"),
+                    "dcir_edge_type": res.get("dcir_edge_type"),
+                    "ecm_R0_mohm": res.get("r0_mohm") if res.get("ecm_identified") else None,
+                    "ecm_R1_mohm": res.get("r1_mohm") if res.get("ecm_identified") else None,
+                    "ecm_C1_F": res.get("c1_farad") if res.get("ecm_identified") else None,
+                    "ecm_tau_s": res.get("tau_s") if res.get("ecm_identified") else None,
+                    "ecm_fit_quality": res.get("ecm_r2") if res.get("ecm_identified") else None,
+                    "cca_proxy_a": res.get("cca_est_a"),
+                    "cca_proxy_source": res.get("cca_proxy_source", "UNKNOWN"),
+                    "analysis_version": "quick-screen-v5",
+                })
+            except Exception as exc:
+                logger.warning("Quick Scan result metadata update failed: %s", exc)
         campaign = getattr(self.config.system, "validation_campaign", {}) or {}
         if (campaign.get("enabled") and res.get("capacity_gradeable")
                 and res.get("capacity_basis") == "MAIN_DISCHARGE"):
@@ -907,23 +1157,15 @@ class AutoController:
         return res
 
     def _ocv_reset_after_rest(self, phase: str, rest_s: float = 30.0):
-        """Wait for surface charge to relax then sync SoC from OCV.
-
-        Called automatically after charge and discharge end so the SoC estimator
-        is re-anchored to the true resting voltage rather than drifting on coulomb
-        counting alone.  The 30-second rest is a compromise: enough for the RC
-        relaxation to settle (τ₁ ≈ 5-15s for lead-acid) without blocking the UI
-        thread (this runs in the charge/test background thread).
-        """
+        """Re-anchor only if the shared OCV current/rest/stability gates pass."""
         if self.estimator is None or not self.hw.is_connected:
             return
         try:
             logger.info("OCV reset: resting %.0fs after %s …", rest_s, phase)
             time.sleep(rest_s)
-            v, _, _ = self.hw.read_vi()
-            temp = self.hw.current_temp
-            soc = self.estimator.sync_with_ocv(v, temp)
-            logger.info("OCV reset after %s: %.3fV → SoC %.1f%%", phase, v, soc)
+            soc, v, status = self.calibrate_from_ocv_stable()
+            logger.info("OCV observation after %s: %.3fV → SoC %s (%s)",
+                        phase, v, f"{soc:.1f}%" if math.isfinite(soc) else "N/A", status)
         except Exception as e:
             logger.warning("OCV reset after %s failed: %s", phase, e)
 
@@ -958,9 +1200,11 @@ class AutoController:
 
         hw_ok = False
         try:
-            self.hw.shutdown_all()
-            hw_ok = True
-            logger.info("Hardware shutdown completed")
+            hw_ok = self.hw.shutdown_all() is not False
+            if hw_ok:
+                logger.info("Hardware shutdown completed")
+            else:
+                logger.critical("Hardware shutdown incomplete; OFF state was not confirmed")
         except Exception as e:
             logger.error(f"Error during hardware shutdown: {e}")
         # latch idempotency เฉพาะเมื่อขั้นตัดไฟ/ตัดการเชื่อมต่อสำเร็จจริง — ถ้า fail

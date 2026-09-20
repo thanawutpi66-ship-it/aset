@@ -241,7 +241,9 @@ class CloudPusher:
         self._running = False
         self._thread = None
         self._cached_analysis: dict = {}
-        self._last_analysis_t: float = 0.0
+        # Monotonic session clock: this value is an elapsed-time throttle marker,
+        # never a calendar/audit timestamp.
+        self._last_analysis_t: float | None = None
         self._csv_cache: dict = {}   # see _tail_csv_rows_incremental — persists across push_once() calls
 
     @property
@@ -270,7 +272,7 @@ class CloudPusher:
                       if self._data_handler and getattr(self._data_handler, "current_path", "")
                       else self.csv_path)
 
-            now = time.time()
+            now = time.monotonic()
             # Timing instrumentation — this whole method runs on its own background
             # thread every `interval` seconds (default 5s), sharing the GIL with the
             # acquisition worker + ESP32 monitor threads. build_payload() now reads
@@ -282,7 +284,8 @@ class CloudPusher:
             # test run's numbers can be correlated by timestamp against the
             # "worker sampled at X Hz" lines, and to confirm build stays flat now.
             _t_analysis = 0.0
-            if now - self._last_analysis_t >= self.analysis_interval:
+            if (self._last_analysis_t is None
+                    or now - self._last_analysis_t >= self.analysis_interval):
                 _a0 = time.perf_counter()
                 try:
                     self._cached_analysis = _run_analysis(self._config, active)
@@ -307,8 +310,10 @@ class CloudPusher:
                 "cloud push: rows=%s analysis=%.0fms build=%.0fms http=%.0fms total=%.0fms",
                 row_count, _t_analysis * 1000, _t_build * 1000, _t_http * 1000,
                 (_t_analysis + _t_build + _t_http) * 1000)
+            analysis_age = (0.0 if self._last_analysis_t is None
+                            else max(0.0, now - self._last_analysis_t))
             logger.debug("cloud push -> HTTP %s (rows=%s, analysis_age=%.0fs)",
-                         status, row_count, now - self._last_analysis_t)
+                         status, row_count, analysis_age)
             return True
         except Exception as e:
             logger.warning("cloud push ล้มเหลว: %s", e)
@@ -340,7 +345,7 @@ class CloudPusher:
                 try:
                     analysis = _run_analysis(self._config, csv_path)
                     self._cached_analysis = analysis
-                    self._last_analysis_t = time.time()
+                    self._last_analysis_t = time.monotonic()
                 except Exception as e:
                     analysis = {"success": False, "error": str(e)}
                 try:

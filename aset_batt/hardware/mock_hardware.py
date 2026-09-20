@@ -14,7 +14,7 @@ class MockHardwareController:
         self.is_load_connected = True
         self.is_esp_connected = False
         self.current_temp = 25.0         # °C จำลอง
-        self.last_esp_heartbeat = time.time()   # parity with HardwareController
+        self.last_esp_heartbeat = time.perf_counter()   # monotonic; parity with HardwareController
         self.inst_lock = threading.Lock()  # ต้องมีเหมือน HardwareController
 
         # จำลอง instruments (ไม่ใช้จริง แต่ต้องไม่ให้ AttributeError)
@@ -61,7 +61,7 @@ class MockHardwareController:
 
     def connect_esp32(self, port, callback=None):
         self.is_esp_connected = True
-        self.last_esp_heartbeat = time.time()
+        self.last_esp_heartbeat = time.perf_counter()
         self.set_ssr(False)  # mirror HardwareController.connect_esp32 fail-safe
 
     def temp_is_stale(self, max_age_s: float = 10.0) -> bool:
@@ -70,12 +70,20 @@ class MockHardwareController:
         link to drop) — matches the age check for interface consistency."""
         if not self.is_esp_connected:
             return True
-        return (time.time() - self.last_esp_heartbeat) > max_age_s
+        return (time.perf_counter() - self.last_esp_heartbeat) > max_age_s
+
+    def temperature_measurement(self) -> dict:
+        # Simulation has an explicit synthetic temperature source; a real
+        # disconnected ESP32 is never promoted to a valid 0 °C sample.
+        return {"temperature_c": float(self.current_temp), "temperature_valid": True,
+                "temperature_age_s": 0.0, "temperature_source": "SIMULATED",
+                "temperature_status": "VALID"}
 
     def disconnect_esp32(self):
-        self.set_ssr(False)   # mirror HardwareController.disconnect_esp32 ordering
+        ssr_off = self.set_ssr(False)   # mirror HardwareController.disconnect_esp32 ordering
         self.is_esp_connected = False
         self.ssr_state = None
+        return ssr_off
 
     def set_ssr(self, state: bool) -> bool:
         self.ssr_state = bool(state)
@@ -127,12 +135,14 @@ class MockHardwareController:
             self._load_off_t = time.monotonic()
         self._load_current = 0.0
         self._load_on_t = None
+        return True
 
     def psu_off(self):
         self._psu_voltage = 0.0
         self._charging = False
         self._psu_output_on = False
         self.set_ssr(False)
+        return True
 
     # ------------------------------------------------------------------
     # Measurement — จำลองแบตเตอรี่ลดแรงดันตามเวลา
@@ -192,8 +202,9 @@ class MockHardwareController:
     # ------------------------------------------------------------------
 
     def shutdown_all(self):
-        self.disconnect_instruments()
-        self.disconnect_esp32()
+        instruments_off = self.disconnect_instruments()
+        ssr_off = self.disconnect_esp32()
+        return bool(instruments_off and ssr_off)
 
     def disconnect_instruments(self):
         self.is_connected = False
@@ -202,6 +213,7 @@ class MockHardwareController:
         self.set_ssr(False)   # mirror HardwareController.disconnect_instruments
         self.psu_inst = None
         self.load_inst = _MockInst()
+        return True
 
     def read_measurements(self, prefer_load_v=False):
         # Convention: discharge = positive. Mirrors HardwareController.read_measurements().
@@ -216,6 +228,7 @@ class MockHardwareController:
         if state:
             self._psu_voltage = min(4.2, self._psu_voltage + 0.01)
         self.set_ssr(bool(state))
+        return True
 
     def set_psu_cccv(self, voltage, current):
         """จำลอง CC-CV charge: ตั้ง target + กระแส bulk ให้ read_vi ขับ state machine ได้"""
@@ -225,6 +238,7 @@ class MockHardwareController:
         self._charging = True
         self._psu_output_on = True
         self.set_ssr(True)
+        return True
 
 
 class _MockInst:

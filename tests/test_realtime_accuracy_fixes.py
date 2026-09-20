@@ -173,6 +173,11 @@ class _SlowFakeHW:
         time.sleep(self.read_delay_s)
         return (12.0, 0.0, 0.0)
 
+    def temp_is_stale(self, max_age_s=10.0):
+        # This fixture has no temperature worker; model a fresh sensor so the
+        # monitor reaches its timing path instead of taking the safety fallback.
+        return False
+
 
 class TestMonitorLoopTiming(unittest.TestCase):
     def _controller(self, hw):
@@ -232,8 +237,8 @@ class TestMonitorLoopTiming(unittest.TestCase):
 
         controller._monitor_loop()
         self.assertEqual(len(estimator.calls), 2)
-        # first call: no previous timestamp -> falls back to the documented 0.1 default
-        self.assertAlmostEqual(estimator.calls[0], 0.1, places=6)
+        # The first sample has no elapsed interval and must not integrate.
+        self.assertEqual(estimator.calls[0], 0.0)
         # second call: a real measured interval, small and positive (not a huge
         # wall-clock epoch difference, not negative)
         self.assertGreater(estimator.calls[1], 0.0)

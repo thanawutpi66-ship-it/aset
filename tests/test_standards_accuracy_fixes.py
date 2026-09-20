@@ -66,20 +66,20 @@ def _full_discharge_record(i_dis, rated=5.3, anchor=12.60, cutoff_v=10.45,
 class TestF1PeukertReferenceRate(unittest.TestCase):
     def test_at_reference_rate_normalization_is_noop(self):
         """Lead-acid measured at exactly I10 with hr=10 → factor 1.0."""
-        out = peukert_capacity(5.3, 0.53, 5.3, 1.10, ref_c_rate=0.1)
-        self.assertAlmostEqual(out, 5.3, places=6)
+        out = peukert_capacity(5.0, 0.50, 5.0, 1.10, ref_c_rate=0.1)
+        self.assertAlmostEqual(out, 5.0, places=6)
 
     def test_1c_to_c10_boost_factor(self):
         """1C measurement on a C10-rated pack → ×10^(k−1) = 10^0.1."""
-        out = peukert_capacity(5.3, 5.3, 5.3, 1.10, ref_c_rate=0.1)
-        self.assertAlmostEqual(out / 5.3, 10.0 ** 0.1, places=4)
+        out = peukert_capacity(5.0, 5.0, 5.0, 1.10, ref_c_rate=0.1)
+        self.assertAlmostEqual(out / 5.0, 10.0 ** 0.1, places=4)
 
     def test_old_hardcoded_02c_reference_understated_leadacid(self):
         """The exact bug: 0.1C run judged against a 0.2C reference lost
         (0.5)^0.1 ≈ 6.7% — pin that the wrong reference really does that,
         so the fix's direction is unambiguous."""
-        wrong = peukert_capacity(5.3, 0.53, 5.3, 1.10, ref_c_rate=0.2)
-        self.assertAlmostEqual(wrong / 5.3, 0.5 ** 0.1, places=4)
+        wrong = peukert_capacity(5.0, 0.50, 5.0, 1.10, ref_c_rate=0.2)
+        self.assertAlmostEqual(wrong / 5.0, 0.5 ** 0.1, places=4)
 
     def test_profile_from_config_populates_peukert_hr(self):
         from aset_batt.core.config import ConfigManager
@@ -93,13 +93,13 @@ class TestF1PeukertReferenceRate(unittest.TestCase):
         behavior for lithium (no silent 20HR default leaking in as 0.05C)."""
         from aset_batt.core import battery_profiles as bp
         for chem in ("LiPO", "LiFePO4", "Li-ion"):
-            self.assertAlmostEqual(bp.get_chemistry(chem).peukert_hr, 5.0,
+            self.assertAlmostEqual(bp.get_chemistry(chem).peukert_hr, 20.0,
                                    places=6, msg=chem)
 
     def test_analyze_series_leadacid_i10_soh_no_haircut(self):
         """Integration: healthy pack discharged at I10 → SoH ≈ 100%, not 93.3%."""
-        t, i, v, temp, q = _full_discharge_record(i_dis=0.53)
-        res = analyze_series(t, i, v, temp, q, _lead_profile(), is_hppc=False)
+        t, i, v, temp, q = _full_discharge_record(i_dis=0.50, rated=5.0)
+        res = analyze_series(t, i, v, temp, q, _lead_profile(capacity_ah=5.0), is_hppc=False)
         self.assertFalse(np.isnan(res["soh"]))
         self.assertGreater(res["soh"], 97.0,
                            "I10 run must not lose the 6.7-point 0.2C-reference haircut")
@@ -123,6 +123,7 @@ class TestF2F3PeukertCharacterizationSources(unittest.TestCase):
         src = self._src()
         self.assertNotIn('"peukert_hr": self.controller.config.battery.rated_capacity',
                          src)
+        self.assertIn('"peukert_hr": getattr(', src)
         # the hour-rate must come from the chemistry registry
         self.assertIn("get_chemistry", src)
 

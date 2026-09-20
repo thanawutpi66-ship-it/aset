@@ -57,6 +57,53 @@ def test_seq_hw_safe_off_no_controller():
     host.hw.psu_off.assert_called_once()
 
 
+def test_sequence_cancel_still_cuts_outputs_when_session_flush_fails():
+    """Logger/session failure during Cancel must not skip either output OFF."""
+    from PySide6.QtWidgets import QMessageBox
+
+    host = _make_seq_host()
+    host._seq_running = threading.Event()
+    host._seq_running.set()
+    host.lbl_wf_status = MagicMock()
+    host._set_phase_banner_idle = MagicMock()
+    host.btn_seq_cancel = MagicMock()
+    host.sig_phase_progress = MagicMock()
+    host.sig_loading = MagicMock()
+    host.sig_alarm = MagicMock()
+    host.frm_seq_result = MagicMock()
+    host.controller.end_session.side_effect = OSError("disk full")
+
+    with patch("PySide6.QtWidgets.QMessageBox.question",
+               return_value=QMessageBox.StandardButton.Yes):
+        host._on_seq_cancel()
+
+    host.hw.load_off.assert_called_once()
+    host.hw.psu_off.assert_called_once()
+    host.controller.end_session.assert_called_once_with(
+        "cancelled", "operator cancelled sequence")
+    assert any("CRITICAL" in str(call) for call in host.sig_alarm.emit.call_args_list)
+
+
+def test_fatal_monitor_communication_loss_trips_and_cuts_both_outputs():
+    from aset_batt.app.auto_controller import AutoController
+
+    controller = AutoController.__new__(AutoController)
+    controller.monitor_running = True
+    controller.safety_triggered = False
+    controller.hw = MagicMock()
+    controller.hw.set_ssr.return_value = True
+    controller.event_handler = MagicMock()
+
+    controller._stop_monitor_fatally("lost VISA communication")
+
+    assert not controller.monitor_running
+    assert controller.safety_triggered
+    controller.hw.set_ssr.assert_called_once_with(False)
+    controller.hw.load_off.assert_called_once()
+    controller.hw.psu_off.assert_called_once()
+    controller.event_handler.post_event.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # _char_check_safety  (aset_batt/ui/characterize.py)
 # ---------------------------------------------------------------------------

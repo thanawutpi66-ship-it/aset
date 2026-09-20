@@ -133,7 +133,8 @@ class DialogsMixin:
         b.nominal_voltage = prod.nominal_voltage_per_cell
         b.cells_series = prod.cells_series
         b.cells_parallel = prod.cells_parallel
-        b.rated_capacity = prod.rated_capacity_ah
+        b.rated_capacity = (prod.capacity_10h_ah if prod.capacity_10h_ah > 0.0
+                            else prod.rated_capacity_ah)
         if prod.mass_grams:
             b.mass_grams = prod.mass_grams
         if prod.max_voltage_per_cell:
@@ -204,14 +205,19 @@ class DialogsMixin:
             c_test = float(self.cb_test_crate.currentText().rstrip("C"))
         except (AttributeError, ValueError):
             c_test = 0.2
-        i_test = round(c_test * prod.rated_capacity_ah, 2)
+        reference_ah = (prod.capacity_10h_ah if prod.capacity_10h_ah > 0.0
+                        else prod.rated_capacity_ah)
+        i_test = round(c_test * reference_ah, 2)
         if len(self._wf_desc_lbls) > 3:
             self._wf_desc_lbls[3].setText(f"Discharge {c_test:g}C = {i_test:.3f} A")
         if hasattr(self, "lbl_test_crate_a"):
             self.lbl_test_crate_a.setText(f"= {i_test:.3f} A")
 
         # อัป Quick Scan DISCHARGE step (index 2) → แสดง A จริงของ 1C
-        i_1c = prod.max_cont_discharge_a if prod.max_cont_discharge_a else prod.rated_capacity_ah
+        # Quick Scan 1C follows the C10/rated Ah. A higher continuous-current
+        # limit is a safety capability, not the definition of 1C.
+        from aset_batt.ui.sequences.quick_scan import quick_scan_1c_current
+        i_1c = quick_scan_1c_current(reference_ah, self.config.battery.max_current)
         if len(self._qs_desc_lbls) > 2:
             self._qs_desc_lbls[2].setText(f"1C = {i_1c:.3f} A")
 
@@ -230,8 +236,10 @@ class DialogsMixin:
             return
         prod_name = self.cb_product.currentText() if hasattr(self, "cb_product") else ""
         prod = battery_profiles.get_product(prod_name)
-        cap = prod.rated_capacity_ah if prod else (
+        cap = ((prod.capacity_10h_ah if prod.capacity_10h_ah > 0.0 else prod.rated_capacity_ah)
+               if prod else (
             self.config.battery.rated_capacity if self.config else 0.0)
+        )
         i_test = round(c_test * cap, 2) if cap else 0.0
         if hasattr(self, "lbl_test_crate_a"):
             self.lbl_test_crate_a.setText(f"= {i_test:.3f} A" if cap else "— A")
@@ -248,8 +256,10 @@ class DialogsMixin:
             return
         prod_name = self.cb_product.currentText() if hasattr(self, "cb_product") else ""
         prod = battery_profiles.get_product(prod_name)
-        cap = prod.rated_capacity_ah if prod else (
+        cap = ((prod.capacity_10h_ah if prod.capacity_10h_ah > 0.0 else prod.rated_capacity_ah)
+               if prod else (
             self.config.battery.rated_capacity if self.config else 0.0)
+        )
         self.lbl_seq_crate_a.setText(f"= {c_rate * cap:.3f} A" if cap else "— A")
         if prod:
             self._update_charge_crate_label(prod, c_rate_override=c_rate)
@@ -257,7 +267,8 @@ class DialogsMixin:
     def _update_charge_crate_label(self, prod, c_rate_override: float = None):
         """สร้างข้อความ stage breakdown และอัป lbl_charge_crate"""
         cp    = battery_profiles.get_chemistry(prod.chemistry).charge
-        cap   = prod.rated_capacity_ah
+        cap   = (prod.capacity_10h_ah if prod.capacity_10h_ah > 0.0
+                 else prod.rated_capacity_ah)
         s     = prod.cells_series
         c_rate = c_rate_override if c_rate_override is not None else cp.bulk_c_rate
         i_bulk = c_rate * cap
@@ -651,7 +662,7 @@ class DialogsMixin:
         except Exception as exc:
             logger.error("stopping test threads on close: %s", exc)
         try:
-            if self.controller:
+            if self.controller and not getattr(self, "_close_hardware_shutdown_done", False):
                 self.controller.shutdown()
         except Exception as exc:
             logger.error("shutdown on close: %s", exc)

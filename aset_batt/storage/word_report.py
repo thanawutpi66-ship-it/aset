@@ -219,7 +219,7 @@ def _add_heading(doc, text: str, level: int):
 
 
 def _analysis_rows(analysis: dict) -> list[list[str]]:
-    return [
+    rows = [
         ["Quick Scan Grade", str(analysis.get("quick_grade", "REVIEW")),
          str(analysis.get("quick_grade_basis", "Not a Quick Scan record."))],
         ["Verified Overall Grade", str(analysis.get("overall_grade", analysis.get("grade", "REVIEW"))),
@@ -228,19 +228,33 @@ def _analysis_rows(analysis: dict) -> list[list[str]]:
          "Requires phase-labelled, full C-rate reference discharge to cut-off."],
         ["Electrical Grade", str(analysis.get("electrical_grade", "REVIEW")),
          "Requires valid DCIR/ECM pulse data."],
-        ["Observed capacity", _fmt(analysis.get("capacity_ah"), 3, " Ah"),
+        ["Charge Removed", _fmt(analysis.get("q_removed_ah", analysis.get("capacity_ah")), 3, " Ah"),
          str(analysis.get("capacity_basis", "not available"))],
+        ["Capacity Basis Status", str(analysis.get("capacity_basis_status", "CURRENT_PROFILE_BASIS")),
+         "Historical sessions retain their recorded basis and are not reinterpreted."],
+        ["OCV-normalized Estimated Full Capacity",
+         _fmt(analysis.get("quick_capacity_est_ah"), 3, " Ah"),
+         str(analysis.get("quick_capacity_est_status", "not available"))],
         ["Rate-normalised capacity", _fmt(analysis.get("capacity_rate_normalized_ah", analysis.get("capacity_norm_ah")), 3, " Ah"),
          "Diagnostic estimate; not capacity acceptance by itself."],
-        ["Observed capacity fraction", _fmt(analysis.get("soh"), 1, " %"),
+        ["Verified SoH" if not analysis.get("is_quick_scan") else "Quick SoH Estimate",
+         _fmt(analysis.get("verified_soh_pct") if not analysis.get("is_quick_scan")
+              else analysis.get("quick_soh_est_pct"), 1, " %"),
          str(analysis.get("soh_basis", ""))],
-        ["Peukert-corrected SoH", _fmt(analysis.get("soh_est"), 1, " %"),
-         "Used for Quick Scan Grade; not a measured C10 capacity result."],
-        ["DCIR @ edge", _fmt(analysis.get("dcir_mohm"), 2, " mΩ"),
-         f"valid steps: {analysis.get('dcir_n_steps', 0)}"],
-        ["ECM R0 / R1", f"{_fmt(analysis.get('r0_mohm'), 2, ' mΩ')} / {_fmt(analysis.get('r1_mohm'), 2, ' mΩ')}",
-         f"R²: {_fmt(analysis.get('ecm_r2'), 3)}; RMSE: {_fmt(analysis.get('ecm_rmse_mv'), 2, ' mV')}"],
+        ["Measured DCIR" if analysis.get("dcir_measured") else "Profile Resistance (Fallback)",
+         _fmt(analysis.get("dcir_mohm"), 2, " mΩ"),
+         f"source: {analysis.get('dcir_source', 'legacy/unknown')}; steps: {analysis.get('dcir_n_steps', 0)}"],
     ]
+    if analysis.get("ecm_identified"):
+        rows.extend([
+            ["ECM R0", _fmt(analysis.get("r0_mohm"), 2, " mΩ"),
+             str(analysis.get("r0_method", "fitted ECM"))],
+            ["ECM R1", _fmt(analysis.get("r1_mohm"), 2, " mΩ"),
+             f"R²: {_fmt(analysis.get('ecm_r2'), 3)}; RMSE: {_fmt(analysis.get('ecm_rmse_mv'), 2, ' mV')}"],
+            ["ECM C1", _fmt(analysis.get("c1_farad"), 2, " F"), "1-RC fit"],
+            ["ECM τ", _fmt(analysis.get("tau_s"), 2, " s"), "R1·C1"],
+        ])
+    return rows
 
 
 def generate_word_report(path, config, estimator=None, analysis=None, csv_path=None):
@@ -322,7 +336,11 @@ def generate_word_report(path, config, estimator=None, analysis=None, csv_path=N
     _add_table(doc, ["Field", "Recorded value"], [
         ["Battery under test", str(getattr(b, "product_name", "") or b.battery_type)],
         ["Chemistry / configuration", f"{b.battery_type}; {b.cells_series}S{b.cells_parallel}P"],
-        ["Nominal voltage / rated capacity", f"{b.pack_nominal_voltage:.2f} V / {b.rated_capacity:.2f} Ah"],
+        ["Nominal voltage / selected reference capacity", f"{b.pack_nominal_voltage:.2f} V / {b.rated_capacity:.2f} Ah"],
+        ["Capacity rating basis", f"C10 {meta.get('capacity_10h_ah', 'N/A')} Ah; C20 {meta.get('capacity_20h_ah', 'N/A')} Ah; basis version {meta.get('capacity_basis_version', 'legacy / not recorded')}"],
+        ["Peukert k / source", f"{meta.get('peukert_k', 'N/A')} / {meta.get('peukert_k_source', 'LEGACY_UNKNOWN')}"],
+        ["Peukert reference", f"{meta.get('peukert_reference_hr', 'N/A')} h; {meta.get('peukert_reference_current_a', 'N/A')} A"],
+        ["Quick Peukert factor", _fmt(meta.get('peukert_factor'), 4)],
         ["Raw CSV", os.path.basename(csv_path) if csv_path else "Not available"],
         ["Session ID / CSV SHA-256", f"{meta.get('session_id', 'Not recorded')} / {meta.get('sha256', 'Not finalized')}"],
         ["Protocol / analysis version", f"{(meta.get('protocol') or {}).get('id', 'Not recorded')} / {(meta.get('protocol') or {}).get('analysis_version', 'Not recorded')}"],
@@ -331,6 +349,19 @@ def generate_word_report(path, config, estimator=None, analysis=None, csv_path=N
         ["Sampling interval / rate", f"{_fmt(stats['median_dt_s'], 3, ' s')} / {_fmt(stats['median_hz'], 2, ' Hz')}"],
         ["Recorded phases", ", ".join(stats["modes"]) if stats["modes"] else "Not recorded (legacy CSV)"],
     ], [2700, 6660])
+
+    if meta.get("test_type") == "CoulombEfficiency":
+        _add_heading(doc, "Coulombic Efficiency", 2)
+        _add_table(doc, ["Measurement", "Recorded result"], [
+            ["Q charged (Qin)", _fmt(meta.get("Qin_Ah"), 3, " Ah")],
+            ["Q discharged (Qout)", _fmt(meta.get("Qout_Ah"), 3, " Ah")],
+            ["Coulombic Efficiency", _fmt(meta.get("eta_coulomb_pct"), 2, " %")],
+            ["Result status", str(meta.get("eta_status", "UNKNOWN"))],
+            ["Reference discharge", _fmt(meta.get("reference_discharge_current_a"), 3, " A (C10)")],
+            ["Charge duration", _fmt(_safe_float(meta.get("charge_duration_s")) / 3600, 2, " h")],
+            ["Discharge duration", _fmt(_safe_float(meta.get("discharge_duration_s")) / 3600, 2, " h")],
+            ["Interpretation", "Coulombic efficiency is not capacity SoH."],
+        ], [2700, 6660])
 
     campaign = meta.get("validation_campaign") or {}
     evidence = meta.get("validation_evidence") or {}

@@ -41,6 +41,10 @@ class MockApp(CharacterizeMixin):
         self._char_cca_thread = None
         self._char_peukert_thread = None
         self._char_running = {}
+        self._char_leases = {}
+        self._char_threads = {}
+        self._operation_leases = {}
+        self._operation_threads = {}
         self._headless = True
         
         self._seq_running = MagicMock()
@@ -49,15 +53,26 @@ class MockApp(CharacterizeMixin):
 
         # Some methods used inside
         self.controller = MagicMock()
+        self.controller.monitor_running = False
+        self.controller._monitor_thread = None
+        self.controller._live_readback_thread = None
+        self.controller.safety_triggered = False
+        self.controller.operation_state = MagicMock()
+        self.controller.operation_state.active = None
+        self.controller.operation_state.state = None
+        self.controller.operation_state.claim.return_value = MagicMock(run_id="fixture")
+        self.controller.operation_state.running = MagicMock()
+        self.controller.operation_state.cleanup = MagicMock()
+        self.operation_state = self.controller.operation_state
         self._ensure_logging = MagicMock()
         self._stop_logging_if_auto = MagicMock()
+        self._prepare_new_physical_session = MagicMock()
 
 def test_char_eta():
     app = MockApp()
-    with patch('threading.Thread') as mock_thread:
+    with patch.object(app, '_spawn_char_worker') as mock_spawn:
         app._on_char_eta_start()
-        # The target is passed to Thread
-        target = mock_thread.call_args[1]['target']
+        target = mock_spawn.call_args.args[1]
         
         # Test cancel
         app._on_char_eta_cancel()
@@ -76,9 +91,9 @@ def test_char_eta():
 
 def test_char_gitt():
     app = MockApp()
-    with patch('threading.Thread') as mock_thread:
+    with patch.object(app, '_spawn_char_worker') as mock_spawn:
         app._on_char_gitt_start()
-        target = mock_thread.call_args[1]['target']
+        target = mock_spawn.call_args.args[1]
         app._on_char_gitt_cancel()
         
         with patch('time.sleep'):
@@ -89,14 +104,14 @@ def test_char_gitt():
 
 def test_char_cca():
     app = MockApp()
-    with patch('threading.Thread') as mock_thread:
+    with patch.object(app, '_spawn_char_worker') as mock_spawn:
         with patch('aset_batt.ui.characterize.battery_profiles.get_product') as mock_get_prod:
             mock_prod = MagicMock()
             mock_prod.cca_a = 500.0
             mock_get_prod.return_value = mock_prod
             
             app._on_char_cca_start()
-            target = mock_thread.call_args[1]['target']
+            target = mock_spawn.call_args.args[1]
             app._on_char_cca_cancel()
             
             with patch('time.sleep'):
@@ -107,9 +122,9 @@ def test_char_cca():
 
 def test_char_pk():
     app = MockApp()
-    with patch('threading.Thread') as mock_thread:
+    with patch.object(app, '_spawn_char_worker') as mock_spawn:
         app._on_char_pk_start()
-        target = mock_thread.call_args[1]['target']
+        target = mock_spawn.call_args.args[1]
         app._on_char_pk_cancel()
         
         with patch('time.sleep'):

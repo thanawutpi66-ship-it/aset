@@ -784,6 +784,7 @@ class ZonesMixin:
         psu_row.addWidget(self.ed_psu_i)
         psu_on  = _btn("ON",  bg="OK",       fg="white", hover="#266a2a")
         psu_off = _btn("OFF", bg="PANEL2", hover="FIELD")
+        self.btn_psu_on, self.btn_psu_off = psu_on, psu_off
         psu_on.clicked.connect( lambda: self._psu_manual(True))
         psu_off.clicked.connect(lambda: self._psu_manual(False))
         psu_row.addWidget(psu_on)
@@ -799,6 +800,7 @@ class ZonesMixin:
         load_row.addWidget(self.ed_load_a)
         load_on  = _btn("ON",  bg="OK",       fg="white", hover="#266a2a")
         load_off = _btn("OFF", bg="PANEL2", hover="FIELD")
+        self.btn_load_on, self.btn_load_off = load_on, load_off
         load_on.clicked.connect( lambda: self._load_manual(True))
         load_off.clicked.connect(lambda: self._load_manual(False))
         load_row.addWidget(load_on)
@@ -821,6 +823,19 @@ class ZonesMixin:
         prot_row.addWidget(self.btn_check_trip)
         prot_row.addWidget(self.btn_clear_trip)
         lay.addLayout(prot_row)
+
+        lay.addWidget(self._subheader("E-LOAD PROTECTION"))
+        load_prot_row = QHBoxLayout()
+        self.lbl_load_trip = QLabel("Trip: —")
+        self.lbl_load_trip.setStyleSheet(f"color:{theme.MUTED}; font-weight:600;")
+        load_prot_row.addWidget(self.lbl_load_trip, 1)
+        self.btn_check_load_trip = _btn("Check", bg="PANEL2", hover="FIELD")
+        self.btn_clear_load_trip = _btn("Clear Trip", bg="WARN", fg="white", hover="#a06800")
+        self.btn_check_load_trip.clicked.connect(self._on_check_load_trip)
+        self.btn_clear_load_trip.clicked.connect(self._on_clear_load_trip)
+        load_prot_row.addWidget(self.btn_check_load_trip)
+        load_prot_row.addWidget(self.btn_clear_load_trip)
+        lay.addLayout(load_prot_row)
 
         note = QLabel("⚠  ใช้เฉพาะทดสอบฮาร์ดแวร์  —  ไม่มี SoC หรือ safety interlock")
         theme.style(note, lambda: f"color:{theme.WARN}; font-size:10px;")
@@ -1463,6 +1478,14 @@ class ZonesMixin:
         theme.style(self.lbl_analytics, lambda: f"color:{theme.MUTED};")
         lay.addWidget(self.lbl_analytics)
 
+        self.plot_offline_csv = pg.PlotWidget()
+        self.plot_offline_csv.setBackground(theme.GRAPH_BG)
+        self.plot_offline_csv.setLabel("bottom", "Elapsed", units="s")
+        self.plot_offline_csv.setLabel("left", "Voltage", units="V")
+        self.plot_offline_csv.showGrid(x=True, y=True, alpha=0.2)
+        self.plot_offline_csv.setMaximumHeight(190)
+        lay.addWidget(self.plot_offline_csv)
+
         # วงจร Thevenin ECM
         self.btn_ecm_toggle = QPushButton("▶ Show Equivalent Circuit")
         self.btn_ecm_toggle.setCheckable(True)
@@ -1491,7 +1514,7 @@ class ZonesMixin:
         self.lbl_grade.setFont(QFont("Segoe UI", 30, QFont.Weight.Bold))
         theme.style(self.lbl_grade, self._grade_bar_style)
         lay.addWidget(self.lbl_grade)
-        btn = _btn("Analyze Last CSV", bg="INFO", fg="white", hover="#0d4a89")
+        btn = _btn("Select File / Analyze", bg="INFO", fg="white", hover="#0d4a89")
         btn.clicked.connect(self._on_analyze_csv)
         lay.addWidget(btn)
 

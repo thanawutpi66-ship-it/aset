@@ -4,6 +4,8 @@ import json
 import os
 import math
 import uuid
+import tempfile
+import time
 from datetime import datetime
 from typing import Any, Optional
 import logging
@@ -11,16 +13,20 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class StorageError(OSError):
+    """A session could not be durably recorded; acquisition must stop safely."""
+
+
 # All new sessions use this schema, whether they are written by AutoController
 # sequences or the high-rate AcquisitionWorker.  Keep the original analysis
 # columns first so existing CSV readers remain compatible.
-SESSION_SCHEMA_VERSION = "2.1"
+SESSION_SCHEMA_VERSION = "2.3"
 SESSION_COLUMNS = [
-    "Timestamp", "Elapsed_s", "Voltage_V", "Current_A", "SoC_pct",
+    "Timestamp", "Timestamp_ISO", "Elapsed_s", "Voltage_V", "Current_A", "SoC_pct",
     "Resistance_mOhm", "Temperature_C", "Rin_Calibrated", "Capacity_Ah",
     "Mode", "Schema_Version", "Session_ID", "Test_Type", "Phase",
     "Step_Index", "Voltage_Source", "Current_Source", "Sample_Quality",
-    "Sample_Note",
+    "Sample_Note", "Temperature_Status", "Temperature_Age_s", "Temperature_Source",
 ]
 
 
@@ -59,7 +65,7 @@ def get_app_version() -> str:
 
 def write_session_metadata(csv_path: str, config: Any = None, *,
                            session_id: str = "", test_type: str = "",
-                           extra: Optional[dict] = None) -> None:
+                           extra: Optional[dict] = None, hardware: Any = None) -> None:
     """Write a companion <csv_path>.meta.json capturing the audit-trail context
     that used to exist nowhere: which operator ran this session, which exact
     software version produced it, and which calibration values (harness
@@ -90,6 +96,14 @@ def write_session_metadata(csv_path: str, config: Any = None, *,
                 operator = "unknown"
 
         product_name = getattr(battery, "product_name", "") or ""
+        peukert_snapshot = {}
+        if battery is not None:
+            try:
+                from aset_batt.core import battery_profiles
+                peukert_snapshot = battery_profiles.resolve_peukert_parameters(
+                    product_name, getattr(battery, "battery_type", ""))
+            except Exception as exc:
+                logger.warning("Peukert metadata unavailable: %s", exc)
         measured_params = {}
         if product_name:
             try:
@@ -99,7 +113,7 @@ def write_session_metadata(csv_path: str, config: Any = None, *,
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
-        now = datetime.now().isoformat(timespec="seconds")
+        now = datetime.now().astimezone().isoformat(timespec="milliseconds")
         validation_campaign = None
         try:
             from aset_batt.core.validation_campaign import normalize_campaign
@@ -131,6 +145,88 @@ def write_session_metadata(csv_path: str, config: Any = None, *,
             "harness_resistance_ohm": getattr(battery, "harness_resistance_ohm", None),
             "measured_params": measured_params,
         }
+        if peukert_snapshot:
+            reference_capacity = (peukert_snapshot.get("peukert_reference_capacity_ah")
+                                  or getattr(battery, "rated_capacity", None))
+            reference_hr = peukert_snapshot["peukert_reference_hr"]
+            reference_current = peukert_snapshot["peukert_reference_current_a"]
+            if reference_current is None and reference_capacity and reference_hr > 0.0:
+                reference_current = float(reference_capacity) / reference_hr
+            meta.update({
+                "peukert_k": peukert_snapshot["peukert_k"],
+                "peukert_k_source": peukert_snapshot["peukert_k_source"],
+                "peukert_reference_hr": peukert_snapshot["peukert_reference_hr"],
+                "peukert_reference_current_a": reference_current,
+                "peukert_reference_capacity_ah": reference_capacity,
+                "peukert_formula_version": "peukert-power-law-v1",
+            })
+        hwcfg = getattr(config, "hardware", None)
+        identity = {}
+        try:
+            candidate_identity = hardware.instrument_identity() if hardware is not None else {}
+            if isinstance(candidate_identity, dict):
+                identity = candidate_identity
+            else:
+                hardware = None
+        except Exception:
+            hardware = None
+        def _number(value, default=0.0):
+            try:
+                result = float(value)
+                return result if math.isfinite(result) else default
+            except (TypeError, ValueError):
+                return default
+        cal = {
+            "source": "CONFIGURED_OFFSET_CORRECTION",
+            "applied": hardware is not None,
+            "psu_voltage_offset_v": _number(getattr(hardware, "_psu_voltage_offset", getattr(hwcfg, "psu_v_offset", 0.0))),
+            "psu_current_offset_a": _number(getattr(hardware, "_psu_configured_current_offset", getattr(hwcfg, "psu_i_offset", 0.0))),
+            "load_voltage_offset_v": _number(getattr(hardware, "_load_voltage_offset", getattr(hwcfg, "load_v_offset", 0.0))),
+            "load_current_offset_a": _number(getattr(hardware, "_load_current_offset", getattr(hwcfg, "load_i_offset", 0.0))),
+        }
+        if hardware is not None:
+            cal.update({
+                "psu_runtime_zero_offset_a": _number(getattr(hardware, "_psu_runtime_zero_offset", 0.0)),
+                "psu_effective_current_offset_a": _number(getattr(hardware, "_psu_current_offset", cal["psu_current_offset_a"]), cal["psu_current_offset_a"]),
+            })
+        instruments = identity
+        cal["version"] = hashlib.sha256(json.dumps(cal, sort_keys=True).encode()).hexdigest()[:12]
+        cal["recorded_at"] = now
+        meta["calibration"] = cal
+        meta["instruments"] = instruments
+        meta["temperature_source"] = "MLX90614 via ESP32" if hardware is not None else "unknown"
+        meta["measurement_sources"] = {"voltage": "active instrument SCPI readback",
+                                        "current": "active instrument SCPI readback"}
+        meta["measurement_timestamp_basis"] = "HOST_READ_RETURN"
+        meta["temperature_timestamp_basis"] = "HOST_SERIAL_PARSE_ARRIVAL"
+        meta["voltage_current_alignment"] = "combined response when instrument supports it; otherwise sequential SCPI queries"
+        if system is not None:
+            meta["safety_limits"] = dict(getattr(system, "safety_limits", {}) or {})
+        resolver = getattr(config, "effective_safety_limits", None)
+        if callable(resolver):
+            try:
+                meta["effective_safety_limits"] = resolver()
+            except Exception as exc:
+                logger.warning("Effective safety snapshot unavailable: %s", exc)
+        if product_name:
+            try:
+                from aset_batt.core import battery_profiles
+                product = battery_profiles.get_product(product_name)
+                if product:
+                    meta.update({
+                        "battery_profile": product.chemistry,
+                        "battery_product": product_name,
+                        "rated_capacity_basis": product.capacity_rating_basis,
+                        "product_display_capacity_ah": product.product_display_capacity_ah or None,
+                        "capacity_10h_ah": product.capacity_10h_ah or None,
+                        "capacity_20h_ah": product.capacity_20h_ah or None,
+                        "selected_reference_capacity_ah": battery.rated_capacity,
+                        "selected_reference_rate_hr": product.peukert_hr or None,
+                        "profile_version": "battery-profiles-v2",
+                        "capacity_basis_version": "ytz6v-c10-c20-v1",
+                    })
+            except Exception as exc:
+                logger.warning("Product rating metadata unavailable: %s", exc)
         if validation_campaign is not None:
             meta["validation_campaign"] = validation_campaign
         if extra:
@@ -142,7 +238,7 @@ def write_session_metadata(csv_path: str, config: Any = None, *,
 
 
 def finalize_session_metadata(csv_path: str, outcome: str = "completed",
-                              reason: str = "") -> None:
+                              reason: str = "", checkpoint: dict | None = None) -> None:
     """Record the immutable end-of-session evidence after the CSV is closed.
 
     A row trace by itself cannot distinguish a completed capacity test from an
@@ -162,9 +258,11 @@ def finalize_session_metadata(csv_path: str, outcome: str = "completed",
             meta = {"schema_version": SESSION_SCHEMA_VERSION}
         meta.update({
             "status": outcome,
-            "ended_at": datetime.now().isoformat(timespec="seconds"),
+            "ended_at": datetime.now().astimezone().isoformat(timespec="milliseconds"),
             "end_reason": reason or outcome,
         })
+        if checkpoint is not None:
+            meta["checkpoint"] = dict(checkpoint)
         # Preserve the achieved timing by phase, beside the sequence's target
         # rate in ``protocol``.  A nominal 10 Hz setting is not evidence that
         # the instruments actually delivered 10 Hz during a pulse.
@@ -228,6 +326,45 @@ def record_session_event(csv_path: str, name: str, payload: dict) -> None:
             json.dump(meta, handle, indent=2, ensure_ascii=False)
     except OSError as exc:
         logger.warning("Could not record session event %s: %s", name, exc)
+
+
+def update_session_metadata(csv_path: str, updates: dict) -> None:
+    """Best-effort additive metadata update for measurements discovered mid-run."""
+    if not csv_path:
+        return
+    path = csv_path + ".meta.json"
+    try:
+        with open(path, encoding="utf-8") as handle:
+            meta = json.load(handle)
+        meta.update(dict(updates))
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(meta, handle, indent=2, ensure_ascii=False)
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        logger.warning("Could not update session metadata %s: %s", path, exc)
+
+
+def checkpoint_session_metadata(csv_path: str, checkpoint: dict) -> None:
+    """Atomically persist bounded recovery state; failures are acquisition faults."""
+    path = csv_path + ".meta.json"
+    tmp_path = None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            meta = json.load(handle)
+        meta["checkpoint"] = dict(checkpoint)
+        fd, tmp_path = tempfile.mkstemp(prefix=".session-meta-", suffix=".tmp",
+                                        dir=os.path.dirname(os.path.abspath(path)))
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(meta, handle, indent=2, ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    except Exception as exc:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        raise StorageError(f"session metadata checkpoint failed: {exc}") from exc
 
 
 def _sampling_summary(csv_path: str) -> dict:
@@ -407,7 +544,32 @@ def _compute_summary(rows: list) -> dict:
     avg_v = sum(v_vals) / len(v_vals) if v_vals else None
     avg_i = sum(i_vals) / len(i_vals) if i_vals else None
     capacity_ah = abs(avg_i * elapsed / 3600.0) if avg_i and elapsed else None
-    energy_wh = abs(avg_i * avg_v * elapsed / 3600.0) if avg_i and avg_v and elapsed else None
+    legacy_energy_wh = abs(avg_i * avg_v * elapsed / 3600.0) if avg_i and avg_v and elapsed else None
+    energy_in_wh = energy_out_wh = 0.0
+    energy_duration = 0.0
+    times, powers, qualities = [], [], []
+    for row in rows:
+        try:
+            tt = float(row.get("Elapsed_s", "nan"))
+            vv = float(row.get("Voltage_V", "nan"))
+            ii = float(row.get("Current_A", "nan"))
+        except (ValueError, TypeError):
+            continue
+        times.append(tt); powers.append(vv * ii)
+        qualities.append(str(row.get("Sample_Quality", "VALID")).upper())
+    dts = [times[n] - times[n - 1] for n in range(1, len(times))
+           if math.isfinite(times[n] - times[n - 1]) and times[n] > times[n - 1]]
+    max_gap = 2.5 * (sorted(dts)[len(dts) // 2] if dts else float("inf"))
+    for n in range(len(times) - 1):
+        dt = times[n + 1] - times[n]
+        if (dt <= 0 or dt > max_gap or "INVALID" in (qualities[n], qualities[n + 1])
+                or "GAP" in (qualities[n], qualities[n + 1])
+                or not math.isfinite(powers[n]) or not math.isfinite(powers[n + 1])):
+            continue
+        energy_out_wh += 0.5 * (max(0.0, powers[n]) + max(0.0, powers[n + 1])) * dt / 3600.0
+        energy_in_wh += 0.5 * (max(0.0, -powers[n]) + max(0.0, -powers[n + 1])) * dt / 3600.0
+        energy_duration += dt
+    energy_wh = energy_in_wh + energy_out_wh if energy_duration > 0 else None
 
     return {
         "row_count": len(rows),
@@ -416,6 +578,10 @@ def _compute_summary(rows: list) -> dict:
         "avg_current_a": avg_i,
         "capacity_ah": capacity_ah,
         "energy_wh": energy_wh,
+        "energy_in_wh": energy_in_wh if energy_duration > 0 else None,
+        "energy_out_wh": energy_out_wh if energy_duration > 0 else None,
+        "energy_integration_method": "TRAPEZOIDAL_MEASURED_VI",
+        "energy_legacy_average_product_wh": legacy_energy_wh,
         "test_phase": test_phase,
         "latest": {
             "Voltage_V": _f("Voltage_V"),
@@ -459,6 +625,13 @@ class DataHandler:
         self.session_id: str = ""
         self.test_type: str = ""
         self._step_index = 0
+        self.last_valid_timestamp = ""
+        self.last_phase = ""
+        self.last_flush_timestamp = ""
+        self.last_elapsed_s: float | None = None
+        self._last_checkpoint = 0.0
+        self._clock = time.perf_counter  # private deterministic test seam
+        self.flush_count = 0
 
     @staticmethod
     def make_session_path(sessions_dir: str = "sessions", label: str = "") -> str:
@@ -482,21 +655,37 @@ class DataHandler:
     def start_logging(self, filepath: str, test_type: str = ""):
         """เริ่มบันทึก CSV — คืน (True, "") หรือ (False, error_message)"""
         try:
+            self.flush_count = 0
             self.csv_file = open(filepath, 'a', newline='', encoding='utf-8-sig')
             self.csv_writer = csv.writer(self.csv_file)
             # เขียน header เฉพาะเมื่อไฟล์ใหม่ (ขนาด 0)
             if os.path.getsize(filepath) == 0:
                 self.csv_writer.writerow(SESSION_COLUMNS)
                 self.csv_file.flush()  # FIX: Prevent 0-byte file on early crash
+                self.flush_count += 1
             self.current_path = filepath
             self.is_recording = True
             self._last_row_vals = None       # new session — first row always writes
             self._last_row_elapsed = -1e9
             self._step_index = 0
+            self.last_valid_timestamp = ""
+            self.last_phase = ""
+            self.last_elapsed_s = None
+            self.last_flush_timestamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
+            self._last_checkpoint = self._clock()
+            self._last_flush = self._last_checkpoint
             self.session_id = uuid.uuid4().hex
             self.test_type = test_type
             return True, "Success"
         except Exception as e:
+            if self.csv_file is not None:
+                try:
+                    self.csv_file.close()
+                except Exception:
+                    pass
+            self.csv_file = None
+            self.csv_writer = None
+            self.is_recording = False
             return False, str(e)
 
     def flush(self) -> None:
@@ -507,7 +696,13 @@ class DataHandler:
         depending on the one-second periodic flush cadence.
         """
         if self.csv_file:
-            self.csv_file.flush()
+            try:
+                self.csv_file.flush()
+                self.flush_count += 1
+                self._last_flush = self._clock()
+                self.last_flush_timestamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
+            except Exception as exc:
+                raise StorageError(f"CSV flush failed: {exc}") from exc
 
     def stop_logging(self, outcome: str = "completed", reason: str = ""):
         """Close the CSV and mark its terminal outcome in the sidecar metadata."""
@@ -536,7 +731,16 @@ class DataHandler:
         # normal completed/aborted session has already received its start
         # snapshot before this point.
         if was_recording and self.current_path:
-            finalize_session_metadata(self.current_path, outcome, reason)
+            finalize_session_metadata(self.current_path, outcome, reason, {
+                "session_id": self.session_id,
+                "status": outcome,
+                "current_phase": self.last_phase,
+                "last_valid_data_timestamp": self.last_valid_timestamp,
+                "elapsed_engineering_s": self.last_elapsed_s,
+                "rows_written": self._step_index,
+                "last_successful_flush_timestamp": self.last_flush_timestamp,
+                "test_type": self.test_type,
+            })
 
     @staticmethod
     def _hash_file(path: str) -> str:
@@ -579,7 +783,10 @@ class DataHandler:
                 capacity_ah: Optional[float] = None, phase: str = "",
                 voltage_source: str = "unknown", current_source: str = "unknown",
                 sample_quality: str = "VALID", sample_note: str = "",
-                expected_dt_s: Optional[float] = None):
+                expected_dt_s: Optional[float] = None,
+                temperature_status: str = "NOT_AVAILABLE",
+                temperature_age_s: Optional[float] = None,
+                temperature_source: str = "unknown"):
         """
         บันทึก 1 แถวข้อมูล
 
@@ -600,6 +807,8 @@ class DataHandler:
             phase/source/quality: Per-row provenance required for later validation.
             expected_dt_s  : If supplied, a late sample is kept but marked GAP.
         """
+        if not self.is_recording or not self.csv_writer or not self.csv_file:
+            raise StorageError("CSV session is not open for writing")
         if self.is_recording and self.csv_writer:
             try:
                 phase = phase or mode
@@ -613,9 +822,14 @@ class DataHandler:
                     invalid_notes.append("missing_phase")
                 if not math.isfinite(v) or v <= 0.0:
                     invalid_notes.append("invalid_voltage")
+                if not math.isfinite(i_net):
+                    invalid_notes.append("invalid_current")
                 if invalid_notes:
                     sample_quality = "INVALID"
                     sample_note = (sample_note + "; " if sample_note else "") + "; ".join(invalid_notes)
+                if self._last_row_elapsed > -1e8 and elapsed_s <= self._last_row_elapsed:
+                    sample_quality = "INVALID"
+                    sample_note = (sample_note + "; " if sample_note else "") + "nonpositive_elapsed_interval"
                 if (expected_dt_s and self._last_row_elapsed > -1e8
                         and elapsed_s - self._last_row_elapsed > expected_dt_s * 2.5):
                     gap = elapsed_s - self._last_row_elapsed
@@ -642,18 +856,23 @@ class DataHandler:
                             f"{resistance_mohm:.2f}", f"{temp_c:.2f}",
                             "1" if rin_calibrated else "0", capacity_text, mode,
                             phase, voltage_source, current_source, sample_quality,
-                            sample_note)
+                            sample_note, temperature_status,
+                            "" if temperature_age_s is None else f"{temperature_age_s:.3f}",
+                            temperature_source)
                 if (self._throttle_redundant_rows and row_vals == self._last_row_vals
                         and elapsed_s - self._last_row_elapsed < 0.25):
                     return
                 self._last_row_vals = row_vals
                 self._last_row_elapsed = elapsed_s
                 self._step_index += 1
+                now_wall = datetime.now().astimezone()
+                timestamp_iso = now_wall.isoformat(timespec="milliseconds")
                 self.csv_writer.writerow([
                     # Full date, not just HH:MM:SS — a 4-5 h session crossing
                     # midnight otherwise wraps 23:59→00:00 with nothing to
                     # disambiguate the day during a post-hoc audit.
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    now_wall.strftime("%Y-%m-%d %H:%M:%S"),
+                    timestamp_iso,
                     # 1 ms resolution, not 0.1 s: at ~10 Hz the old %.1f quantisation
                     # gave thousands of duplicate timestamps per session (5,988 in a
                     # real file), corrupting every dt-based consumer (identify_dcir's
@@ -665,7 +884,13 @@ class DataHandler:
                     SESSION_SCHEMA_VERSION, self.session_id, self.test_type,
                     phase, str(self._step_index), voltage_source,
                     current_source, sample_quality, sample_note,
+                    temperature_status,
+                    "" if temperature_age_s is None else f"{temperature_age_s:.3f}",
+                    temperature_source,
                 ])
+                self.last_valid_timestamp = timestamp_iso if sample_quality == "VALID" else self.last_valid_timestamp
+                self.last_phase = phase
+                self.last_elapsed_s = elapsed_s
                 # flush() forces a real disk write (or, on this repo's OneDrive-synced
                 # project folder, a sync-agent wakeup) every call — at the monitor
                 # loop's ~10 Hz during CHARGE that's 10 forced writes/sec, a plausible
@@ -673,12 +898,35 @@ class DataHandler:
                 # of rows on a hard crash, which cloud push (5s interval, see
                 # cloud_push_interval) already tolerates just as well.
                 import time
-                now = time.perf_counter()
-                if now - self._last_flush >= 1.0:
-                    self._last_flush = now
-                    self.csv_file.flush()
+                now = self._clock()
+                if now - self._last_flush >= 1.0 - 1e-9:
+                    try:
+                        self.csv_file.flush()
+                        self.flush_count += 1
+                        self._last_flush = now
+                        self.last_flush_timestamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
+                    except Exception as exc:
+                        raise StorageError(f"CSV flush failed: {exc}") from exc
+                try:
+                    if now - self._last_checkpoint >= 30.0 - 1e-9:
+                        checkpoint_session_metadata(self.current_path, {
+                            "session_id": self.session_id,
+                            "status": "running",
+                            "current_phase": self.last_phase,
+                            "last_valid_data_timestamp": self.last_valid_timestamp,
+                            "elapsed_engineering_s": elapsed_s,
+                            "rows_written": self._step_index,
+                            "last_successful_flush_timestamp": self.last_flush_timestamp,
+                            "test_type": self.test_type,
+                        })
+                        self._last_checkpoint = now
+                except Exception as exc:
+                    raise StorageError(f"CSV durability/checkpoint failed: {exc}") from exc
             except Exception as e:
                 logger.error(f"CSV write error: {e}")
+                if isinstance(e, StorageError):
+                    raise
+                raise StorageError(f"CSV write failed: {e}") from e
 
     @staticmethod
     def load_profile_csv(filepath: str, default_dt: float):

@@ -59,10 +59,14 @@ def _fake_calibrate_stable(win, samples=4):
     """Replaces controller.calibrate_from_ocv_stable(): fires on_progress a few
     times synchronously (like real 5s-interval OCV samples), then cancels the
     sequence so the thread returns right after PREPARE."""
-    def _fake(on_progress=None, cancel_check=None):
+    def _fake(on_progress=None, cancel_check=None, **_policy):
         for i in range(samples):
             if on_progress:
-                on_progress(float(i * 5), 12.6 + i * 0.01, 5.0, "waiting")
+                try:
+                    on_progress(float(i * 5), 12.6 + i * 0.01, 5.0,
+                                "waiting", 0.0, 25.0)
+                except TypeError:
+                    on_progress(float(i * 5), 12.6 + i * 0.01, 5.0, "waiting")
         win._seq_running.clear()
         return 80.0, 12.64, "timeout"
     return _fake

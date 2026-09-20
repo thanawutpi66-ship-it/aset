@@ -114,7 +114,19 @@ def test_seq_common_start_bumps_generation():
             self.buf_soc = []; self.buf_rin = []; self.buf_temp = []
             self._elapsed_t0 = None
             self._run_generation = 2
-            self.controller = MagicMock(monitor_running=False)
+            self.controller = MagicMock(
+                monitor_running=False, safety_triggered=False,
+                _monitor_thread=None, _live_readback_thread=None,
+            )
+            from aset_batt.app.operation_state import OperationState
+            self.operation_state = OperationState()
+            self._operation_leases = {}
+            self._operation_threads = {}
+            self.estimator = None
+            # _seq_common_start now verifies the old monitor/readback threads
+            # have actually exited before acquiring sequence ownership.
+            self.controller._monitor_thread = None
+            self.controller._live_readback_thread = None
             self.lbl_phase_banner = MagicMock()
             self.cb_workflow_type = MagicMock()
             self.cb_workflow_type.currentText.return_value = "IEC 61960"
@@ -124,6 +136,7 @@ def test_seq_common_start_bumps_generation():
             self.sig_phase_progress = MagicMock()
             self.sig_loading = MagicMock()
             self.sig_profile_status = MagicMock()
+            self.sig_alarm = MagicMock()
 
         def _seq_reset_step_leds(self):
             pass
@@ -139,7 +152,10 @@ def test_on_run_test_bumps_generation():
         w.config.hardware.psu_port = "COM1"
         w.config.hardware.load_port = "COM2"
         w.hw = MagicMock(is_connected=True)
-        w.controller = MagicMock(is_charging=False, monitor_running=False)
+        w.controller = MagicMock(
+            is_charging=False, monitor_running=False, safety_triggered=False,
+            _monitor_thread=None, _live_readback_thread=None,
+        )
         before = w._run_generation
         w.cb_psu.addItem("COM1"); w.cb_load.addItem("COM2")
         w.cb_psu.setCurrentIndex(w.cb_psu.count() - 1)
@@ -158,7 +174,10 @@ def test_char_guard_bumps_generation_only_when_nothing_else_running():
     w = _make_window()
     try:
         w.hw = MagicMock(is_connected=True)
-        w.controller = MagicMock(monitor_running=False)
+        w.controller = MagicMock(
+            monitor_running=False, safety_triggered=False,
+            _monitor_thread=None, _live_readback_thread=None,
+        )
         w._test_thread = None
         w._seq_running = threading.Event()
         w._char_running = {}
@@ -166,12 +185,12 @@ def test_char_guard_bumps_generation_only_when_nothing_else_running():
         assert w._char_guard() is True
         assert w._run_generation == before + 1
 
-        # A second CHARACTERIZE test joining an already-active one must NOT
-        # bump again — that would invalidate the first test's own samples.
+        # A second CHARACTERIZE test joining an already-active one must be
+        # rejected because both workers share the same estimator/instruments.
         w._char_running["pk"] = threading.Event()
         w._char_running["pk"].set()
         after_first = w._run_generation
-        assert w._char_guard() is True
+        assert w._char_guard() is False
         assert w._run_generation == after_first
     finally:
         w.close()

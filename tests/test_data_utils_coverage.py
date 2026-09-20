@@ -20,7 +20,8 @@ def test_data_handler_start_stop_logging(temp_dir):
     assert ok is True
     assert handler.is_recording is True
     
-    handler.log_row(time.time(), 12.0, 5.0, 25.0, "STAGE", "NOTE", 0.01)
+    handler.log_row(time.time(), 12.0, 5.0, 25.0, 0.01, 25.0,
+                    mode="STAGE", sample_note="NOTE")
     
     handler.stop_logging()
     assert handler.is_recording is False

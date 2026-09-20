@@ -110,12 +110,23 @@ QUICK_MINI_RELAX_S = 90.0
 # keeps the head rest dominant while still recording the immediate post-
 # discharge relaxation as real data.
 QUICK_TAIL_REST_S = 60.0
+QUICK_OCV_MIN_REST_S = 180.0
+QUICK_OCV_MAX_REST_S = 600.0
+QUICK_OCV_WINDOW_S = 60.0
+QUICK_OCV_MAX_SPREAD_V = 0.010
 # At the normal 1C discharge rate the record can be sparse, but the terminal
 # region is safety- and capacity-critical.  Enter a visibly labelled 10 Hz
 # phase before reaching the actual cut-off, then stop on its first measured
 # crossing rather than letting a slow debounce pull the pack below its limit.
 QUICK_NEAR_CUTOFF_MARGIN_V = 0.35
 QUICK_NEAR_CUTOFF_SAMPLE_HZ = 10.0
+
+
+def quick_scan_1c_current(reference_capacity_ah: float, safety_max_a: float) -> float:
+    """Return 1C from the selected reference Ah, limited by the safety cap."""
+    target = max(0.0, float(reference_capacity_ah))
+    limit = max(0.0, float(safety_max_a))
+    return min(target, limit) if limit > 0.0 else target
 
 def en50342_capacity_conditions(chemistry: str, c_test: float, pack_min_v: float,
                                 cells_series: int, skip_charge: bool,
@@ -186,9 +197,14 @@ class QuickScanMixin:
             v_now, _, _ = self.hw.read_vi()
             soc_now = getattr(self.controller.estimator, "soc", 0.0)
             rated = self.controller.config.battery.rated_capacity
+            from aset_batt.core import battery_profiles
+            _product = battery_profiles.get_product(
+                self.controller.config.battery.product_name)
+            if _product and _product.capacity_10h_ah > 0.0:
+                rated = _product.capacity_10h_ah
             plan = [
-                f"Battery: {self.controller.config.battery.battery_type}",
-                f"OCV: {v_now:.3f} V  ·  Temp: {self.hw.current_temp:.1f} °C",
+                  f"Battery: {self.controller.config.battery.battery_type}",
+                  f"OCV: {v_now:.3f} V  ·  Temp: {self.hw.current_temp:.1f} °C",
                 f"OCV settle → Mini-pulse DCIR/ECM → Discharge 1C ({rated:.3f} A) → Peukert SoH",
             ]
             # Honest ETA (was a flat hardcoded 90 regardless of starting SoC or
@@ -202,9 +218,9 @@ class QuickScanMixin:
             plan = ["(hardware not ready — values unavailable)"]
         if not self._show_pretest_dialog("QUICK SCAN", plan, eta_min=eta_min):
             return
-        self._seq_common_start("btn_quick_scan", "Scanning…")
-        import threading
-        threading.Thread(target=self._quick_scan_thread, daemon=True).start()
+        if not self._seq_common_start("btn_quick_scan", "Scanning…"):
+            return
+        self._spawn_sequence_worker(self._quick_scan_thread, kind="quick-scan")
 
     def _quick_scan_thread(self):
         """Quick Scan: OCV settle → Mini-pulse DCIR/ECM → Discharge 1C → Tail rest
@@ -219,6 +235,7 @@ class QuickScanMixin:
 
         completed_ok = False
         try:
+            tail_rest_s = QUICK_OCV_MIN_REST_S
             # ── Phase 0: OCV ────────────────────────────────────────────────
             self.sig_qs_workflow.emit(0, "active")
             status("QUICK: ปิดอุปกรณ์, รอ OCV settle...")
@@ -238,7 +255,8 @@ class QuickScanMixin:
                     "mini_pulse_s": QUICK_MINI_PULSE_S,
                     "mini_relax_s": QUICK_MINI_RELAX_S,
                     "discharge_c_rate": 1.0,
-                    "tail_rest_s": QUICK_TAIL_REST_S,
+                    "tail_rest_s": tail_rest_s,
+                    "tail_rest_max_s": QUICK_OCV_MAX_REST_S,
                     "sampling_target_hz": {
                         "MINI_PULSE": DEFAULT_SAMPLE_HZ,
                         "RELAX": DEFAULT_SAMPLE_HZ,
@@ -246,8 +264,8 @@ class QuickScanMixin:
                         "NEAR_CUTOFF": QUICK_NEAR_CUTOFF_SAMPLE_HZ,
                         "TAIL_REST": 1.0,
                     },
-                    "analysis_version": "quick-screen-v3",
-                    "grade_policy": "quick grade uses Peukert-corrected SoH; verified grade requires C10 capacity",
+                    "analysis_version": "quick-screen-v5",
+                    "grade_policy": "Quick SoH uses Peukert-normalized C10-equivalent charge with valid OCV anchors; verified grade requires C10 capacity",
                 },
             )
 
@@ -257,11 +275,14 @@ class QuickScanMixin:
             # locate the step, not just the pulse's own already-loaded current.
             _rest_tail_v = []
 
-            def _ocv_progress(elapsed, v, dv_mv, st):
+            ocv_progress = {}
+            def _ocv_progress(elapsed, v, dv_mv, st, measured_i, temp_c):
+                ocv_progress.update(elapsed=elapsed, dv_mv=dv_mv, current=measured_i,
+                                    temperature=temp_c, status=st)
                 dv_str = f"{dv_mv:.1f} mV" if dv_mv == dv_mv else "—"
                 status(f"QUICK PREPARE: OCV settle {int(elapsed)} s | {v:.3f} V | ΔV {dv_str} [{st}]")
-                self.controller._log_sample(v, 0.0, mode="OCV", expected_dt_s=5.0)
-                self.update_display(v, 0.0, self.controller.estimator.soc,
+                self.controller._log_sample(v, measured_i, mode="OCV", expected_dt_s=5.0)
+                self.update_display(v, measured_i, self.controller.estimator.soc,
                                     self.controller.estimator.rin)
                 _rest_tail_v.append(v)
                 if len(_rest_tail_v) > 5:
@@ -284,11 +305,75 @@ class QuickScanMixin:
             soc, v, ocv_result = self.controller.calibrate_from_ocv_stable(
                 on_progress=_ocv_progress,
                 cancel_check=self._seq_running.is_set,
+                min_rest_override=QUICK_OCV_MIN_REST_S,
+                max_rest_override=QUICK_OCV_MAX_REST_S,
+                interval_override=10.0,
+                window_override=QUICK_OCV_WINDOW_S,
+                spread_override=QUICK_OCV_MAX_SPREAD_V,
             )
             if not self._seq_running.is_set():
                 return
-            flag = "✓ settled" if ocv_result == "settled" else "⚠ timeout"
+            flag = "✓ valid OCV" if ocv_result == "VALID_OCV" else f"⚠ {ocv_result}"
             self.sig_alarm.emit(f"[QUICK] OCV: {v:.3f} V → SoC {soc:.1f}% ({flag})")
+            try:
+                from aset_batt.storage.data_utils import update_session_metadata
+                chem = self.controller.config.battery.battery_type
+                from aset_batt.core import battery_profiles as _profiles
+                _prod = _profiles.get_product(self.controller.config.battery.product_name)
+                _chem_profile = _profiles.get_chemistry(chem)
+                _ref_hr = ((_prod.peukert_hr if _prod and _prod.peukert_hr > 0.0 else
+                            _chem_profile.peukert_hr))
+                min_rest, win_s, spread_v = self.controller._OCV_SETTLE.get(
+                    chem, self.controller._OCV_SETTLE["LiPO"])
+                update_session_metadata(self.controller.data.current_path, {
+                    "analysis_version": "quick-screen-v5",
+                    "battery_product": self.controller.config.battery.product_name,
+                    "rated_capacity_basis": getattr(_prod, "capacity_rating_basis", "UNKNOWN"),
+                    "product_display_capacity_ah": getattr(_prod, "product_display_capacity_ah", 0.0) or None,
+                    "capacity_10h_ah": getattr(_prod, "capacity_10h_ah", 0.0) or None,
+                    "capacity_20h_ah": getattr(_prod, "capacity_20h_ah", 0.0) or None,
+                    "selected_reference_capacity_ah": (
+                        _prod.capacity_10h_ah if _prod and _prod.capacity_10h_ah > 0.0
+                        else self.controller.config.battery.rated_capacity),
+                    "selected_reference_rate_hr": _ref_hr,
+                    "reference_current_c10_a": (
+                        getattr(_prod, "capacity_10h_ah", 0.0) / 10.0
+                        if _prod and getattr(_prod, "capacity_10h_ah", 0.0) > 0.0
+                        else None),
+                    "quick_scan_reference_capacity_ah": (
+                        _prod.capacity_10h_ah if _prod and _prod.capacity_10h_ah > 0.0
+                        else self.controller.config.battery.rated_capacity),
+                    "quick_scan_discharge_rate_c": 1.0,
+                    "peukert_reference_capacity_ah": (
+                        _prod.capacity_10h_ah if _prod and _prod.capacity_10h_ah > 0.0
+                        else self.controller.config.battery.rated_capacity),
+                    "peukert_reference_rate_hr": _ref_hr,
+                    "ocv_start_v": v,
+                    "ocv_start_valid": ocv_result == "VALID_OCV",
+                    "ocv_start_status": ocv_result,
+                    "ocv_start_soc_pct": soc if ocv_result == "VALID_OCV" else None,
+                    "ocv_start_soc_valid": ocv_result == "VALID_OCV",
+                    "ocv_start_temperature_c": ocv_progress.get("temperature"),
+                    "ocv_start_rest_duration_s": ocv_progress.get("elapsed", 0.0),
+                    "ocv_start_voltage_window_v": (ocv_progress.get("dv_mv", 0.0) / 1000.0),
+                    "ocv_start_max_abs_current_a": self.controller._OCV_MAX_ABS_CURRENT_A,
+                    "current_threshold_a": self.controller._OCV_MAX_ABS_CURRENT_A,
+                    "ocv_min_rest_s": QUICK_OCV_MIN_REST_S,
+                    "ocv_max_rest_s": QUICK_OCV_MAX_REST_S,
+                    "ocv_window_s": QUICK_OCV_WINDOW_S,
+                    "min_rest_s": QUICK_OCV_MIN_REST_S,
+                    "max_rest_s": QUICK_OCV_MAX_REST_S,
+                    "stability_window_s": QUICK_OCV_WINDOW_S,
+                    "ocv_max_spread_v": QUICK_OCV_MAX_SPREAD_V,
+                    "voltage_spread_limit_v": QUICK_OCV_MAX_SPREAD_V,
+                    "ocv_voltage_selection": "last_sample_of_stable_window",
+                    "battery_profile_identifier": self.controller.config.battery.product_name or chem,
+                    "ocv_curve_identifier": chem,
+                    "profile_version": "battery-profiles-v2",
+                    "capacity_basis_version": "ytz6v-c10-c20-v1",
+                })
+            except Exception as exc:
+                logger.warning("Quick Scan OCV metadata update failed: %s", exc)
             self.sig_qs_workflow.emit(0, "done")
 
             # ── Phase 1: MINI-PULSE (DCIR/ECM) ────────────────────────────
@@ -299,10 +384,23 @@ class QuickScanMixin:
             # on this same rig/chemistry validated R²=0.94-0.99 from an
             # identical 30s/10Hz pulse — see QUICK_MINI_PULSE_S's comment.
             self.sig_qs_workflow.emit(1, "active")
-            rated    = self.controller.config.battery.rated_capacity
+            from aset_batt.core import battery_profiles as _profiles
+            _product = _profiles.get_product(
+                self.controller.config.battery.product_name)
+            rated = (_product.capacity_10h_ah
+                     if _product and _product.capacity_10h_ah > 0.0
+                     else self.controller.config.battery.rated_capacity)
             max_i    = self.controller.config.battery.max_current
             i_target = round(1.0 * rated, 2)
-            i_dis    = min(i_target, max_i)   # same 1C the main discharge uses
+            i_dis    = round(quick_scan_1c_current(rated, max_i), 2)
+            try:
+                from aset_batt.storage.data_utils import update_session_metadata
+                update_session_metadata(self.controller.data.current_path, {
+                    "quick_1c_current_a": i_dis,
+                    "quick_1c_nominal_current_a": i_target,
+                })
+            except Exception as exc:
+                logger.warning("Quick Scan current metadata update failed: %s", exc)
             if i_dis < i_target:
                 self.sig_alarm.emit(
                     f"[QUICK] Requested 1C = {i_target:.3f} A but limited to "
@@ -317,12 +415,16 @@ class QuickScanMixin:
             status(f"QUICK MINI-PULSE: {i_dis:.3f} A (1C) × {QUICK_MINI_PULSE_S:.0f}s...")
             self.sig_alarm.emit(f"[QUICK] Mini-pulse: {i_dis:.3f} A × {QUICK_MINI_PULSE_S:.0f}s (DCIR/ECM)")
             self.hw.set_load(True, i_dis)
+            if not self._seq_check_load_trip():
+                return
             # Immediate low-latency edge sample — identify_dcir()'s staleness
             # gate is 0.5s; waiting for the next paced loop iteration would blow
             # straight past it, same reasoning as the main discharge loop below.
             try:
                 v_mp0, i_mp0 = self.hw.read_measurements(prefer_load_v=True)
                 self.controller._log_sample(v_mp0, i_mp0, mode="MINI_PULSE", expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
+                if not self._seq_check_load_trip():
+                    return
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
@@ -335,11 +437,13 @@ class QuickScanMixin:
             _fit_i = [0.0] * _rest_n
             _fit_v = list(_rest_tail_v)
             voc_for_fit = (sorted(_rest_tail_v)[_rest_n // 2] if _rest_n else v)
-            t_phase = _t.time() + QUICK_MINI_PULSE_S
-            while self._seq_running.is_set() and _t.time() < t_phase:
+            t_phase = _t.perf_counter() + QUICK_MINI_PULSE_S
+            while self._seq_running.is_set() and _t.perf_counter() < t_phase:
                 _iter_t0 = _t.perf_counter()
                 try:
                     v_mp, i_mp = self.hw.read_measurements(prefer_load_v=True)
+                    if not self._seq_check_load_trip():
+                        break
                     temp_mp = self.hw.current_temp
                     if not self._seq_check_temp_stale():
                         break
@@ -386,11 +490,15 @@ class QuickScanMixin:
 
             # Relaxation rest — the curve itself is data, and this also gives
             # identify_dcir() a real rest window before the main discharge edge.
-            t_phase = _t.time() + QUICK_MINI_RELAX_S
-            while self._seq_running.is_set() and _t.time() < t_phase:
+            t_phase = _t.perf_counter() + QUICK_MINI_RELAX_S
+            while self._seq_running.is_set() and _t.perf_counter() < t_phase:
                 _iter_t0 = _t.perf_counter()
                 try:
-                    v_rl, _, _ = self.hw.read_vi()
+                    v_rl, psu_i_rl, load_i_rl = self.hw.read_vi()
+                    if not self._seq_check_load_trip():
+                        break
+                    i_rl = max(abs(psu_i_rl), abs(load_i_rl))
+                    i_rl_net = load_i_rl - psu_i_rl
                     temp_rl = self.hw.current_temp
                     if not self._seq_check_temp_stale():
                         break
@@ -398,10 +506,10 @@ class QuickScanMixin:
                         break
                     _upd_now = _t.perf_counter()
                     state_rl = self.controller.estimator.update(
-                        v_rl, 0.0, dt=max(1e-3, _upd_now - _upd_last), temp=temp_rl)
+                        v_rl, i_rl_net, dt=max(1e-3, _upd_now - _upd_last), temp=temp_rl)
                     _upd_last = _upd_now
-                    self.controller._log_sample(v_rl, 0.0, mode="RELAX", expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
-                    self.update_display(v_rl, 0.0, state_rl["soc"], state_rl["rin"])
+                    self.controller._log_sample(v_rl, i_rl_net, mode="RELAX", expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
+                    self.update_display(v_rl, i_rl_net, state_rl["soc"], state_rl["rin"])
                     self._seq_kick_watchdog()
                 except Exception as e:
                     import logging
@@ -464,6 +572,8 @@ class QuickScanMixin:
             self.sig_alarm.emit(f"[QUICK] Discharge 1C: {i_dis:.3f} A  (rated {rated:.1f} Ah)")
             self.controller._ensure_logging(label="QuickScan")
             self.hw.set_load(True, i_dis)
+            if not self._seq_check_load_trip():
+                return
             # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
             last_log = _t.perf_counter()
             _dis_t0 = _t.perf_counter()
@@ -481,6 +591,8 @@ class QuickScanMixin:
             while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
+                    if not self._seq_check_load_trip():
+                        break
                     now    = _t.perf_counter()   # stamp AT the measurement
                     temp3  = self.hw.current_temp
                     if not self._seq_check_temp_stale():
@@ -541,19 +653,49 @@ class QuickScanMixin:
             self.sig_qs_workflow.emit(2, "done")
             self.sig_alarm.emit("[QUICK] Discharge complete (1C) — Peukert correction applied in analysis")
 
-            # ── Phase 3: TAIL REST (short, fixed) ─────────────────────────
-            # Replaces what used to be a THIRD full calibrate_from_ocv_stable()
-            # settle (≥300s floor for lead-acid) — see QUICK_TAIL_REST_S's
-            # comment for why a long settled tail isn't worth that cost here.
+            # ── Phase 3: TAIL REST (bounded OCV stabilization) ────────────
             self.sig_qs_workflow.emit(3, "active")
-            status(f"QUICK: พัก {QUICK_TAIL_REST_S:.0f} วิหลัง discharge...")
-            t_phase = _t.time() + QUICK_TAIL_REST_S
-            while self._seq_running.is_set() and _t.time() < t_phase:
+            status("QUICK: stabilizing end OCV (180–600 s)...")
+            tail_t0 = _t.perf_counter()
+            tail_samples = []
+            tail_last_t = None
+            end_ocv = {"valid": False, "status": "NOT_RESTED", "voltage_v": None,
+                       "temperature_c": None, "rest_s": 0.0}
+            while (self._seq_running.is_set()
+                   and time.perf_counter() - tail_t0 < QUICK_OCV_MAX_REST_S):
                 try:
-                    v_tail, _, _ = self.hw.read_vi()
-                    self.controller._log_sample(v_tail, 0.0, mode="TAIL_REST", expected_dt_s=1.0)
-                    self.update_display(v_tail, 0.0, self.controller.estimator.soc,
+                    v_tail, psu_i_tail, load_i_tail = self.hw.read_vi()
+                    i_tail = max(abs(psu_i_tail), abs(load_i_tail))
+                    i_tail_net = load_i_tail - psu_i_tail
+                    tail_temp = self.hw.current_temp
+                    self.controller._log_sample(v_tail, i_tail_net, mode="TAIL_REST", expected_dt_s=1.0)
+                    self.update_display(v_tail, i_tail_net, self.controller.estimator.soc,
                                         self.controller.estimator.rin)
+                    tail_now = time.perf_counter() - tail_t0
+                    tail_valid = (not self.hw.temp_is_stale()
+                                  and (tail_last_t is None or tail_now - tail_last_t <= 2.5))
+                    tail_samples.append((tail_now, v_tail, i_tail, tail_temp, tail_valid))
+                    tail_last_t = tail_now
+                    if (tail_now >= QUICK_OCV_MIN_REST_S
+                            and int(tail_now - QUICK_OCV_MIN_REST_S) % 10 == 0):
+                        from aset_batt.acquisition.ocv_validation import evaluate_quick_ocv_window
+                        end_ocv = evaluate_quick_ocv_window(
+                            tail_samples, outputs_off=True,
+                            max_abs_current_a=self.controller._OCV_MAX_ABS_CURRENT_A,
+                            now_s=tail_now)
+                        if end_ocv["valid"]:
+                            # np.interp in get_soc_from_ocv clamps outside the
+                            # calibrated curve. Reject those readings before
+                            # allowing them to become a valid SoC anchor.
+                            model = self.controller.estimator.battery_model
+                            oor_mv = model.ocv_out_of_range_mv(
+                                end_ocv["voltage_v"], end_ocv["temperature_c"])
+                            if oor_mv != 0.0:
+                                end_ocv["valid"] = False
+                                end_ocv["status"] = "OUT_OF_RANGE"
+                                end_ocv["out_of_range_mv"] = oor_mv
+                            else:
+                                break
                 except Exception as e:
                     import logging
                     logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
@@ -561,7 +703,39 @@ class QuickScanMixin:
                     break
             if not self._seq_running.is_set():
                 return
+            if not end_ocv["valid"] and time.perf_counter() - tail_t0 >= QUICK_OCV_MAX_REST_S:
+                end_ocv["status"] = "OCV_TIMEOUT"
+                end_ocv["rest_s"] = QUICK_OCV_MAX_REST_S
             self.sig_qs_workflow.emit(3, "done")
+
+            # Validation keeps the established last-sample voltage selection
+            # within the accepted final 60-second stability window.
+            end_soc = (self.controller.estimator.battery_model.get_soc_from_ocv(
+                end_ocv["voltage_v"], end_ocv["temperature_c"])
+                if end_ocv["valid"] else None)
+            try:
+                from aset_batt.storage.data_utils import update_session_metadata
+                update_session_metadata(self.controller.data.current_path, {
+                    "ocv_end_v": end_ocv["voltage_v"],
+                    "ocv_end_soc_pct": end_soc,
+                    "ocv_end_valid": end_ocv["valid"],
+                    "ocv_end_status": end_ocv["status"],
+                    "ocv_end_rest_s": end_ocv["rest_s"],
+                    "ocv_end_temp_c": end_ocv["temperature_c"],
+                    "ocv_end_min_rest_s": QUICK_OCV_MIN_REST_S,
+                    "ocv_end_max_rest_s": QUICK_OCV_MAX_REST_S,
+                    "ocv_end_window_s": QUICK_OCV_WINDOW_S,
+                    "ocv_end_max_spread_v": QUICK_OCV_MAX_SPREAD_V,
+                    "ocv_end_max_abs_current_a": self.controller._OCV_MAX_ABS_CURRENT_A,
+                    "ocv_end_current_threshold_a": self.controller._OCV_MAX_ABS_CURRENT_A,
+                    "current_threshold_a": self.controller._OCV_MAX_ABS_CURRENT_A,
+                    "voltage_spread_limit_v": QUICK_OCV_MAX_SPREAD_V,
+                    "ocv_end_voltage_selection": "last_sample_of_stable_window",
+                    "tail_rest_observation_v": tail_samples[-1][1] if tail_samples else None,
+                    "tail_rest_observation_valid_ocv": end_ocv["valid"],
+                })
+            except Exception as exc:
+                logger.warning("Quick Scan end OCV metadata update failed: %s", exc)
 
             # ── Phase 4: ANALYZE ─────────────────────────────────────────
             # fit_ecm=True (NOT force_hppc — see _auto_analyze's docstring):
@@ -569,7 +743,7 @@ class QuickScanMixin:
             # though it's not an HPPC test, so attempt the same 1-RC/2-RC fit
             # without suppressing SoH, which force_hppc would do.
             self.sig_qs_workflow.emit(4, "active")
-            status("QUICK ANALYZE: คำนวณ Peukert SoH และ Quick Scan Grade...")
+            status("QUICK ANALYZE: คำนวณค่าประมาณ Quick SoH และ screening grade...")
             res = self.controller._auto_analyze(fit_ecm=True)
             self.sig_qs_workflow.emit(4, "done")
             if res:
@@ -607,8 +781,8 @@ class QuickScanMixin:
             self._seq_running.clear()
             if self.controller:
                 self.controller.end_session(
-                    "completed" if completed_ok else "aborted",
-                    "quick scan completed" if completed_ok else "quick scan cancelled or failed",
+                    "completed" if completed_ok else "safety_tripped" if self._seq_safety_reason else "aborted",
+                    "quick scan completed" if completed_ok else self._seq_safety_reason or "quick scan cancelled or failed",
                 )
             self.sig_phase_progress.emit(0, 0)
             if not completed_ok:

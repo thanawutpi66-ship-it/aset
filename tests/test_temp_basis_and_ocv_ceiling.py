@@ -100,8 +100,11 @@ class TestOcvCeilingClamp(unittest.TestCase):
         # raw reading still reported truthfully...
         self.assertGreater(res["ocv_v"], ceil)
         # ...but the CCA proxy budget uses the ceiling, not the inflated value.
-        expected_cca = (ceil - 1.2 * prof.series) / (res["ri_mohm"] / 1000.0)
-        self.assertAlmostEqual(res["cca_est_a"], expected_cca, delta=0.02 * expected_cca)
+        expected_cca_25c = (ceil - 1.2 * prof.series) / (res["ri_mohm"] / 1000.0)
+        from aset_batt.acquisition.analysis import _cca_derate_to_cold
+        expected_proxy = _cca_derate_to_cold(expected_cca_25c, ceil, prof)
+        self.assertAlmostEqual(res["cca_est_a"], expected_proxy,
+                               delta=0.02 * expected_proxy)
 
     def test_voc_divergence_warning_fires_on_inconsistent_rest_history(self):
         """Local pre-pulse rest far from the whole-record rest median (surface

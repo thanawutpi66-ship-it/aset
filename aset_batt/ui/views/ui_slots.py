@@ -216,6 +216,14 @@ class UiSlotsMixin:
         self._set_temp_label_color(temp)
     @Slot(str, str)
     def _slot_profile_status(self, text, color):
+        from aset_batt.app.operation_state import ApplicationState
+        # Presentation strings must never release the worker's ownership.
+        # Late DONE/STOP callbacks are common during cleanup.
+        if self.operation_state.state is ApplicationState.ESTOP_LATCHED:
+            return
+        if (self.operation_state.active is not None
+                and text.upper() in {"IDLE", "DONE", "STOP", "STOPPED"}):
+            return
         # lbl_profile_status belonged to the legacy IEC PROFILES zone removed in
         # e7e9ab4 — a leftover reference here raised AttributeError and killed
         # the slot before the state-pill update below ever ran (Qt swallows slot
@@ -252,6 +260,14 @@ class UiSlotsMixin:
         b = self._buttons.get(key)
         if b is None:
             return
+        if (not loading and self.operation_state.active is not None
+                and self.operation_state.active.kind in {
+                    "btn_auto_seq", "btn_quick_scan", "btn_hppc_seq",
+                    "btn_cycle_life", "characterize:pk", "characterize:eta",
+                    "characterize:gitt", "characterize:cca", "manual-acquisition"}):
+            # The worker's cleanup signal can arrive before its Python thread
+            # has returned. Re-enable only from _on_operation_worker_exited.
+            return
         if loading:
             b._orig = b.text()
             b.setText(text or "…")
@@ -259,6 +275,47 @@ class UiSlotsMixin:
         else:
             b.setText(getattr(b, "_orig", b.text()))
             b.setEnabled(True)
+
+    def _on_operation_worker_exited(self, run_id):
+        """Release ownership only after worker cleanup and thread return."""
+        lease = self._operation_leases.get(run_id)
+        thread = self._operation_threads.get(run_id)
+        if lease is None:
+            return
+        # The worker emits this as its final action; joining here is a completion
+        # barrier, not a timing delay.
+        if thread is not None and thread is not __import__("threading").current_thread():
+            thread.join()
+        self.operation_state.cleanup(lease)
+        self.operation_state.release(lease)
+        self._operation_leases.pop(run_id, None)
+        self._operation_threads.pop(run_id, None)
+        if getattr(self, "_seq_lease", None) is lease:
+            self._seq_lease = None
+            self._seq_thread = None
+            self._seq_running.clear()
+            self._seq_reset_step_leds()
+            self._set_phase_banner_idle()
+            self.sig_phase_progress.emit(0, 0)
+            self.btn_seq_cancel.setEnabled(False)
+            if self.operation_state.state.value != "ESTOP_LATCHED":
+                self.sig_loading.emit(lease.kind, False, "")
+            pending = self._pending_seq_done
+            self._pending_seq_done = None
+            if pending and self.operation_state.state.value != "ESTOP_LATCHED":
+                self._slot_seq_done(*pending)
+            elif self.operation_state.state.value != "ESTOP_LATCHED":
+                self.sig_profile_status.emit("IDLE", theme.NEUTRAL)
+        else:
+            for test_id, active_lease in list(getattr(self, "_char_leases", {}).items()):
+                if active_lease is lease:
+                    self._char_leases.pop(test_id, None)
+                    self._char_threads.pop(test_id, None)
+                    if self.operation_state.state.value != "ESTOP_LATCHED":
+                        self._slot_char_update(test_id, "__DONE__")
+                    break
+        if getattr(self, "_close_after_hardware_task", False):
+            QTimer.singleShot(0, self.close)
     @Slot()
     def _slot_conn(self):
         connected  = bool(getattr(self.hw, "is_connected", False))
@@ -290,8 +347,15 @@ class UiSlotsMixin:
             else:
                 self.lbl_session.hide()
 
+        direct_readback_active = bool(
+            getattr(self, "rb_direct", None) is not None
+            and self.rb_direct.isChecked()
+            and (getattr(self, "_direct_poll_inflight", False)
+                 or getattr(self, "_direct_last_success_at", None) is not None)
+        )
         if connected:
-            self.status_label.setText("Hardware connected")
+            if not direct_readback_active:
+                self.status_label.setText("Hardware connected")
         elif conn_err:
             self.status_label.setText(f"เชื่อมต่อล้มเหลว: {conn_err.splitlines()[0]}")
         else:
@@ -341,6 +405,8 @@ class UiSlotsMixin:
                 self.lbl_ssr_state.setStyleSheet(f"color:{theme.CRIT}; font-weight:600;")
     @Slot(str)
     def _slot_safety(self, reason):
+        self.operation_state.latch_estop()
+        self._set_hardware_start_controls(False)
         self._log_alarm(f"⛔ SAFETY: {reason}")
         self.state_pill.setText("  ESTOP  ")
         self.state_pill.setStyleSheet(self._pill(theme.CRIT))
@@ -364,6 +430,20 @@ class UiSlotsMixin:
             msg = result.get("error", "unknown") if isinstance(result, dict) else "unknown"
             self.lbl_analytics.setText(f"Analysis failed: {msg}")
             self._log_alarm(f"Analysis failed: {msg}")
+            return
+        if result.get("analysis_layer") == "OFFLINE_CURRENT_REANALYSIS":
+            # Historical review must not rewrite live-test UI or cloud state.
+            self._last_analysis = result
+            self.txt_analytics.setHtml(build_results_html(result))
+            self.lbl_analytics.setText(
+                f"Offline analysis · {result.get('dataset_status', 'LEGACY_LIMITED')} · "
+                f"{result.get('integrity_status', 'INTEGRITY_HASH_UNAVAILABLE')}")
+            self.lbl_grade.setText("N/A")
+            self.btn_ecm_toggle.setEnabled(False)
+            return
+        if result.get("_offline_review"):
+            self.txt_analytics.setHtml(build_results_html(result))
+            self.lbl_analytics.setText("Historical analysis complete — active session unchanged")
             return
         self._last_analysis = result
         self._on_test_finished(result)

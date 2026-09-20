@@ -190,15 +190,54 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMi
     sig_cycle_counter   = Signal(str)       # cycle-life counter label text (cross-thread safe)
     sig_update_available = Signal(int, str)  # (behind_count, latest_commit_subject)
     sig_update_done      = Signal(bool, str)  # (ok, message) — result of applying an update
+    sig_hw_task_done     = Signal(str, object)
+    sig_operation_worker_exited = Signal(str)
 
     def __init__(self, config_manager):
         super().__init__()
         self.config = config_manager
+        from aset_batt.app.operation_state import OperationState
+        self.operation_state = OperationState()
+        self._operation_leases = {}
+        self._operation_threads = {}
+        self._pending_seq_done = None
+        # Shared sequence completion paths read this even when no sequence
+        # has started yet.  Keep the lifecycle state owned by the window so
+        # every sequence (Quick, IEC, HPPC, cycle life) has a clean baseline.
+        self._seq_safety_reason = ""
+        self._seq_thread = None
+        self._char_threads = {}
+        self._char_leases = {}
         self.controller = None
         self.hw = None
         self.data = None
         self.estimator = None
         self.thread_pool = QThreadPool.globalInstance()
+        # One app-owned worker lane for GUI-initiated VISA/serial work. Its
+        # in-flight guards below ensure Direct polling cannot queue behind itself.
+        self._hardware_pool = QThreadPool(self)
+        self._hardware_pool.setMaxThreadCount(1)
+        self._hardware_tasks = {}
+        self._hardware_ports_busy = False
+        self._hardware_connecting = False
+        self._hardware_disconnecting = False
+        self._direct_poll_inflight = False
+        self._direct_poll_requests = 0
+        self._direct_poll_executed = 0
+        self._direct_poll_skipped = 0
+        self._direct_poll_started_at = None
+        self._direct_last_success_at = None
+        self._direct_last_sample = None
+        self._direct_stale_notified = False
+        self._direct_temp_stale = False
+        self._direct_stale_after_s = 3.0
+        self._close_after_hardware_task = False
+        self._close_confirmed = False
+        self._close_hardware_shutdown_started = False
+        self._close_hardware_shutdown_done = False
+        self._close_workers_stopped = False
+        self._close_timeout_started = False
+        self._close_force_after_timeout = False
         self._pdf_notifier = _PdfNotifier()
         self._pdf_notifier.finished.connect(self._on_pdf_finished)
         self._word_notifier = _WordNotifier()
@@ -257,6 +296,8 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMi
 
         self._build_ui()
         self._connect_signals()
+        self.sig_hw_task_done.connect(self._on_hardware_task_done)
+        self.sig_operation_worker_exited.connect(self._on_operation_worker_exited)
         self._load_calibration()
 
         self._tick = QTimer(self)
@@ -291,6 +332,7 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMi
 
     def bind_controller(self, controller):
         self.controller = controller
+        controller.operation_state = self.operation_state
         self.hw = controller.hw
         self.data = controller.data
         self.estimator = controller.estimator
@@ -431,18 +473,78 @@ class BatteryQtWindow(ZonesMixin, SequencesMixin, CharacterizeMixin, UiBuilderMi
 
 
     def closeEvent(self, event):
-        if self._headless:
-            self._shutdown_services()
-            event.accept()
-            return
-        reply = QMessageBox.question(
-            self,
-            "Quit",
-            "Close the program and stop the test?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        if not self._headless and not self._close_confirmed:
+            reply = QMessageBox.question(
+                self,
+                "Quit",
+                "Close the program and stop the test?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+        self._close_confirmed = True
+        self._close_after_hardware_task = True
+        if not self._close_workers_stopped:
+            self._close_workers_stopped = True
+            self.operation_state.begin_shutdown()
+            try:
+                self._seq_running.clear()
+                for char_ev in getattr(self, "_char_running", {}).values():
+                    char_ev.clear()
+                if getattr(self, "_test_worker", None) is not None:
+                    self._test_worker.stop()
+                if self.controller is not None:
+                    self.controller.stop_charge()
+                    self.controller.stop_monitor()
+                    self.controller.stop_live_readback()
+                self._cloud_push_stop()
+            except Exception as exc:
+                logger.error("stopping workers before hardware shutdown: %s", exc)
+        for timer_attr in ("_tick", "_pulse_timer", "_flash_timer"):
+            timer = getattr(self, timer_attr, None)
+            if timer is not None:
+                timer.stop()
+        if self.controller is not None and hasattr(self.controller, "stop_live_readback"):
+            self.controller.stop_live_readback()
+        workers_active = (
+            self.operation_state.owns_hardware
+            or (self._test_thread is not None and self._test_thread.isRunning())
+            or any(t.is_alive() for t in self._operation_threads.values())
+            or (getattr(self.controller, "_monitor_thread", None)
+                and self.controller._monitor_thread.is_alive())
+            or (getattr(self.controller, "_live_readback_thread", None)
+                and self.controller._live_readback_thread.is_alive())
+            or (getattr(self.controller, "_charge_thread", None)
+                and self.controller._charge_thread.is_alive())
         )
-        if reply == QMessageBox.StandardButton.Yes:
-            self._shutdown_services()
-            event.accept()
-        else:
+        if workers_active and not self._close_force_after_timeout:
+            if not self._close_timeout_started:
+                self._close_timeout_started = True
+                QTimer.singleShot(5000, self._on_close_worker_timeout)
             event.ignore()
+            return
+        if self._hardware_tasks:
+            # Keep the window alive until the current bounded hardware operation
+            # returns; its result signal is connected to this QObject, so no late
+            # callback can target a destroyed widget.
+            event.ignore()
+            return
+        if (self.controller is not None and hasattr(self.controller, "shutdown")
+                and not self._close_hardware_shutdown_done):
+            if not self._close_hardware_shutdown_started:
+                self._close_hardware_shutdown_started = True
+                self._submit_hardware_task("shutdown", self.controller.shutdown)
+            event.ignore()
+            return
+        self._close_after_hardware_task = False
+        self._shutdown_services()
+        event.accept()
+
+    def _on_close_worker_timeout(self):
+        if not self._close_after_hardware_task:
+            return
+        self._close_force_after_timeout = True
+        if self.operation_state.owns_hardware:
+            logger.critical("Workers did not exit within 5s shutdown bound; continuing best-effort controller shutdown")
+        self.close()

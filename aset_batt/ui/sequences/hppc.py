@@ -257,7 +257,8 @@ class HppcMixin:
                    float(self.ed_hppc_relax.text() or "30")) // 60)
         if not self._show_pretest_dialog("HPPC FULL SEQUENCE", plan, eta_min=eta):
             return
-        self._seq_common_start("btn_hppc_seq", "Running…")
+        if not self._seq_common_start("btn_hppc_seq", "Running…"):
+            return
         # Snapshot on the GUI thread — see the comment in _on_auto_sequence.
         opts = {
             "n_cyc": self.spn_hppc_cycles.value(),
@@ -276,8 +277,7 @@ class HppcMixin:
             # unaffected.
             opts.update({"soc_sweep_enabled": True, "soc_step_pct": "20",
                          "soc_floor_pct": "20", "validation_preset": "hppc-map-v1"})
-        import threading
-        threading.Thread(target=self._hppc_seq_thread, args=(opts,), daemon=True).start()
+        self._spawn_sequence_worker(self._hppc_seq_thread, kind="hppc-sequence", args=(opts,))
 
     # ---- result formatting: see aset_batt/ui/report_html.py ---------------
 
@@ -383,7 +383,7 @@ class HppcMixin:
             status("HPPC SEQ: ชาร์จ CC-CV → 100%...")
             rated = self.controller.config.battery.rated_capacity
             self.controller.start_charge(strategy=None, reuse_session=True)
-            _ch_t0 = _t.time()
+            _ch_t0 = _t.perf_counter()
             _soc0 = getattr(self.controller.estimator, "soc", 50.0)
             _cp = battery_profiles.get_chemistry(
                 self.controller.config.battery.battery_type).charge
@@ -395,7 +395,7 @@ class HppcMixin:
                 try:
                     v_c, i_c, _ = self.hw.read_vi()
                     i_c = max(0.0, i_c)
-                    elapsed_ch = int(_t.time() - _ch_t0)
+                    elapsed_ch = int(_t.perf_counter() - _ch_t0)
                     status(self._charge_status_text(v_c, i_c, elapsed_ch, prefix="HPPC CHARGE"))
                     ctrl = getattr(self.controller, "_charge_ctrl", None)
                     if getattr(ctrl, "stage", None) in ("absorption", "cv"):
@@ -601,6 +601,9 @@ class HppcMixin:
                     while self._seq_running.is_set():
                         try:
                             v_s, i_s = self.hw.read_measurements(prefer_load_v=True)
+                            if not self._seq_check_load_trip():
+                                hppc_safety_tripped = True
+                                break
                             temp_s = self.hw.current_temp
                             if not self._seq_check_temp_stale():
                                 hppc_safety_tripped = True
@@ -681,7 +684,7 @@ class HppcMixin:
                 # estimator.soc crosses the floor), so this intentionally shows
                 # per-level progress rather than a whole-sweep ETA with false
                 # precision — see sig_alarm below for level-level visibility.
-                _hppc_t0 = _t.time()
+                _hppc_t0 = _t.perf_counter()
                 _hppc_total = n_cyc * (relax_s + pulse_s)
                 if regen_enabled:
                     _hppc_total += n_cyc * (relax_s + pulse_s)
@@ -716,10 +719,10 @@ class HppcMixin:
                 # locate the step (fit_model._detect_step()), not just the pulse's
                 # own already-loaded current throughout.
                 _relax_tail_v = []
-                _t_relax0 = _t.time()
+                _t_relax0 = _t.perf_counter()
                 t_phase = _t_relax0 + relax_eff
                 _settle_win = []   # (wall_t, v) for the settle early-exit check
-                while self._seq_running.is_set() and _t.time() < t_phase:
+                while self._seq_running.is_set() and _t.perf_counter() < t_phase:
                     _iter_t0 = _t.perf_counter()
                     try:
                         v_r, _, _ = self.hw.read_vi()
@@ -761,7 +764,7 @@ class HppcMixin:
                             _relax_tail_v.pop(0)
                         self.update_display(v_r, 0.0, state_r["soc"], state_r["rin"])
                         self._seq_kick_watchdog()
-                        elapsed_h = int(_t.time() - _hppc_t0)
+                        elapsed_h = int(_t.perf_counter() - _hppc_t0)
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                         if v_r <= pack_min:
                             self._seq_running.clear()
@@ -776,7 +779,7 @@ class HppcMixin:
                         # Settle early-exit for the ADAPTIVE extension only —
                         # checked AFTER the rest-UVP trip above so a settled-but-
                         # empty pack still aborts instead of pulsing.
-                        _now_w = _t.time()
+                        _now_w = _t.perf_counter()
                         _settle_win.append((_now_w, v_r))
                         while _settle_win and _now_w - _settle_win[0][0] > 2.0 * _SETTLE_WIN_S:
                             _settle_win.pop(0)
@@ -812,6 +815,9 @@ class HppcMixin:
                     break
                 # Pulse leg
                 self.hw.set_load(True, str(i_pulse))
+                if not self._seq_check_load_trip():
+                    hppc_safety_tripped = True
+                    break
                 # Capture one sample immediately after the SCPI command returns, before
                 # the ~0.2s-paced while loop below even starts its first iteration —
                 # identify_dcir()'s single-step method needs a post-edge sample within
@@ -856,7 +862,7 @@ class HppcMixin:
                 _fit_v = list(_relax_tail_v)
                 voc_for_fit = (sorted(_relax_tail_v)[_rest_n // 2]
                                if _rest_n else v_r)
-                t_phase = _t.time() + pulse_s
+                t_phase = _t.perf_counter() + pulse_s
                 # Per-substep timing breakdown for the achieved-rate alarm below —
                 # "sampling only 0.7 Hz" alone doesn't say WHERE the ~1.4s/iteration
                 # went (SCPI round-trip vs CSV/cloud log vs Qt display paint), so a
@@ -864,11 +870,14 @@ class HppcMixin:
                 # hand. Wall-clock, not CPU time — this is exactly the real latency
                 # budget the pacing loop below is fighting.
                 _t_scpi = _t_log = _t_display = 0.0
-                while self._seq_running.is_set() and _t.time() < t_phase:
+                while self._seq_running.is_set() and _t.perf_counter() < t_phase:
                     _iter_t0 = _t.perf_counter()
                     try:
                         _s0 = _t.perf_counter()
                         v_p, i_p = self.hw.read_measurements(prefer_load_v=True)
+                        if not self._seq_check_load_trip():
+                            hppc_safety_tripped = True
+                            break
                         temp_h = self.hw.current_temp
                         _t_scpi += _t.perf_counter() - _s0
                         # discharge-positive convention (matches AUTO/QUICK SCAN) — do
@@ -907,7 +916,7 @@ class HppcMixin:
                         self.update_display(v_p, i_p, state_p["soc"], state_p["rin"])
                         _t_display += _t.perf_counter() - _s2
                         self._seq_kick_watchdog()
-                        elapsed_h = int(_t.time() - _hppc_t0)
+                        elapsed_h = int(_t.perf_counter() - _hppc_t0)
                         self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                         if v_p <= hppc_load_floor:
                             self._seq_running.clear()
@@ -1054,9 +1063,9 @@ class HppcMixin:
                         # fit from regen-rest samples.
                         status(f"HPPC {cyc}/{n_cyc}{_level_label}: REGEN REST {relax_s:.0f}s...")
                         _regen_tail_v = []
-                        _t_regen_relax0 = _t.time()
+                        _t_regen_relax0 = _t.perf_counter()
                         while (self._seq_running.is_set()
-                              and _t.time() < _t_regen_relax0 + relax_s):
+                              and _t.perf_counter() < _t_regen_relax0 + relax_s):
                             _iter_t0 = _t.perf_counter()
                             try:
                                 v_rg, _, _ = self.hw.read_vi()
@@ -1079,7 +1088,7 @@ class HppcMixin:
                                     _regen_tail_v.pop(0)
                                 self.update_display(v_rg, 0.0, state_rg["soc"], state_rg["rin"])
                                 self._seq_kick_watchdog()
-                                elapsed_h = int(_t.time() - _hppc_t0)
+                                elapsed_h = int(_t.perf_counter() - _hppc_t0)
                                 self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                                 if v_rg <= pack_min:
                                     self._seq_running.clear()
@@ -1113,9 +1122,9 @@ class HppcMixin:
                                     'Ignored exception: %s', e, exc_info=True)
                             status(f"HPPC {cyc}/{n_cyc}{_level_label}: REGEN PULSE "
                                   f"{pulse_s:.0f}s  -{i_regen:.3f} A")
-                            _t_regen_pulse0 = _t.time()
+                            _t_regen_pulse0 = _t.perf_counter()
                             while (self._seq_running.is_set()
-                                  and _t.time() < _t_regen_pulse0 + pulse_s):
+                                  and _t.perf_counter() < _t_regen_pulse0 + pulse_s):
                                 _iter_t0 = _t.perf_counter()
                                 try:
                                     v_rp, i_rp = self.hw.read_measurements(prefer_load_v=False)
@@ -1135,7 +1144,7 @@ class HppcMixin:
                                                                 expected_dt_s=1.0 / DEFAULT_SAMPLE_HZ)
                                     self.update_display(v_rp, i_rp, state_rp["soc"], state_rp["rin"])
                                     self._seq_kick_watchdog()
-                                    elapsed_h = int(_t.time() - _hppc_t0)
+                                    elapsed_h = int(_t.perf_counter() - _hppc_t0)
                                     self.sig_phase_progress.emit(elapsed_h, int(_hppc_total))
                                     if v_rp >= hppc_regen_ceiling:
                                         self._seq_running.clear()
@@ -1227,11 +1236,12 @@ class HppcMixin:
             self._seq_hw_safe_off()
             self._seq_running.clear()
             if self.controller:
-                outcome = ("completed" if completed_ok and not hppc_safety_tripped
-                           else "safety_tripped" if hppc_safety_tripped else "aborted")
+                safety_tripped = hppc_safety_tripped or bool(self._seq_safety_reason)
+                outcome = ("completed" if completed_ok and not safety_tripped
+                           else "safety_tripped" if safety_tripped else "aborted")
                 self.controller.end_session(
                     outcome,
-                    "HPPC completed" if outcome == "completed" else outcome.replace("_", " "),
+                    "HPPC completed" if outcome == "completed" else self._seq_safety_reason or outcome.replace("_", " "),
                 )
             self.sig_phase_progress.emit(0, 0)
             if not completed_ok:

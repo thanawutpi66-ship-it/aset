@@ -120,13 +120,24 @@ physics constants for two accuracy fixes:
 | Field | Chemistry | Value | Physics |
 |---|---|---|---|
 | `temp_coeff_mv_per_degc` | LeadAcid | 0.40 mV/°C/cell | Nernst — H₂SO₄ OCV rises with temperature |
-| `peukert_k` | LeadAcid | 1.30 | Peukert — capacity is current-rate dependent |
-| `peukert_hr` | LeadAcid | 10.0 (C10) | Hour-rate at which rated capacity is specified |
+| `peukert_k` | LeadAcid chemistry default | 1.10 | Chemistry-level AGM assumption; product profiles can override it |
+| `peukert_hr` | LeadAcid | 10.0 (C10) | Hour-rate at which rated capacity is specified; YTZ6V C10=5.0Ah (0.500A), C20=5.3Ah (0.265A), Quick Scan 1C=5.0A |
 
-**Products**: YTZ7V (7Ah), YTZ6V (5Ah), **FB FTZ6V (5.3Ah/90CCA)**, Generic 4S LiFePO4,
+**Products**: YTZ7V (7Ah), YTZ6V (5.0Ah C10 / 5.3Ah C20), **FB FTZ6V (5.3Ah/90CCA)**, Generic 4S LiFePO4,
 Little Bee MV20-12 (20Ah SLA), Lithium Valley LFP 25.6V 50Ah.
 
 The integrated app's runtime config is `config.json` (managed by `config.py`).
+
+Peukert k is resolved from a product override first, then the chemistry default,
+then a built-in/generic fallback. The current YTZ6V configured exponent is 1.16,
+classified `PROVISIONAL_EMPIRICAL_UNVERIFIED` from existing Quick Scan evidence;
+it is not physically characterized or manufacturer-certified
+or physically characterized in this repository. LeadAcid chemistry k=1.10 is
+`CHEMISTRY_DEFAULT_ASSUMPTION`, not a verified YTZ6V value. CHARACTERIZE results
+are retained as measured parameters but require an explicit activation policy
+before they can become the production k. New Quick Scan sidecars record the
+effective k and source; file reanalysis reports stored historical k separately
+from today's current-profile k.
 
 ---
 
