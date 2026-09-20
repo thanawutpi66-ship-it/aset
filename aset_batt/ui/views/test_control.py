@@ -169,6 +169,16 @@ class TestControlMixin:
             
         self._ensure_battery_sn()
 
+        # Ensure estimator has a valid SoC anchor before test starts if resting
+        if self.estimator is not None and not getattr(self.estimator, "soc_is_initialized", False):
+            try:
+                v_now, i_now = self.hw.read_measurements(prefer_load_v=True)
+                temp_now = getattr(self.hw, "current_temp", 25.0)
+                if abs(i_now) < 0.5 and v_now > 1.0:
+                    self.estimator.sync_with_ocv(v_now, temp_now)
+            except Exception as e:
+                logger.debug("Pre-test OCV sync skipped: %s", e)
+
         op_mode = mode or OperationMode(self.cb_op_mode.currentText())
         cfg = TestConfig(self._acq_profile(), op_mode)
         
@@ -176,7 +186,7 @@ class TestControlMixin:
         if op_mode not in (OperationMode.HPPC, OperationMode.CC_CV_CHARGE):
             # C-rate override
             if hasattr(self, 'cb_manual_discharge_crate'):
-                c_txt = self.cb_manual_discharge_crate.currentText().replace("C", "")
+                c_txt = self.cb_manual_discharge_crate.currentText().replace("C", "").strip()
                 try:
                     cfg.profile.discharge_c_rate = float(c_txt)
                 except ValueError:
@@ -233,7 +243,12 @@ class TestControlMixin:
             self.btn_run_test.setEnabled(False)
         self._test_thread.start()
         self.sig_profile_status.emit("RUN", theme.INFO)
-        self._log_alarm(f"Characterization started: {cfg.mode.value}")
+        if cfg.mode == OperationMode.CC_DISCHARGE:
+            crate = getattr(cfg.profile, 'discharge_c_rate', 0.2)
+            i_target = min(crate * cfg.profile.capacity_ah, cfg.profile.max_discharge_a)
+            self._log_alarm(f"Characterization started: {cfg.mode.value} ({crate:g}C = {i_target:.2f} A)")
+        else:
+            self._log_alarm(f"Characterization started: {cfg.mode.value}")
     def _on_stop_test(self):
         if self._test_worker:
             self._test_worker.stop()
@@ -248,15 +263,21 @@ class TestControlMixin:
             self.metric_labels["Voltage"][0].setText(f'{row["v"]:.2f} {self.metric_labels["Voltage"][1]}')
             self.metric_labels["Current"][0].setText(f'{row["i"]:.3f} {self.metric_labels["Current"][1]}')
             soc_is_initialized = getattr(getattr(self, "estimator", None), "soc_is_initialized", True)
-            if not soc_is_initialized:
+            soc_val = row.get("soc")
+            if not soc_is_initialized and (soc_val is None or soc_val != soc_val):
                 self.metric_labels["SoC"][0].setText(f'— {self.metric_labels["SoC"][1]}')
-            elif row.get("soc") == row.get("soc"):  # not NaN
+            elif soc_val is not None and soc_val == soc_val:  # not NaN
                 _u = self.metric_labels["SoC"][1]
                 _std = row.get("soc_std", getattr(getattr(self, "estimator", None), "soc_std", None))
                 if _std is not None and _std == _std:
-                    self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} ±{min(_std, 99):.0f} {_u}')
+                    self.metric_labels["SoC"][0].setText(f'{soc_val:.1f} ±{min(_std, 99):.0f} {_u}')
                 else:
-                    self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} {_u}')
+                    self.metric_labels["SoC"][0].setText(f'{soc_val:.1f} {_u}')
+                self.metric_labels["SoC"][0].setStyleSheet(f"color:{theme.TEXT}; border:0;")
+            elif getattr(getattr(self, "estimator", None), "soc_is_initialized", False):
+                _u = self.metric_labels["SoC"][1]
+                self.metric_labels["SoC"][0].setText(f'{self.estimator.soc:.1f} {_u}')
+                self.metric_labels["SoC"][0].setStyleSheet(f"color:{theme.TEXT}; border:0;")
             self.metric_labels["Temp"][0].setText(f'{row["temp"]:.1f} {self.metric_labels["Temp"][1]}')
         self._set_temp_label_color(row["temp"])
         # Throttled the same way as _slot_display — see its comment. Target rate

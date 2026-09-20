@@ -37,6 +37,25 @@ class TestHardwareBackend(unittest.TestCase):
         self.assertTrue(np.isfinite(v) and np.isfinite(i))
         self.assertLess(i, 0.0, "discharge current must be negative (worker convention)")
 
+    def test_cc_discharge_respects_c_rate(self):
+        # _profile(): capacity 7.0 Ah, max_discharge_a 7.0 A
+        p = _profile()
+        p.discharge_c_rate = 0.2
+        cfg = TestConfig(p, OperationMode.CC_DISCHARGE)
+        self.be.start_mode(cfg)
+        self.assertAlmostEqual(self.hw._load_current, 1.4, places=2)
+
+        p.discharge_c_rate = 0.5
+        cfg = TestConfig(p, OperationMode.CC_DISCHARGE)
+        self.be.start_mode(cfg)
+        self.assertAlmostEqual(self.hw._load_current, 3.5, places=2)
+
+        # Clamped by max_discharge_a (7.0 A)
+        p.discharge_c_rate = 2.0
+        cfg = TestConfig(p, OperationMode.CC_DISCHARGE)
+        self.be.start_mode(cfg)
+        self.assertAlmostEqual(self.hw._load_current, 7.0, places=2)
+
     def test_charge_sets_cccv(self):
         cfg = TestConfig(_profile(), OperationMode.CC_CV_CHARGE)
         self.be.start_mode(cfg)

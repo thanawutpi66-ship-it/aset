@@ -13,8 +13,8 @@ class AutoController:
     """Advanced controller for battery testing operations"""
 
     # G8 (industrial-grade audit): sustained-staleness escalation threshold — see
-    # _monitor_loop's temp_is_stale() handling below. Deliberately much larger than
-    # HardwareController.temp_is_stale()'s own 10s default so a momentary serial
+    # _monitor_loop's temp_is_stale() handling below. Deliberately larger than
+    # HardwareController.temp_is_stale()'s own 45s default so a momentary serial
     # glitch only warns, not trips.
     _TEMP_STALE_TRIP_S = 60.0
     _LOAD_NOISE_FLOOR_A = 0.02

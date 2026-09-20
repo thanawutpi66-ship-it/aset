@@ -55,7 +55,15 @@ class HardwareBackend(InstrumentBackend):
             self.hw.set_psu_cccv(p.max_charge_v, p.max_charge_a)
         elif cfg.mode == OperationMode.CC_DISCHARGE:
             self.hw.psu_off()
-            self.hw.set_load(True, str(p.max_discharge_a))
+            crate = getattr(p, "discharge_c_rate", 0.2)
+            try:
+                crate = float(crate)
+            except (TypeError, ValueError):
+                crate = 0.2
+            if crate <= 0:
+                crate = 0.2
+            i_dis = min(crate * p.capacity_ah, p.max_discharge_a)
+            self.hw.set_load(True, str(round(i_dis, 3)))
         else:  # HPPC — start at rest; step() sequences the pulses
             self.hw.psu_off()
             self.hw.load_off()

@@ -64,7 +64,7 @@ class MockHardwareController:
         self.last_esp_heartbeat = time.time()
         self.set_ssr(False)  # mirror HardwareController.connect_esp32 fail-safe
 
-    def temp_is_stale(self, max_age_s: float = 10.0) -> bool:
+    def temp_is_stale(self, max_age_s: float = 45.0) -> bool:
         """Mock parity with HardwareController.temp_is_stale(). Refreshed on every
         connect and never goes stale on its own in simulation (there is no real serial
         link to drop) — matches the age check for interface consistency."""

@@ -146,6 +146,7 @@ class UiSlotsMixin:
                 soc_lbl.setText(f"{soc:.1f} ±{min(soc_std, 99):.0f} {soc_unit}")
             else:
                 soc_lbl.setText(f"{soc:.1f} {soc_unit}")
+            soc_lbl.setStyleSheet(f"color:{theme.TEXT}; border:0;")
             if hasattr(self, "_lbl_soc_note") and self._lbl_soc_note.text() == "OCV calibration pending":
                 self._lbl_soc_note.setText("")
         # Rin: a DC resistance reading needs current flowing. At rest, (OCV−V)/I is
@@ -209,11 +210,34 @@ class UiSlotsMixin:
     @Slot(float, float, float)
     def _slot_live_readback(self, v, i, temp):
         """Pre-test Connect readback: shows Voltage/Current/Temp immediately after
-        Connect succeeds, before any test is running. No SoC/Rin (needs the state
-        estimator), no CSV logging, no graph buffer — those stay owned by the real
-        test's _slot_display so the recorded session isn't polluted with idle data."""
+        Connect succeeds, before any test is running. When resting at valid voltage,
+        automatically initializes and displays SoC from OCV."""
         self._update_vi_temp_labels(v, i, temp)
         self._set_temp_label_color(temp)
+
+        if "SoC" in self.metric_labels:
+            soc_lbl, soc_unit = self.metric_labels["SoC"]
+            if self.estimator is not None and v > 1.0:
+                if not getattr(self.estimator, "soc_is_initialized", False) and abs(i) < 0.2:
+                    try:
+                        self.estimator.sync_with_ocv(v, temp)
+                    except Exception as e:
+                        logger.debug("Live readback OCV sync skipped: %s", e)
+                elif abs(i) < 0.2 and getattr(self.estimator, "soc_is_initialized", False):
+                    try:
+                        self.estimator.soc = self.estimator.battery_model.get_soc_from_ocv(v, temp)
+                    except Exception:
+                        pass
+
+                if getattr(self.estimator, "soc_is_initialized", False):
+                    soc_lbl.setText(f"{self.estimator.soc:.1f} {soc_unit}")
+                    soc_lbl.setStyleSheet(f"color:{theme.TEXT}; border:0;")
+                    if hasattr(self, "_lbl_soc_note") and self._lbl_soc_note.text() == "OCV calibration pending":
+                        self._lbl_soc_note.setText("")
+                else:
+                    soc_lbl.setText(f"— {soc_unit}")
+            elif v <= 1.0:
+                soc_lbl.setText(f"— {soc_unit}")
     @Slot(str, str)
     def _slot_profile_status(self, text, color):
         # lbl_profile_status belonged to the legacy IEC PROFILES zone removed in

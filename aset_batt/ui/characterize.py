@@ -362,11 +362,12 @@ class CharacterizeMixin:
                 self.controller._trigger_safety(reason)
             return False
         if not getattr(self, "_seq_temp_stale_warned", False) and \
-                getattr(self.hw, "temp_is_stale", None) and self.hw.temp_is_stale():
+                getattr(self.hw, "temp_is_stale", None) and self.hw.temp_is_stale(45):
             self._seq_temp_stale_warned = True
             self.sig_alarm.emit(
-                "[WARNING] ESP32 temperature reading is stale — Rin/OCV temperature "
-                "compensation and OTP protection may not reflect the real battery.")
+                "[WARNING] ESP32 temperature reading is stale (no update recently) — over-"
+                "temperature protection may not reflect the real battery temperature until "
+                "it reconnects.")
         return True
 
     def _char_hw_stop(self):

@@ -801,7 +801,7 @@ class HardwareController:
                 return float(m.group(1))
         return None
 
-    def temp_is_stale(self, max_age_s: float = 10.0) -> bool:
+    def temp_is_stale(self, max_age_s: float = 45.0) -> bool:
         """True if no ESP32 temperature line has been successfully parsed in the last
         ``max_age_s`` seconds. ``current_temp`` has no timestamp of its own — it just
         holds whatever the last successful parse set it to — so a serial glitch, a

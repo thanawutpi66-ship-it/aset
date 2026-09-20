@@ -51,6 +51,7 @@ class BatteryProfile:
     hppc_pulse_duration: float = 30.0       # seconds of constant-current load
     hppc_relaxation_duration: float = 30.0  # seconds of rest (relaxation tail) per cycle
     hppc_pulse_crate: float = 1.0           # C-rate for pulse current (× capacity_ah)
+    discharge_c_rate: float = 0.2           # C-rate for constant-current discharge (× capacity_ah)
     # Peukert exponent — how strongly available capacity falls with discharge rate.
     # ~1.0–1.05 for lithium (almost rate-independent), ~1.15–1.30 for lead-acid.
     # Used to normalise measured capacity to a reference C-rate before SoH.

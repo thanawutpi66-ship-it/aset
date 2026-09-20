@@ -216,6 +216,11 @@ class AcquisitionWorker(QObject):
                 if self.estimator is not None and dt > 0:
                     _s2 = time.perf_counter()
                     try:
+                        if not getattr(self.estimator, "soc_is_initialized", False) and v > 1.0:
+                            try:
+                                self.estimator.sync_with_ocv(v, temp)
+                            except Exception as e:
+                                logger.debug("Worker initial OCV sync skipped: %s", e)
                         st = self.estimator.update(v, i, dt=dt, temp=temp)
                         # Do not publish the estimator's internal 50% seed before
                         # OCV/endpoint calibration establishes actual SoC.
