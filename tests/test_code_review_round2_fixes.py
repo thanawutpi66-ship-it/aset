@@ -369,6 +369,11 @@ class TestWorkerEcmFeedbackAnchorsToPulseSoc(unittest.TestCase):
 
         model = BatteryModel("LeadAcid", 7.0, 6, 1)
         estimator = StateEstimator(7.0, model)
+        # The worker deliberately withholds an uninitialized estimator seed
+        # from CSV/UI.  Establish a legitimate OCV anchor so the Linux
+        # ProcessPool path has validated SoC evidence to map onto the pulse.
+        estimator.sync_with_ocv(voc, temp=25.0)
+        self.assertTrue(estimator.soc_is_initialized)
         soc_trace = []
         orig_update = estimator.update
         def _spy_update(*a, **k):
