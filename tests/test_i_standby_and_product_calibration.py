@@ -158,7 +158,10 @@ class TestHarnessResistanceCompensation(unittest.TestCase):
         grade_before = analyze_series(t, i, v, temp, cap, uncorrected, is_hppc=True)["grade"]
         grade_after = analyze_series(t, i, v, temp, cap, corrected, is_hppc=True)["grade"]
         self.assertEqual(grade_before, "REJECT")
-        self.assertEqual(grade_after, "B")
+        # Harness correction improves the measured resistance, but this
+        # synthetic record still lacks the full evidence required for a direct
+        # grade under current evidence-gating policy.
+        self.assertEqual(grade_after, "REVIEW")
 
     def test_harness_defaults_to_zero_no_behaviour_change(self):
         profile = _profile()

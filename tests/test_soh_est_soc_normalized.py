@@ -19,6 +19,7 @@ phase-labelled full C10 capacity reference and valid electrical evidence.
 """
 import os
 import unittest
+import math
 
 import numpy as np
 
@@ -71,8 +72,8 @@ class TestSohEstNormalization(unittest.TestCase):
         res = analyze_series(t, i, v, temp, q, _make_profile(), is_hppc=False,
                              soc_start=50.0)
         # Raw soh reads ~50% of true (only half the capacity was ever removed).
-        self.assertLess(res["soh"], 60.0)
-        self.assertGreater(res["soh"], 40.0)
+        self.assertTrue(math.isnan(res["soh"]))
+        self.assertGreater(res["soh_est"], 90.0)
         # soh_est extrapolates back toward the true ~100% figure.
         self.assertGreater(res["soh_est"], 85.0)
         self.assertLessEqual(res["soh_est"], 120.0)
@@ -90,8 +91,9 @@ class TestSohEstNormalization(unittest.TestCase):
                                        is_hppc=False, soc_start=None)
         res_without = analyze_series(t, i, v, temp, q, _make_profile(),
                                      is_hppc=False)
-        self.assertAlmostEqual(res_with_none["soh_est"], res_with_none["soh"], delta=1e-6)
-        self.assertAlmostEqual(res_without["soh_est"], res_without["soh"], delta=1e-6)
+        self.assertTrue(math.isnan(res_with_none["soh"]))
+        self.assertAlmostEqual(res_with_none["soh_est"], res_without["soh_est"], delta=1e-6)
+        self.assertTrue(math.isnan(res_without["soh"]))
 
     def test_partial_and_full_unverified_runs_do_not_get_false_grades(self):
         """A healthy pack starting at 50% SoC must not be graded as if it

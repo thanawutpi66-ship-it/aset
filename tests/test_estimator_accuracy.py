@@ -30,8 +30,9 @@ class TestEffectiveCapacity(unittest.TestCase):
         e_aged.set_soh(80.0)
         e_aged._reset_to_soc(100.0)
         # discharge 1A for 1h = 1 Ah on a steep-ish voltage (avoid OCV correction noise)
-        e_new.update(3.30, 1.0, dt=3600)
-        e_aged.update(3.30, 1.0, dt=3600)
+        for _ in range(120):
+            e_new.update(3.30, 1.0, dt=30.0)
+            e_aged.update(3.30, 1.0, dt=30.0)
         # new: 1/10 = 10% drop → ~90 ; aged: 1/8 = 12.5% drop → ~87.5
         self.assertGreater(e_new.soc, e_aged.soc)
 
@@ -95,8 +96,11 @@ class TestAblationFlags(unittest.TestCase):
         e._reset_to_soc(50.0)
         e.update(3.30, 0.0, dt=10.0)     # seed _last_current = 0
         before = e.ah_accumulated
-        e.update(3.30, 2.0, dt=3600.0)   # trapezoid: (0+2)/2*1h = 1 Ah, not 2
-        self.assertAlmostEqual(e.ah_accumulated - before, 1.0, places=3)
+        for _ in range(60):
+            e.update(3.30, 2.0, dt=30.0)
+        # First interval ramps from 0 A to 2 A; subsequent intervals are 2 A.
+        # The resulting integral is approximately one hour at 2 A.
+        self.assertAlmostEqual(e.ah_accumulated - before, 0.9916667, places=3)
 
 
 class TestEKF(unittest.TestCase):

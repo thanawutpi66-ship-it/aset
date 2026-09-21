@@ -163,11 +163,9 @@ class TestRetheme(unittest.TestCase):
         finally:
             win.close()
 
-    def test_estop_pill_resets_to_idle_on_successful_reconnect(self):
-        """Regression: _slot_safety latched the state pill at "ESTOP"/CRIT with
-        no code path anywhere ever resetting it — the operator's explicit
-        reconnect (the resume action after a safety trip) must restore
-        IDLE/NEUTRAL."""
+    def test_estop_pill_remains_latched_on_reconnect(self):
+        """Reconnect is not an implicit E-STOP reset; explicit recovery is
+        required before the pill may return to IDLE."""
         from unittest.mock import MagicMock
         theme.set_theme("light")
         win = BatteryQtWindow(ConfigManager())
@@ -185,8 +183,8 @@ class TestRetheme(unittest.TestCase):
             win._on_connect()
             _app.processEvents()   # sig_profile_status delivery
 
-            self.assertEqual(win.state_pill.text().strip(), "IDLE")
-            self.assertIn(theme.NEUTRAL, win.state_pill.styleSheet())
+            self.assertEqual(win.state_pill.text().strip(), "ESTOP")
+            self.assertIn(theme.CRIT, win.state_pill.styleSheet())
         finally:
             win.close()
 

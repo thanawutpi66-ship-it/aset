@@ -38,6 +38,8 @@ class MockSequence(BaseSequenceMixin, HppcMixin, CycleLifeMixin, IecCapacityMixi
         self._stop_event = MagicMock()
         self._stop_event.is_set.side_effect = [False, False, True] # Run 2 steps then exit
         self._seq_running = MagicMock()
+        self._seq_safety_reason = ""
+        self.operation_state = MagicMock()
         
         # Signals
         self.log_message = MagicMock()

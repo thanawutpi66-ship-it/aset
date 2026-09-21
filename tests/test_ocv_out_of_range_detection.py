@@ -144,6 +144,9 @@ class TestSurfaceChargeBleedOff(unittest.TestCase):
         hw.is_connected = True
         data = DataHandler()
         ctrl = AutoController(None, hw, data, estimator, cfg)
+        # Direct bleed tests exercise hardware safety and current clamping; the
+        # production call path opens its session before invoking this helper.
+        ctrl._log_sample = MagicMock()
         return ctrl, hw, cfg
 
     def test_stops_early_at_safety_floor(self):
