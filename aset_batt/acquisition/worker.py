@@ -15,13 +15,16 @@ import gc
 import math
 import time
 import logging
+import json
 
 import numpy as np
 
 from PySide6.QtCore import QObject, Signal, QThread, QMutex, QMutexLocker
 
 from aset_batt.acquisition.models import BatteryProfile, TestConfig, OperationMode
-from aset_batt.storage.data_utils import DataHandler, write_session_metadata
+from aset_batt.storage.data_utils import (
+    DataHandler, StorageError, write_session_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +61,9 @@ class AcquisitionWorker(QObject):
         self._estop = False
         self._warned = set()
         self.cap_ah = 0.0
+        self._clock = time.perf_counter       # private accelerated-soak test seam
+        self._sleep_ms = QThread.msleep       # production remains Qt paced
+        self._active_session = None
 
     # ---- UI-thread-safe controls ------------------------------------------
     def pause(self, paused: bool):
@@ -86,43 +92,65 @@ class AcquisitionWorker(QObject):
     def run(self):
         period = 1.0 / max(1.0, self.cfg.sample_hz)
         p = self.cfg.profile
-        v_hist, q_hist, t_hist = [], [], []
-        time_hist, i_hist = [], []          # for 1-RC ECM identification (HPPC)
-        soc_hist = []                       # parallel to time_hist — see update_ecm() feedback below
-        session = DataHandler(throttle_redundant_rows=False)
-        ok, message = session.start_logging(self.csv_path, test_type=self.cfg.mode.value)
-        if not ok:
-            raise OSError(f"Cannot start session logging: {message}")
-        write_session_metadata(
-            self.csv_path, session_id=session.session_id,
-            test_type=session.test_type,
-            extra={
-                "profile": p.name,
-                "rated_capacity_ah": p.capacity_ah,
-                "peukert_k": getattr(p, "peukert_k", 1.1),
-                "sample_hz_target": self.cfg.sample_hz,
-                "polarity": "discharge_positive",
-                "protocol": {
-                    "id": "manual-acquisition-v1",
-                    "purpose": "single-mode instrument run",
-                    "mode": self.cfg.mode.value,
-                    "sample_hz_target": self.cfg.sample_hz,
-                    "profile": p.name,
-                },
-            },
-        )
+        session = None
         outcome = "aborted"
         end_reason = "test stopped before a normal completion condition"
+        _gc_cb = None
         try:
+            session = DataHandler(throttle_redundant_rows=False)
+            self._active_session = session
+            session._clock = self._clock
+            ok, message = session.start_logging(self.csv_path, test_type=self.cfg.mode.value)
+            if not ok:
+                raise OSError(f"Cannot start session logging: {message}")
+            write_session_metadata(
+                self.csv_path, session_id=session.session_id,
+                test_type=session.test_type,
+                hardware=getattr(self.backend, "hw", None),
+                extra={
+                    "profile": p.name,
+                    "analysis_version": "unified-analysis-v1",
+                    "profile_version": "battery-profiles-v2",
+                "rated_capacity_ah": p.capacity_ah,
+                "peukert_k": getattr(p, "peukert_k", 1.1),
+                "peukert_k_source": getattr(p, "peukert_k_source", "GENERIC_PROFILE_FALLBACK"),
+                "peukert_reference_hr": getattr(p, "peukert_hr", 10.0),
+                "peukert_reference_current_a": getattr(p, "peukert_reference_current_a", None),
+                "peukert_formula_version": "peukert-power-law-v1",
+                    "sample_hz_target": self.cfg.sample_hz,
+                    "measurement_sources": {"voltage": "active instrument SCPI readback",
+                                            "current": "active instrument SCPI readback",
+                                            "temperature": "MLX90614 via ESP32"},
+                    "safety_limits": {"ovp_v": p.ovp, "uvp_v": p.uvp,
+                                      "otp_critical_c": p.otp_crit,
+                                      "max_charge_a": p.max_charge_a,
+                                      "max_discharge_a": p.max_discharge_a},
+                    "polarity": "discharge_positive",
+                    "protocol": {
+                        "id": "manual-acquisition-v1",
+                        "purpose": "single-mode instrument run",
+                        "mode": self.cfg.mode.value,
+                        "sample_hz_target": self.cfg.sample_hz,
+                        "profile": p.name,
+                    },
+                },
+            )
+            try:
+                with open(self.csv_path + ".meta.json", encoding="utf-8") as _meta_file:
+                    _meta = json.load(_meta_file)
+                if _meta.get("session_id") != session.session_id:
+                    raise ValueError("session metadata identity mismatch")
+            except Exception as exc:
+                raise StorageError(f"cannot establish session metadata: {exc}") from exc
             with QMutexLocker(self._io):
                 self.backend.start_mode(self.cfg)
             self.state.emit("RUNNING")
             # perf_counter: sub-µs monotonic clock. time.monotonic() on Windows can be
             # quantized to ~15.6 ms, a ~15 % error on a 100 ms (10 Hz) dt → corrupts the
             # coulomb integral. Timestamp is captured AT the measurement, not before it.
-            t0 = time.perf_counter()
-            last_t = t0
-            last_flush_t = t0
+            t0 = self._clock()
+            last_t = t0                 # pacing/backend simulation origin
+            last_sample_t = None        # no physical integration before first readback
             last_i = 0.0                               # discharge-positive
             # Per-substep timing breakdown, same idea as sequences/hppc.py's HPPC
             # Full Sequence pulse-rate alarm — this manual TEST MODE run (including
@@ -130,7 +158,7 @@ class AcquisitionWorker(QObject):
             # sequence and didn't have any rate diagnostics at all. Logged every
             # _RATE_LOG_EVERY samples so a slow rig is visible without waiting for
             # the whole test to finish.
-            _t_scpi = _t_log = _t_est = _t_emit = _t_safety = _t_flush = 0.0
+            _t_scpi = _t_log = _t_est = _t_emit = _t_safety = 0.0
             _t_sleep_req = _t_sleep_actual = 0.0
             _t_ctrl = 0.0
             _rate_n = 0
@@ -152,9 +180,9 @@ class AcquisitionWorker(QObject):
             _gc_t0 = [None]
             def _gc_cb(phase, info):
                 if phase == "start":
-                    _gc_t0[0] = time.perf_counter()
+                    _gc_t0[0] = self._clock()
                 elif _gc_t0[0] is not None:
-                    _t_gc_accum[0] += time.perf_counter() - _gc_t0[0]
+                    _t_gc_accum[0] += self._clock() - _gc_t0[0]
                     _gc_t0[0] = None
             gc.callbacks.append(_gc_cb)
             _RATE_LOG_EVERY = 25
@@ -167,11 +195,11 @@ class AcquisitionWorker(QObject):
                 # flush was measured) but real hardware runs still showed 22-49%%
                 # unexplained in OTHER slow blocks with flush=0%% — this isolates
                 # whether ctrl-mutex contention is that remainder.
-                _c0 = time.perf_counter()
+                _c0 = self._clock()
                 with QMutexLocker(self._ctrl):
                     running = self._running
                     paused, estop = self._paused, self._estop
-                _t_ctrl += time.perf_counter() - _c0
+                _t_ctrl += self._clock() - _c0
                 if not running:
                     if estop:
                         outcome = "safety_tripped"
@@ -182,30 +210,66 @@ class AcquisitionWorker(QObject):
                     end_reason = "emergency stop"
                     break
                 if paused:
-                    QThread.msleep(40)
-                    last_t = time.perf_counter()       # don't accrue dt across the pause
+                    self._sleep_ms(40)
+                    last_t = self._clock()       # don't accrue dt across the pause
                     last_i = 0.0
                     continue
 
-                _iter_t0 = time.perf_counter()
+                _iter_t0 = self._clock()
                 elapsed = _iter_t0 - t0
 
-                _s0 = time.perf_counter()
+                _s0 = self._clock()
                 with QMutexLocker(self._io):
                     v, i_raw = self.backend.step(elapsed - (last_t - t0), elapsed)
-                    temp = self.backend.read_temperature()
-                _t_scpi += time.perf_counter() - _s0
-                t_meas = time.perf_counter()           # timestamp AT the sample
+                    get_temp_info = getattr(self.backend, "temperature_measurement", None)
+                    try:
+                        temp_info = get_temp_info() if callable(get_temp_info) else None
+                    except Exception:
+                        temp_info = None
+                    if not isinstance(temp_info, dict):
+                        # Compatibility for injected legacy/test backends. The
+                        # production HardwareBackend always returns validated
+                        # status from the concrete hardware controller.
+                        candidate = float(self.backend.read_temperature())
+                        temp_info = {"temperature_c": candidate,
+                                     "temperature_valid": math.isfinite(candidate),
+                                     "temperature_age_s": None,
+                                     "temperature_source": "backend-unverified",
+                                     "temperature_status": "VALID" if math.isfinite(candidate) else "NONFINITE"}
+                    temp = float(temp_info.get("temperature_c", float("nan")))
+                _t_scpi += self._clock() - _s0
+                t_meas = self._clock()           # timestamp AT the sample
                 # Normalize sign ONCE at the backend boundary: backend returns charge +,
                 # discharge −; the whole worker + analysis speaks discharge-POSITIVE.
                 i = -i_raw
 
-                dt = t_meas - last_t
-                if dt <= 0:
-                    dt = period
+                if not temp_info.get("temperature_valid", False):
+                    status = str(temp_info.get("temperature_status") or "NOT_AVAILABLE")
+                    self.alarm.emit("CRITICAL", f"TEMP_SENSOR_{status}: OTP protection unavailable")
+                    # Keep a provenance row for the acquired electrical sample;
+                    # temperature is never fabricated or fed to the estimator.
+                    session.log_row(elapsed, v, i, float("nan"), float("nan"), temp,
+                                    mode=self.cfg.mode.value, phase=self.cfg.mode.value,
+                                    voltage_source=getattr(self.backend.hw, "last_voltage_source", "unknown"),
+                                    current_source=getattr(self.backend.hw, "last_current_source", "unknown"),
+                                    sample_quality="INVALID", sample_note=f"TEMP_SENSOR_{status}",
+                                    temperature_status=status,
+                                    temperature_age_s=temp_info.get("temperature_age_s"),
+                                    temperature_source=temp_info.get("temperature_source", "unknown"))
+                    self.telemetry.emit({"elapsed": elapsed, "v": v, "i": i,
+                                         "temp": temp, "temp_status": status,
+                                         "soc": float("nan")})
+                    self.emergency_stop()
+                    outcome = "safety_tripped"
+                    end_reason = f"TEMP_SENSOR_{status}"
+                    break
+
+                dt = (t_meas - last_sample_t) if last_sample_t is not None else 0.0
+                last_sample_t = t_meas
                 # Trapezoidal coulomb counting on signed current = net Ah removed
                 # (this IS the discharge capacity; charge phases correctly subtract).
-                self.cap_ah += 0.5 * (i + last_i) * dt / 3600.0
+                if dt > 0.0:
+                    self.cap_ah += 0.5 * (i + last_i) * dt / 3600.0
                 last_i, last_t = i, t_meas
 
                 # Live SoC from the real estimator (discharge-positive). SoH/R are NOT
@@ -214,7 +278,7 @@ class AcquisitionWorker(QObject):
                 rin_mohm = float("nan")
                 rin_calibrated = False
                 if self.estimator is not None and dt > 0:
-                    _s2 = time.perf_counter()
+                    _s2 = self._clock()
                     try:
                         st = self.estimator.update(v, i, dt=dt, temp=temp)
                         # Do not publish the estimator's internal 50% seed before
@@ -225,31 +289,33 @@ class AcquisitionWorker(QObject):
                         rin_calibrated = bool(st.get("rin_calibrated", False))
                     except Exception as e:
                         logger.debug("estimator update skipped: %s", e)
-                    _t_est += time.perf_counter() - _s2
+                    _t_est += self._clock() - _s2
 
-                v_hist.append(v); q_hist.append(self.cap_ah); t_hist.append(temp)
-                time_hist.append(elapsed); i_hist.append(i); soc_hist.append(soc)
-
-                _s3 = time.perf_counter()
+                _s3 = self._clock()
                 self._check_safety(v, i, temp, p)
-                _t_safety += time.perf_counter() - _s3
+                _t_safety += self._clock() - _s3
 
                 phase = self.cfg.mode.value
                 if self.cfg.mode == OperationMode.HPPC:
                     phase = "PULSE" if getattr(self.backend, "_hppc_loaded", False) else "RELAX"
                 uses_load = self.cfg.mode in (OperationMode.HPPC, OperationMode.CC_DISCHARGE)
-                source = "eload" if uses_load else "psu"
+                hw = getattr(self.backend, "hw", None)
+                voltage_source = getattr(hw, "last_voltage_source", "eload" if uses_load else "psu")
+                current_source = getattr(hw, "last_current_source", "eload" if uses_load else "psu")
                 row = {"elapsed": elapsed, "v": v, "i": i, "cap": self.cap_ah,
                        "soc": soc, "temp": temp, "mode": phase}
-                _s1 = time.perf_counter()
+                _s1 = self._clock()
                 session.log_row(
                     elapsed, v, i, soc, rin_mohm, temp,
                     rin_calibrated=rin_calibrated, mode=phase,
                     capacity_ah=self.cap_ah, phase=phase,
-                    voltage_source=source, current_source=source,
+                    voltage_source=voltage_source, current_source=current_source,
                     expected_dt_s=period,
+                    temperature_status=temp_info.get("temperature_status", "NOT_AVAILABLE"),
+                    temperature_age_s=temp_info.get("temperature_age_s"),
+                    temperature_source=temp_info.get("temperature_source", "unknown"),
                 )
-                _t_log += time.perf_counter() - _s1
+                _t_log += self._clock() - _s1
                 # Cross-thread Qt signal emit to the GUI thread — previously left
                 # unmeasured (folded into "other"). Fires once per sample, same
                 # cadence as the unexplained ~65ms/sample gap found by comparing
@@ -257,23 +323,13 @@ class AcquisitionWorker(QObject):
                 # worker Hz breakdown investigation, 2026-07-11) — timing this
                 # separately will show directly whether GIL/event-queue contention
                 # on this emit() is the hidden cost, instead of it staying invisible.
-                _s4 = time.perf_counter()
+                _s4 = self._clock()
                 self.telemetry.emit(row)
-                _t_emit += time.perf_counter() - _s4
+                _t_emit += self._clock() - _s4
 
-                now = time.perf_counter()
-                if now - last_flush_t >= 1.0:
-                    # Disk sync — the one remaining untimed piece of the loop body.
-                    # emit/safety were measured on a real run and came back flat 0%,
-                    # ruling both out, yet "other(unexplained)" was still 28-65% in
-                    # slow blocks — this fires only once/sec so it wouldn't show up
-                    # in every block, matching that unevenness. A stalled disk write
-                    # (Windows Defender / antivirus scanning the CSV, slow storage)
-                    # would land here and nowhere else already measured.
-                    _s5 = time.perf_counter()
-                    session.csv_file.flush()
-                    _t_flush += time.perf_counter() - _s5
-                    last_flush_t = now
+                now = self._clock()
+                # DataHandler owns the one-second flush so all acquisition paths
+                # share one durability policy without double-flushing.
 
                 _rate_n += 1
                 if _rate_n >= _RATE_LOG_EVERY:
@@ -299,7 +355,7 @@ class AcquisitionWorker(QObject):
                             # measured directly via gc.callbacks (_t_gc_accum).
                             _t_gc = _t_gc_accum[0]
                             _t_accounted = (_t_scpi + _t_log + _t_est + _t_emit + _t_safety
-                                           + _t_flush + _t_ctrl + _t_gc + _t_sleep_actual)
+                                           + _t_ctrl + _t_gc + _t_sleep_actual)
                             _t_total = max(_t_accounted, _rate_span)
                             _t_other = max(0.0, _t_total - _t_accounted)
                             # Every explicit Python-level operation in the loop is now
@@ -316,13 +372,13 @@ class AcquisitionWorker(QObject):
                                 "%s worker sampled at %.1f Hz (%d samples / %.1fs, target %.1f Hz, "
                                 "hppc_phase=%s) — "
                                 "breakdown: SCPI %.0f%%  estimator %.0f%%  log %.0f%%  emit %.0f%%  "
-                                "safety %.0f%%  flush %.0f%%  ctrl %.0f%%  gc %.0f%%  sleep %.0f%%  "
+                                "safety %.0f%%  ctrl %.0f%%  gc %.0f%%  sleep %.0f%%  "
                                 "other(unexplained) %.0f%%  "
                                 "(sleep requested %.0fms actual %.0fms over %d samples)",
                                 self.cfg.mode.value, _hz, _rate_n, _rate_span, _target_hz, _hppc_phase,
                                 100 * _t_scpi / _t_total, 100 * _t_est / _t_total,
                                 100 * _t_log / _t_total, 100 * _t_emit / _t_total,
-                                100 * _t_safety / _t_total, 100 * _t_flush / _t_total,
+                                100 * _t_safety / _t_total,
                                 100 * _t_ctrl / _t_total, 100 * _t_gc / _t_total,
                                 100 * _t_sleep_actual / _t_total, 100 * _t_other / _t_total,
                                 _t_sleep_req * 1000, _t_sleep_actual * 1000, _rate_n)
@@ -331,7 +387,7 @@ class AcquisitionWorker(QObject):
                                 "%s worker sampled at %.1f Hz (%d samples / %.1fs, target %.1f Hz) — healthy",
                                 self.cfg.mode.value, _hz, _rate_n, _rate_span, _target_hz)
                     _rate_n = 0
-                    _t_scpi = _t_log = _t_est = _t_emit = _t_safety = _t_flush = _t_ctrl = 0.0
+                    _t_scpi = _t_log = _t_est = _t_emit = _t_safety = _t_ctrl = 0.0
                     _t_sleep_req = _t_sleep_actual = 0.0
                     _t_gc_accum[0] = 0.0
                     _rate_t0 = now
@@ -377,31 +433,48 @@ class AcquisitionWorker(QObject):
                 # (confirmed on the real rig: SCPI 9-15%, estimator/log ~0%, "other"
                 # 84-91% — "other" WAS this fixed sleep, not hidden overhead). Same
                 # self-correcting pacing sequences/hppc.py's pulse loop already uses.
-                _iter_elapsed = time.perf_counter() - _iter_t0
+                _iter_elapsed = self._clock() - _iter_t0
                 _sleep_ms = max(0, int((period - _iter_elapsed) * 1000))
-                _sl0 = time.perf_counter()
-                QThread.msleep(_sleep_ms)
+                _sl0 = self._clock()
+                self._sleep_ms(_sleep_ms)
                 _t_sleep_req += _sleep_ms / 1000.0
-                _t_sleep_actual += time.perf_counter() - _sl0
+                _t_sleep_actual += self._clock() - _sl0
         except Exception as e:
             logger.exception("worker loop error")
             self.alarm.emit("CRITICAL", f"Acquisition fault: {e}")
             outcome = "fault"
             end_reason = f"acquisition fault: {e}"
         finally:
-            try:
-                gc.callbacks.remove(_gc_cb)
-            except ValueError:
-                pass
+            if _gc_cb is not None:
+                try:
+                    gc.callbacks.remove(_gc_cb)
+                except ValueError:
+                    pass
             with QMutexLocker(self._io):
                 try:
                     self.backend.safe_shutdown()
                 except Exception as e:
                     import logging
                     logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
-            session.stop_logging(outcome, end_reason)
+            if session is not None:
+                try:
+                    session.stop_logging(outcome, end_reason)
+                except Exception:
+                    logger.exception("closing acquisition session failed")
+                finally:
+                    self._active_session = None
 
-        results = self._post_process(time_hist, i_hist, v_hist, q_hist, t_hist, p)
+        if outcome == "fault":
+            results = {"error": end_reason}
+        else:
+            try:
+                results = self._post_process([], [], [], [], [], p, csv_path=self.csv_path)
+            except Exception as exc:
+                logger.exception("post-acquisition analysis failed")
+                outcome = "fault"
+                end_reason = f"post-acquisition analysis failed: {exc}"
+                self.alarm.emit("CRITICAL", end_reason)
+                results = {"error": end_reason}
         # Feed final analysis back into the estimator so subsequent live estimation is
         # sharper: (a) measured SoH → SoH-adjusted coulomb capacity; (b) HPPC ECM
         # (R0/R1/C1) → the EKF's 1-RC parameters (replaces the rough defaults).
@@ -422,16 +495,18 @@ class AcquisitionWorker(QObject):
                         # from the per-sample history captured above instead.
                         fit_soc = None
                         fit_t = results.get("ecm_fit_t_s")
-                        if fit_t is not None and not math.isnan(fit_t) and time_hist:
-                            idx = int(np.argmin(np.abs(np.asarray(time_hist) - fit_t)))
-                            if not math.isnan(soc_hist[idx]):
-                                fit_soc = soc_hist[idx]
+                        if fit_t is not None and not math.isnan(fit_t):
+                            candidate_soc = results.get("ecm_fit_soc_pct")
+                            if candidate_soc is not None and not math.isnan(candidate_soc):
+                                fit_soc = candidate_soc
                         self.estimator.update_ecm(r0, r1, c1, fit_soc=fit_soc)
             except Exception as e:
                 logger.debug("estimator feedback skipped: %s", e)
         self.finished.emit(results)
-        if not self._estop:
+        if not self._estop and outcome != "fault":
             self.state.emit("STOPPED")
+        elif outcome == "fault":
+            self.state.emit("FAULT")
 
     # ---- software failsafes (interlocks) ----------------------------------
     def _check_safety(self, v, i, temp, p: BatteryProfile):
@@ -467,7 +542,7 @@ class AcquisitionWorker(QObject):
 
     # ---- post-test analytics ----------------------------------------------
     def _post_process(self, time_hist, i_hist, v_hist, q_hist, t_hist,
-                      p: BatteryProfile):
+                      p: BatteryProfile, *, csv_path: str | None = None):
         """Delegate to the single application-wide analysis (aset_batt.acquisition.
         analysis). Worker current is already discharge-positive (normalized in run()).
 
@@ -481,6 +556,10 @@ class AcquisitionWorker(QObject):
         process-wide GIL with the Qt main thread — the ECM curve-fit inside holds
         that GIL for the whole fit (~5-15s), so the UI would report "Not Responding"
         exactly as it did before analyze_csv's call sites got the same treatment."""
+        if csv_path:
+            from aset_batt.acquisition.analysis import analyze_csv_mp
+            return analyze_csv_mp(
+                csv_path, p, force_hppc=(self.cfg.mode == OperationMode.HPPC))
         from aset_batt.acquisition.analysis import analyze_series_mp
         cur_pos = np.asarray(i_hist, float)   # already discharge-positive
         return analyze_series_mp(time_hist, cur_pos, v_hist, t_hist, q_hist, p,

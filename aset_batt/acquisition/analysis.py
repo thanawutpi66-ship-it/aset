@@ -42,6 +42,7 @@ def profile_from_config(config) -> BatteryProfile:
     """Build the analysis profile (pack limits + safety window + baseline Rᵢ) from
     the application config. Shared by the GUI and the controller's auto-analyze."""
     b = config.battery
+    product_name = getattr(b, "product_name", "") or ""
     s = config.system.safety_limits or {}
     try:
         from aset_batt.core.battery_model import BatteryModel
@@ -65,7 +66,7 @@ def profile_from_config(config) -> BatteryProfile:
     peukert = chemistry_profile.peukert_k
     peukert_hr = float(getattr(chemistry_profile, "peukert_hr", 10.0))
     try:
-        prod = battery_profiles.get_product(getattr(b, "product_name", "") or "")
+        prod = battery_profiles.get_product(product_name)
         if prod and getattr(prod, "peukert_k", 0.0) > 0.0:
             peukert = prod.peukert_k
         if prod and getattr(prod, "peukert_hr", 0.0) > 0.0:
@@ -73,6 +74,22 @@ def profile_from_config(config) -> BatteryProfile:
     except Exception as e:
         import logging
         logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
+    try:
+        product = battery_profiles.get_product(product_name)
+    except Exception:
+        product = None
+    peukert_settings = battery_profiles.resolve_peukert_parameters(
+        product_name, b.battery_type)
+    peukert = peukert_settings["peukert_k"]
+    peukert_hr = peukert_settings["peukert_reference_hr"]
+    # A product with an explicit 10-hour rating has a canonical C10 basis.
+    # Do not allow stale saved/UI rated Ah (often the 20-hour display value) to
+    # become the denominator for 1C, Peukert, SoH, or capacity grading.
+    reference_capacity_ah = (float(product.capacity_10h_ah)
+                             if product is not None and product.capacity_10h_ah > 0.0
+                             else float(b.rated_capacity))
+    peukert_reference_current_a = (
+        reference_capacity_ah / peukert_hr if peukert_hr > 0.0 else None)
 
     # A characterised specimen's R0/R1 (see aset_batt.core.battery_profiles.
     # save_measured_params) overrides the chemistry-generic base_rin/60-40 split for
@@ -80,7 +97,7 @@ def profile_from_config(config) -> BatteryProfile:
     # small pack can measure well above it even when genuinely healthy.
     r0_fraction = 0.0
     try:
-        mp = battery_profiles.get_measured_params(b.product_name)
+        mp = battery_profiles.get_measured_params(product_name)
         internal_r_ohm = mp.get("internal_r_ohm")
         if internal_r_ohm and float(internal_r_ohm) > 0:
             rin = float(internal_r_ohm)
@@ -89,17 +106,31 @@ def profile_from_config(config) -> BatteryProfile:
         import logging
         logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
 
+    product = None
+    try:
+        product = battery_profiles.get_product(product_name)
+    except Exception:
+        product = None
     return BatteryProfile(
-        name=b.battery_type, chemistry=b.battery_type,
+        name=product_name or b.battery_type, chemistry=b.battery_type,
         nominal_v=b.pack_nominal_voltage, series=b.cells_series,
-        capacity_ah=b.rated_capacity,
+        capacity_ah=reference_capacity_ah,
         max_charge_v=b.pack_max_voltage, cutoff_v=b.pack_min_voltage,
         max_charge_a=b.max_current, max_discharge_a=b.max_current,
         ovp=float(s.get("max_voltage", b.pack_max_voltage + 1)),
         uvp=float(s.get("min_voltage", b.pack_min_voltage - 1)),
         otp_warn=max(0.0, otp - 10.0), otp_crit=otp, internal_r=float(max(1e-4, rin)),
-        peukert_k=peukert, peukert_hr=peukert_hr, r0_fraction=r0_fraction,
+        peukert_k=peukert, peukert_k_source=peukert_settings["peukert_k_source"],
+        peukert_hr=peukert_hr,
+        peukert_reference_hr=peukert_hr,
+        peukert_reference_current_a=peukert_reference_current_a,
+        r0_fraction=r0_fraction,
         harness_r_ohm=max(0.0, float(getattr(b, "harness_resistance_ohm", 0.0))),
+        capacity_10h_ah=float(getattr(product, "capacity_10h_ah", 0.0) or 0.0),
+        capacity_20h_ah=float(getattr(product, "capacity_20h_ah", 0.0) or 0.0),
+        capacity_rating_basis=str(getattr(product, "capacity_rating_basis", "UNKNOWN")),
+        capacity_rating_validated=(bool(getattr(product, "capacity_10h_ah", 0.0) > 0.0)
+                                   if product is not None else None),
     )
 
 
@@ -117,7 +148,7 @@ _T_REF = 25.0                # °C
 # StateEstimator.standby_current (aset_batt/core/state_estimator.py). Left at 0.6
 # here (this module's only, separate from the live estimator) meant the ±0.15 A
 # rest-detection band coincided with a LeadAcid bulk-charge current (~0.1C ≈ 0.5 A
-# for a 5.3 Ah pack), so bulk-charge samples were misread as "rest" and their
+# for a generic ~5.0 Ah pack), so bulk-charge samples were misread as "rest" and their
 # elevated (absorption-stage) voltage leaked into the ECM fit's OCV anchor.
 _I_STANDBY = 0.0             # A
 
@@ -129,7 +160,58 @@ _I_STANDBY = 0.0             # A
 # Shared with StateEstimator._STEP_MAX_DT_S (the live/online method reading the
 # same physical rig) via battery_model.MAX_STEP_EDGE_LATENCY_S.
 _DCIR_MAX_STEP_DT = MAX_STEP_EDGE_LATENCY_S      # s
+MAX_CAPACITY_EXCLUDED_GAP_S = 30.0
 
+
+def _integration_gap_metrics(time_s, sample_quality=None, modes=None, *, quick_scan=False):
+    """Classify integration intervals using Quick phase cadence and row quality.
+
+    Quick pulse/near-cutoff edges allow at most 0.25 s; main-discharge edges
+    allow at most 12.5 s. Other acquisitions retain the existing 30 s bound
+    when sample-quality evidence is available. DCIR has its own 0.5 s edge rule.
+    """
+    t = np.asarray(time_s, float)
+    q = [str(x or "VALID").strip().upper() for x in
+         ([] if sample_quality is None else list(sample_quality))]
+    phase = [str(x or "").strip().upper() for x in (modes or [])]
+    dt = np.diff(t)
+    excluded_mask = np.zeros(dt.size, dtype=bool)
+    gap_count = 0
+    excluded_duration = 0.0
+    for idx, span in enumerate(dt):
+        tagged = len(q) == len(t) and (q[idx] == "GAP" or q[idx + 1] == "GAP")
+        invalid = not np.isfinite(span) or span <= 0
+        if quick_scan and len(phase) == len(t):
+            edge_phases = (phase[idx], phase[idx + 1])
+            expected_dt = (0.1 if any(p in {"MINI_PULSE", "NEAR_CUTOFF"}
+                                      for p in edge_phases) else 5.0)
+            max_dt = min(MAX_CAPACITY_EXCLUDED_GAP_S, 2.5 * expected_dt)
+            excessive = np.isfinite(span) and span > max_dt
+        else:
+            # Non-Quick direct callers retain legacy timing behavior unless
+            # row-quality data explicitly identifies a gap.
+            excessive = (sample_quality is not None and np.isfinite(span)
+                         and span > MAX_CAPACITY_EXCLUDED_GAP_S)
+        excluded = invalid or tagged or excessive
+        excluded_mask[idx] = excluded
+        if excluded:
+            gap_count += 1
+            if np.isfinite(span) and span > 0:
+                excluded_duration += float(span)
+    span_total = float(t[-1] - t[0]) if t.size >= 2 and np.isfinite(t[[0, -1]]).all() else 0.0
+    fraction = excluded_duration / span_total if span_total > 0 else 1.0
+    status = ("INSUFFICIENT_DATA" if t.size < 2 else
+              "INVALID_TIMESTAMPS" if (quick_scan or sample_quality is not None)
+              and np.any(~np.isfinite(dt) | (dt <= 0)) else
+              "EXCESSIVE_GAPS" if excluded_duration > MAX_CAPACITY_EXCLUDED_GAP_S or fraction > 0.05 else
+              "VALID_WITH_MINOR_GAPS" if gap_count else "VALID")
+    positive = dt[np.isfinite(dt) & (dt > 0)]
+    return {"gap_count": gap_count, "excluded_gap_count": gap_count,
+            "largest_dt_s": float(np.max(positive)) if positive.size else 0.0,
+            "excluded_gap_duration_s": excluded_duration,
+            "integration_span_s": span_total,
+            "integration_quality_status": status,
+            "excluded_interval_mask": excluded_mask}
 # SoH = measured discharge Ah ÷ rated ASSUMES the discharge began from a full pack.
 # Below this starting SoC the capacity removed only spans SoC_start→0, so a healthy
 # pack reads a proportionally LOW SoH (a 50 %-charged healthy pack → SoH ≈ 50 %).
@@ -196,9 +278,10 @@ def peukert_capacity(capacity_ah, mean_current_a, rated_ah, k, ref_c_rate=0.1):
 
     Available capacity falls as the discharge rate rises (strongly for lead-acid). With
     ``C = C_p / I^(k-1)``, a capacity measured at current ``I`` maps to the reference
-    rate ``I_ref = ref_c_rate·rated`` by ``C_ref = C·(I/I_ref)^(k-1)`` — so a high-rate
+    rate ``I_ref = ref_c_rate·rated`` by ``C_ref = C·(I/I_ref)^(k-1)`` — for YTZ6V
+    Quick→C10 this is ``(I_mean/0.500)^(k-1)`` — so a high-rate
     test isn't unfairly graded low. Lithium (k≈1.05) → almost no change."""
-    i_ref = ref_c_rate * rated_ah
+    i_ref = float(rated_ah) * float(ref_c_rate)
     if mean_current_a <= 0 or i_ref <= 0 or k <= 0:
         return capacity_ah
     return capacity_ah * (mean_current_a / i_ref) ** (k - 1.0)
@@ -276,7 +359,8 @@ def _dcir_temp_normalizer(profile: BatteryProfile):
         return lambda T: 1.0 + _DCIR_TEMP_COEFF * (T - _T_REF)
 
 
-def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=None):
+def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=None,
+                  modes=None, quick_scan=False, sample_quality=None):
     """Repeatable single-step DCIR aggregated over EVERY current step in the record.
 
     At the rig's ~5 Hz SCPI readback the instantaneous ohmic step cannot be resolved
@@ -313,11 +397,16 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=
     va = np.asarray(voltage_v, float)
     tc = np.asarray(temp_c, float)
     ta = np.asarray(time_s, float) if time_s is not None else None
+    mode_arr = np.asarray([str(m or "").strip().upper() for m in (modes or [])], dtype=object)
+    quality_arr = np.asarray([str(x or "VALID").strip().upper()
+                              for x in (sample_quality or [])], dtype=object)
+    phase_scoped = bool(quick_scan and mode_arr.size == ia.size)
     if ia.size < 4:
         return profile.internal_r, 0.0, 0, False, 0, 0
     temp_mult = _dcir_temp_normalizer(profile)
     di = np.diff(ia)
-    thr = max(1e-3, 0.20 * float(np.max(np.abs(ia))))     # a real load edge, not jitter
+    pulse_abs = (np.abs(ia[mode_arr == "MINI_PULSE"]) if phase_scoped else np.abs(ia))
+    thr = max(1e-3, 0.20 * float(np.max(pulse_abs)))     # a real load edge, not jitter
     r_base = float(profile.internal_r)
     vals = []
     n_stale = 0
@@ -325,12 +414,31 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=
     k = 0
     while k < di.size:
         if abs(di[k]) > thr:
-            # dt-gate: the post-edge sample must land soon after the edge, or it has
-            # relaxed into the RC region and R would carry R1, not just the ohmic R0.
-            if ta is not None and (k + 1) < ta.size and (ta[k + 1] - ta[k]) > _DCIR_MAX_STEP_DT:
+            if quality_arr.size == ia.size and (quality_arr[k] in {"GAP", "INVALID"}
+                                                  or quality_arr[k + 1] in {"GAP", "INVALID"}):
                 n_stale += 1
                 k += 2
                 continue
+            if phase_scoped:
+                # Quick Scan's measured DCIR is the MINI_PULSE STEP_ON only.
+                # The preceding sample may be OCV_SETTLE; the post-edge row
+                # must explicitly belong to MINI_PULSE and be discharge-positive.
+                if (mode_arr[k + 1] != "MINI_PULSE" or di[k] <= 0.0
+                        or ia[k + 1] <= 0.0):
+                    k += 1
+                    continue
+            # dt-gate: the post-edge sample must land soon after the edge, or it has
+            # relaxed into the RC region and R would carry R1, not just the ohmic R0.
+            if ta is not None and (k + 1) < ta.size:
+                edge_dt = float(ta[k + 1] - ta[k])
+                if not np.isfinite(edge_dt) or edge_dt <= 0.0:
+                    n_stale += 1
+                    k += 2
+                    continue
+                if edge_dt > _DCIR_MAX_STEP_DT:
+                    n_stale += 1
+                    k += 2
+                    continue
             v_before = float(np.median(va[max(0, k - 2):k + 1]))   # rested/level baseline
             v_after = float(va[k + 1])                             # first post-edge sample
             r = abs((v_after - v_before) / di[k])
@@ -350,6 +458,31 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=
     return float(np.median(arr)), float(np.std(arr)), int(arr.size), True, n_stale, n_implausible
 
 
+def _quick_step_on_latency(current_a, modes, time_s, sample_quality=None) -> float:
+    """Latency (s) of the first discharge MINI_PULSE STEP_ON candidate."""
+    ia = np.asarray(current_a, float)
+    ta = np.asarray(time_s, float)
+    ma = np.asarray([str(m or "").strip().upper() for m in (modes or [])], dtype=object)
+    if ia.size < 2 or ta.size != ia.size or ma.size != ia.size:
+        return float("nan")
+    pulse = np.abs(ia[ma == "MINI_PULSE"])
+    if not pulse.size:
+        return float("nan")
+    threshold = max(1e-3, 0.20 * float(np.max(pulse)))
+    quality = np.asarray([str(x or "VALID").strip().upper()
+                          for x in (sample_quality or [])], dtype=object)
+    for k in range(ia.size - 1):
+        di = ia[k + 1] - ia[k]
+        dt = ta[k + 1] - ta[k]
+        if ma[k + 1] == "MINI_PULSE" and di > threshold and ia[k + 1] > 0.0:
+            if (not np.isfinite(dt) or dt <= 0.0 or dt > _DCIR_MAX_STEP_DT
+                    or (quality.size == ia.size
+                        and (quality[k] != "VALID" or quality[k + 1] != "VALID"))):
+                return float("nan")
+            return float(dt)
+    return float("nan")
+
+
 # FreedomCAR/SAE J537-style fixed post-edge timepoints: R@0.1s is closest to pure
 # ohmic (R0), R@1s adds fast charge-transfer, R@10s adds diffusion and is closest
 # to sustained-load/cranking-relevant resistance — three numbers with an
@@ -360,7 +493,8 @@ _DCIR_TIMEPOINTS_S = (0.1, 1.0, 10.0)
 
 
 def identify_dcir_at_timepoints(current_a, voltage_v, temp_c, profile: BatteryProfile,
-                                 time_s, timepoints_s=_DCIR_TIMEPOINTS_S) -> dict:
+                                 time_s, timepoints_s=_DCIR_TIMEPOINTS_S,
+                                 modes=None, quick_scan=False, sample_quality=None) -> dict:
     """R = |ΔV/ΔI| at fixed post-edge timepoints, additive alongside identify_dcir()
     (does not replace it — same step detection over current edges, same
     temperature normalisation, plausibility band, and per-timepoint MAD outlier
@@ -381,15 +515,32 @@ def identify_dcir_at_timepoints(current_a, voltage_v, temp_c, profile: BatteryPr
     ta = np.asarray(time_s, float)
     if ia.size < 4 or ta.size != ia.size:
         return {}
+    mode_arr = np.asarray([str(m or "").strip().upper() for m in (modes or [])], dtype=object)
+    phase_scoped = bool(quick_scan and mode_arr.size == ia.size)
     temp_mult = _dcir_temp_normalizer(profile)
     di = np.diff(ia)
-    thr = max(1e-3, 0.20 * float(np.max(np.abs(ia))))
+    pulse_abs = (np.abs(ia[mode_arr == "MINI_PULSE"]) if phase_scoped else np.abs(ia))
+    thr = max(1e-3, 0.20 * float(np.max(pulse_abs)))
     r_base = float(profile.internal_r)
 
     per_tp_vals = {tp: [] for tp in timepoints_s}
+    quality_arr = np.asarray([str(x or "VALID").strip().upper()
+                              for x in (sample_quality or [])], dtype=object)
     k = 0
     while k < di.size:
         if abs(di[k]) > thr:
+            edge_dt = float(ta[k + 1] - ta[k])
+            if not np.isfinite(edge_dt) or edge_dt <= 0.0 or edge_dt > MAX_STEP_EDGE_LATENCY_S:
+                k += 2
+                continue
+            if quality_arr.size == ia.size and (
+                    quality_arr[k] != "VALID" or quality_arr[k + 1] != "VALID"):
+                k += 2
+                continue
+            if phase_scoped and (mode_arr[k + 1] != "MINI_PULSE"
+                                 or di[k] <= 0.0 or ia[k + 1] <= 0.0):
+                k += 1
+                continue
             v_before = float(np.median(va[max(0, k - 2):k + 1]))
             # t_edge references the FIRST post-edge sample (ta[k+1]), not the last
             # pre-edge one (ta[k]) — the new current level is only actually present
@@ -451,6 +602,25 @@ def _cca_cutoff_v(profile: BatteryProfile) -> float:
     if chem == "LeadAcid":
         return _CCA_CRANK_CUTOFF_V_PER_CELL * profile.series
     return profile.cutoff_v
+
+
+def _cca_derate_to_cold(cca_25c: float, ocv_eff: float,
+                        profile: BatteryProfile) -> float:
+    """Cold-temperature cranking-current proxy; not a standardized CCA result."""
+    try:
+        value = float(cca_25c)
+        budget_25 = float(ocv_eff) - _cca_cutoff_v(profile)
+        if not np.isfinite(value) or value <= 0.0 or budget_25 <= 0.0:
+            return 0.0
+        from aset_batt.core.battery_model import BatteryModel
+        model = BatteryModel(profile.chemistry)
+        factor = model.temp_rin_multiplier(-18.0)
+        coeff = float(getattr(model.chemistry, "temp_coeff_mv_per_degc", 0.0))
+        cold_ocv = float(ocv_eff) + coeff * (-43.0) * profile.series / 1000.0
+        cold_budget = cold_ocv - _cca_cutoff_v(profile)
+        return max(0.0, value * cold_budget / (budget_25 * max(1e-9, factor)))
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
 
 
 def _ocv_ceiling(profile: BatteryProfile, temp_c: float):
@@ -552,7 +722,7 @@ _ECM_MIN_R2 = 0.90      # accept the 1-RC fit only if it explains the transient 
 # the exponential term ≈ linear over the fit window, clearing R²≥0.90 with a
 # result that is not a real RC branch. Found via fit_ecm=True on the real
 # Quick Scan CSV (a plain 1C discharge, no pulse): τ=91366 s (25 HOURS),
-# R1=10.35 Ω — both absurd for a 5.3 Ah lead-acid pack. 600 s (10 min) is a
+# R1=10.35 Ω — both absurd for the YTZ6V C10 5.0 Ah pack. 600 s (10 min) is a
 # generous ceiling well above any real pulse/relax duration this rig uses
 # (HPPC's own relax cap is 300 s) while comfortably rejecting an hours-scale
 # spurious fit.
@@ -767,7 +937,8 @@ def _hppc_pulse_summary(pulses: list, warnings: list) -> tuple:
     return drift, cv, warnings
 
 
-def _main_discharge_capacity(time_s, ia, capacity_total: float, modes: list[str] | None):
+def _main_discharge_capacity(time_s, ia, capacity_total: float, modes: list[str] | None,
+                            sample_quality=None):
     """Return Ah belonging to MAIN_DISCHARGE only, plus its provenance.
 
     Logged cumulative Ah includes Quick Scan's diagnostic pulse and any other
@@ -780,19 +951,71 @@ def _main_discharge_capacity(time_s, ia, capacity_total: float, modes: list[str]
     i = np.asarray(ia, float)
     normalised = [str(m or "").strip().upper() for m in (modes or [])]
     if len(normalised) == len(i) and "MAIN_DISCHARGE" in normalised and len(i) >= 2:
-        mask = np.asarray([m == "MAIN_DISCHARGE" for m in normalised], bool)
+        # NEAR_CUTOFF is a sampling-rate subphase of the same discharge. Counting
+        # intervals by adjacent rows (rather than summing named phase totals)
+        # includes it exactly once and never double-counts the transition.
+        mask = np.asarray([m in {"MAIN_DISCHARGE", "NEAR_CUTOFF"}
+                           for m in normalised], bool)
         dt = np.diff(t)
         interval_mask = mask[:-1] & mask[1:] & np.isfinite(dt) & (dt >= 0.0)
+        gap_info = _integration_gap_metrics(t, sample_quality, normalised)
+        interval_mask &= ~gap_info["excluded_interval_mask"]
         current_mid = 0.5 * (np.clip(i[:-1], 0.0, None) + np.clip(i[1:], 0.0, None))
         return float(np.sum(current_mid[interval_mask] * dt[interval_mask]) / 3600.0), \
             "MAIN_DISCHARGE"
     return float(capacity_total), "legacy_all_positive"
 
 
+def _quick_discharge_interval(time_s, ia, capacity_total: float,
+                              modes: list[str] | None, sample_quality=None):
+    """Integrate the single Quick Scan discharge from its pre-pulse anchor.
+
+    Include pulse, main discharge and near-cutoff rows.  Each physical interval
+    is integrated once when either endpoint is in an active discharge phase;
+    this captures the load-on/off boundary trapezoids without summing phases.
+    """
+    t = np.asarray(time_s, float)
+    i = np.asarray(ia, float)
+    phase = [str(m or "").strip().upper() for m in (modes or [])]
+    active = {"MINI_PULSE", "MAIN_DISCHARGE", "NEAR_CUTOFF"}
+    if len(phase) != len(i) or len(i) < 2 or "MAIN_DISCHARGE" not in phase:
+        return float(capacity_total)
+    dt = np.diff(t)
+    interval_mask = np.asarray([(a in active or b in active)
+                                for a, b in zip(phase[:-1], phase[1:])])
+    interval_mask &= np.isfinite(dt) & (dt >= 0.0)
+    gap_info = _integration_gap_metrics(t, sample_quality, phase, quick_scan=True)
+    interval_mask &= ~gap_info["excluded_interval_mask"]
+    current_mid = 0.5 * (np.clip(i[:-1], 0.0, None) + np.clip(i[1:], 0.0, None))
+    return float(np.sum(current_mid[interval_mask] * dt[interval_mask]) / 3600.0)
+
+
+def _quick_mean_discharge_current(time_s, ia, modes, sample_quality=None):
+    """Time-weighted mean over the exact intervals used by Quick charge integration."""
+    t = np.asarray(time_s, float)
+    i = np.asarray(ia, float)
+    phase = [str(m or "").strip().upper() for m in (modes or [])]
+    active = {"MINI_PULSE", "MAIN_DISCHARGE", "NEAR_CUTOFF"}
+    if len(phase) != len(i) or len(i) < 2:
+        return 0.0
+    dt = np.diff(t)
+    interval_mask = np.asarray([a in active or b in active
+                                for a, b in zip(phase[:-1], phase[1:])])
+    interval_mask &= np.isfinite(dt) & (dt >= 0.0)
+    gap_info = _integration_gap_metrics(t, sample_quality, phase, quick_scan=True)
+    interval_mask &= ~gap_info["excluded_interval_mask"]
+    duration = float(np.sum(dt[interval_mask]))
+    if duration <= 0.0:
+        return 0.0
+    current_mid = 0.5 * (np.clip(i[:-1], 0.0, None) + np.clip(i[1:], 0.0, None))
+    return float(np.sum(current_mid[interval_mask] * dt[interval_mask]) / duration)
+
+
 def _calc_capacity_and_soh(
         time_s, capacity_total: float, ia: np.ndarray, profile: "BatteryProfile",
         is_hppc: bool, reached_cutoff: bool, soh: float | None,
-        modes: list[str] | None = None, soc_start: float | None = None):
+        modes: list[str] | None = None, soc_start: float | None = None,
+        sample_quality=None):
     """Calculate raw and rate/SoC-normalised capacity separately.
 
     ``soh`` is always the raw, observed capacity fraction. ``soh_est`` is a
@@ -800,7 +1023,7 @@ def _calc_capacity_and_soh(
     normalisation.  The estimate is useful for diagnosis, but never by itself a
     capacity acceptance grade.
     """
-    capacity, capacity_basis = _main_discharge_capacity(time_s, ia, capacity_total, modes)
+    capacity, capacity_basis = _main_discharge_capacity(time_s, ia, capacity_total, modes, sample_quality)
     normalised_modes = [str(m or "").strip().upper() for m in (modes or [])]
     if len(normalised_modes) == len(ia) and "MAIN_DISCHARGE" in normalised_modes:
         dis = ia[np.asarray([m == "MAIN_DISCHARGE" for m in normalised_modes], bool)]
@@ -808,11 +1031,27 @@ def _calc_capacity_and_soh(
         dis = ia[ia > 0.05]
     mean_dis = float(np.mean(dis)) if dis.size else 0.0
     ref_c_rate = 1.0 / max(1e-9, float(getattr(profile, "peukert_hr", 10.0)))
-    cap_norm = peukert_capacity(capacity, mean_dis, profile.capacity_ah,
-                                getattr(profile, "peukert_k", 1.1), ref_c_rate)
+    reference_current_a = (float(profile.capacity_10h_ah) /
+                           max(1.0, float(getattr(profile, "peukert_hr", 10.0)))
+                           if getattr(profile, "capacity_10h_ah", 0.0) > 0.0
+                           else ref_c_rate * profile.capacity_ah)
+    try:
+        _k = float(getattr(profile, "peukert_k", 1.1))
+    except (TypeError, ValueError):
+        _k = float("nan")
+    cap_norm = (capacity * (mean_dis / reference_current_a) ** (_k - 1.0)
+                if mean_dis > 0.0 and reference_current_a > 0.0
+                and np.isfinite(_k) else capacity)
+    # ``capacity`` is measured removed charge.  It becomes a direct SoH only
+    # when the protocol proves a full-charge start; a partial/unknown start is
+    # reported through ``observed_capacity_fraction_pct`` and may only produce
+    # ``soh_est`` after independent SoC-span normalization.
+    verified_full_start = (soc_start is not None and np.isfinite(float(soc_start))
+                           and float(soc_start) >= _SOH_MIN_START_SOC)
     if soh is None:
         raw_soh = (100.0 * capacity / profile.capacity_ah
-                   if (not is_hppc) and reached_cutoff and profile.capacity_ah else float("nan"))
+                   if (not is_hppc) and reached_cutoff and profile.capacity_ah
+                   and verified_full_start else float("nan"))
     else:
         raw_soh = float(soh)
     soh_est = (100.0 * cap_norm / profile.capacity_ah
@@ -1114,7 +1353,8 @@ def _extract_ecm_metrics(
 def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                    profile: "BatteryProfile", is_hppc: bool, soh=None,
                    soc_start=None, soc_series=None, fit_ecm=None, modes=None,
-                   quick_scan: bool | None = None) -> dict:
+                   quick_scan: bool | None = None, ocv_start_valid=None,
+                   soc_end=None, ocv_end_valid=False, sample_quality=None) -> dict:
     """Run the unified analysis on raw series → the standard results dict.
 
     ``fit_ecm``: whether to attempt a 1-RC/2-RC pulse fit at all. ``None``
@@ -1130,10 +1370,82 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     q = np.asarray(capacity_series, float)
     capacity_total = float(q[-1]) if q.size else 0.0
     reached_cutoff = bool(v.size and float(np.min(v)) <= profile.cutoff_v * 1.02)
-
+    mode_set = {str(m or "").strip().upper() for m in (modes or [])}
+    is_quick_scan = (not is_hppc and (bool(quick_scan)
+                     or {"MINI_PULSE", "MAIN_DISCHARGE"}.issubset(mode_set)))
+    integration_quality = _integration_gap_metrics(
+        time_s, sample_quality, modes, quick_scan=is_quick_scan)
+    gaps_excessive = integration_quality["integration_quality_status"] in {
+        "EXCESSIVE_GAPS", "INVALID_TIMESTAMPS"}
     capacity, capacity_basis, mean_dis, cap_norm, soh, soh_est, soh_basis = \
         _calc_capacity_and_soh(time_s, capacity_total, ia, profile, is_hppc,
-                                reached_cutoff, soh, modes, soc_start)
+                                reached_cutoff, soh, modes, soc_start, sample_quality)
+    if gaps_excessive:
+        # Preserve the integrated measurement as raw evidence even when timing
+        # quality prevents normalized capacity/SoH certification.
+        cap_norm = soh = soh_est = float("nan")
+        soh_basis = "unavailable: excessive excluded sampling gaps"
+
+    quick_capacity = None
+    quick_capacity_status = "NOT_QUICK_SCAN"
+    quick_soh_est = float("nan")
+    q_interval_removed = (_quick_discharge_interval(time_s, ia, capacity_total, modes, sample_quality)
+                          if is_quick_scan else capacity)
+    quick_mean_current = (_quick_mean_discharge_current(time_s, ia, modes, sample_quality)
+                          if is_quick_scan else mean_dis)
+    if gaps_excessive and is_quick_scan:
+        q_interval_removed = quick_mean_current = float("nan")
+        quick_capacity = None
+        quick_capacity_status = integration_quality["integration_quality_status"]
+    try:
+        _peukert_hr = float(getattr(profile, "peukert_hr", 10.0))
+    except (TypeError, ValueError):
+        _peukert_hr = float("nan")
+    try:
+        _capacity_10h = float(getattr(profile, "capacity_10h_ah", 0.0))
+    except (TypeError, ValueError):
+        _capacity_10h = float("nan")
+    _reference_capacity = (_capacity_10h if np.isfinite(_capacity_10h) and _capacity_10h > 0.0
+                          else float(profile.capacity_ah))
+    try:
+        i_ref_quick = float(getattr(profile, "peukert_reference_current_a", None))
+    except (TypeError, ValueError):
+        i_ref_quick = float("nan")
+    if not np.isfinite(i_ref_quick) or i_ref_quick <= 0.0:
+        i_ref_quick = (_reference_capacity / _peukert_hr
+                       if np.isfinite(_peukert_hr) and _peukert_hr > 0.0
+                       else float("nan"))
+    try:
+        peukert_k = float(getattr(profile, "peukert_k", float("nan")))
+    except (TypeError, ValueError):
+        peukert_k = float("nan")
+    peukert_inputs_valid = (np.isfinite(quick_mean_current) and quick_mean_current > 0.0
+                             and np.isfinite(i_ref_quick) and i_ref_quick > 0.0
+                             and np.isfinite(peukert_k))
+    peukert_factor = ((quick_mean_current / i_ref_quick) ** (peukert_k - 1.0)
+                      if peukert_inputs_valid else
+                      float("nan") if is_quick_scan else 1.0)
+    q_c10_interval = (q_interval_removed * peukert_factor
+                      if np.isfinite(peukert_factor) else float("nan"))
+    if is_quick_scan:
+        from aset_batt.acquisition.ocv_validation import estimate_full_capacity
+        if gaps_excessive:
+            quick_capacity_status = "EXCESSIVE_GAPS"
+        elif not peukert_inputs_valid:
+            quick_capacity_status = "PEUKERT_INPUT_INVALID"
+        elif getattr(profile, "capacity_rating_validated", None) is False:
+            quick_capacity_status = "PROFILE_NOT_RATE_VALIDATED"
+        else:
+            estimate = estimate_full_capacity(
+                max(0.0, float(q_c10_interval)), soc_start, soc_end,
+                start_valid=bool(ocv_start_valid), end_valid=bool(ocv_end_valid),
+                rated_capacity_ah=profile.capacity_ah)
+            quick_capacity, quick_capacity_status = estimate["capacity_ah"], estimate["status"]
+            if estimate["valid"]:
+                quick_soh_est = 100.0 * quick_capacity / profile.capacity_ah
+        soh_est = quick_soh_est
+        soh_basis = ("OCV-normalized Quick screening estimate" if np.isfinite(quick_soh_est)
+                     else quick_capacity_status)
 
     # Polarity guard: reject a charge-only record, but do not misclassify an
     # HPPC sequence just because its regen leg has more samples than its
@@ -1154,9 +1466,13 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         soh = float("nan")
 
     dcir, dcir_std, n_steps, measured, n_stale, n_implausible = identify_dcir(
-        current_a, voltage_v, temp_c, profile, time_s=time_s)
+        current_a, voltage_v, temp_c, profile, time_s=time_s,
+        modes=modes, quick_scan=is_quick_scan, sample_quality=sample_quality)
+    dcir_latency = (_quick_step_on_latency(current_a, modes, time_s, sample_quality)
+                    if is_quick_scan else float("nan"))
     dcir_timepoints = identify_dcir_at_timepoints(
-        current_a, voltage_v, temp_c, profile, time_s=time_s)
+        current_a, voltage_v, temp_c, profile, time_s=time_s,
+        modes=modes, quick_scan=is_quick_scan, sample_quality=sample_quality)
     levels = _vi_levels(current_a, voltage_v)
     if len(levels) >= 2:
         dcir_slope, dcir_slope_r2 = dcir_from_vi_slope(
@@ -1182,7 +1498,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     _tc_arr = np.asarray(temp_c, float)
     t_med = float(np.nanmedian(_tc_arr)) if _tc_arr.size and not np.all(np.isnan(_tc_arr)) else _T_REF
     ocv_ceil = _ocv_ceiling(profile, t_med)
-    sag, cca_est, ocv = _load_metrics(current_a, voltage_v, dcir, profile, ocv_ceiling=ocv_ceil)
+    sag, cca_est_25c, ocv = _load_metrics(
+        current_a, voltage_v, dcir, profile, ocv_ceiling=ocv_ceil)
     warnings, temp_drift = _quality_flags(current_a, voltage_v, temp_c, profile,
                                           is_hppc, n_steps, reached_cutoff)
     warnings = warnings + harness_warnings
@@ -1199,9 +1516,37 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     if is_charge_record:
         warnings.append("test was a CHARGE (negative median current) — grading requires a DISCHARGE; SoH is invalid")
 
+    fit_time, fit_current, fit_voltage, fit_temp = time_s, current_a, voltage_v, temp_c
+    fit_ocv = ocv
+    if is_quick_scan and fit_ecm and len(mode_set) > 0:
+        _mode_arr = np.asarray([str(m or "").strip().upper() for m in modes], dtype=object)
+        _pulse_idxs = np.where(_mode_arr == "MINI_PULSE")[0]
+        if _pulse_idxs.size:
+            _first = int(_pulse_idxs[0])
+            _last = int(_pulse_idxs[-1])
+            _start = max(0, _first - 5)
+            _pre_v = np.asarray(voltage_v, float)[_start:_first]
+            _pre_i = np.asarray(current_a, float)[_start:_first]
+            _quiet = _pre_v[np.abs(_pre_i) < 0.15]
+            if _quiet.size:
+                fit_ocv = float(np.median(_quiet))
+            _fit_indices = np.arange(_start, _last + 1)
+            fit_time = np.asarray(time_s, float)[_fit_indices]
+            fit_time = fit_time - fit_time[0]
+            fit_current = np.asarray(current_a, float)[_fit_indices]
+            fit_voltage = np.asarray(voltage_v, float)[_fit_indices]
+            fit_temp = np.asarray(temp_c, float)[_fit_indices]
+        else:
+            fit_ecm = False
     ecm, warnings, cca_est = _extract_ecm_metrics(
-        time_s, current_a, voltage_v, temp_c, ocv, ocv_ceil, fit_ecm,
+        fit_time, fit_current, fit_voltage, fit_temp, fit_ocv, ocv_ceil, fit_ecm,
         harness_r, profile, t_med, dcir, measured, warnings)
+    _ocv_eff = min(ocv, ocv_ceil) if ocv_ceil else ocv
+    if ecm["ecm_identified"]:
+        # Prefer fitted ECM resistance over a profile/DCIR fallback for the
+        # proxy. Keep the raw-at-25°C and cold-derated values distinct.
+        cca_est_25c = cca_est
+    cca_est = _cca_derate_to_cold(cca_est_25c, _ocv_eff, profile)
 
     # Per-pulse breakdown — the aggregated ECM above fits ONE pulse (whichever
     # edge fit_model's _detect_step finds first); this exposes the pulse-to-
@@ -1272,8 +1617,9 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
                 "r0_fit": _p_r0_fit, "r0_release": _p_r0_release,
                 "r0_release_n": _p_r0_release_n, "r0_method": _p_r0_method,
             })
-            cca_est = (max(0.0, (min(ocv, ocv_ceil) if ocv_ceil else ocv) - _cca_cutoff_v(profile)) / ecm["ri_total"]
-                      if ecm["ri_total"] > 1e-6 else 0.0)
+            cca_est_25c = (max(0.0, _ocv_eff - _cca_cutoff_v(profile)) / ecm["ri_total"]
+                           if ecm["ri_total"] > 1e-6 else 0.0)
+            cca_est = _cca_derate_to_cold(cca_est_25c, _ocv_eff, profile)
 
     # A C10 capacity acceptance needs explicit phase provenance, a full/known-full
     # start, the profile cut-off, and a current close to C10.  Quick Scan's
@@ -1292,8 +1638,12 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         capacity_reasons.append("record is a charge, not a discharge")
     if capacity_basis != "MAIN_DISCHARGE":
         capacity_reasons.append("CSV has no MAIN_DISCHARGE phase provenance")
+    if getattr(profile, "capacity_rating_validated", None) is not True:
+        capacity_reasons.append("profile C10 rating basis is not validated")
     if not full_start:
         capacity_reasons.append("discharge did not start from verified full SoC")
+    if not bool(ocv_start_valid):
+        capacity_reasons.append("starting OCV condition is not verified")
     if not cutoff_ok:
         capacity_reasons.append("configured cut-off was not reached")
     if not rate_ok:
@@ -1336,17 +1686,13 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     # useful to the operator and must not be confused with the verified C10
     # grade below.  The phase signature keeps generic 1C data from receiving a
     # Quick Scan label accidentally.
-    mode_set = {str(m or "").strip().upper() for m in (modes or [])}
-    is_quick_scan = (not is_hppc and (
-        bool(quick_scan) or {"MINI_PULSE", "MAIN_DISCHARGE"}.issubset(mode_set)
-    ))
     quick_reasons = []
     if not is_quick_scan:
         quick_reasons.append("not a phase-labelled Quick Scan record")
     if capacity_basis != "MAIN_DISCHARGE":
         quick_reasons.append("missing MAIN_DISCHARGE capacity provenance")
-    if not full_start:
-        quick_reasons.append("start SoC is not verified full")
+    if not np.isfinite(quick_soh_est):
+        quick_reasons.append(quick_capacity_status)
     if not cutoff_ok:
         quick_reasons.append("configured cut-off was not reached")
     if is_charge_record:
@@ -1364,8 +1710,15 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
     # Scan.  Preserve the historical safety behaviour for other test records:
     # a resolved electrical REJECT remains decisive there.
     if is_quick_scan:
-        grade = (_worst_grade(capacity_grade, electrical_grade)
-                 if capacity_gradeable and electrical_gradeable else "REVIEW")
+        # Missing endpoint OCV means the Quick capacity assessment is incomplete,
+        # not contradictory evidence. Keep the electrical result and report N/A.
+        if not np.isfinite(quick_soh_est):
+            quick_grade = "N/A"
+            capacity_grade = "N/A"
+            grade = "N/A"
+        else:
+            grade = (_worst_grade(capacity_grade, electrical_grade)
+                     if capacity_gradeable and electrical_gradeable else "REVIEW")
     elif "REJECT" in (capacity_grade, electrical_grade):
         grade = "REJECT"
     elif capacity_gradeable and electrical_gradeable:
@@ -1405,20 +1758,84 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
 
     ica_v, ica = Analytics.incremental_capacity(v, q)
     return {
-        "soh": soh, "soh_est": soh_est, "soh_basis": soh_basis,
+        "soh": (float("nan") if is_quick_scan else soh),
+        "observed_capacity_fraction_pct": soh,
+        "soh_est": soh_est, "soh_basis": soh_basis,
         "capacity_ah": capacity, "capacity_total_ah": capacity_total,
+        **{k: value for k, value in integration_quality.items()
+           if k != "excluded_interval_mask"},
+        "q_removed_ah": capacity,
+        "q_interval_removed_ah": q_interval_removed,
+        "peukert_factor": peukert_factor,
+        "quick_mean_discharge_a": quick_mean_current,
+        "q_c10_interval_equivalent_ah": q_c10_interval,
+        "reference_current_c10_a": i_ref_quick,
+        "quick_peukert_k": peukert_k,
+        "peukert_k": peukert_k,
+        "peukert_k_source": getattr(profile, "peukert_k_source", "GENERIC_PROFILE_FALLBACK"),
+        "quick_soc_start_pct": soc_start,
+        "quick_soc_end_pct": soc_end,
+        "quick_ocv_start_valid": bool(ocv_start_valid),
+        "quick_ocv_end_valid": bool(ocv_end_valid),
+        "quick_capacity_est_status": quick_capacity_status,
+        "quick_capacity_est_ah": quick_capacity,
+        "quick_full_capacity_est_ah": quick_capacity,
+        "quick_capacity_est_valid": quick_capacity is not None,
+        "quick_capacity_est_status": quick_capacity_status,
+        "quick_soh_est_pct": quick_soh_est,
+        "quick_soh_status": ("AVAILABLE" if np.isfinite(quick_soh_est)
+                             else quick_capacity_status if is_quick_scan else "NOT_QUICK_SCAN"),
+        "capacity_assessment_status": ("AVAILABLE" if capacity_gradeable else
+                                       "NOT_AVAILABLE" if is_quick_scan and not np.isfinite(quick_soh_est)
+                                       else "REVIEW"),
+        "evidence_status": (quick_capacity_status if is_quick_scan and not np.isfinite(quick_soh_est)
+                            else "AVAILABLE"),
+        "quick_soh_est_valid": bool(np.isfinite(quick_soh_est)),
+        "verified_capacity_ah": capacity if capacity_gradeable else None,
+        "verified_soh_pct": soh if capacity_gradeable else None,
         "capacity_basis": capacity_basis, "capacity_norm_ah": cap_norm,
         "capacity_rate_normalized_ah": cap_norm, "mean_discharge_a": mean_dis,
         "peukert_k": getattr(profile, "peukert_k", 1.1),
+        "capacity_reference_rate_hr": getattr(profile, "peukert_hr", 10.0),
+        "capacity_reference_ah": profile.capacity_ah,
+        "capacity_reference_current_a": (
+            float(profile.capacity_10h_ah) / max(1.0, float(profile.peukert_hr))
+            if profile.capacity_10h_ah > 0.0 else
+            profile.capacity_ah / max(1e-9, getattr(profile, "peukert_hr", 10.0))),
+        "quick_scan_reference_capacity_ah": profile.capacity_ah,
+        "quick_scan_discharge_rate_c": 1.0 if is_quick_scan else float("nan"),
+        "peukert_reference_capacity_ah": profile.capacity_ah,
+        "peukert_reference_rate_hr": getattr(profile, "peukert_hr", 10.0),
+        "peukert_reference_hr": getattr(profile, "peukert_hr", 10.0),
+        "peukert_reference_current_a": i_ref_quick,
+        "peukert_formula_version": "peukert-power-law-v1",
+        "capacity_rating_basis": getattr(profile, "capacity_rating_basis", "UNKNOWN"),
+        "capacity_basis_status": "CURRENT_PROFILE_BASIS",
+        "capacity_basis_legacy": False,
         "dcir_mohm": dcir * 1000.0, "dcir_std_mohm": dcir_std * 1000.0,
         "dcir_n_steps": n_steps, "dcir_measured": measured, "dcir_temp_normalised": True,
+        "dcir_source": ("MEASURED_MINI_PULSE_STEP_ON" if measured and is_quick_scan
+                        else "MEASURED_RECORD" if measured else "PROFILE_FALLBACK"),
+        "dcir_phase": "MINI_PULSE" if measured and is_quick_scan else None,
+        "dcir_edge_type": "STEP_ON" if measured and is_quick_scan else None,
+        "dcir_latency_s": dcir_latency,
+        "dcir_timing_status": ("VALID" if np.isfinite(dcir_latency) and 0.0 < dcir_latency <= 0.5
+                               else "INVALID_TIMESTAMP" if is_quick_scan else "NOT_APPLICABLE"),
         "ecm_temp_normalised": True,
         "dcir_slope_mohm": dcir_slope * 1000.0, "dcir_slope_r2": dcir_slope_r2,
         "ri_mohm": ecm["ri_total"] * 1000.0,
-        "voltage_sag_v": sag, "cca_est_a": cca_est, "ocv_v": ocv,
+        "voltage_sag_v": sag, "cca_est_a": cca_est,
+        "cca_est_25c_a": cca_est_25c,
+        "cca_proxy_source": ("ECM_R0_PLUS_R1" if ecm["ecm_identified"]
+                             else "DCIR_MEASURED" if measured
+                             else "PROFILE_FALLBACK"),
+        "cca_basis": "−18°C estimated cranking-current proxy; not SAE J537 CCA",
+        "temperature_median_c": t_med,
+        "ocv_v": ocv,
         "grade": grade, "overall_grade": grade, "gradeable": gradeable,
         "overall_gradeable": gradeable,
         "quick_grade": quick_grade, "quick_gradeable": quick_gradeable,
+        "is_quick_scan": is_quick_scan,
         "quick_grade_basis": quick_grade_basis, "quick_grade_confidence": quick_confidence,
         "capacity_grade": capacity_grade, "capacity_gradeable": capacity_gradeable,
         "electrical_grade": electrical_grade, "electrical_gradeable": electrical_gradeable,
@@ -1472,8 +1889,8 @@ def _read_csv(path):
         c_t, c_v, c_i = col("Elapsed_s"), col("Voltage_V"), col("Current_A")
         c_temp, c_cap, c_mode = col("Temperature_C"), col("Capacity_Ah"), col("Mode")
         c_soc, c_quality, c_phase = col("SoC_pct"), col("Sample_Quality"), col("Phase")
-        T, V, I, TEMP, CAP, SOC, modes = [], [], [], [], [], [], []
-        quality = {"invalid_excluded": 0, "gap_phases": []}
+        T, V, I, TEMP, CAP, SOC, modes, sample_quality = [], [], [], [], [], [], [], []
+        quality = {"invalid_excluded": 0, "gap_phases": [], "row_quality": []}
         for r in reader:
             def num(c, default=float("nan")):
                 try:
@@ -1483,6 +1900,9 @@ def _read_csv(path):
             row_quality = str(r.get(c_quality) or "VALID").strip().upper() if c_quality else "VALID"
             if row_quality == "INVALID":
                 quality["invalid_excluded"] += 1
+                if quality["row_quality"]:
+                    quality["row_quality"][-1] = "GAP"
+                quality["pending_invalid"] = True
                 continue
             mode = r[c_mode] if c_mode else ""
             phase = r[c_phase] if c_phase else mode
@@ -1491,8 +1911,11 @@ def _read_csv(path):
             T.append(num(c_t)); V.append(num(c_v)); I.append(num(c_i))
             TEMP.append(num(c_temp, 25.0)); CAP.append(num(c_cap)); SOC.append(num(c_soc))
             modes.append(mode)
+            sample_quality.append("GAP" if quality.pop("pending_invalid", False) else row_quality)
+            quality["row_quality"].append(sample_quality[-1])
     return (np.asarray(T, float), np.asarray(V, float), np.asarray(I, float),
-            np.asarray(TEMP, float), np.asarray(CAP, float), np.asarray(SOC, float), modes, quality)
+            np.asarray(TEMP, float), np.asarray(CAP, float), np.asarray(SOC, float), modes,
+            quality)
 
 
 def _apply_session_outcome(csv_path: str, result: dict) -> dict:
@@ -1544,8 +1967,185 @@ def _apply_session_outcome(csv_path: str, result: dict) -> dict:
     return result
 
 
+def _quick_start_soc_from_metadata(fallback_soc: float | None, *,
+                                   quick_scan: bool, session_meta: dict):
+    """Prefer the valid pre-MINI_PULSE OCV anchor recorded by Quick Scan."""
+    if quick_scan and session_meta.get("ocv_start_valid"):
+        try:
+            return float(session_meta["ocv_start_soc_pct"])
+        except (KeyError, TypeError, ValueError):
+            return None
+    return fallback_soc
+
+
+def _offline_legacy_quick_metrics(t, i, v, modes, profile):
+    """Recover independently useful Quick Scan metrics from historical raw rows."""
+    t, i, v = (np.asarray(x, float) for x in (t, i, v))
+    labels = [str(x or "").strip().upper() for x in modes]
+    recorded = any(labels)
+    phase_source = "RECORDED_PHASE" if recorded else "LEGACY_INFERRED_PHASE"
+    dt = np.diff(t)
+    valid_dt = np.isfinite(dt) & (dt > 0)
+    charge = np.clip(i, 0.0, None)
+    q_total = float(np.sum((charge[:-1] + charge[1:]) * 0.5 * np.where(valid_dt, dt, 0.0)) / 3600.0)
+
+    if recorded and len(labels) == len(i):
+        mini = np.asarray([x == "MINI_PULSE" for x in labels])
+        main = np.asarray([x == "MAIN_DISCHARGE" for x in labels])
+        active = mini | main
+    else:
+        # Legacy Quick Scan has a short diagnostic pulse followed by the longer
+        # continuous discharge. Identify pulse regions from current changes.
+        active_i = np.where(i > max(0.5, 0.15 * float(np.nanmax(i))))[0]
+        mini = np.zeros(i.size, bool)
+        main = np.zeros(i.size, bool)
+        active = np.zeros(i.size, bool)
+        if active_i.size:
+            starts = np.r_[active_i[0], active_i[1:][np.diff(active_i) > 1]]
+            ends = np.r_[starts[1:] - 1, active_i[-1]]
+            if starts.size:
+                mini[starts[0]:ends[0] + 1] = True
+                for a, b in zip(starts[1:], ends[1:]):
+                    main[a:b + 1] = True
+                active = mini | main
+
+    def integrate(mask):
+        if mask.size != i.size or np.count_nonzero(mask) < 2:
+            return float("nan")
+        idx = np.where(mask)[0]
+        edges = np.arange(idx[0], idx[-1])
+        use = mask[edges] & mask[edges + 1] & valid_dt[edges]
+        selected_edges = edges[use]
+        return float(np.sum((charge[selected_edges] + charge[selected_edges + 1]) * 0.5 * dt[selected_edges]) / 3600.0)
+
+    q_mini, q_main = integrate(mini), integrate(main)
+    q_interval = q_total if not np.any(active) else float(np.nansum([q_mini, q_main]))
+    loaded = active & np.isfinite(i) & (i > 0.05)
+    loaded_edges = loaded[:-1] & loaded[1:] & valid_dt
+    loaded_dt = float(np.sum(dt[loaded_edges]))
+    loaded_ah = (float(np.sum((charge[:-1][loaded_edges] + charge[1:][loaded_edges])
+                              * 0.5 * dt[loaded_edges]) / 3600.0)
+                 if loaded_edges.any() else float("nan"))
+    mean_i = loaded_ah * 3600.0 / loaded_dt if loaded_dt > 0.0 else float("nan")
+    k = float(getattr(profile, "peukert_k", 0.0) or 0.0)
+    c10_capacity = float(getattr(profile, "capacity_10h_ah", 0.0) or 0.0)
+    rating_valid = getattr(profile, "capacity_rating_validated", None) is True
+    rated_capacity = float(getattr(profile, "capacity_ah", 0.0) or 0.0)
+    rated_hours = float(getattr(profile, "peukert_hr", 0.0) or 0.0)
+    if c10_capacity > 0.0 and rating_valid:
+        i_ref = c10_capacity / 10.0
+    elif rating_valid and str(getattr(profile, "capacity_rating_basis", "")).upper() == "C10" \
+            and rated_capacity > 0.0 and rated_hours > 0.0:
+        i_ref = rated_capacity / rated_hours
+    else:
+        i_ref = float("nan")
+    q_c10 = (q_interval * (mean_i / i_ref) ** (k - 1.0)
+             if np.isfinite(q_interval) and np.isfinite(mean_i) and mean_i > 0
+             and np.isfinite(i_ref) and i_ref > 0.0 and k > 0.0 else float("nan"))
+
+    # Use the actual first pulse-on edge. Its first sample must be within 0.5s.
+    candidates = np.where((i[1:] - i[:-1]) > max(0.05, 0.2 * float(np.nanmax(i))))[0]
+    dcir = latency = float("nan")
+    for edge in candidates:
+        if recorded and (edge + 1 >= len(labels) or labels[edge + 1] != "MINI_PULSE"):
+            continue
+        latency = float(t[edge + 1] - t[edge])
+        if latency <= 0.5 and i[edge + 1] > 0:
+            dcir = abs(float(v[edge + 1] - v[edge]) / float(i[edge + 1] - i[edge])) * 1000.0
+            break
+    return {
+        "phase_detection_source": phase_source,
+        "charge_removed_ah": q_interval,
+        "q_interval_removed_ah": q_interval,
+        "charge_removed_source": "REANALYZED_FROM_RAW_DATA",
+        "q_mini_ah": q_mini, "q_main_ah": q_main,
+        "mean_discharge_current_a": mean_i,
+        "quick_mean_discharge_a": mean_i,
+        "reference_current_c10_a": i_ref,
+        "peukert_k": k,
+        "c10_equivalent_interval_charge_ah": q_c10,
+        "q_c10_interval_equivalent_ah": q_c10,
+        "peukert_factor_legacy_reanalysis": (q_c10 / q_interval if np.isfinite(q_c10) and q_interval > 0 else float("nan")),
+        "peukert_factor": (q_c10 / q_interval if np.isfinite(q_c10) and q_interval > 0 else float("nan")),
+        "capacity_basis_status": "VALIDATED_C10_PROFILE" if np.isfinite(q_c10) else "C10_BASIS_UNAVAILABLE",
+        "dcir_reanalyzed_mohm": dcir if np.isfinite(dcir) and latency <= 0.5 else float("nan"),
+        "dcir_reanalyzed_latency_s": latency,
+        "dcir_reanalyzed_source": "REANALYZED_FROM_LEGACY_RAW_DATA" if np.isfinite(dcir) and latency <= 0.5 else "UNAVAILABLE",
+        "recorded_rest_voltage_v": float(v[0]) if v.size else float("nan"),
+        "validated_start_ocv_v": float("nan"), "validated_end_ocv_v": float("nan"),
+        "quick_soh_current_method_pct": float("nan"),
+        "quick_full_capacity_est_ah": float("nan"),
+        "quick_soh_est_pct": float("nan"),
+        "quick_soh_current_method_reason": "Historical end OCV does not satisfy current Quick OCV validation",
+        "start_ocv_status": "RECORDED_REST_VOLTAGE_UNVALIDATED",
+        "end_ocv_status": "LEGACY_UNVERIFIED",
+    }
+
+
+def _read_historical_csv_result(csv_path):
+    """Read optional historical grade/capacity columns without using them as current results."""
+    out = {}
+    try:
+        with open(csv_path, "r", encoding="utf-8-sig", newline="") as handle:
+            lines = (line for line in handle if not line.lstrip().startswith("#"))
+            reader = csv.DictReader(lines)
+            rows = list(reader)
+        if not rows:
+            return out
+        aliases = {
+            "grade": ("Historical_Grade", "Grade"),
+            "soh": ("Historical_SoH_pct", "SoH_pct", "SoH"),
+            "capacity_ah": ("Historical_Capacity_Ah", "Capacity_Ah"),
+            "analysis_version": ("Analysis_Version",),
+        }
+        lookup = {str(k).strip().lower(): k for k in (reader.fieldnames or [])}
+        for target, names in aliases.items():
+            col_name = next((lookup[n.lower()] for n in names if n.lower() in lookup), None)
+            if col_name is None:
+                continue
+            value = next((row.get(col_name) for row in reversed(rows)
+                          if row.get(col_name) not in (None, "")), None)
+            if value is not None:
+                if target == "grade":
+                    out[target] = value
+                elif target == "analysis_version":
+                    out[target] = value
+                else:
+                    try:
+                        out[target] = float(value)
+                    except (TypeError, ValueError):
+                        pass
+    except (OSError, csv.Error, UnicodeError):
+        return out
+    return out
+
+
+def _has_current_quick_schema(csv_path):
+    """Whether a CSV carries the production schema and Quick procedure record."""
+    try:
+        with open(csv_path, "r", encoding="utf-8-sig", newline="") as handle:
+            lines = (line for line in handle if not line.lstrip().startswith("#"))
+            reader = csv.DictReader(lines)
+            headers = {str(name).strip().lower() for name in (reader.fieldnames or [])}
+        required = {"schema_version", "session_id", "test_type", "phase",
+                    "sample_quality", "temperature_c", "elapsed_s",
+                    "voltage_v", "current_a"}
+        if not required.issubset(headers):
+            return False
+        with open(csv_path + ".meta.json", encoding="utf-8") as handle:
+            metadata = json.load(handle)
+        protocol = metadata.get("protocol") or {}
+        protocol_id = str(protocol.get("id", "")).strip().lower()
+        test_type = str(metadata.get("test_type", "")).strip().lower()
+        return (str(metadata.get("schema_version", "")) == "2.3"
+                and protocol_id == "quick-scan-v2"
+                and "quick" in test_type)
+    except (OSError, csv.Error, UnicodeError, ValueError, TypeError):
+        return False
+
+
 def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False,
-                fit_ecm=None) -> dict:
+                fit_ecm=None, offline_legacy: bool = False) -> dict:
     """Parse a telemetry CSV and run the unified analysis. HPPC is inferred from
     the ``Mode`` column; capacity is integrated from current if not logged.
 
@@ -1554,18 +2154,177 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
     setting ``force_hppc`` (which would incorrectly suppress SoH)."""
     if not csv_path or not os.path.exists(csv_path):
         raise FileNotFoundError(csv_path or "(no CSV)")
+    try:
+        with open(csv_path + ".meta.json", encoding="utf-8") as handle:
+            session_meta = json.load(handle)
+    except (OSError, ValueError, TypeError):
+        session_meta = {}
+    current_peukert_k = float(getattr(profile, "peukert_k", 1.1))
+    current_peukert_source = getattr(profile, "peukert_k_source", "GENERIC_PROFILE_FALLBACK")
+    is_quick_scan = ("quickscan" in os.path.basename(csv_path).lower()
+                     or "quick" in str(session_meta.get("test_type", "")).lower())
+    historical_peukert_k = None
+    historical_peukert_source = "LEGACY_UNKNOWN"
+    try:
+        saved_k = session_meta.get("peukert_k") if is_quick_scan else None
+        if saved_k is not None and np.isfinite(float(saved_k)) and float(saved_k) > 0.0:
+            historical_peukert_k = float(saved_k)
+            historical_peukert_source = str(
+                session_meta.get("peukert_k_source") or "LEGACY_UNKNOWN")
+    except (TypeError, ValueError):
+        pass
+    # Stored session k is the reproducible assumption for reanalysis. A file
+    # without it is explicitly a current-profile reanalysis. Replace only this
+    # immutable value object; do not mutate today's selected profile/config.
+    if historical_peukert_k is not None:
+        from dataclasses import replace as _replace
+        historical_values = {
+            "peukert_k": historical_peukert_k,
+            "peukert_k_source": historical_peukert_source,
+        }
+        for field, meta_key in (("peukert_hr", "peukert_reference_hr"),
+                                ("peukert_reference_hr", "peukert_reference_hr"),
+                                ("peukert_reference_current_a", "peukert_reference_current_a"),
+                                ("capacity_10h_ah", "peukert_reference_capacity_ah"),
+                                ("capacity_ah", "peukert_reference_capacity_ah")):
+            value = session_meta.get(meta_key)
+            if value is not None:
+                try:
+                    historical_values[field] = float(value)
+                except (TypeError, ValueError):
+                    pass
+        profile = _replace(profile, **historical_values)
+    historical_basis_complete = (historical_peukert_k is not None and
+                                  session_meta.get("peukert_reference_hr") is not None and
+                                  session_meta.get("peukert_reference_current_a") is not None and
+                                  session_meta.get("peukert_reference_capacity_ah") is not None and
+                                  session_meta.get("peukert_formula_version") is not None)
     t, v, i, temp, cap, soc, modes, acquisition_quality = _read_csv(csv_path)
+    sample_quality = acquisition_quality.get("row_quality", [])
     if t.size < 2:
         raise ValueError("CSV has too few samples to analyse.")
     is_hppc = force_hppc or any("hppc" in (m or "").lower() for m in modes)
     # New sessions expose the protocol through Mode/Phase.  Filename detection
     # retains correct grading semantics when replaying legacy QuickScan files
     # that predate phase provenance.
-    is_quick_scan = "quickscan" in os.path.basename(csv_path).lower()
+    is_quick_scan = ("quickscan" in os.path.basename(csv_path).lower()
+                     or "quick" in str(session_meta.get("test_type", "")).lower())
+    phase_recorded = any(str(m or "").strip() for m in modes)
+    # Select File uses offline_legacy=True for every saved file.  Current
+    # session files must still use the unified analyzer so their recorded
+    # timing quality, OCV evidence, and protocol basis are honored.  Require
+    # both the current row schema and an explicit Quick protocol: filenames
+    # and phase labels alone can also occur in historical/exported CSVs.
+    offline_legacy = bool(offline_legacy and not _has_current_quick_schema(csv_path))
+    if offline_legacy and is_quick_scan and not any(str(m or "").strip() for m in modes):
+        # Give the unified analyzer conservative inferred labels so legacy Quick
+        # traces use the same pulse-scoped gates without requiring Phase/Mode.
+        raw_mask = np.asarray(i, float) > max(0.5, 0.15 * float(np.nanmax(i)))
+        starts = np.where(raw_mask & ~np.r_[False, raw_mask[:-1]])[0]
+        ends = np.where(raw_mask & ~np.r_[raw_mask[1:], False])[0]
+        inferred = np.full(len(i), "", dtype=object)
+        if starts.size:
+            inferred[starts[0]:ends[0] + 1] = "MINI_PULSE"
+            for a, b in zip(starts[1:], ends[1:]):
+                inferred[a:b + 1] = "MAIN_DISCHARGE"
+        modes = inferred.tolist()
     if np.all(np.isnan(cap)):                       # no capacity column → integrate
         dt = np.diff(t, prepend=t[0])
         cap = np.cumsum(np.clip(i, 0, None) * dt) / 3600.0
-    # Starting SoC = the SoC right before the main discharge begins (after any RELAX phase).
+    if offline_legacy:
+        # Offline legacy inspection is independent from current certification
+        # gates. Reconstruct each metric from raw columns and keep historical
+        # result fields only as separate provenance.
+        raw = _offline_legacy_quick_metrics(t, i, v, modes, profile)
+        if not phase_recorded:
+            raw["phase_detection_source"] = "LEGACY_INFERRED_PHASE"
+        try:
+            from aset_batt.storage.data_utils import DataHandler
+            integrity = DataHandler.verify_integrity(csv_path)
+        except Exception:
+            integrity = None
+        integrity_status = ("HASH_VERIFIED" if integrity is True else
+                            "HASH_MISMATCH" if integrity is False else
+                            "INTEGRITY_HASH_UNAVAILABLE")
+        historical = session_meta
+        first_row = {}
+        try:
+            with open(csv_path, "r", encoding="utf-8-sig", newline="") as handle:
+                lines = (line for line in handle if not line.lstrip().startswith("#"))
+                first_reader = csv.DictReader(lines)
+                first_row = next(first_reader, {}) or {}
+        except (OSError, csv.Error, UnicodeError):
+            pass
+        hist_result = {k: historical[k] for k in
+                       ("analysis_version", "capacity_basis_version", "rated_capacity_ah",
+                        "capacity_ah", "soh", "grade", "quick_soh_est_pct",
+                        "historical_grade", "historical_soh_pct", "historical_capacity_ah",
+                        "peukert_k", "peukert_k_source", "peukert_factor",
+                        "q_c10_interval_equivalent_ah", "quick_full_capacity_est_ah")
+                       if historical.get(k) is not None}
+        for key, value in _read_historical_csv_result(csv_path).items():
+            hist_result.setdefault(key, value)
+        protocol = historical.get("protocol") or {}
+        if protocol.get("analysis_version"):
+            hist_result.setdefault("analysis_version", protocol["analysis_version"])
+        if historical.get("historical_grade") is not None:
+            hist_result.setdefault("grade", historical["historical_grade"])
+        if historical.get("historical_soh_pct") is not None:
+            hist_result.setdefault("quick_soh_est_pct", historical["historical_soh_pct"])
+        if historical.get("historical_capacity_ah") is not None:
+            hist_result.setdefault("capacity_ah", historical["historical_capacity_ah"])
+        return {
+            **raw,
+            "historical_peukert_k": historical_peukert_k,
+            "historical_peukert_k_source": historical_peukert_source,
+            "current_reanalysis_peukert_k": current_peukert_k,
+            "current_reanalysis_peukert_k_source": current_peukert_source,
+            "peukert_reanalysis_basis": ("HISTORICAL_BASIS_INCOMPLETE" if historical_peukert_k is not None and not historical_basis_complete
+                                          else "HISTORICAL_STORED" if historical_peukert_k is not None
+                                          else "REANALYZED_WITH_CURRENT_PROFILE"),
+            "peukert_k": float(profile.peukert_k),
+            "peukert_k_source": getattr(profile, "peukert_k_source", "LEGACY_UNKNOWN"),
+            "peukert_reference_hr": float(profile.peukert_hr),
+            "peukert_reference_current_a": raw.get("reference_current_c10_a"),
+            "analysis_layer": "OFFLINE_CURRENT_REANALYSIS",
+            "dataset_status": ("CORRUPT" if integrity_status == "HASH_MISMATCH" else
+                               "LEGACY_COMPATIBLE" if np.isfinite(raw["charge_removed_ah"])
+                               and raw["charge_removed_ah"] > 0.0 else "LEGACY_LIMITED"),
+            "compatibility_status": ("RAW_ONLY_LEGACY" if not historical else "LEGACY_COMPATIBLE"),
+            "current_reanalysis_status": ("PARTIAL_METRICS" if not np.isfinite(raw["c10_equivalent_interval_charge_ah"])
+                                          or not np.isfinite(raw["dcir_reanalyzed_mohm"])
+                                          else "COMPLETE_METRICS"),
+            "electrical_status": ("MEASURED_DCIR_GRADE_UNVERIFIED"
+                                  if np.isfinite(raw["dcir_reanalyzed_mohm"])
+                                  else "DCIR_UNAVAILABLE"),
+            "overall_displayed_status": "N/A",
+            "integrity_status": integrity_status,
+            "historical_result": hist_result,
+            "file_information": {
+                "filename": os.path.basename(csv_path),
+                "size_bytes": os.path.getsize(csv_path),
+                "session_id": historical.get("session_id") or first_row.get("Session_ID") or "N/A",
+                "test_type": (historical.get("test_type") or first_row.get("Test_Type")
+                              or ("Quick Scan (filename inferred)" if "quick" in os.path.basename(csv_path).lower()
+                                  else first_row.get("Mode") or "N/A")),
+                "acquisition_date": first_row.get("Timestamp") or historical.get("started_at") or "N/A",
+                "app_version": historical.get("app_version") or "N/A",
+                "analysis_version": historical.get("analysis_version")
+                                   or (historical.get("protocol") or {}).get("analysis_version") or "N/A",
+            },
+            "dataset_notes": (["Historical CSV reanalyzed from its recorded samples"]
+                              + ([] if historical else ["No metadata sidecar; analyzed raw CSV only"])),
+            "grade": "N/A", "overall_grade": "N/A", "gradeable": False,
+            "overall_gradeable": False, "capacity_grade": "N/A", "quick_grade": "N/A",
+            "electrical_grade": "N/A", "quality_warnings": [],
+            "capacity_ah": raw["charge_removed_ah"],
+            "dcir_mohm": raw["dcir_reanalyzed_mohm"],
+            "dcir_measured": np.isfinite(raw["dcir_reanalyzed_mohm"]),
+            "soh": float("nan"), "soh_est": float("nan"),
+            "quick_soh_est_pct": float("nan"),
+        }
+    # Quick Scan's SoC anchor is the validated OCV-derived value before MINI_PULSE.
+    # Other analyses retain the historical pre-main-discharge anchoring behavior.
     # This bypasses artificially high initial SoC caused by surface charge.
     soc_start = None
     if soc.size and not np.all(np.isnan(soc)):
@@ -1598,19 +2357,64 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
     soc_series = soc if soc.size and not np.all(np.isnan(soc)) else None
     reference_capacity_ah = None
     try:
-        with open(csv_path + ".meta.json", encoding="utf-8") as handle:
-            campaign = (json.load(handle).get("validation_campaign") or {})
+        campaign = (session_meta.get("validation_campaign") or {})
         candidate = float(campaign.get("reference_capacity_ah"))
         if campaign.get("enabled") and candidate > 0.0:
             from aset_batt.core.validation_campaign import reference_soc_from_capacity
             soc_series = np.asarray(reference_soc_from_capacity(cap, candidate), float)
             soc_start = float(soc_series[0]) if soc_series.size else soc_start
             reference_capacity_ah = candidate
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    except (ValueError, TypeError):
         pass
+    soc_start = _quick_start_soc_from_metadata(
+        soc_start, quick_scan=is_quick_scan, session_meta=session_meta)
     result = analyze_series(t, i, v, temp, cap, profile, is_hppc,
                             soc_start=soc_start, soc_series=soc_series,
-                            fit_ecm=fit_ecm, modes=modes, quick_scan=is_quick_scan)
+                            fit_ecm=fit_ecm, modes=modes, quick_scan=is_quick_scan,
+                            ocv_start_valid=session_meta.get("ocv_start_valid"),
+                            soc_end=session_meta.get("ocv_end_soc_pct"),
+                            ocv_end_valid=session_meta.get("ocv_end_valid", False),
+                            sample_quality=sample_quality)
+    if is_quick_scan:
+        result.update({
+            "historical_peukert_k": historical_peukert_k,
+            "historical_peukert_k_source": historical_peukert_source,
+            "current_reanalysis_peukert_k": current_peukert_k,
+            "current_reanalysis_peukert_k_source": current_peukert_source,
+            "peukert_reanalysis_basis": ("HISTORICAL_BASIS_INCOMPLETE" if historical_peukert_k is not None and not historical_basis_complete
+                                          else "HISTORICAL_STORED" if historical_peukert_k is not None
+                                          else "REANALYZED_WITH_CURRENT_PROFILE"),
+        })
+    # Keep the worker's historical EKF feedback anchor without retaining a
+    # second per-sample SoC history during acquisition. This is a pure nearest-
+    # timestamp lookup over the same validated series used by the fit.
+    fit_t = result.get("ecm_fit_t_s")
+    fit_soc_values = soc_series if soc_series is not None else soc
+    if (fit_t is not None and np.isfinite(fit_t) and fit_soc_values is not None
+            and len(fit_soc_values) == len(t) and len(t)):
+        fit_soc_idx = int(np.argmin(np.abs(t - fit_t)))
+        fit_soc = float(fit_soc_values[fit_soc_idx])
+        if np.isfinite(fit_soc):
+            result["ecm_fit_soc_pct"] = fit_soc
+    # Never relabel a historical YTZ6V measurement using today's corrected
+    # product profile. Old CSVs and sidecars remain untouched; their report
+    # records that the capacity basis predates the explicit C10/C20 split.
+    recorded_product = str(session_meta.get("product_name") or
+                           session_meta.get("battery_product") or
+                           getattr(profile, "name", "") or "").lower()
+    is_ytz6v = "ytz6v" in recorded_product
+    if is_ytz6v and session_meta.get("capacity_basis_version") != "ytz6v-c10-c20-v1" and not offline_legacy:
+        result["capacity_basis_status"] = "LEGACY_HISTORICAL_CAPACITY_BASIS"
+        result["capacity_basis_legacy"] = True
+        warning = ("YTZ6V session uses a historical capacity basis; current C10/C20 "
+                   "profile values were not applied to this recorded measurement")
+        result.setdefault("quality_warnings", []).append(warning)
+        # The measured Ah remains visible for traceability, but historical
+        # metadata cannot support a current C10 SoH denominator or grade.
+        result.update({"capacity_grade": "REVIEW", "capacity_gradeable": False,
+                       "verified_capacity_ah": None, "verified_soh_pct": None,
+                       "grade": "REVIEW", "overall_grade": "REVIEW",
+                       "gradeable": False, "overall_gradeable": False})
     if reference_capacity_ah is not None:
         result["reference_soc_source"] = "c10_capacity"
         result["reference_capacity_ah"] = reference_capacity_ah
@@ -1628,6 +2432,18 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
         # corrupts capacity.  Preserve diagnostics, but never certify a grade.
         result.update({"grade": "REVIEW", "overall_grade": "REVIEW",
                        "gradeable": False, "overall_gradeable": False})
+    if is_quick_scan and "MINI_PULSE" in acquisition_quality["gap_phases"]:
+        result.update({"dcir_measured": False, "dcir_source": "PROFILE_FALLBACK",
+                       "dcir_n_steps": 0, "dcir_timepoints_mohm": {},
+                       "ecm_identified": False, "electrical_grade": "REVIEW",
+                       "electrical_gradeable": False, "grade": "REVIEW",
+                       "overall_grade": "REVIEW", "gradeable": False,
+                       "overall_gradeable": False})
+        result.setdefault("quality_warnings", []).append(
+            "Quick Scan MINI_PULSE contains GAP samples; measured DCIR/ECM evidence withheld")
+    # Offline inspection is diagnostic. An old terminal status must not erase
+    # independently reconstructed electrical metrics or turn the page into a
+    # generic REVIEW result.
     return _apply_session_outcome(csv_path, result)
 
 
@@ -1660,7 +2476,7 @@ def shutdown_analysis_pool():
 
 
 def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = False,
-                   fit_ecm=None) -> dict:
+                   fit_ecm=None, offline_legacy: bool = False) -> dict:
     """Same result as analyze_csv(), but the ECM curve-fit (scipy.optimize.curve_fit,
     up to ~10k iterations, run from a background thread after every auto sequence)
     executes in a separate worker process instead of a thread.
@@ -1671,7 +2487,7 @@ def analyze_csv_mp(csv_path: str, profile: BatteryProfile, force_hppc: bool = Fa
     for the ~5-15s the fit takes. A separate process has its own GIL, so the UI
     thread keeps pumping events while this call blocks on the subprocess result.
     """
-    future = _get_analysis_pool().submit(analyze_csv, csv_path, profile, force_hppc, fit_ecm)
+    future = _get_analysis_pool().submit(analyze_csv, csv_path, profile, force_hppc, fit_ecm, offline_legacy)
     return future.result()
 
 

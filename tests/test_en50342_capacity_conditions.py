@@ -32,7 +32,8 @@ class TestStandardConditions(unittest.TestCase):
     def test_clean_i10_run_has_no_violations(self):
         # C10-rated pack: reference rate = 0.1C; 10.5 V / 6 cells = 1.75 V/cell.
         applicable, violations = en50342_capacity_conditions(
-            "LeadAcid", 0.1, 10.5, 6, skip_charge=False, skip_rest=False)
+            "LeadAcid", 0.1, 10.5, 6, skip_charge=False, skip_rest=False,
+            temp_c=25.0)
         self.assertTrue(applicable)
         self.assertEqual(violations, [])
 
@@ -61,7 +62,7 @@ class TestStandardConditions(unittest.TestCase):
     def test_rate_tolerance_accepts_near_reference(self):
         # ±15% band: 0.108C on a C10 rating still counts as I10.
         _, violations = en50342_capacity_conditions(
-            "LeadAcid", 0.108, 10.5, 6, False, False)
+            "LeadAcid", 0.108, 10.5, 6, False, False, temp_c=25.0)
         self.assertFalse(any("reference rate" in v for v in violations))
 
 

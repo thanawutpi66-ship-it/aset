@@ -56,8 +56,16 @@ def integrate_capacity(t_s: List[float], i_a: List[float], v_v: List[float]):
     return ah, wh
 
 
-def soh_from_capacity(capacity_ah: float, rated_ah: float) -> float:
-    """SoH % = measured discharge capacity ÷ rated, clamped to [0, 120]."""
+def soh_from_capacity(capacity_ah: float, rated_ah: float, *,
+                      verified_full_discharge: bool = False) -> float:
+    """Return direct-reference SoH only for a verified full discharge.
+
+    A PC discharge records measured removed charge, but it does not prove that
+    the battery started full.  Callers must provide protocol evidence before
+    converting that measurement into SoH.
+    """
+    if not verified_full_discharge:
+        return float("nan")
     if rated_ah <= 0:
         return float("nan")
     return max(0.0, min(120.0, 100.0 * capacity_ah / rated_ah))
@@ -143,7 +151,9 @@ class PelBattTest:
             self.safe_off()
         ah, wh = integrate_capacity(t_s, i_a, v_v)
         return DischargeResult(
-            capacity_ah=ah, energy_wh=wh, soh_pct=soh_from_capacity(ah, self.rated_ah),
+            capacity_ah=ah, energy_wh=wh,
+            soh_pct=soh_from_capacity(ah, self.rated_ah,
+                                       verified_full_discharge=False),
             duration_s=(t_s[-1] if t_s else 0.0), stopped_reason=reason,
             n_samples=len(t_s), t_s=t_s, v_v=v_v, i_a=i_a, source="pc_coulomb")
 

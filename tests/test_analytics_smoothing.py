@@ -71,6 +71,23 @@ class TestHampelFilterShortArrays(unittest.TestCase):
 
 
 class TestHampelFilterOutlierRejection(unittest.TestCase):
+    def test_vectorized_filter_matches_reference_at_edges_and_for_spikes(self):
+        rng = np.random.default_rng(42)
+        x = rng.normal(10.0, 0.15, 257)
+        x[[0, 1, 127, 255, 256]] += [8.0, -7.0, 12.0, 6.0, -9.0]
+        x[80] = np.nan  # preserve the original median's NaN propagation
+        k = 7
+        expected = x.copy()
+        for i in range(x.size):
+            window = x[max(0, i - k):min(x.size, i + k + 1)]
+            median = float(np.median(window))
+            mad = float(np.median(np.abs(window - median)))
+            if mad == 0:
+                mad = max(1e-6, 0.01 * abs(median))
+            if abs(x[i] - median) > 3.0 * 1.4826 * mad:
+                expected[i] = median
+        np.testing.assert_array_equal(Analytics.hampel_filter(x, k=k), expected)
+
     def test_single_spike_replaced_neighbors_untouched(self):
         x = np.full(21, 10.0)
         x[10] = 500.0  # single large spike in the middle

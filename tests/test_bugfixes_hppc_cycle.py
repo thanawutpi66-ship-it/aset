@@ -70,6 +70,11 @@ class _FakeHW:
         self._psu_output_on = False
         self.read_vi = read_vi_fn
 
+    def temperature_measurement(self):
+        return {"temperature_c": self.current_temp, "temperature_valid": True,
+                "temperature_age_s": 0.0, "temperature_source": "TEST",
+                "temperature_status": "VALID"}
+
 
 def _controller(read_vi_fn):
     c = AutoController(root=None, hw=_FakeHW(read_vi_fn), data=_FakeData(),

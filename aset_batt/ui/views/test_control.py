@@ -152,6 +152,9 @@ class TestControlMixin:
     def _on_run_test(self, mode=None):
         if self._test_thread is not None:
             return
+        if getattr(self.controller, "safety_triggered", False):
+            self._log_alarm("E_STOP_LATCHED — reset safety before starting a test")
+            return
         if not getattr(self.hw, "is_connected", False):
             if not self._headless:
                 QMessageBox.warning(self, "Run Test", "Connect hardware first")
@@ -166,8 +169,17 @@ class TestControlMixin:
             self._log_alarm("Charge stopped (auto) — starting test.")
         if self.controller and self.controller.monitor_running:
             self.controller.stop_monitor()
+        if self.controller:
+            self.controller.stop_live_readback()
+            monitor = getattr(self.controller, "_monitor_thread", None)
+            readback = getattr(self.controller, "_live_readback_thread", None)
+            if ((monitor is not None and monitor.is_alive())
+                    or (readback is not None and readback.is_alive())):
+                self._log_alarm("HARDWARE_BUSY — telemetry worker is still exiting; retry the test")
+                return
             
         self._ensure_battery_sn()
+        self._prepare_new_physical_session("manual-acquisition")
 
         op_mode = mode or OperationMode(self.cb_op_mode.currentText())
         cfg = TestConfig(self._acq_profile(), op_mode)
@@ -210,6 +222,13 @@ class TestControlMixin:
         if getattr(self, "_cloud_svc", None) is not None:
             self._cloud_svc.csv_path = csv_path
 
+        lease = self.operation_state.claim("manual-acquisition")
+        if lease is None:
+            self._log_alarm("HARDWARE_BUSY — previous worker has not released ownership")
+            return
+        self._manual_test_lease = lease
+        self.operation_state.running(lease)
+        self._operation_leases[lease.run_id] = lease
         backend = HardwareBackend(self.hw)
         self._test_thread = QThread()
         self._test_worker = AcquisitionWorker(backend, cfg, csv_path, estimator=self.estimator)
@@ -250,6 +269,9 @@ class TestControlMixin:
             logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
     def _on_stop_test(self):
         if self._test_worker:
+            lease = getattr(self, "_manual_test_lease", None)
+            if lease is not None:
+                self.operation_state.request_cancel(lease)
             self._test_worker.stop()
             self.sig_profile_status.emit("STOP", theme.WARN)
             self._log_alarm("Test stop requested.")
@@ -271,8 +293,13 @@ class TestControlMixin:
                     self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} ±{min(_std, 99):.0f} {_u}')
                 else:
                     self.metric_labels["SoC"][0].setText(f'{row["soc"]:.1f} {_u}')
-            self.metric_labels["Temp"][0].setText(f'{row["temp"]:.1f} {self.metric_labels["Temp"][1]}')
+            temp_status = row.get("temp_status", "VALID")
+            self.metric_labels["Temp"][0].setText(
+                f'{row["temp"]:.1f} {self.metric_labels["Temp"][1]}'
+                if temp_status == "VALID" else temp_status.replace("TEMP_SENSOR_", ""))
         self._set_temp_label_color(row["temp"])
+        if row.get("temp_status", "VALID") != "VALID" and "Temp" in self.metric_labels:
+            self.metric_labels["Temp"][0].setStyleSheet(f"color:{theme.CRIT}; border:0;")
         # Throttled the same way as _slot_display — see its comment. Target rate
         # is now DEFAULT_SAMPLE_HZ=10 (battery_model.py), so this 0.2s (5Hz)
         # redraw window finally provides real headroom — it now fires on roughly
@@ -337,6 +364,12 @@ class TestControlMixin:
             import logging
             logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
     def _on_test_finished(self, results: dict):
+        self._pending_manual_results = results
+        if isinstance(results, dict) and results.get("error"):
+            self.sig_alarm.emit(f"[ACQUISITION FAULT] {results['error']}")
+            if self.operation_state.state.value != "ESTOP_LATCHED":
+                self.sig_profile_status.emit("FAULT", theme.CRIT)
+            return
         # Final unthrottled redraw — _slot_display's redraw is rate-limited to ~5 Hz
         # (see its own comment), so the very last sample or two collected right before
         # the test ended could still be sitting un-painted when this fires.
@@ -363,7 +396,8 @@ class TestControlMixin:
         grade = results["grade"]
         conf = results.get("confidence", 1.0)
         self.lbl_grade.setText(grade if grade == "REVIEW" else f"{grade}")
-        self.sig_profile_status.emit("DONE", theme.OK)
+        if self.operation_state.state.value != "ESTOP_LATCHED":
+            self.sig_profile_status.emit("DONE", theme.OK)
         # AcquisitionWorker.finished fires even after E-STOP (worker.py's
         # finally-block always emits it) — don't stack the completion chime
         # on top of _on_estop's own siren for that case.
@@ -382,16 +416,20 @@ class TestControlMixin:
         nstep = results.get("dcir_n_steps", 0)
         warns = results.get("quality_warnings", [])
         
-        # explicitly mark fallback vs measured DCIR
-        if nstep > 0:
-            dcir_txt = f"DCIR {dcir:.1f}±{dstd:.1f} mΩ"
+        # Explicitly mark fallback vs measured DCIR.
+        if results.get("dcir_measured", nstep > 0):
+            dcir_txt = f"Measured DCIR {dcir:.1f}±{dstd:.1f} mΩ"
         else:
-            dcir_txt = f"R_base {dcir:.1f} mΩ (No pulse)"
-            
+            dcir_txt = f"Profile Resistance (Fallback) {dcir:.1f} mΩ"
+        cap_label = "Charge Removed" if results.get("is_quick_scan") else "Observed capacity"
+        qsoh = results.get("quick_soh_est_pct", float("nan"))
+        soh_label = (f"Quick SoH Estimate {qsoh:.1f}%" if results.get("is_quick_scan")
+                     and qsoh == qsoh else f"SoH {soh_txt}%")
         self.lbl_analytics.setText(
-            f"Grade {grade} (conf {conf*100:.0f}%) · SoH {soh_txt}% · "
+            f"Grade {grade} (conf {conf*100:.0f}%) · {soh_label} · "
             f"{dcir_txt} · Sag {results.get('voltage_sag_v', 0.0):.3f} V · "
-            f"CCA~{results.get('cca_est_a', 0.0):.0f} A · Cap {results['capacity_ah']:.3f} Ah")
+            f"CCA Proxy {results.get('cca_est_a', 0.0):.0f} A · "
+            f"{cap_label} {results['capacity_ah']:.3f} Ah")
         # 5 Hz-measurable sorting features (see project pivot): SoH + DCIR + sag + CCA proxy
         if results.get("ecm_identified"):
             svg = self._build_ecm_svg(
@@ -440,16 +478,36 @@ class TestControlMixin:
             self._test_thread.deleteLater()
         self._test_thread = None
         self._test_worker = None
-        self.btn_run_test.setEnabled(True)
-        if hasattr(self, "btn_run_hppc"):
-            self.btn_run_hppc.setEnabled(True)
+        lease = getattr(self, "_manual_test_lease", None)
+        if lease is not None:
+            self.operation_state.cleanup(lease)
+            self.operation_state.release(lease)
+            self._operation_leases.pop(lease.run_id, None)
+            self._manual_test_lease = None
+        if self.operation_state.state.value != "ESTOP_LATCHED":
+            self.btn_run_test.setEnabled(True)
+            if hasattr(self, "btn_run_hppc"):
+                self.btn_run_hppc.setEnabled(True)
         if hasattr(self, "lbl_hppc_phase"):
             self.lbl_hppc_phase.setText("IDLE")
             self.lbl_hppc_phase.setStyleSheet(
                 f"background:{theme.PANEL2}; color:{theme.MUTED}; border:1px solid {theme.BORDER}; "
                 f"border-radius:4px; padding:5px 8px; font-weight:600; font-size:11px;"
             )
-        self.lbl_test_status.setText("Test idle")
+        results = getattr(self, "_pending_manual_results", None)
+        self._pending_manual_results = None
+        if self.operation_state.state.value == "ESTOP_LATCHED":
+            self.lbl_test_status.setText("E-STOP LATCHED — explicit reset required")
+        elif isinstance(results, dict) and results.get("error"):
+            self.lbl_test_status.setText("Test fault — safe-off attempted")
+            self.sig_profile_status.emit("FAULT", theme.CRIT)
+        elif results is not None:
+            self.lbl_test_status.setText("Test complete")
+            self.sig_profile_status.emit("DONE", theme.OK)
+        else:
+            self.lbl_test_status.setText("Test idle")
+        if getattr(self, "_close_after_hardware_task", False):
+            QTimer.singleShot(0, self.close)
         try:
             from aset_batt.storage.cloud_push import set_cloud_meta
             set_cloud_meta(phase="", test_mode="", workflow="")
@@ -462,6 +520,7 @@ class TestControlMixin:
                 QMessageBox.warning(self, "Monitor", "Connect hardware first")
             return
         self._ensure_battery_sn()
+        self._prepare_new_physical_session("manual-monitor")
         self.controller.start_monitor()
         import time
         self._elapsed_t0 = time.perf_counter()   # interval only — see _slot_display

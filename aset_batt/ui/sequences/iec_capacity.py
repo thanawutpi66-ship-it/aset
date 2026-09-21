@@ -157,6 +157,11 @@ class IecCapacityMixin:
             temp_now = self.hw.current_temp
             soc_now = getattr(self.controller.estimator, "soc", 0.0)
             rated = self.controller.config.battery.rated_capacity
+            from aset_batt.core import battery_profiles as _profiles
+            _product = _profiles.get_product(
+                self.controller.config.battery.product_name)
+            if _product and _product.capacity_10h_ah > 0.0:
+                rated = _product.capacity_10h_ah
             crate = self.cb_seq_crate.currentText()
             test_crate_str = self.cb_test_crate.currentText()
             plan = [
@@ -177,7 +182,8 @@ class IecCapacityMixin:
                         pack_min_v=self.controller.config.battery.pack_min_voltage,
                         cells_series=self.controller.config.battery.cells_series,
                         skip_charge=self.chk_skip_charge.isChecked(),
-                        skip_rest=self.chk_skip_rest.isChecked()
+                        skip_rest=self.chk_skip_rest.isChecked(),
+                        temp_c=temp_now,
                     )
                     if applicable and violations:
                         plan.append("")
@@ -192,7 +198,8 @@ class IecCapacityMixin:
         if not self._show_pretest_dialog(
                 f"{self._capacity_standard_name()} AUTO SEQUENCE", plan, eta_min=600):
             return
-        self._seq_common_start("btn_auto_seq", "Running…")
+        if not self._seq_common_start("btn_auto_seq", "Running…"):
+            return
         # Snapshot every widget value on the GUI thread BEFORE spawning the worker —
         # reading Qt widgets from a background thread races the GUI thread (the operator
         # could change a dropdown mid-run) and is not thread-safe.
@@ -212,8 +219,7 @@ class IecCapacityMixin:
             opts.update({"skip_charge": False, "skip_rest": False,
                          "rest_min": 60, "test_crate": "0.1C",
                          "validation_preset": "c10-reference-v1"})
-        import threading
-        threading.Thread(target=self._auto_sequence_thread, args=(opts,), daemon=True).start()
+        self._spawn_sequence_worker(self._auto_sequence_thread, kind="capacity", args=(opts,))
 
     def _auto_sequence_thread(self, opts: dict):
         """Background thread: PREPARE → CHARGE → REST → TEST → ANALYZE.
@@ -293,7 +299,7 @@ class IecCapacityMixin:
                 self.controller.start_charge(strategy=None,
                                              bulk_c_rate_override=_c_rate_override,
                                              reuse_session=True)
-                _ch_t0 = time.time()
+                _ch_t0 = time.perf_counter()
                 _ch_est = self._estimate_charge_s(soc, _c_rate_override or 0.1)
                 _tail_t_hist, _tail_i_hist = [], []
                 while self._seq_running.is_set():
@@ -302,7 +308,7 @@ class IecCapacityMixin:
                     try:
                         v2, i2, _ = self.hw.read_vi()
                         i2 = max(0.0, i2)
-                        elapsed_ch = int(time.time() - _ch_t0)
+                        elapsed_ch = int(time.perf_counter() - _ch_t0)
                         status(self._charge_status_text(v2, i2, elapsed_ch))
                         ctrl = getattr(self.controller, "_charge_ctrl", None)
                         if getattr(ctrl, "stage", None) in ("absorption", "cv"):
@@ -338,9 +344,9 @@ class IecCapacityMixin:
             else:
                 self.sig_workflow.emit(2, "active")
                 rest_total = rest_min * 60
-                t_rest_end = time.time() + rest_total
+                t_rest_end = time.perf_counter() + rest_total
                 while self._seq_running.is_set():
-                    remaining = int(t_rest_end - time.time())
+                    remaining = int(t_rest_end - time.perf_counter())
                     if remaining <= 0:
                         break
                     elapsed_r = rest_total - remaining
@@ -396,12 +402,19 @@ class IecCapacityMixin:
             except (AttributeError, ValueError):
                 c_test = 0.2
             rated   = self.controller.config.battery.rated_capacity
+            from aset_batt.core import battery_profiles
+            _product = battery_profiles.get_product(
+                self.controller.config.battery.product_name)
+            if _product and _product.capacity_10h_ah > 0.0:
+                rated = _product.capacity_10h_ah
             i_dis   = round(c_test * rated, 2)
             pack_min = self.controller.config.battery.pack_min_voltage
             status(f"TEST: discharge {i_dis:.3f} A ({c_test:g}C) จนถึง {pack_min:.1f} V")
             self.sig_alarm.emit(f"[AUTO] Starting discharge {i_dis:.3f} A")
             self.controller._ensure_logging(label="IEC")
             self.hw.set_load(True, i_dis)
+            if not self._seq_check_load_trip():
+                return
             import time as _t
             # perf_counter (monotonic, sub-ms) not time.time() (wall-clock): immune to
             # NTP/clock-jump and consistent with worker.py's own established convention.
@@ -427,6 +440,8 @@ class IecCapacityMixin:
             while self._seq_running.is_set():
                 try:
                     v3, i3 = self.hw.read_measurements(prefer_load_v=True)
+                    if not self._seq_check_load_trip():
+                        break
                     now = _t.perf_counter()   # stamp AT the measurement, not after temp/etc.
                     temp3 = self.hw.current_temp
                     if not self._seq_check_temp_stale():
@@ -473,8 +488,6 @@ class IecCapacityMixin:
             status("ANALYZE: วิเคราะห์ CSV...")
             res = self.controller._auto_analyze()
             self.sig_workflow.emit(4, "done")
-            if res:
-                self.sig_seq_result.emit(format_seq_result(res))
             # ── EN 50342-1 verdict (lead-acid only) ───────────────────────
             # When the run satisfied the standard's Cn-test conditions, the
             # measured Ah IS a direct standard-basis Ce — report it against the
@@ -487,8 +500,12 @@ class IecCapacityMixin:
                 applicable, violations = en50342_capacity_conditions(
                     self.controller.config.battery.battery_type, c_test, pack_min,
                     self.controller.config.battery.cells_series,
-                    not _charge_ran, skip_rest)
+                    not _charge_ran, skip_rest,
+                    temp_c=(res.get("temperature_median_c") if res else None))
                 if applicable and res:
+                    res["en50342"] = {"applicable": True, "valid": not violations,
+                                       "violations": list(violations),
+                                       "temperature_c": res.get("temperature_median_c")}
                     ce = float(res.get("capacity_ah", 0.0))
                     pct = 100.0 * ce / rated if rated else 0.0
                     if not violations:
@@ -503,6 +520,8 @@ class IecCapacityMixin:
                     self.sig_alarm.emit(f"[AUTO] {en_line}")
             except Exception as exc:
                 logger.debug("EN 50342-1 verdict skipped: %s", exc)
+            if res:
+                self.sig_seq_result.emit(format_seq_result(res))
             status("เสร็จสิ้น — ดูผลที่แท็บ Analytics")
             self.sig_alarm.emit("[AUTO] Sequence complete ✓")
             grade_str = res.get("grade", "?") if res else "?"
@@ -522,8 +541,8 @@ class IecCapacityMixin:
             self._seq_running.clear()
             if self.controller:
                 self.controller.end_session(
-                    "completed" if completed_ok else "aborted",
-                    "capacity verification completed" if completed_ok else "capacity verification cancelled or failed",
+                    "completed" if completed_ok else "safety_tripped" if self._seq_safety_reason else "aborted",
+                    "capacity verification completed" if completed_ok else self._seq_safety_reason or "capacity verification cancelled or failed",
                 )
             self.sig_phase_progress.emit(0, 0)
             if not completed_ok:

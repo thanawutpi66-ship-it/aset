@@ -46,6 +46,10 @@ class BatteryProfile:
     # .harness_resistance_ohm. R1/C1/τ are NOT touched: wiring resistance is a simple
     # series resistor, not the cell's own charge-transfer/polarization dynamics.
     harness_r_ohm: float = 0.0
+    capacity_10h_ah: float = 0.0
+    capacity_20h_ah: float = 0.0
+    capacity_rating_basis: str = "UNKNOWN"
+    capacity_rating_validated: bool | None = None
     # HPPC timing — pulse should be ≳ 3·τ and the relaxation long enough to capture
     # the full RC tail, so R1/C1 are not truncated/under-resolved by a short pulse.
     hppc_pulse_duration: float = 30.0       # seconds of constant-current load
@@ -55,11 +59,15 @@ class BatteryProfile:
     # ~1.0–1.05 for lithium (almost rate-independent), ~1.15–1.30 for lead-acid.
     # Used to normalise measured capacity to a reference C-rate before SoH.
     peukert_k: float = 1.10
+    peukert_k_source: str = "GENERIC_PROFILE_FALLBACK"
     # Rated-capacity reference duration (h).  A 10 h value means that capacity
     # acceptance is a C10 discharge, not an arbitrary Quick/HPPC current.
     # This is deliberately explicit: Peukert correction may be reported as an
     # estimate at other rates, but cannot turn a Quick Scan into a C10 proof.
     peukert_hr: float = 10.0
+    # Explicit provenance/export alias; peukert_hr stays the calculation field.
+    peukert_reference_hr: float | None = None
+    peukert_reference_current_a: float | None = None
 
 
 @dataclass

@@ -67,6 +67,10 @@ class TestCalibrateFromOcvStableSurfacesOutOfRangeWarning(unittest.TestCase):
         hw.read_vi = MagicMock(return_value=(ocv_voltage, 0.0, 0.0))
         hw.read_measurements = MagicMock(return_value=(ocv_voltage, 0.0))
         hw.current_temp = 25.0
+        hw.temp_is_stale = lambda: False
+        # read_vi is stubbed, so supply the same source provenance real hardware
+        # records alongside the measured voltage/current.
+        hw.last_voltage_source = "eload"
         data = DataHandler()
         ctrl = AutoController(None, hw, data, estimator, cfg)
         ctrl.event_handler = MagicMock()
@@ -122,7 +126,8 @@ class TestCalibrateFromOcvStableSurfacesOutOfRangeWarning(unittest.TestCase):
         with patch("time.sleep"):
             ctrl.calibrate_from_ocv_stable(cancel_check=cancel)
         ctrl.hw.set_load.assert_called_once()
-        ctrl.hw.load_off.assert_called_once()
+        # One initial OFF command plus the bleed-off cleanup command.
+        self.assertGreaterEqual(ctrl.hw.load_off.call_count, 2)
 
 
 class TestSurfaceChargeBleedOff(unittest.TestCase):

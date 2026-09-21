@@ -104,6 +104,62 @@ def test_run_test_finish_skips_sound_after_estop():
         w.close()
 
 
+def test_same_instance_partial_estimate_then_measured_only_clears_soh_and_capacity():
+    """The production result handler must not retain Run A's estimate."""
+    import math
+    w = _make_window()
+    try:
+        w._test_worker = MagicMock(_estop=True)
+        w.buf_t = []
+        first = _real_test_results(float("nan"))
+        first.update({"capacity_ah": 3.60, "q_removed_ah": 3.60,
+                      "quick_capacity_est_ah": 4.50,
+                      "quick_soh_est_pct": 90.0, "is_quick_scan": True})
+        w._on_test_finished(first)
+        assert "3.60" in w.lbl_analytics.text()
+        assert "90.0%" in w.lbl_analytics.text()
+        second = _real_test_results(float("nan"))
+        second.update({"capacity_ah": 3.20, "q_removed_ah": 3.20,
+                       "quick_capacity_est_ah": None,
+                       "quick_soh_est_pct": float("nan"),
+                       "is_quick_scan": True})
+        w._on_test_finished(second)
+        text = w.lbl_analytics.text()
+        assert "3.20" in text
+        assert "3.60" not in text and "90.0%" not in text
+        assert not w._last_soh_valid
+        assert math.isnan(second["soh"])
+    finally:
+        w.close()
+
+
+def test_same_instance_verified_c10_then_invalid_result_clears_reference_fields():
+    w = _make_window()
+    try:
+        w._test_worker = MagicMock(_estop=True)
+        w.buf_t = []
+        first = _real_test_results(96.0)
+        first.update({"capacity_ah": 4.80, "q_removed_ah": 4.80,
+                      "verified_capacity_ah": 4.80,
+                      "verified_soh_pct": 96.0,
+                      "capacity_basis": "DIRECT_C10_REFERENCE"})
+        w._on_test_finished(first)
+        assert "4.80" in w.txt_analytics.toHtml()
+        assert "96.0" in w.txt_analytics.toHtml()
+        second = _real_test_results(float("nan"))
+        second.update({"capacity_ah": 3.60, "q_removed_ah": 3.60,
+                       "verified_capacity_ah": None,
+                       "verified_soh_pct": None,
+                       "capacity_basis": "MEASURED_ONLY"})
+        w._on_test_finished(second)
+        rendered = w.txt_analytics.toHtml()
+        assert "3.60" in rendered
+        assert "4.80" not in rendered and "96.0" not in rendered
+        assert "Verified C10 SoH" in rendered
+    finally:
+        w.close()
+
+
 def test_seq_done_plays_sound():
     from aset_batt.ui.sequences.base import BaseSequenceMixin
 

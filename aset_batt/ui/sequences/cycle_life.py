@@ -86,6 +86,30 @@ _EN50342_END_V_PER_CELL = 1.75
 _EN50342_RATE_TOL = 0.15       # ±15% around In still counts as the reference rate
 _EN50342_END_V_TOL = 0.06      # V/cell tolerance on the configured cutoff
 
+
+def cycle_retention_summary(measured_cycles, *, basis="MEASURED_ONLY",
+                            reference_baseline_ah=None):
+    """Return cycle retention without promoting measured Ah to SoH.
+
+    Retention is only comparable when every cycle has the same semantic basis.
+    A measured-only baseline is useful for within-run fade tracking, but it is
+    explicitly not a rated-capacity SoH result.
+    """
+    values = [float(v) for v in (measured_cycles or []) if math.isfinite(float(v)) and float(v) >= 0]
+    if not values:
+        return {"retention_pct": float("nan"), "soh_pct": float("nan"),
+                "basis": basis, "baseline_ah": None, "valid": False}
+    baseline = float(reference_baseline_ah) if reference_baseline_ah is not None else values[0]
+    if not math.isfinite(baseline) or baseline <= 0:
+        return {"retention_pct": float("nan"), "soh_pct": float("nan"),
+                "basis": basis, "baseline_ah": None, "valid": False}
+    same_basis = basis in {"DIRECT_C10_REFERENCE", "COMPLETE_CYCLE_REFERENCE", "MEASURED_ONLY"}
+    return {"retention_pct": 100.0 * values[-1] / baseline if same_basis else float("nan"),
+            "soh_pct": (100.0 * values[-1] / baseline
+                        if basis in {"DIRECT_C10_REFERENCE", "COMPLETE_CYCLE_REFERENCE"}
+                        else float("nan")),
+            "basis": basis, "baseline_ah": baseline, "valid": same_basis}
+
 def en50342_capacity_conditions(chemistry: str, c_test: float, pack_min_v: float,
                                 cells_series: int, skip_charge: bool,
                                 skip_rest: bool):
@@ -167,7 +191,8 @@ class CycleLifeMixin:
         eta = int(n * (90 + self.spn_cycle_rest.value()))  # rough: 90 min/cycle
         if not self._show_pretest_dialog("CYCLE LIFE TEST", plan, eta_min=eta):
             return
-        self._seq_common_start("btn_cycle_life", f"Cycling…")
+        if not self._seq_common_start("btn_cycle_life", "Cycling…"):
+            return
         # Snapshot on the GUI thread — see the comment in _on_auto_sequence.
         opts = {
             "n_cyc": self.spn_cycle_n.value(),
@@ -175,8 +200,7 @@ class CycleLifeMixin:
             "charge_crate": self.cb_cycle_charge_crate.currentText(),
             "dis_crate": self.cb_cycle_dis_crate.currentText(),
         }
-        import threading
-        threading.Thread(target=self._cycle_life_thread, args=(opts,), daemon=True).start()
+        self._spawn_sequence_worker(self._cycle_life_thread, kind="cycle-life", args=(opts,))
 
     # ---- result formatting: see aset_batt/ui/report_html.py ---------------
 
@@ -264,7 +288,7 @@ class CycleLifeMixin:
                 self.controller.start_charge(strategy=None,
                                              bulk_c_rate_override=c_ch,
                                              reuse_session=True)
-                _ch_t0 = _t.time()
+                _ch_t0 = _t.perf_counter()
                 _soc0 = getattr(self.controller.estimator, "soc", 50.0)
                 _ch_est = self._estimate_charge_s(_soc0, c_ch or 0.1)
                 _tail_t_hist, _tail_i_hist = [], []
@@ -274,7 +298,7 @@ class CycleLifeMixin:
                     try:
                         v_c, i_c, _ = self.hw.read_vi()
                         i_c = max(0.0, i_c)
-                        elapsed_c = int(_t.time() - _ch_t0)
+                        elapsed_c = int(_t.perf_counter() - _ch_t0)
                         status(self._charge_status_text(v_c, i_c, elapsed_c,
                                                         prefix=f"CYCLE {cyc}/{n_cyc} CHARGE"))
                         ctrl = getattr(self.controller, "_charge_ctrl", None)
@@ -300,9 +324,9 @@ class CycleLifeMixin:
                 # ── step 2: REST (no dedicated LED — _CYCLE_STEPS has no REST entry;
                 # the DISCHARGE LED below only goes "active" once discharge itself starts,
                 # so REST no longer mislabels it early on cycle 1)
-                t_rest_end = _t.time() + rest_s
+                t_rest_end = _t.perf_counter() + rest_s
                 while self._seq_running.is_set():
-                    remaining = int(t_rest_end - _t.time())
+                    remaining = int(t_rest_end - _t.perf_counter())
                     if remaining <= 0:
                         break
                     elapsed_r = rest_s - remaining
@@ -343,6 +367,8 @@ class CycleLifeMixin:
                     import logging
                     logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
                 self.hw.set_load(True, str(i_dis))
+                if not self._seq_check_load_trip():
+                    break
                 # perf_counter (monotonic, sub-ms): see the comment in _auto_sequence_thread.
                 _dis_t0 = _t.perf_counter()
                 _dis_est = self._estimate_discharge_s(i_dis)
@@ -360,6 +386,8 @@ class CycleLifeMixin:
                 while self._seq_running.is_set():
                     try:
                         v_d, i_d = self.hw.read_measurements(prefer_load_v=True)
+                        if not self._seq_check_load_trip():
+                            break
                         now = _t.perf_counter()   # stamp AT the measurement
                         dt  = now - last_log
                         last_log = now
@@ -413,10 +441,10 @@ class CycleLifeMixin:
                 # Qt widget directly here (the old code did) can crash Qt (access
                 # violation) or corrupt the UI; go through a signal like everything else.
                 self.sig_cycle_counter.emit(
-                    f"Cycle {cyc}/{n_cyc}  —  {ah_acc:.3f} Ah  ({fade:.1f}% of rated)"
+                    f"Cycle {cyc}/{n_cyc}  —  measured removed charge {ah_acc:.3f} Ah"
                 )
                 self.sig_alarm.emit(
-                    f"[CYCLE] Cycle {cyc}: {ah_acc:.3f} Ah  ({fade:.1f}%)"
+                    f"[CYCLE] Cycle {cyc}: measured removed charge {ah_acc:.3f} Ah"
                 )
                 self.sig_cycle_wf.emit(2, "done")
 
@@ -425,14 +453,13 @@ class CycleLifeMixin:
             if cap_history:
                 first, last = cap_history[0], cap_history[-1]
                 import math
-                soh_init  = 100.0 * first / rated if rated else float("nan")
-                soh_final = 100.0 * last  / rated if rated else float("nan")
-                fade_pct  = 100.0 * (first - last) / first if first else 0.0
+                summary = cycle_retention_summary(cap_history, basis="MEASURED_ONLY")
+                retention = summary["retention_pct"]
                 result_html = (
                     f"<b>Cycle Life ({len(cap_history)} cycles)</b><br>"
-                    f"Cap(1): {first:.3f} Ah  →  Cap(N): {last:.3f} Ah<br>"
-                    f"SoH init: {soh_init:.1f}%  SoH final: {soh_final:.1f}%  "
-                    f"Fade: {fade_pct:.1f}%"
+                    f"Measured removed charge: {first:.3f} Ah → {last:.3f} Ah<br>"
+                    f"Measured-only retention: {retention:.1f}%  "
+                    f"(SoH unavailable without verified reference basis)"
                 )
                 self.sig_seq_result.emit(result_html)
             self.sig_cycle_wf.emit(4, "done")
@@ -450,8 +477,8 @@ class CycleLifeMixin:
             self._seq_running.clear()
             if self.controller:
                 self.controller.end_session(
-                    "completed" if completed_ok else "aborted",
-                    "cycle-life test completed" if completed_ok else "cycle-life test cancelled or failed",
+                    "completed" if completed_ok else "safety_tripped" if self._seq_safety_reason else "aborted",
+                    "cycle-life test completed" if completed_ok else self._seq_safety_reason or "cycle-life test cancelled or failed",
                 )
             self.sig_phase_progress.emit(0, 0)
             if not completed_ok:

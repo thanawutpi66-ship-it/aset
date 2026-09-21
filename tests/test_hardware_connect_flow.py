@@ -5,14 +5,17 @@ range auto-set, PSU-offset calibration) is built on top of, but which had zero
 direct test coverage of its own until now.
 """
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from aset_batt.hardware.hardware_driver import HardwareController
 
 
 def _make_hw():
-    with patch("aset_batt.hardware.hardware_driver.pyvisa.ResourceManager"):
-        return HardwareController()
+    hw = HardwareController()
+    # ResourceManager is lazy so normal UI startup never initializes VISA on the
+    # GUI thread. Inject the mock directly instead of relying on eager __init__.
+    hw._rm = MagicMock()
+    return hw
 
 
 def _mock_instruments(hw, psu_idn="GW,PSW80-40.5,SN1,V1", load_idn="GW,PEL-3111,SN2,V1"):

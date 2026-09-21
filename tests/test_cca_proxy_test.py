@@ -31,7 +31,7 @@ _app = QApplication.instance() or QApplication([])
 
 def _make_bound_window():
     cfg = ConfigManager()
-    cfg.battery.product_name = "YTZ6V (12V 5.3Ah VRLA)"   # cca_a=95.0 in battery_profiles.json
+    cfg.battery.product_name = "YTZ6V (12V 5.3Ah VRLA)"   # manufacturer CCA reference: 90 A
     hw = MockHardwareController()
     # _char_check_safety (safety audit ก.ค. 2026) aborts CHARACTERIZE tests when the
     # temperature link is down (OTP would be blind) — connect the mock ESP32 the same
@@ -53,7 +53,7 @@ class TestCcaCurrentClamping(unittest.TestCase):
     def test_current_is_clamped_to_max_current(self):
         win, ctrl, hw, data = _make_bound_window()
         try:
-            self.assertLess(ctrl.config.battery.max_current, 95.0,
+            self.assertLess(ctrl.config.battery.max_current, 90.0,
                             "test assumes the rig's configured max_current is well under CCA rating")
             ctrl.start_charge = lambda *a, **k: None
             ctrl.is_charging = False
@@ -85,7 +85,7 @@ class TestCcaCurrentClamping(unittest.TestCase):
             result = win._char_results.get("cca")
             self.assertIsNotNone(result)
             self.assertTrue(result["cca_clamped"])
-            self.assertEqual(result["cca_rated_a"], 95.0)
+            self.assertEqual(result["cca_rated_a"], 90.0)
         finally:
             win.close()
 

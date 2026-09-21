@@ -88,6 +88,14 @@ class HardwareBackend(InstrumentBackend):
     def read_temperature(self):
         return float(getattr(self.hw, "current_temp", float("nan")))
 
+    def temperature_measurement(self) -> dict:
+        get_info = getattr(self.hw, "temperature_measurement", None)
+        if callable(get_info):
+            return get_info()
+        return {"temperature_c": float("nan"), "temperature_valid": False,
+                "temperature_age_s": None, "temperature_source": "unknown",
+                "temperature_status": "NOT_AVAILABLE"}
+
     def emergency_zero(self):
         # Independent calls so one failing instrument can't block the other.
         # psu_off() also cuts the SSR relay (GPIO16) — see HardwareController.psu_off.

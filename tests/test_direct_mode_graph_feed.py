@@ -9,6 +9,7 @@ estimator), only fires while the Direct radio button is actually selected.
 """
 import os
 import unittest
+import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -21,6 +22,17 @@ from aset_batt.ui.isa101_views import BatteryQtWindow
 from aset_batt.hardware.mock_hardware import MockHardwareController
 
 _app = QApplication.instance() or QApplication([])
+
+
+def _wait_until(predicate, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        _app.processEvents()
+        if predicate():
+            return True
+        time.sleep(0.005)
+    _app.processEvents()
+    return bool(predicate())
 
 
 def _make_window():
@@ -55,7 +67,7 @@ class TestDirectModeGraphFeed(unittest.TestCase):
             calls = self._spy_update_display(w)
             w.rb_direct.setChecked(True)
             w._on_heartbeat_tick()
-            self.assertEqual(len(calls), 1)
+            self.assertTrue(_wait_until(lambda: len(calls) == 1))
             v, i, soc, rin, temp = calls[0]   # soh omitted -> update_display fills its own default
             self.assertIsInstance(v, float)
             self.assertIsInstance(i, float)
@@ -89,6 +101,7 @@ class TestDirectModeGraphFeed(unittest.TestCase):
             # instead (proving it read soc/rin, not mutated them via .update()).
             self.assertEqual(w.estimator.soc, 42.0)
             self.assertEqual(w.estimator.rin, 0.05)
+            self.assertTrue(_wait_until(lambda: len(w.buf_v) > 0))
         finally:
             w.close()
 

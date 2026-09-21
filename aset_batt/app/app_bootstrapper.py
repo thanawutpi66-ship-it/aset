@@ -161,18 +161,19 @@ class ApplicationBootstrapper:
         # Auto-connect mock hardware in simulation mode
         config = self.config_manager
         if config.system.simulation_mode:
-            try:
+            def simulation_connect():
                 visa = controller.hw.get_visa_ports()
                 if len(visa) >= 2:
                     controller.hw.connect_instruments(visa[0], visa[1])
                     coms = controller.hw.get_com_ports()
                     if coms:
                         controller.hw.connect_esp32(coms[0])
-                    app_ui._update_connection_status()
-                    controller.start_live_readback()
-                    logger.info("Auto-connected mock hardware (simulation mode)")
+                    return True
+                return False
+            try:
+                app_ui._submit_hardware_task("simulation_autoconnect", simulation_connect)
             except Exception as e:
-                logger.warning(f"Simulation auto-connect failed: {e}")
+                logger.warning(f"Simulation auto-connect queue failed: {e}")
 
         # Local web server removed — cloud dashboard is the primary interface
         self._web_server = None
@@ -262,6 +263,7 @@ class ApplicationBootstrapper:
             nominal_voltage=config.battery.nominal_voltage,
             series_cells=config.battery.cells_series,
             parallel_cells=config.battery.cells_parallel,
+            product_name=getattr(config.battery, "product_name", ""),
         )
         estimator = StateEstimator(config.battery.rated_capacity, battery_model)
         controller = AutoController(None, hw, data, estimator, config)

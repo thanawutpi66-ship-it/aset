@@ -32,7 +32,7 @@ _REAL_CSV = os.path.join(os.path.dirname(__file__), "..", "sessions",
 def _make_profile(**overrides):
     kwargs = dict(
         name="t", chemistry="LeadAcid", nominal_v=12.0, series=6,
-        capacity_ah=5.3, max_charge_v=14.4, cutoff_v=10.5,
+        capacity_ah=5.0, max_charge_v=14.4, cutoff_v=10.5,
         max_charge_a=1.0, max_discharge_a=10.0, ovp=15.0, uvp=9.5,
         otp_warn=45.0, otp_crit=60.0, internal_r=0.030,
         peukert_k=1.10, peukert_hr=10.0,
@@ -41,7 +41,7 @@ def _make_profile(**overrides):
     return BatteryProfile(**kwargs)
 
 
-def _partial_discharge_record(soc_start_frac, rated=5.3, i_dis=0.53,
+def _partial_discharge_record(soc_start_frac, rated=5.0, i_dis=0.50,
                               anchor=12.60, cutoff_v=10.45, hz=1.0):
     """A HEALTHY pack (no sulfation, no anomaly) discharged starting from
     soc_start_frac of its rated capacity -- e.g. soc_start_frac=0.5 means the

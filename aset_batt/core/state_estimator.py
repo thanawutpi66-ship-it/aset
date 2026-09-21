@@ -3,6 +3,7 @@ Advanced State Estimation: SoC estimation ด้วย Coulomb counting + OCV co
 + 2-state EKF (1-RC) fusion, live SoH, SoH-adjusted capacity, current-offset tare.
 """
 import time
+import math
 import threading
 from functools import wraps
 from aset_batt.core.battery_model import (
@@ -126,6 +127,10 @@ class StateEstimator:
         # HPPC test's repeated pulse/rest cycles never accumulate toward it.
         self._peukert_sustain_s = 0.0
         self._peukert_min_sustain_s = 60.0
+        # Long gaps are missing observations, not continuous battery telemetry.
+        # Keep this aligned with the capacity/η absolute excluded-gap ceiling.
+        self.max_integrable_dt_s = 30.0
+        self.last_timing_status = "NOT_UPDATED"
 
         # --- Endpoint-anchor sustain gate ---
         # A real HPPC test caught this failing on real hardware: the 0% anchor's
@@ -284,7 +289,12 @@ class StateEstimator:
         hr  = getattr(self.battery_model.chemistry, "peukert_hr", 20.0)
         if k <= 1.0 or hr <= 0 or self.rated_capacity <= 0:
             return dah
-        i_rated = self.rated_capacity / hr
+        # Use the same resolved reference current as post-test analysis when the
+        # selected product supplies an explicit capacity basis (for example the
+        # YTZ6V C10 rating). Older/generic models retain rated_capacity / hours.
+        i_rated = getattr(self.battery_model, "peukert_reference_current_a", None)
+        if i_rated is None or i_rated <= 0:
+            i_rated = self.rated_capacity / hr
         if i_rated <= 0:
             return dah
         scale = (current / i_rated) ** (k - 1.0)
@@ -693,6 +703,7 @@ class StateEstimator:
             "rin": self.rin,
             "rin_calibrated": self._ecm_calibrated,
             "ah_accumulated": self.ah_accumulated,
+            "timing_status": self.last_timing_status,
         }
 
     def _fallback_ocv_correction(self, voltage: float, cur: float, t_use: float, soc_cc: float) -> dict:
@@ -732,7 +743,8 @@ class StateEstimator:
             "soh": self.soh,
             "rin": self.rin,
             "rin_calibrated": True,
-            "ah_accumulated": self.ah_accumulated
+            "ah_accumulated": self.ah_accumulated,
+            "timing_status": self.last_timing_status
         }
 
     def update(self, voltage: float, current: float, dt: float,
@@ -751,6 +763,30 @@ class StateEstimator:
             dict: {soc, soh, rin, ah_accumulated}
         """
         with self._lock:
+            try:
+                dt = float(dt)
+            except (TypeError, ValueError, OverflowError):
+                dt = float("nan")
+            if not math.isfinite(dt) or dt <= 0.0:
+                self.last_timing_status = "INVALID_DT"
+                return self.get_state()
+            if dt > self.max_integrable_dt_s:
+                self.last_timing_status = "DATA_GAP"
+                # Do not integrate charge, rest, sustain, self-discharge, or EKF
+                # dynamics across an interval with no observations. Drop the
+                # trapezoid anchor and require a fresh OCV/endpoint observation.
+                self._last_current = None
+                self._peukert_sustain_s = 0.0
+                self._rested_s = 0.0
+                self._full_anchor_sustain_s = 0.0
+                self._zero_anchor_sustain_s = 0.0
+                self._full_anchor_count = 0
+                self._zero_anchor_count = 0
+                if self._ekf is not None:
+                    self._ekf.P[0, 0] += 25.0
+                    self._ekf.P[1, 1] += 0.05
+                return self.get_state()
+            self.last_timing_status = "VALID"
             cur = self._tare_current(current)
             t_use = temp if self.use_temp else 25.0
 
@@ -782,5 +818,6 @@ class StateEstimator:
             "rin": self.rin,
             "rin_calibrated": self._ecm_calibrated if self.use_ekf else True,
             "ah_accumulated": self.ah_accumulated,
-            "coulomb_efficiency": self.coulomb_efficiency
+            "coulomb_efficiency": self.coulomb_efficiency,
+            "timing_status": self.last_timing_status,
         }

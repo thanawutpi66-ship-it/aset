@@ -8,6 +8,7 @@ import os
 import logging
 import tempfile
 import json
+import math
 from datetime import datetime
 
 from reportlab.lib.pagesizes import A4
@@ -21,6 +22,14 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 logger = logging.getLogger(__name__)
 
 _PRIMARY = colors.HexColor("#005a9e")
+
+
+def _fmt(value, decimals=2, suffix=""):
+    try:
+        number = float(value)
+        return f"{number:.{decimals}f}{suffix}" if math.isfinite(number) else "N/A"
+    except (TypeError, ValueError):
+        return "N/A"
 
 
 def _info_table(rows):
@@ -97,21 +106,6 @@ def generate_pdf_report(path, config, estimator=None, analysis=None, csv_path=No
         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", normal))
     story.append(Spacer(1, 8 * mm))
 
-    # --- Battery info ---
-    b = config.battery
-    story.append(Paragraph("Battery Under Test", h2))
-    story.append(_info_table([
-        ["Chemistry", str(b.battery_type)],
-        ["Configuration", f"{b.cells_series}S{b.cells_parallel}P"],
-        ["Nominal Voltage", f"{b.pack_nominal_voltage:.2f} V (pack)"],
-        ["Rated Capacity", f"{b.rated_capacity:.2f} Ah"],
-        ["Mass", f"{getattr(b, 'mass_grams', 0):.0f} g"],
-    ]))
-    story.append(Spacer(1, 6 * mm))
-
-    # Validation evidence is opt-in session context, never inferred from a
-    # routine test.  Keep it compact in the submission PDF; raw residuals and
-    # traces remain in the linked CSV/session sidecar.
     session_meta = {}
     if csv_path and os.path.exists(csv_path + ".meta.json"):
         try:
@@ -119,6 +113,40 @@ def generate_pdf_report(path, config, estimator=None, analysis=None, csv_path=No
                 session_meta = json.load(handle)
         except (OSError, ValueError):
             pass
+
+    # --- Battery info ---
+    b = config.battery
+    story.append(Paragraph("Battery Under Test", h2))
+    story.append(_info_table([
+        ["Chemistry", str(b.battery_type)],
+        ["Configuration", f"{b.cells_series}S{b.cells_parallel}P"],
+        ["Nominal Voltage", f"{b.pack_nominal_voltage:.2f} V (pack)"],
+        ["Selected reference capacity", f"{b.rated_capacity:.2f} Ah"],
+        ["Capacity rating basis", (f"C10 {session_meta.get('capacity_10h_ah', 'N/A')} Ah; "
+                                    f"C20 {session_meta.get('capacity_20h_ah', 'N/A')} Ah; "
+                                    f"basis version {session_meta.get('capacity_basis_version', 'legacy / not recorded')}")],
+        ["Peukert k / source", f"{session_meta.get('peukert_k', 'N/A')} / {session_meta.get('peukert_k_source', 'LEGACY_UNKNOWN')}"],
+        ["Peukert reference", f"{session_meta.get('peukert_reference_hr', 'N/A')} h; {session_meta.get('peukert_reference_current_a', 'N/A')} A"],
+        ["Quick Peukert factor", _fmt(session_meta.get('peukert_factor'), 4)],
+        ["Mass", f"{getattr(b, 'mass_grams', 0):.0f} g"],
+    ]))
+    story.append(Spacer(1, 6 * mm))
+
+    # Validation evidence is opt-in session context, never inferred from a
+    # routine test.  Keep it compact in the submission PDF; raw residuals and
+    # traces remain in the linked CSV/session sidecar.
+    if session_meta.get("test_type") == "CoulombEfficiency":
+        story.append(Paragraph("Coulombic Efficiency", h2))
+        story.append(_info_table([
+            ["Q charged (Qin)", _fmt(session_meta.get("Qin_Ah"), 3, " Ah")],
+            ["Q discharged (Qout)", _fmt(session_meta.get("Qout_Ah"), 3, " Ah")],
+            ["Coulombic Efficiency", _fmt(session_meta.get("eta_coulomb_pct"), 2, " %")],
+            ["Result status", str(session_meta.get("eta_status", "UNKNOWN"))],
+            ["Reference discharge", _fmt(session_meta.get("reference_discharge_current_a"), 3, " A (C10)")],
+            ["Charge / discharge duration", f"{_fmt(session_meta.get('charge_duration_s', 0) / 3600, 2, ' h')} / {_fmt(session_meta.get('discharge_duration_s', 0) / 3600, 2, ' h')}"],
+            ["Interpretation", "Coulombic efficiency is not capacity SoH."],
+        ]))
+        story.append(Spacer(1, 6 * mm))
     campaign = session_meta.get("validation_campaign") or {}
     evidence = session_meta.get("validation_evidence") or {}
     if campaign.get("enabled"):
@@ -160,9 +188,9 @@ def generate_pdf_report(path, config, estimator=None, analysis=None, csv_path=No
             _grade = analysis.get("grade", "?")
             _quick_grade = analysis.get("quick_grade", "REVIEW")
             _conf = analysis.get("confidence", 0.0)
-            _soh = analysis.get("soh", 0.0)
+            _soh = analysis.get("soh", float("nan"))
             _soh_est = analysis.get("soh_est", _soh)
-            _cap = analysis.get("capacity_ah", 0.0)
+            _cap = analysis.get("capacity_ah", float("nan"))
             _dcir = analysis.get("dcir_mohm", 0.0)
             _r0 = analysis.get("r0_mohm", 0.0)
             _r1 = analysis.get("r1_mohm", 0.0)
@@ -177,7 +205,7 @@ def generate_pdf_report(path, config, estimator=None, analysis=None, csv_path=No
             _grade = analysis.grade
             _quick_grade = "N/A"
             _conf = analysis.confidence
-            _soh = getattr(f, "soh_pct", 0.0)
+            _soh = getattr(f, "soh_pct", float("nan"))
             _soh_est = _soh
             _cap = getattr(f, "capacity_ah", 0.0)
             _dcir = getattr(f, "r0_mohm", 0.0) + getattr(f, "rp_mohm", 0.0)
@@ -195,17 +223,20 @@ def generate_pdf_report(path, config, estimator=None, analysis=None, csv_path=No
         if _show:
             story.append(Paragraph("AI Grading Result", h2))
             grade_rows = [
-                ["Quick Scan Grade", str(_quick_grade)],
-                ["Peukert-corrected SoH", f"{_soh_est:.1f} %"],
+                ["Quick Screening Grade", str(_quick_grade)],
+                ["Quick SoH Estimate", _fmt(analysis.get("quick_soh_est_pct"), 1, " %")],
                 ["Verified Grade", f"{_grade}  ({_conf * 100:.0f}% confidence)"],
-                ["Observed 1C capacity fraction", f"{_soh:.1f} %"],
-                ["Capacity", f"{_cap:.3f} Ah"],
-                ["DCIR", f"{_dcir:.2f} mΩ"],
-                ["R0 (ohmic)", f"{_r0:.2f} mΩ"],
-                ["R1 (polarisation)", f"{_r1:.2f} mΩ"],
-                ["τ (time constant)", f"{_tau:.2f} s"],
+                ["Measured Removed Charge", _fmt(analysis.get("q_removed_ah", _cap), 3, " Ah")],
+                ["OCV-normalized Estimated Full Capacity", _fmt(analysis.get("quick_capacity_est_ah"), 3, " Ah")],
+                ["Measured DCIR" if analysis.get("dcir_measured") else "Profile Resistance (Fallback)", f"{_dcir:.2f} mΩ"],
+                ["CCA Proxy", f"{analysis.get('cca_est_a', 0.0):.0f} A"],
             ]
             if _ecm_id:
+                grade_rows.extend([
+                    ["ECM R0", f"{_r0:.2f} mΩ"],
+                    ["ECM R1", f"{_r1:.2f} mΩ"],
+                    ["ECM τ (time constant)", f"{_tau:.2f} s"],
+                ])
                 grade_rows.append(["ECM R²", f"{_ecm_r2:.4f}"])
                 if _ecm_rmse == _ecm_rmse:
                     grade_rows.append(["ECM voltage RMSE", f"{_ecm_rmse:.2f} mV"])

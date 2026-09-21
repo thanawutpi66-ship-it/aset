@@ -133,7 +133,8 @@ class TestFitEcmPromotesMiniPulse(unittest.TestCase):
                              fit_ecm=True)
         # SoH must still be computed -- this is the whole point of fit_ecm
         # existing separately from force_hppc.
-        self.assertFalse(np.isnan(res["soh"]), "fit_ecm=True must not suppress SoH")
+        self.assertTrue(np.isnan(res["soh"]), "unverified partial discharge has no direct SoH")
+        self.assertTrue(np.isfinite(res["soh_est"]))
         self.assertTrue(res["ecm_identified"],
                         "mini-pulse fit should reach the report via the promotion "
                         "fallback even though the whole-record fit targets the "
@@ -160,7 +161,7 @@ class TestFitEcmPromotesMiniPulse(unittest.TestCase):
         q = np.cumsum(np.clip(i, 0, None) * np.diff(t, prepend=t[0])) / 3600.0
         res = analyze_series(t, i, v, temp, q, _make_profile(), is_hppc=False,
                              fit_ecm=True)
-        self.assertFalse(np.isnan(res["soh"]))
+        self.assertTrue(np.isnan(res["soh"]))
         self.assertTrue(res["ecm_identified"],
                         "equal-magnitude mini-pulse/discharge edges (production's "
                         "actual shape) must still yield an ECM fit")
@@ -177,7 +178,7 @@ class TestFitEcmPromotesMiniPulse(unittest.TestCase):
         q = np.cumsum(np.clip(i, 0, None) * np.diff(t, prepend=t[0])) / 3600.0
         res = analyze_series(t, i, v, temp, q, _make_profile(), is_hppc=False,
                              fit_ecm=True)
-        self.assertFalse(np.isnan(res["soh"]))
+        self.assertTrue(np.isnan(res["soh"]))
         self.assertTrue(res["ecm_identified"],
                         "near-tie edges must still promote the mini-pulse's fit")
         self.assertAlmostEqual(res["r0_mohm"], 30.0, delta=8.0)
@@ -196,7 +197,7 @@ class TestFitEcmPromotesMiniPulse(unittest.TestCase):
         self.assertFalse(res_default["ecm_identified"])
         self.assertEqual(res_default["ecm_identified"], res_explicit_none["ecm_identified"])
         self.assertEqual(res_default["hppc_pulses"], [])
-        self.assertFalse(np.isnan(res_default["soh"]))
+        self.assertTrue(np.isnan(res_default["soh"]))
 
     def test_fit_ecm_true_does_not_suppress_soh_unlike_force_hppc(self):
         """The exact bug the fit_ecm flag exists to avoid: is_hppc=True would
@@ -208,8 +209,9 @@ class TestFitEcmPromotesMiniPulse(unittest.TestCase):
                                    fit_ecm=True)
         self.assertTrue(np.isnan(res_wrong["soh"]),
                         "sanity check: is_hppc=True really does suppress SoH")
-        self.assertFalse(np.isnan(res_right["soh"]),
-                         "fit_ecm=True with is_hppc=False must compute SoH")
+        self.assertTrue(np.isnan(res_right["soh"]),
+                        "unverified Quick Scan must not compute direct SoH")
+        self.assertTrue(np.isfinite(res_right["soh_est"]))
 
 
 class TestRealQuickScanCsvUnaffected(unittest.TestCase):
@@ -225,7 +227,9 @@ class TestRealQuickScanCsvUnaffected(unittest.TestCase):
     def test_soh_unchanged_ecm_gracefully_absent(self):
         res_old = analyze_csv(_REAL_CSV, _make_profile())
         res_new = analyze_csv(_REAL_CSV, _make_profile(), fit_ecm=True)
-        self.assertAlmostEqual(res_old["soh"], res_new["soh"], places=2)
+        self.assertTrue(np.isnan(res_old["soh"]) and np.isnan(res_new["soh"]))
+        self.assertAlmostEqual(res_old["observed_capacity_fraction_pct"],
+                               res_new["observed_capacity_fraction_pct"], places=2)
         self.assertAlmostEqual(res_old["capacity_ah"], res_new["capacity_ah"], places=3)
         self.assertFalse(res_new["ecm_identified"],
                          "no mini-pulse in this legacy record -> nothing to promote")
@@ -240,6 +244,7 @@ class TestSourcePatternWiresMiniPulseIntoThread(unittest.TestCase):
 
     def setUp(self):
         src = _QUICK_SCAN_PY.read_text(encoding="utf-8")
+        self.src = src
         start = src.index("def _quick_scan_thread")
         end = src.find("\n    def ", start + 1)
         self.qs_src = src[start:end if end != -1 else len(src)]
@@ -265,7 +270,16 @@ class TestSourcePatternWiresMiniPulseIntoThread(unittest.TestCase):
     def test_mini_pulse_constants_used(self):
         self.assertIn("QUICK_MINI_PULSE_S", self.qs_src)
         self.assertIn("QUICK_MINI_RELAX_S", self.qs_src)
-        self.assertIn("QUICK_TAIL_REST_S", self.qs_src)
+        self.assertIn("QUICK_OCV_MIN_REST_S", self.qs_src)
+
+    def test_quick_ocv_uses_bounded_shared_policy_at_both_anchors(self):
+        self.assertIn("min_rest_override=QUICK_OCV_MIN_REST_S", self.qs_src)
+        self.assertIn("max_rest_override=QUICK_OCV_MAX_REST_S", self.qs_src)
+        self.assertIn("interval_override=10.0", self.qs_src)
+        self.assertIn("evaluate_quick_ocv_window(", self.qs_src)
+        self.assertIn("QUICK_OCV_MAX_REST_S = 600.0", self.src)
+        self.assertIn("QUICK_OCV_WINDOW_S = 60.0", self.src)
+        self.assertIn("QUICK_OCV_MAX_SPREAD_V = 0.010", self.src)
 
     def test_fresh_edge_pair_at_discharge_load_off(self):
         # both a fresh pre-edge (prefer_load_v=True) and immediate post-edge

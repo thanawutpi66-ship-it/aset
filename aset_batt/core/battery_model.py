@@ -83,6 +83,20 @@ class BatteryModel:
         # ดึงโปรไฟล์เคมีจาก registry (battery_profiles.json + built-in fallback)
         # — แทนการ hardcode พารามิเตอร์แบบ if/elif เดิม
         self.chemistry = battery_profiles.get_chemistry(battery_type)
+        peukert = battery_profiles.resolve_peukert_parameters(product_name, battery_type)
+        # Chemistry profiles are shared registry values. Copy before applying a
+        # product override so selecting one battery cannot mutate other sessions.
+        if product_name:
+            from dataclasses import replace
+            self.chemistry = replace(
+                self.chemistry,
+                peukert_k=peukert["peukert_k"],
+                peukert_hr=peukert["peukert_reference_hr"],
+            )
+        self.peukert_k_source = peukert["peukert_k_source"]
+        self.peukert_reference_hr = peukert["peukert_reference_hr"]
+        self.peukert_reference_current_a = peukert["peukert_reference_current_a"]
+        self.peukert_reference_capacity_ah = peukert["peukert_reference_capacity_ah"]
 
         # Temperature-dependent OCV tables (ต่อเซลล์)
         self.ocv_tables = self._generate_ocv_tables()
@@ -392,4 +406,4 @@ class BatteryModel:
         # Same floor as update_aging_factor(): never assume more than 50% extra
         # resistance from aging alone. Capped at 1.0 — a SoH reading above 100% (measurement
         # noise/calibration) should not further REDUCE the baseline below chemistry-generic.
-        self.aging_factor = max(0.5, min(1.0, float(soh) / 100.0))
+        self.aging_factor = max(0.5, min(1.0, float(soh) / 100.0))

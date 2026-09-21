@@ -130,6 +130,24 @@ class TestSafetyTrip(unittest.TestCase):
         backend.emergency_zero.assert_called_once()
         self.assertEqual(len(finished), 1)
 
+
+class TestStorageFailure(unittest.TestCase):
+    def test_csv_write_failure_faults_and_safely_stops_worker(self):
+        from unittest.mock import patch
+        from aset_batt.storage.data_utils import StorageError, DataHandler
+
+        profile = _make_profile(cutoff_v=-100.0)
+        worker, backend, csv_path = _make_worker(profile)
+        telemetry, alarms, states, finished = _collect_signals(worker)
+        backend.step.side_effect = lambda dt, elapsed: (12.0, -1.0)
+        with patch.object(DataHandler, "log_row", side_effect=StorageError("disk full")):
+            worker.run()
+        self.assertEqual(backend.safe_shutdown.call_count, 1)
+        self.assertEqual(states[-1], "FAULT")
+        self.assertEqual(len(telemetry), 0)
+        self.assertIn("disk full", alarms[-1][1])
+        self.assertEqual(len(finished), 1)
+
     def test_undervoltage_while_discharging_triggers_emergency_stop(self):
         """UVP used to be WARNING-only and never actually stopped the loop — the
         ONLY safety net HPPC mode has (it has no voltage-based test-complete

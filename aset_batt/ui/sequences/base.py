@@ -85,11 +85,13 @@ logger = logging.getLogger(__name__)
 _EN50342_END_V_PER_CELL = 1.75
 _EN50342_RATE_TOL = 0.15       # ±15% around In still counts as the reference rate
 _EN50342_END_V_TOL = 0.06      # V/cell tolerance on the configured cutoff
+_EN50342_TEMP_MIN_C = 20.0
+_EN50342_TEMP_MAX_C = 30.0
 
 
 def en50342_capacity_conditions(chemistry: str, c_test: float, pack_min_v: float,
                                 cells_series: int, skip_charge: bool,
-                                skip_rest: bool):
+                                skip_rest: bool, temp_c: float | None = None):
     """Check a capacity run's settings against EN 50342-1's Cn-test conditions.
 
     Returns ``(applicable, violations)``: ``applicable`` False for non-lead-acid
@@ -119,6 +121,12 @@ def en50342_capacity_conditions(chemistry: str, c_test: float, pack_min_v: float
     if skip_rest:
         violations.append("REST phase skipped — standard requires a rested "
                           "battery before discharge")
+    if temp_c is None:
+        violations.append("test temperature not verified")
+    elif not (_EN50342_TEMP_MIN_C <= float(temp_c) <= _EN50342_TEMP_MAX_C):
+        violations.append(
+            f"test temperature {float(temp_c):.1f}°C outside verified "
+            f"{_EN50342_TEMP_MIN_C:.0f}–{_EN50342_TEMP_MAX_C:.0f}°C band")
     return True, violations
 
 
@@ -331,6 +339,11 @@ class BaseSequenceMixin:
     @Slot(str, str)
     def _slot_seq_done(self, title: str, body: str):
         """Sound + popup notification when a sequence finishes."""
+        if getattr(self.operation_state, "active", None) is not None:
+            self._pending_seq_done = (title, body)
+            return
+        if getattr(getattr(self.operation_state, "state", None), "value", None) == "ESTOP_LATCHED":
+            return
         self.lbl_phase_banner.setText(f"✓  {self._current_test_name or 'TEST'}  ·  เสร็จสิ้น")
         self.lbl_phase_banner.setStyleSheet(
             f"background:{theme.PANEL2}; color:{theme.OK}; border:1px solid {theme.OK}; "
@@ -507,13 +520,37 @@ class BaseSequenceMixin:
 
     def _seq_common_start(self, btn_key: str, loading_label: str):
         """Shared startup: reset all step leds, buffers, progress, result card."""
+        validator = getattr(self.config, "validate_effective_safety_limits", None)
+        if callable(validator):
+            errors = validator()
+            if errors:
+                self.sig_alarm.emit("SAFETY_CONFIG_INVALID — " + "; ".join(errors))
+                return False
+        if getattr(self.controller, "safety_triggered", False):
+            self.sig_alarm.emit("E_STOP_LATCHED — reset safety before starting a test")
+            return False
+        if self.controller:
+            self.controller.stop_monitor()
+            self.controller.stop_live_readback()
+            monitor = getattr(self.controller, "_monitor_thread", None)
+            readback = getattr(self.controller, "_live_readback_thread", None)
+            if ((monitor is not None and monitor.is_alive())
+                    or (readback is not None and readback.is_alive())):
+                self.sig_alarm.emit("HARDWARE_BUSY — telemetry worker is still exiting; retry after it stops")
+                return False
+        lease = self.operation_state.claim(btn_key) if hasattr(self, "operation_state") else None
+        if hasattr(self, "operation_state") and lease is None:
+            self.sig_alarm.emit("HARDWARE_BUSY — previous worker has not released ownership")
+            return False
+        if lease is not None:
+            self._seq_lease = lease
+            self._operation_leases[lease.run_id] = lease
+            self._pending_seq_done = None
         # The background monitor loop (Start Monitor) also calls estimator.update()
         # at ~10 Hz. If it's left running while a sequence thread starts feeding the
         # same estimator directly, every sample gets counted twice — coulomb counting
         # (and therefore displayed SoC) drifts at roughly double the true rate. Mirror
         # _on_run_test's guard: a sequence owns the estimator exclusively while it runs.
-        if self.controller and self.controller.monitor_running:
-            self.controller.stop_monitor()
         if self.controller:
             # A sequence is the single writer of phase-labelled rows.  The
             # monitor loop honours this immediately even if it was already
@@ -531,18 +568,68 @@ class BaseSequenceMixin:
             buf.clear()
         self._elapsed_t0 = None
         self._run_generation += 1   # invalidate any straggling sample from a stopped run — see _slot_display
-        self._seq_last_meas_time = 0.0   # reset watchdog
+        self._seq_last_meas_time = 0.0   # perf_counter timestamp; reset watchdog
         self._seq_temp_stale_warned = False   # one-shot guard, see _seq_check_temp_stale
+        self._seq_safety_reason = ""
         if hasattr(self, "_lbl_soc_note"):
             self._lbl_soc_note.setText("")   # clear any stale "Topping off" from a previous run
         self.sig_phase_progress.emit(0, 0)   # hide progress bar
         self.frm_seq_result.hide()
         self._seq_running.set()
+        if lease is not None:
+            self.operation_state.running(lease)
         self.btn_seq_cancel.setEnabled(True)
         self.sig_loading.emit(btn_key, True, loading_label)
         if hasattr(self, '_ensure_battery_sn'):
             self._ensure_battery_sn()
+        self._prepare_new_physical_session(btn_key)
         self.sig_profile_status.emit("RUN", theme.INFO)
+        return True
+
+    def _prepare_new_physical_session(self, test_type: str):
+        """Reset session-only state; reset the estimator only when battery identity changes."""
+        config = getattr(self, "config", None)
+        battery = getattr(config, "battery", None)
+        identity = (str(getattr(battery, "serial_number", "") or "").strip(),
+                    str(getattr(battery, "product_name", "") or "").strip(),
+                    str(getattr(battery, "battery_type", "") or "").strip())
+        previous = getattr(self, "_physical_session_identity", None)
+        if previous is not None and identity != previous and self.estimator is not None:
+            reset = getattr(self.estimator, "reset_battery_state", None)
+            if callable(reset):
+                reset()
+        self._physical_session_identity = identity
+        if self.controller is not None:
+            begin = getattr(self.controller, "begin_physical_session", None)
+            if callable(begin):
+                begin(test_type)
+        self._last_analysis = None
+        self._last_grade = None
+        for name in ("lbl_grade", "lbl_run_grade", "lbl_analytics"):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setText("—" if name != "lbl_analytics" else "New session — waiting for results")
+
+    def _spawn_sequence_worker(self, target, *, kind: str, args=()):
+        """Retain each sequence worker until its cleanup has returned."""
+        import threading
+        lease = getattr(self, "_seq_lease", None)
+
+        def run():
+            try:
+                target(*args)
+            finally:
+                if lease is not None:
+                    self.operation_state.cleanup(lease)
+                    self.sig_operation_worker_exited.emit(lease.run_id)
+
+        thread = threading.Thread(target=run, name=f"aset-{kind}", daemon=True)
+        self._seq_thread = thread
+        if lease is not None:
+            lease.thread = thread
+            self._operation_threads[lease.run_id] = thread
+        thread.start()
+        return thread
 
     # G8 (industrial-grade audit): a momentary staleness blip only warns — a hard
     # stop on that alone would be its own false-trip hazard. Sustained staleness
@@ -573,10 +660,10 @@ class BaseSequenceMixin:
         Returns False (and has already cleared self._seq_running + emitted an
         alarm) only on the sustained-staleness trip.
         """
-        if getattr(self.hw, "temp_is_stale", None) and \
-                self.hw.temp_is_stale(self._SEQ_TEMP_STALE_TRIP_S):
+        info = self.hw.temperature_measurement() if hasattr(self.hw, "temperature_measurement") else None
+        if info is not None and not info["temperature_valid"]:
             self._seq_running.clear()
-            reason = f"ESP32 temperature stale for {self._SEQ_TEMP_STALE_TRIP_S:.0f}s+"
+            reason = f"TEMP_SENSOR_{info['temperature_status']} — OTP protection unavailable"
             self.sig_alarm.emit(f"[SAFETY] {reason} — OTP protection is blind, sequence aborted")
             self.sig_wf_status.emit(f"⛔ {reason}")
             # Same big-banner + hardware-cut path a live E-STOP press uses (G9) — a
@@ -585,14 +672,48 @@ class BaseSequenceMixin:
             if self.controller:
                 self.controller._trigger_safety(reason)
             return False
-        if getattr(self, "_seq_temp_stale_warned", False):
-            return True
         if getattr(self.hw, "temp_is_stale", None) and self.hw.temp_is_stale():
-            self._seq_temp_stale_warned = True
-            self.sig_alarm.emit(
-                "[WARNING] ESP32 temperature reading is stale — Rin/OCV temperature "
-                "compensation and OTP protection may not reflect the real battery.")
+            self._seq_running.clear()
+            reason = "TEMP_SENSOR_STALE — OTP protection unavailable"
+            self.sig_alarm.emit(f"[SAFETY] {reason}")
+            if self.controller:
+                self.controller._trigger_safety(reason)
+            return False
         return True
+
+    def _seq_check_load_trip(self) -> bool:
+        """Poll PEL protection status and fail the active sequence on trip/query loss."""
+        query = getattr(self.hw, "get_load_protection_tripped", None)
+        if not callable(query):
+            return True  # simulation/legacy backend has no PEL protection register
+        try:
+            status = query()
+            if status is None:
+                tripped = True
+                reason = "LOAD_PROTECTION_STATUS_UNAVAILABLE — PEL status query failed"
+            else:
+                tripped = bool(status)
+        except Exception as exc:
+            tripped = True
+            reason = f"LOAD_PROTECTION_STATUS_UNAVAILABLE — {exc}"
+        else:
+            if not tripped:
+                return True
+            if status is not None:
+                reason = "LOAD_PROTECTION_TRIPPED — PEL protection stopped the load"
+        lease = getattr(self, "_seq_lease", None)
+        if lease is not None:
+            self.operation_state.request_cancel(lease)
+        self._seq_running.clear()
+        lease = getattr(self, "_seq_lease", None)
+        if lease is not None and getattr(self, "operation_state", None) is not None:
+            self.operation_state.request_cancel(lease)
+        self._seq_safety_reason = reason
+        self.sig_alarm.emit(f"[SAFETY] {reason} — sequence aborted")
+        self.sig_wf_status.emit(f"⛔ {reason}")
+        if self.controller:
+            self.controller._trigger_safety(reason)
+        return False
 
 
 
@@ -636,7 +757,7 @@ class BaseSequenceMixin:
     def _seq_kick_watchdog(self):
         """Call after every successful measurement read inside a sequence thread."""
         import time as _t
-        self._seq_last_meas_time = _t.time()
+        self._seq_last_meas_time = _t.perf_counter()
 
     def _seq_hw_safe_off(self):
         """Best-effort ตัดไฟทั้งหมด — ต้องเป็นบรรทัดแรกใน ``finally`` ของทุก
@@ -651,11 +772,16 @@ class BaseSequenceMixin:
                 self.controller.stop_charge()
         except Exception:
             logger.exception("sequence finally: stop_charge failed")
+        shutdown_ok = True
         for fn_name in ("load_off", "psu_off"):
             try:
-                getattr(self.hw, fn_name)()
+                if getattr(self.hw, fn_name)() is False:
+                    shutdown_ok = False
+                    logger.critical("sequence finally: %s returned failure", fn_name)
             except Exception:
+                shutdown_ok = False
                 logger.exception("sequence finally: %s failed", fn_name)
+        return shutdown_ok
 
     def _hw_retry(self, fn, *args, retries: int = 3, delay: float = 0.5, **kwargs):
         """Call ``fn(*args, **kwargs)``, retrying a transient exception with a short
@@ -697,20 +823,20 @@ class BaseSequenceMixin:
         import time
         from PySide6.QtCore import QEventLoop, QTimer
 
-        t_end = time.time() + seconds
+        t_end = time.perf_counter() + seconds
         loop = QEventLoop()
         timer = QTimer()
         timer.setSingleShot(True)
         timer.timeout.connect(loop.quit)
         
         while self._seq_running.is_set():
-            left = t_end - time.time()
+            left = t_end - time.perf_counter()
             if left <= 0:
                 return True
                 
             # watchdog: abort if no measurement update for _WATCHDOG_TIMEOUT_S
             last = getattr(self, "_seq_last_meas_time", 0.0)
-            if last and (time.time() - last) > self._WATCHDOG_TIMEOUT_S:
+            if last and (time.perf_counter() - last) > self._WATCHDOG_TIMEOUT_S:
                 self._seq_running.clear()
                 reason = "Watchdog: ไม่มีการวัดค่า > 5 นาที"
                 self.sig_alarm.emit(f"[SAFETY] {reason} — sequence ถูกยกเลิก")
@@ -736,27 +862,42 @@ class BaseSequenceMixin:
         if reply == QMessageBox.StandardButton.No:
             return
 
+        lease = getattr(self, "_seq_lease", None)
+        if lease is not None and getattr(self, "operation_state", None) is not None:
+            self.operation_state.request_cancel(lease)
         self._seq_running.clear()
-        # หยุด hardware ทันที
-        try:
-            if self.controller:
+        # Hardware safety must not depend on session finalization succeeding.
+        # In particular, a CSV/logger error during end_session must not skip the
+        # instrument OFF commands on this operator abort path.
+        shutdown_ok = True
+        if self.controller:
+            try:
                 self.controller.stop_charge()
-                self.controller.end_session(
-                    "cancelled", "operator cancelled sequence")
-                # ปิด session ให้รอบถัดไปเริ่มไฟล์ใหม่แน่ๆ
-            self.hw.load_off()
-            self.hw.psu_off()
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
-        self.lbl_wf_status.setText("ยกเลิก")
-        self._set_phase_banner_idle()
-        self.btn_seq_cancel.setEnabled(False)
-        self.sig_phase_progress.emit(0, 0)
-        self.frm_seq_result.hide()
-        for btn in ("btn_auto_seq", "btn_quick_scan", "btn_hppc_seq", "btn_cycle_life"):
-            self.sig_loading.emit(btn, False, "")
-        self.sig_alarm.emit("[AUTO] Sequence cancelled — hardware stopped.")
+            except Exception:
+                shutdown_ok = False
+                logger.exception("sequence cancel: stop_charge failed")
+        for fn_name in ("load_off", "psu_off"):
+            try:
+                if getattr(self.hw, fn_name)() is False:
+                    shutdown_ok = False
+                    logger.critical("sequence cancel: %s returned failure", fn_name)
+            except Exception:
+                shutdown_ok = False
+                logger.exception("sequence cancel: %s failed", fn_name)
+        if self.controller:
+            try:
+                self.controller.end_session("cancelled", "operator cancelled sequence")
+            except Exception:
+                shutdown_ok = False
+                logger.exception("sequence cancel: session finalization failed")
+        if hasattr(self, "lbl_wf_status"):
+            self.lbl_wf_status.setText("CANCELLING — waiting for worker cleanup")
+        if hasattr(self, "lbl_phase_banner"):
+            self.lbl_phase_banner.setText("⏹  CANCELLING  ·  cleanup in progress")
+        if shutdown_ok:
+            self.sig_alarm.emit("[AUTO] Sequence cancelled — hardware OFF commands issued.")
+        else:
+            self.sig_alarm.emit("[CRITICAL] Sequence cancelled, but safe shutdown could not be confirmed.")
 
     def _charge_status_text(self, v: float, i: float, elapsed_ch: int, prefix: str = "CHARGE") -> str:
         """CHARGE-phase status line, e.g. "CHARGE: 13.85V 0.34A (elapsed 12m03s)" — and,
@@ -796,6 +937,10 @@ class BaseSequenceMixin:
         for the bulk phase and the first few tail samples before that fit is reliable."""
         try:
             rated = self.config.battery.rated_capacity
+            product = battery_profiles.get_product(
+                getattr(self.config.battery, "product_name", "") or "")
+            if product and product.capacity_10h_ah > 0.0:
+                rated = product.capacity_10h_ah
             ah_needed = max(0.0, (100.0 - soc_now) / 100.0) * rated
             i_chg = max(0.05, abs(c_rate) * rated)
             t_bulk = ah_needed / i_chg * 3600.0
@@ -872,8 +1017,10 @@ class BaseSequenceMixin:
         try:
             prod_name = self.cb_product.currentText() if hasattr(self, "cb_product") else ""
             prod = battery_profiles.get_product(prod_name)
-            cap = prod.rated_capacity_ah if prod else (
+            cap = ((prod.capacity_10h_ah if prod.capacity_10h_ah > 0.0 else prod.rated_capacity_ah)
+                   if prod else (
                 self.config.battery.rated_capacity if self.config else 5.0)
+            )
             chemistry = prod.chemistry if prod else (
                 self.config.battery.battery_type if self.config else "LeadAcid")
         except Exception:

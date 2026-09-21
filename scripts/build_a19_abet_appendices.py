@@ -97,7 +97,7 @@ def main() -> None:
     )
     add_table(doc, ["Calculation", "Inputs and method", "Report evidence"], [
         ["DCIR by two-pulse method", "R₀ = ΔV / ΔI = 0.150 V / 5 A = 30 mΩ", "Section 4.3 Engineering Analysis"],
-        ["Peukert normalized capacity", "Reference: 5.3 Ah at 0.2C (1.06 A); normalized factor 5^0.10 = 1.175", "Section 4.3 Engineering Analysis"],
+        ["Peukert normalized capacity", "Legacy example: 5.3 Ah at 0.2C (1.06 A), not YTZ6V basis; corrected YTZ6V reference is C10 5.0 Ah at 0.500 A", "Section 4.3 Engineering Analysis"],
         ["Sampling interval", "Target sampling rate 10 Hz; nominal interval 100 ms; time-gap gate 0.5 s", "Sections 4.3 and 5.1"],
     ])
 

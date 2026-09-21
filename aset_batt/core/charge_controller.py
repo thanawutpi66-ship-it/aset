@@ -163,6 +163,7 @@ class ChargeController:
         self.poll_interval_s = poll_interval_s
         self.stage = IDLE
         self._running = False
+        self.full_charge_confirmed = False
 
     def stop(self):
         self._running = False
@@ -180,7 +181,7 @@ class ChargeController:
 
         self._running = True
         self.stage = IDLE
-        stage_start = time.time()
+        stage_start = time.perf_counter()
         float_entered_at: Optional[float] = None
         # Consecutive-sample counter for decide()'s tail_confirm_n — counts SAMPLES,
         # not elapsed seconds, so it works correctly even at poll_interval_s=0 (unit
@@ -197,17 +198,20 @@ class ChargeController:
 
                 v_pack, psu_i, _load_i = self.hw.read_vi()
                 i_charge = max(0.0, psu_i)   # กระแสเข้าแบต (psu_i = charge)
-                t_in_stage = time.time() - stage_start
+                t_in_stage = time.perf_counter() - stage_start
                 tail_confirm_n = (tail_confirm_n + 1) if i_charge <= self.params.tail_current_a else 0
 
                 d = decide(self.params, self.stage, v_pack, i_charge, t_in_stage, tail_confirm_n)
 
                 if d.stage != self.stage:
                     logger.info(f"charge stage {self.stage} → {d.stage}: {d.note}")
-                    stage_start = time.time()
+                    stage_start = time.perf_counter()
                     self.stage = d.stage
                     if d.stage == FLOAT:
-                        float_entered_at = time.time()
+                        float_entered_at = time.perf_counter()
+                        # A timeout also advances to float; only a verified
+                        # consecutive-sample taper is evidence of full charge.
+                        self.full_charge_confirmed = "taper" in d.note.lower()
 
                 # re-check abort ทันทีก่อน "จ่ายไฟ" — กัน race กับ emergency shutdown
                 # (ถ้า safety ทริกเกอร์หลังเช็คตอนต้นรอบ จะได้ไม่สั่ง OUTP ON ซ้ำหลังตัดไฟ)
@@ -216,26 +220,36 @@ class ChargeController:
                     break
 
                 if d.output_on:
-                    self.hw.set_psu_cccv(d.set_voltage, d.set_current)
+                    if self.hw.set_psu_cccv(d.set_voltage, d.set_current) is False:
+                        raise RuntimeError("PSU CC-CV command failed")
                 else:
-                    self.hw.psu_off()
+                    if self.hw.psu_off() is False:
+                        raise RuntimeError("PSU OFF command failed")
 
                 if self.on_update:
                     self.on_update(self.stage, v_pack, i_charge, d.note)
 
                 # cc_cv: จบเมื่อ DONE. three_stage: จบเมื่อเลี้ยง float ครบ float_hold_s
                 if d.stage == DONE:
+                    self.full_charge_confirmed = "taper" in d.note.lower()
                     break
                 if d.stage == FLOAT and float_entered_at is not None:
-                    if time.time() - float_entered_at >= float_hold_s:
+                    if time.perf_counter() - float_entered_at >= float_hold_s:
                         logger.info("ชาร์จเสร็จ (lead-acid เข้า float แล้ว)")
                         break
 
-                time.sleep(self.poll_interval_s)
+                # A zero interval is the documented deterministic-test mode.
+                # Do not turn it into ``sleep(0)``: on Windows that still yields
+                # to the scheduler and can add a full scheduling quantum to every
+                # virtual sample.  Physical charging retains its configured,
+                # positive polling interval.
+                if self.poll_interval_s > 0.0:
+                    time.sleep(self.poll_interval_s)
         finally:
             self._running = False
             try:
-                self.hw.psu_off()
+                if self.hw.psu_off() is False:
+                    logger.critical("PSU OFF command failed during charge cleanup")
             except Exception as e:
                 logger.error(f"ปิด PSU หลังชาร์จไม่สำเร็จ: {e}")
 

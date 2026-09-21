@@ -230,11 +230,7 @@ class UiUpdaterMixin:
         safety net that a Python signal handler can't provide for a hard kill."""
         self._update_connection_status()
         if getattr(self.hw, "is_esp_connected", False):
-            try:
-                self.hw.feed_watchdog()
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
+            self._request_watchdog()
         # Direct control (raw PSU/Load jog) has no test/monitor loop of its own by
         # design (see _direct_page's warning — no SoC, no CSV) so nothing else feeds
         # the graph while it's active; piggyback on this 1s tick instead. Read-only —
@@ -243,20 +239,8 @@ class UiUpdaterMixin:
         # operator switches over to peek at Direct).
         if getattr(self, "rb_direct", None) is not None and self.rb_direct.isChecked() \
                 and getattr(self.hw, "is_connected", False):
-            try:
-                v, psu_i, load_i = self.hw.read_vi()
-                if load_i > 0.02:
-                    i_net = load_i
-                elif getattr(self.hw, "_psu_output_on", False):
-                    i_net = -psu_i
-                else:
-                    i_net = psu_i
-                soc = getattr(self.estimator, "soc", 0.0) if self.estimator else 0.0
-                rin = getattr(self.estimator, "rin", 0.0) if self.estimator else 0.0
-                self.update_display(v, i_net, soc, rin, self.hw.current_temp)
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
+            self._mark_direct_stale_if_needed()
+            self._request_direct_poll()
     def update_status_bar(self):
         self._update_connection_status()
     def handle_safety_trigger(self, reason):

@@ -5,6 +5,7 @@ mocked out in other tests (e.g. tests/test_prepare_phase_rest_logging.py),
 never exercised for real.
 """
 import unittest
+from unittest.mock import patch
 
 from aset_batt.core.config import ConfigManager
 from aset_batt.core.battery_model import BatteryModel
@@ -46,7 +47,15 @@ class TestCalibrateFromOcvSyncsEstimator(unittest.TestCase):
         hw.current_temp = 25.0
 
         expected_soc = model.get_soc_from_ocv(hw._sim_v, hw.current_temp)
-        soc = ctrl.calibrate_from_ocv()
+        def valid_anchor():
+            estimator.sync_with_ocv(hw._sim_v, hw.current_temp)
+            return expected_soc, hw._sim_v, "VALID_OCV"
+        # The public helper must delegate acceptance to the full stable-OCV
+        # validator. Keep this unit test fast; its rest/current/stability gates
+        # are exercised directly in test_quickscan_coordinated_corrections.
+        with patch.object(ctrl, "calibrate_from_ocv_stable",
+                          side_effect=valid_anchor):
+            soc = ctrl.calibrate_from_ocv()
 
         self.assertAlmostEqual(soc, expected_soc, places=3)
         self.assertAlmostEqual(estimator.soc, expected_soc, places=3)
@@ -58,10 +67,16 @@ class TestCalibrateFromOcvSyncsEstimator(unittest.TestCase):
         ctrl, hw, estimator, model = _make_controller()
 
         hw._sim_v = model.get_ocv_from_soc(30.0, 25.0)  # already pack-level
-        soc_mid = ctrl.calibrate_from_ocv()
+        soc_mid_expected = model.get_soc_from_ocv(hw._sim_v, hw.current_temp)
+        with patch.object(ctrl, "calibrate_from_ocv_stable",
+                          return_value=(soc_mid_expected, hw._sim_v, "VALID_OCV")):
+            soc_mid = ctrl.calibrate_from_ocv()
 
         hw._sim_v = model.get_ocv_from_soc(90.0, 25.0)  # already pack-level
-        soc_high = ctrl.calibrate_from_ocv()
+        soc_high_expected = model.get_soc_from_ocv(hw._sim_v, hw.current_temp)
+        with patch.object(ctrl, "calibrate_from_ocv_stable",
+                          return_value=(soc_high_expected, hw._sim_v, "VALID_OCV")):
+            soc_high = ctrl.calibrate_from_ocv()
 
         self.assertGreater(soc_high, soc_mid)
 

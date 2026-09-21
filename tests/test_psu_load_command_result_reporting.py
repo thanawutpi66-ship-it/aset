@@ -72,6 +72,27 @@ class TestSetLoadReturnValue(unittest.TestCase):
         self.assertFalse(hw.set_load(True, "1.0"))
 
 
+class TestSafeStateCommandResults(unittest.TestCase):
+    def test_load_off_reports_scpi_failure(self):
+        hw = _make_hw()
+        hw.load_inst.write.side_effect = Exception("VISA timeout")
+        self.assertFalse(hw.load_off())
+
+    def test_psu_off_reports_scpi_failure_even_if_ssr_command_succeeds(self):
+        hw = _make_hw()
+        hw.set_ssr = MagicMock(return_value=True)
+        hw.psu_inst.write.side_effect = Exception("VISA timeout")
+        self.assertFalse(hw.psu_off())
+        hw.set_ssr.assert_called_once_with(False)
+
+    def test_cccv_failure_does_not_close_ssr_or_report_success(self):
+        hw = _make_hw()
+        hw.set_ssr = MagicMock(return_value=True)
+        hw.psu_inst.write.side_effect = Exception("VISA timeout")
+        self.assertFalse(hw.set_psu_cccv(14.4, 1.0))
+        hw.set_ssr.assert_not_called()
+
+
 class TestMockHardwareMirrorsTheContract(unittest.TestCase):
     """MockHardwareController must present the same True/False return contract as
     the real driver — otherwise every mock-based test in this suite would silently

@@ -70,6 +70,26 @@ class TestEstopLivesInARealToolbar(unittest.TestCase):
         finally:
             win.close()
 
+    def test_estop_commands_relay_cutoff_before_worker_io(self):
+        from unittest.mock import MagicMock
+        win = BatteryQtWindow(ConfigManager())
+        try:
+            order = []
+            win.hw = MagicMock()
+            win.hw.set_ssr = MagicMock(side_effect=lambda state: order.append(("ssr", state)) or True)
+            win._test_worker = MagicMock()
+            win._test_worker.emergency_stop.side_effect = lambda: order.append(("worker",))
+            win.controller = MagicMock()
+            win.controller._trigger_safety.side_effect = lambda reason: order.append(("controller",))
+
+            win._on_estop()
+
+            self.assertEqual(order[0], ("ssr", False))
+            self.assertEqual(order[1], ("worker",))
+            self.assertEqual(order[2], ("controller",))
+        finally:
+            win.close()
+
     def test_no_dead_build_header_method(self):
         """_build_header() built mode_badge/conn_led/state_pill widgets that were
         never added to any layout — every widget it created was immediately

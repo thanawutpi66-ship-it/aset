@@ -226,7 +226,7 @@ Chart.js) สำหรับดูผลแม้เครื่องแล็�
 - **Lead-Acid physics accuracy (session 2026-06-29):**
   - Nernst OCV temperature compensation: +0.40 mV/°C/cell ใน `_generate_ocv_tables()`
   - State-dependent coulomb efficiency: 0.97/0.92/0.75 ตาม SoC gassing stage
-  - Peukert correction real-time: k=1.30, C10, scale cap 5×
+  - Peukert correction resolves approved measured value → configured product value → chemistry default → built-in/generic fallback. Current YTZ6V k=1.16 is a provisional empirical, unverified selection from Quick Scan evidence; LeadAcid chemistry default k=1.10 is an assumption, not a YTZ6V measurement. Session metadata records k provenance; characterized values remain inactive until explicitly approved.
   - ΔV/Δt criterion ใน PREPARE: `calibrate_from_ocv_stable(cancel_check=...)` 300s+convergence
 
 **ยังเหลือ:**

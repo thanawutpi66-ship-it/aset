@@ -6,6 +6,7 @@ import threading
 import time
 import re
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,13 @@ class HardwareController:
     # only when no parsed update has arrived, so both firmware variants work
     # without adding serial traffic to the streaming variant.
     _ESP_TEMP_REQUEST_INTERVAL_S = 1.0
+    TEMPERATURE_FRESHNESS_TIMEOUT_S = 10.0
 
     def __init__(self):
-        self.rm = pyvisa.ResourceManager()
+        # ResourceManager construction/list_resources may enumerate drivers and
+        # USB backends. Defer it until the caller asks for discovery/connect so
+        # the GUI can dispatch that work to its hardware worker.
+        self._rm = None
         self.psu_inst = None
         self.load_inst = None
         self.is_connected = False
@@ -56,7 +61,9 @@ class HardwareController:
         self.esp_serial = None
         self.is_esp_connected = False
         self.current_temp = 0.0
-        self.last_esp_heartbeat = time.time()
+        self.last_esp_heartbeat = time.perf_counter()
+        self.last_temperature_sample_time: float | None = None  # monotonic parse arrival
+        self.last_temperature_sample_wall: float | None = None
         self.connect_error: str = ""       # ข้อความ error ล่าสุดของ PSU/Load — ว่างเปล่าเมื่อ connect สำเร็จ
         self.esp_connect_error: str = ""   # ข้อความ error ล่าสุดของ ESP32
 
@@ -79,6 +86,8 @@ class HardwareController:
         # Calibration offsets (from SystemConfig)
         self._psu_voltage_offset: float = 0.0
         self._psu_current_offset: float = 0.0
+        self._psu_configured_current_offset: float = 0.0
+        self._psu_runtime_zero_offset: float = 0.0
         self._load_voltage_offset: float = 0.0
         self._load_current_offset: float = 0.0
 
@@ -87,12 +96,56 @@ class HardwareController:
         self._psu_output_on: bool = False
         self.last_voltage_source: str = "unknown"
         self.last_current_source: str = "unknown"
+        self.psu_idn: str = ""
+        self.load_idn: str = ""
+        self.psu_resource: str = ""
+        self.load_resource: str = ""
+
+    def instrument_identity(self) -> dict:
+        return {"psu": {"idn": self.psu_idn or None, "resource": self.psu_resource or None},
+                "electronic_load": {"idn": self.load_idn or None,
+                                    "resource": self.load_resource or None}}
+
+    @property
+    def rm(self):
+        if self._rm is None:
+            self._rm = pyvisa.ResourceManager()
+        return self._rm
+
+    @rm.setter
+    def rm(self, resource_manager):
+        # Preserve the long-standing injection seam used by integrations and
+        # tests while keeping normal construction lazy for the GUI.
+        self._rm = resource_manager
 
     def apply_calibration(self, psu_v, psu_i, load_v, load_i):
         self._psu_voltage_offset = float(psu_v) if psu_v is not None else 0.0
-        self._psu_current_offset = float(psu_i) if psu_i is not None else 0.0
+        self._psu_configured_current_offset = float(psu_i) if psu_i is not None else 0.0
+        self._psu_runtime_zero_offset = 0.0
+        self._psu_current_offset = self._psu_configured_current_offset
         self._load_voltage_offset = float(load_v) if load_v is not None else 0.0
         self._load_current_offset = float(load_i) if load_i is not None else 0.0
+
+    def temperature_measurement(self) -> dict:
+        """Return temperature and authoritative validity/freshness evidence."""
+        now = time.perf_counter()
+        sample_t = self.last_temperature_sample_time
+        age = max(0.0, now - sample_t) if sample_t is not None else None
+        if not self.is_esp_connected:
+            status = "DISCONNECTED"
+        elif sample_t is None:
+            status = "NOT_AVAILABLE"
+        elif not math.isfinite(float(self.current_temp)):
+            status = "NONFINITE"
+        elif age is None or age > self.TEMPERATURE_FRESHNESS_TIMEOUT_S:
+            status = "STALE"
+        else:
+            status = "VALID"
+        return {"temperature_c": float(self.current_temp),
+                "temperature_valid": status == "VALID",
+                "temperature_age_s": age,
+                "temperature_source": "MLX90614 via ESP32" if sample_t is not None else "ESP32",
+                "temperature_status": status}
 
     def get_visa_ports(self):
         try:
@@ -107,6 +160,12 @@ class HardwareController:
             return []
 
     def connect_instruments(self, psu_port, load_port):
+        # VISA sessions remain serialized with every monitor/sequence/E-STOP
+        # operation through the existing instrument lock.
+        with self.inst_lock:
+            return self._connect_instruments_locked(psu_port, load_port)
+
+    def _connect_instruments_locked(self, psu_port, load_port):
         for attr in ("psu_inst", "load_inst"):
             inst = getattr(self, attr, None)
             if inst is not None:
@@ -121,8 +180,16 @@ class HardwareController:
         self.is_load_connected = False
         self.connect_error = ""
 
-        psu  = self.rm.open_resource(psu_port)
-        load = self.rm.open_resource(load_port)
+        psu = self.rm.open_resource(psu_port)
+        try:
+            load = self.rm.open_resource(load_port)
+        except Exception:
+            try:
+                psu.close()
+            except Exception:
+                pass
+            self.is_psu_connected = self.is_load_connected = False
+            raise
 
         for inst in [psu, load]:
             inst.baud_rate = 9600
@@ -138,6 +205,7 @@ class HardwareController:
         # open_resource() succeeds on any valid port — *IDN? confirms a real instrument.
         try:
             psu_idn = psu.query("*IDN?").strip()
+            self.psu_idn, self.psu_resource = psu_idn, str(psu_port)
             logger.info("PSU IDN: %s", psu_idn)
             self.is_psu_connected = True
         except Exception as e:
@@ -154,6 +222,7 @@ class HardwareController:
 
         try:
             load_idn = load.query("*IDN?").strip()
+            self.load_idn, self.load_resource = load_idn, str(load_port)
             logger.info("Load IDN: %s", load_idn)
             self.is_load_connected = True
         except Exception as e:
@@ -566,22 +635,59 @@ class HardwareController:
                 logger.error(f"load_on error: {e}")
 
     def load_off(self):
+        if self.load_inst is None:
+            return False
         with self.inst_lock:
             try:
                 self.load_inst.write(":INP OFF")
+                return True
             except Exception as e:
                 logger.error(f"load_off error: {e}")
+                return False
+
+    def get_load_protection_tripped(self) -> bool:
+        """Return whether the PEL questionable-condition register is nonzero.
+
+        PEL-3111 protection status is exposed through the SCPI Questionable
+        Condition register. A query failure is intentionally not interpreted as
+        a clean register; automated sequence callers treat it as unknown/fault.
+        """
+        if self.load_inst is None:
+            return False
+        with self.inst_lock:
+            try:
+                response = self.load_inst.query(":STAT:QUES:COND?").strip()
+                return int(response) != 0
+            except Exception as exc:
+                logger.error("Load protection status query failed: %s", exc)
+                return None
+
+    def clear_load_protection(self) -> bool:
+        """Clear the PEL event register on deliberate operator request."""
+        if self.load_inst is None:
+            return False
+        with self.inst_lock:
+            try:
+                self.load_inst.query(":STAT:QUES:EVEN?")
+                return True
+            except Exception as exc:
+                logger.warning("clear_load_protection failed: %s", exc)
+                return False
 
     def psu_off(self):
         """ปิด output ของ PSU (ใช้โดย emergency shutdown + ChargeController)
         ตัด SSR (GPIO16) ตามไปด้วยเสมอ — PSU output OFF = ไม่ได้ชาร์จ = ตัดไฟ SSR"""
+        psu_ok = False
         with self.inst_lock:
             try:
-                self.psu_inst.write(":OUTP OFF")
-                self._psu_output_on = False
+                if self.psu_inst is not None:
+                    self.psu_inst.write(":OUTP OFF")
+                    self._psu_output_on = False
+                    psu_ok = True
             except Exception as e:
                 logger.error(f"psu_off error: {e}")
-        self.set_ssr(False)
+        ssr_ok = self.set_ssr(False)
+        return psu_ok and ssr_ok
 
     def calibrate_psu_zero(self) -> float:
         """วัด current offset ของ PSU ขณะ OUTPUT OFF แล้วเก็บไว้ลบออกจากทุกการอ่าน
@@ -593,14 +699,17 @@ class HardwareController:
                 if self.psu_inst:
                     try:
                         i = float(self.psu_inst.query("MEAS:CURR?").strip())
-                        samples.append(i)
+                        # Runtime zero is the residual after the configured
+                        # correction, so effective = configured + residual.
+                        samples.append(i - self._psu_configured_current_offset)
                     except Exception as e:
                         import logging
                         logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
             # Sleep outside the lock to prevent starving background telemetry
             time.sleep(0.1)
         offset = sum(samples) / len(samples) if samples else 0.0
-        self._psu_current_offset = offset
+        self._psu_runtime_zero_offset = offset
+        self._psu_current_offset = self._psu_configured_current_offset + offset
         logger.info("PSU current zero-offset calibrated: %.4f A", offset)
         return offset
 
@@ -673,7 +782,15 @@ class HardwareController:
 
 
     def transient_dcir_measure(self, current_target, delta_I):
-        """วัด DCIR จาก transient voltage step"""
+        """LEGACY / DEPRECATED estimate; not measurement-grade DCIR.
+
+        ``delta_I`` is caller-provided (potentially a setpoint delta), not a
+        measured before/after current. Production Quick Scan/HPPC use CSV
+        measured telemetry and ``identify_dcir`` instead.
+        """
+        import warnings
+        warnings.warn("transient_dcir_measure is legacy and not measured DCIR",
+                      DeprecationWarning, stacklevel=2)
         with self.inst_lock:
             try:
                 v_before = float(self.psu_inst.query("MEAS:VOLT?").strip()) - self._psu_voltage_offset
@@ -690,7 +807,7 @@ class HardwareController:
         logger.info("Connecting ESP32 on %s at %d baud", port, baudrate)
         self.esp_serial = serial.Serial(port, baudrate, timeout=1)
         self.is_esp_connected = True
-        self.last_esp_heartbeat = time.time()
+        self.last_esp_heartbeat = time.perf_counter()
         logger.info("ESP32 serial opened on %s", port)
         threading.Thread(
             target=self._esp_monitor_loop, args=(callback,), daemon=True
@@ -715,7 +832,7 @@ class HardwareController:
         # set_ssr() is a no-op once is_esp_connected is False, so this is the last
         # chance to command the relay. Otherwise SSR keeps whatever state it was in
         # (e.g. ON mid-charge) even after the operator disconnects.
-        self.set_ssr(False)
+        ssr_off = self.set_ssr(False)
         self.is_esp_connected = False
         self.ssr_state = None
         if self.esp_serial:
@@ -724,6 +841,8 @@ class HardwareController:
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
+                ssr_off = False
+        return bool(ssr_off)
 
     def set_ssr(self, state: bool) -> bool:
         """Switch the SSR safety-cutoff relay on ESP32 GPIO16 ON/OFF.
@@ -816,16 +935,16 @@ class HardwareController:
         compensation) should check this first."""
         if not self.is_esp_connected:
             return True
-        return (time.time() - self.last_esp_heartbeat) > max_age_s
+        return (time.perf_counter() - self.last_esp_heartbeat) > max_age_s
 
     def _esp_monitor_loop(self, callback):
-        self.last_esp_heartbeat = time.time()
+        self.last_esp_heartbeat = time.perf_counter()
         # The fast ESP32 firmware is request/response: it emits ``#TEMP`` only
         # after ``TEMP``.  Request once as the monitor starts, rather than
         # waiting for the first stale interval; older streaming firmware
         # harmlessly ignores the command and keeps publishing its own samples.
         self.request_temperature()
-        last_temp_request = time.time()
+        last_temp_request = time.perf_counter()
         _unmatched_logged = set()   # avoid log-spamming the same unknown format
         _matched_once = False
         # Runs as its own daemon thread at 20 Hz (time.sleep(0.05)), continuously,
@@ -848,7 +967,7 @@ class HardwareController:
                 # Do not request against the streaming firmware while it is
                 # healthy.  For the on-demand firmware, request every second
                 # until a parsed #TEMP line refreshes last_esp_heartbeat.
-                now = time.time()
+                now = time.perf_counter()
                 if (now - self.last_esp_heartbeat >= self._ESP_TEMP_REQUEST_INTERVAL_S
                         and now - last_temp_request >= self._ESP_TEMP_REQUEST_INTERVAL_S):
                     self.request_temperature()
@@ -863,7 +982,9 @@ class HardwareController:
                             logger.info("ESP32 temp parsed OK (format: %r) → %.2f°C", line, temp)
                             _matched_once = True
                         self.current_temp = temp
-                        self.last_esp_heartbeat = time.time()
+                        self.last_esp_heartbeat = time.perf_counter()
+                        self.last_temperature_sample_time = time.perf_counter()
+                        self.last_temperature_sample_wall = time.time()
                         if callback:
                             callback(temp)
                     else:
@@ -890,8 +1011,16 @@ class HardwareController:
             time.sleep(0.05)
 
     def shutdown_all(self):
-        self.disconnect_instruments()
-        self.disconnect_esp32()
+        instruments_off = self.disconnect_instruments()
+        ssr_off = self.disconnect_esp32()
+        return bool(instruments_off and ssr_off)
+        rm = self._rm
+        self._rm = None
+        if rm is not None:
+            try:
+                rm.close()
+            except Exception as exc:
+                logger.warning("VISA ResourceManager close failed: %s", exc)
 
     def _write_off_verified(self, inst, off_cmd: str, query_cmd: str, label: str) -> bool:
         """Write an output-off command and VERIFY the instrument actually turned
@@ -917,7 +1046,7 @@ class HardwareController:
     def disconnect_instruments(self):
         self.is_connected = False
         self._psu_output_on = False
-        self.set_ssr(False)   # defense in depth if ESP32 stays connected independently
+        ssr_off = self.set_ssr(False)   # defense in depth if ESP32 stays connected independently
         with self.inst_lock:
             psu_off = load_off = True
             try:
@@ -946,6 +1075,9 @@ class HardwareController:
                 "OUTPUT-OFF NOT CONFIRMED on disconnect (PSU ok=%s, Load ok=%s) — "
                 "check the bench: instrument outputs may still be enabled!",
                 psu_off, load_off)
+        if not ssr_off:
+            logger.critical("SSR OFF not confirmed during instrument disconnect")
+        return bool(psu_off and load_off and ssr_off)
 
     def read_measurements(self, prefer_load_v=False):
         """Return (terminal_voltage, current). Convention: discharge = positive.
@@ -996,7 +1128,8 @@ class HardwareController:
     def set_charge(self, state, current_val="0"):
         """Optional charge control hook for IEC cycle-life tests."""
         if not self.is_connected:
-            return
+            return False
+        ok = True
         with self.inst_lock:
             try:
                 if state:
@@ -1008,7 +1141,10 @@ class HardwareController:
                     self._psu_output_on = False
             except Exception as e:
                 logger.error(f"Charge control error: {e}")
-        self.set_ssr(bool(state))
+                ok = False
+        if ok:
+            ok = bool(self.set_ssr(bool(state)))
+        return ok
 
     def set_psu_cccv(self, voltage, current):
         """ตั้ง PSU เป็น CC-CV: voltage = แรงดันเป้า (CV limit), current = กระแสจำกัด (CC limit)
@@ -1018,7 +1154,8 @@ class HardwareController:
         (3-stage lead-acid / CC-CV lithium) — สั่งทั้งสอง limit พร้อมกันในคำสั่งเดียว
         """
         if not self.is_connected:
-            return
+            return False
+        ok = True
         with self.inst_lock:
             try:
                 self.psu_inst.write(f":VOLT {voltage}")
@@ -1027,4 +1164,7 @@ class HardwareController:
                 self._psu_output_on = True
             except Exception as e:
                 logger.error(f"set_psu_cccv error: {e}")
-        self.set_ssr(True)
+                ok = False
+        if ok:
+            ok = bool(self.set_ssr(True))
+        return ok
