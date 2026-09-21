@@ -119,12 +119,12 @@ class HardwareController:
         self._rm = resource_manager
 
     def apply_calibration(self, psu_v, psu_i, load_v, load_i):
-        self._psu_voltage_offset = psu_v
-        self._psu_configured_current_offset = float(psu_i)
+        self._psu_voltage_offset = float(psu_v) if psu_v is not None else 0.0
+        self._psu_configured_current_offset = float(psu_i) if psu_i is not None else 0.0
         self._psu_runtime_zero_offset = 0.0
         self._psu_current_offset = self._psu_configured_current_offset
-        self._load_voltage_offset = load_v
-        self._load_current_offset = load_i
+        self._load_voltage_offset = float(load_v) if load_v is not None else 0.0
+        self._load_current_offset = float(load_i) if load_i is not None else 0.0
 
     def temperature_measurement(self) -> dict:
         """Return temperature and authoritative validity/freshness evidence."""

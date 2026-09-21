@@ -797,8 +797,15 @@ class AutoController:
                         )
 
                     # คำนวณ elapsed seconds จากเวลาเริ่มต้น (monotonic — ดู _start_mono)
-                    elapsed = (time.perf_counter() - self._start_mono
-                               if self._start_mono is not None else 0.0)
+                    # Guard: _start_mono/_start_time อาจเป็น None ได้ถ้า end_session() reset
+                    # กลางรอบ (เช่น cancel sequence แล้วสั่ง charge ใหม่ทันที) —
+                    # ทำให้เกิด TypeError: unsupported operand type(s) for -: 'float' and 'NoneType'
+                    if self._start_mono is not None:
+                        elapsed = time.perf_counter() - self._start_mono
+                    elif self._start_time is not None:
+                        elapsed = time.time() - self._start_time
+                    else:
+                        elapsed = 0.0
                     self.data.log_row(
                         elapsed, v, i_net,
                         soc_for_publish, state['rin'] * 1000,  # NaN until OCV/endpoint anchor
@@ -1024,7 +1031,8 @@ class AutoController:
             temp_info = self.hw.temperature_measurement()
             self.data.log_row(
                 (time.perf_counter() - self._start_mono
-                 if self._start_mono is not None else 0.0),
+                 if self._start_mono is not None
+                 else time.time() - self._start_time if self._start_time is not None else 0.0),
                 voltage, current,
                 soc, self.estimator.rin * 1000.0,
                 temp_info["temperature_c"], rin_calibrated=calibrated,

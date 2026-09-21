@@ -253,6 +253,20 @@ class TestControlMixin:
         self._test_thread.start()
         self.sig_profile_status.emit("RUN", theme.INFO)
         self._log_alarm(f"Characterization started: {cfg.mode.value}")
+        
+        try:
+            from aset_batt.storage.cloud_push import set_cloud_meta
+            if op_mode == OperationMode.CC_DISCHARGE:
+                set_cloud_meta(phase="discharge", test_mode="MANUAL", workflow="Manual — Discharge", total_s=0)
+            elif op_mode == OperationMode.CC_CV_CHARGE:
+                set_cloud_meta(phase="charge", test_mode="MANUAL", workflow="Manual — Charge", total_s=0)
+            elif op_mode == OperationMode.HPPC:
+                set_cloud_meta(phase="test", test_mode="MANUAL", workflow="Manual — HPPC", total_s=0)
+            else:
+                set_cloud_meta(phase="test", test_mode="MANUAL", workflow=f"Manual — {op_mode.value}", total_s=0)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)
     def _on_stop_test(self):
         if self._test_worker:
             lease = getattr(self, "_manual_test_lease", None)
@@ -494,6 +508,11 @@ class TestControlMixin:
             self.lbl_test_status.setText("Test idle")
         if getattr(self, "_close_after_hardware_task", False):
             QTimer.singleShot(0, self.close)
+        try:
+            from aset_batt.storage.cloud_push import set_cloud_meta
+            set_cloud_meta(phase="", test_mode="", workflow="")
+        except Exception:
+            pass
 
     def _on_start_monitor(self):
         if not getattr(self.hw, "is_connected", False):
