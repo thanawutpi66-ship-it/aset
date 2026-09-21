@@ -618,6 +618,11 @@ class UiUpdaterMixin:
         if last_vit is not None:
             self._update_vi_temp_labels(*last_vit)
             self._set_temp_label_color(last_vit[2])
+        # SoC has no live-readback value while idle, but its placeholder label
+        # is still state-independent and must follow the active palette.
+        if getattr(self, "metric_labels", None) and "SoC" in self.metric_labels:
+            soc_lbl, _ = self.metric_labels["SoC"]
+            soc_lbl.setStyleSheet(f"color:{theme.TEXT}; border:0;")
         # Rin has the same "pending vs. measured" split as SoH/Grade (see
         # _metric_card), but flips back to pending between loads within a
         # single test rather than only once — _rin_ema is non-None exactly

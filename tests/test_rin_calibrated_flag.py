@@ -50,6 +50,12 @@ class _FakeHW:
     is_connected = True
     current_temp = 25.0
 
+    def temperature_measurement(self):
+        return {"temperature_c": self.current_temp,
+                "temperature_status": "VALID",
+                "temperature_age_s": 0.0,
+                "temperature_source": "fixture"}
+
 
 class _FakeDataHandler:
     def __init__(self):
@@ -57,7 +63,7 @@ class _FakeDataHandler:
         self.is_recording = True
 
     def log_row(self, elapsed_s, v, i_net, soc, resistance_mohm, temp_c,
-                rin_calibrated=True):
+                rin_calibrated=True, **kwargs):
         self.rows.append((resistance_mohm, rin_calibrated))
 
 

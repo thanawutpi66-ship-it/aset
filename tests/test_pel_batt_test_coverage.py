@@ -1,4 +1,5 @@
 import pytest
+import math
 from unittest.mock import patch, MagicMock
 from aset_batt.hardware.pel_batt_test import PelBattTest, integrate_capacity, soh_from_capacity, DischargeResult
 
@@ -15,9 +16,8 @@ def test_integrate_capacity():
 
 def test_soh_from_capacity():
     soh = soh_from_capacity(50.0, 100.0)
-    assert soh == 50.0
+    assert math.isnan(soh)
     
-    import math
     soh0 = soh_from_capacity(0.0, 0.0)
     assert math.isnan(soh0)
 

@@ -391,7 +391,11 @@ class CycleLifeMixin:
                         now = _t.perf_counter()   # stamp AT the measurement
                         dt  = now - last_log
                         last_log = now
-                        ah_acc += abs(i_d) * dt / 3600.0
+                        # ASET current convention is positive for discharge and
+                        # negative for charge/regen.  Only discharge current is
+                        # removed capacity; counting ``abs`` would overstate
+                        # capacity whenever regen current appears in the loop.
+                        ah_acc += max(0.0, i_d) * dt / 3600.0
                         temp_d = self.hw.current_temp
                         # Stale-temp escalation (G8), checked BEFORE feeding the
                         # estimator/CSV — same check-then-feed order as the IEC/Quick

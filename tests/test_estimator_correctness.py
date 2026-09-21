@@ -15,13 +15,15 @@ class TestEstimatorCorrectness(unittest.TestCase):
         # discharge: นับเต็ม (ah = +10.0)
         e_dis = StateEstimator(50.0, BatteryModel("LiFePO4"))
         e_dis._reset_to_soc(50.0)
-        e_dis.update(3.3, 10.0, dt=3600)  # discharge 10A 1h
+        for _ in range(120):
+            e_dis.update(3.3, 10.0, dt=30.0)
         self.assertAlmostEqual(e_dis.ah_accumulated, 10.0, places=3)
 
         # charge: ถูกหักด้วย efficiency 0.99 (ah = -9.9 ไม่ใช่ -10)
         e_chg = StateEstimator(50.0, BatteryModel("LiFePO4"))
         e_chg._reset_to_soc(50.0)
-        e_chg.update(3.3, -10.0, dt=3600)  # charge 10A 1h
+        for _ in range(120):
+            e_chg.update(3.3, -10.0, dt=30.0)
         self.assertAlmostEqual(e_chg.ah_accumulated, -9.9, places=3)
 
     def test_temperature_forwarded_to_rin(self):

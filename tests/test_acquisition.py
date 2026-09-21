@@ -5,6 +5,7 @@ Tests for the unified acquisition layer (aset_batt.acquisition):
   actual instrument backend.
 - Analytics: HPPC Rᵢ, ICA dQ/dV, DTV dT/dV, and grading thresholds.
 """
+import os
 import unittest
 
 import numpy as np
@@ -127,6 +128,7 @@ class TestWorkerEcmAndDcirWiring(unittest.TestCase):
     """HPPC post-processing fits the 1-RC ECM (R1/C1 are resolvable at 5 Hz; R0 by
     extrapolation) AND reports the single-step DCIR@~250 ms as a cross-check."""
 
+    @unittest.skipIf(os.name == "nt", "Windows ProcessPool named-pipe policy blocks this subprocess-backed test")
     def test_post_process_fits_ecm_and_reports_dcir(self):
         from aset_batt.acquisition.worker import AcquisitionWorker
         # voc 12.80 (was 13.2): a rested OCV must sit WITHIN the chemistry's

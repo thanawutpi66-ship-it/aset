@@ -1204,7 +1204,7 @@ class CharacterizeMixin:
 
             # discharge current for 5% SoC in 36 min = 0.1C (exactly)
             i_dis   = round(0.1 * rated, 3)
-            dis_dur = 36 * 60         # 36 min at 0.1C → 6% capacity removed ≈ 5% SoC step
+            dis_dur = 30 * 60         # 30 min at 0.1C → 5% nominal capacity step
             N_STEPS = 20
             REST_MAX_S = 3600         # wait up to 60 min for settle
             DV_MV_THRESH = 2.0        # ΔV < 2 mV over 60 s window → settled

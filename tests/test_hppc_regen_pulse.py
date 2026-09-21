@@ -117,12 +117,11 @@ class TestSourcePatternWiresRegenIntoThread(unittest.TestCase):
         # _seq_hw_safe_off() (base.py) already calls both load_off() and
         # psu_off() unconditionally in finally — confirm the regen leg doesn't
         # need (and doesn't add) its own duplicate cleanup path.
-        import aset_batt.ui.sequences.base as base_mod
-        base_src = Path(base_mod.__file__).read_text(encoding="utf-8")
-        teardown_idx = base_src.index("_seq_hw_safe_off")
-        window = base_src[teardown_idx:teardown_idx + 800]
-        self.assertIn("load_off", window)
-        self.assertIn("psu_off", window)
+        import inspect
+        from aset_batt.ui.sequences.base import BaseSequenceMixin
+        safe_off = inspect.getsource(BaseSequenceMixin._seq_hw_safe_off)
+        self.assertIn("load_off", safe_off)
+        self.assertIn("psu_off", safe_off)
 
 
 if __name__ == "__main__":

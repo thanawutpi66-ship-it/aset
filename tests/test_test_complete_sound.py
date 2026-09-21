@@ -170,6 +170,8 @@ def test_seq_done_plays_sound():
             self.sig_profile_status = MagicMock()
             self._play_test_complete_sound = MagicMock()
             self._headless = True
+            self.operation_state = MagicMock(active=None)
+            self.operation_state.state.value = "IDLE"
 
     host = Host()
     host._slot_seq_done("IEC 61960 Sequence Complete", "Grade: A")

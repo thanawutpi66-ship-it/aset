@@ -127,6 +127,11 @@ def test_seq_common_start_bumps_generation():
             # have actually exited before acquiring sequence ownership.
             self.controller._monitor_thread = None
             self.controller._live_readback_thread = None
+            self.config = MagicMock()
+            self.config.validate_effective_safety_limits.return_value = []
+            self.config.battery.serial_number = ""
+            self.config.battery.product_name = "Test"
+            self.config.battery.battery_type = "LeadAcid"
             self.lbl_phase_banner = MagicMock()
             self.cb_workflow_type = MagicMock()
             self.cb_workflow_type.currentText.return_value = "IEC 61960"

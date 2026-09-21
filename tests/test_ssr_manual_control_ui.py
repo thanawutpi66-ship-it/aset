@@ -25,6 +25,7 @@ from aset_batt.ui import theme
 theme.set_theme("light")
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtTest import QTest
 from aset_batt.core.config import ConfigManager
 from aset_batt.ui.isa101_views import BatteryQtWindow
 from aset_batt.ui.characterize import CharacterizeMixin
@@ -57,6 +58,7 @@ class TestSsrManualControlButtons(unittest.TestCase):
             w.hw.connect_esp32("COM_MOCK")
             w.hw.set_ssr(True)
             w._on_ssr_manual_off()   # headless → no confirmation dialog
+            QTest.qWait(100)
             self.assertFalse(w.hw.ssr_state)
         finally:
             w.close()
@@ -66,6 +68,7 @@ class TestSsrManualControlButtons(unittest.TestCase):
         try:
             w.hw.connect_esp32("COM_MOCK")
             w._on_ssr_manual_on()    # headless → confirmation dialog skipped
+            QTest.qWait(100)
             self.assertTrue(w.hw.ssr_state)
         finally:
             w.close()

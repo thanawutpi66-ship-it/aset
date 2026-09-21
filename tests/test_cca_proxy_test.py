@@ -177,7 +177,10 @@ class TestCcaFeedsGraphAndCsv(unittest.TestCase):
             win._char_cca_thread()
 
             self.assertGreater(len(calls), 0)
-            self.assertTrue(data.is_recording)
+            # The CCA worker owns and closes its session in finalization; a
+            # completed direct invocation therefore leaves recording closed.
+            self.assertFalse(data.is_recording)
+            self.assertTrue(data.current_path)
         finally:
             win.close()
 
