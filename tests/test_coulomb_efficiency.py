@@ -296,7 +296,7 @@ def test_actual_eta_worker_completes_accelerated_boundary_matched_cycle(tmp_path
                     return 13.8, 0.5, 0.0
                 if n == 1246:
                     return 14.4, 0.5, 0.0
-                    return 14.4, 0.10, 0.0
+                return 14.4, 0.10, 0.0
             return 12.0, 0.0, self._load_current
 
         def read_measurements(self, prefer_load_v=False):
@@ -315,6 +315,12 @@ def test_actual_eta_worker_completes_accelerated_boundary_matched_cycle(tmp_path
     class SimulationDataHandler(DataHandler):
         csv_observed_early = False
 
+        def flush(self):
+            # Intermediate η checkpoints are exercised through final metadata and
+            # integrity assertions below.  Avoid making this virtual-time test
+            # perform thousands of physical flushes.
+            return None
+
         def log_row(self, *args, **kwargs):
             super().log_row(*args, **kwargs)
             if self.is_recording and not self.csv_observed_early:
@@ -327,6 +333,14 @@ def test_actual_eta_worker_completes_accelerated_boundary_matched_cycle(tmp_path
     hw = FullCycleMock()
     model = BatteryModel("LeadAcid", 5.0, 6, 1)
     data = SimulationDataHandler(throttle_redundant_rows=False)
+    # ``DataHandler`` deliberately uses a private monotonic-clock seam for its
+    # one-second flush and 30-second atomic recovery checkpoint cadence.  This
+    # worker fixture advances ``perf_counter`` by 30 virtual seconds per sample
+    # so the production cadence would otherwise fsync a sidecar for every
+    # synthetic measurement.  Keep rows buffered until normal session close;
+    # that close still writes the final metadata and SHA-256 integrity evidence
+    # asserted below.
+    data._clock = lambda: 0.0
     ctrl = AutoController(None, hw, data,
                           StateEstimator(5.0, model), cfg)
     # Recovery snapshots are separately exercised by controller tests; omitting
@@ -335,13 +349,19 @@ def test_actual_eta_worker_completes_accelerated_boundary_matched_cycle(tmp_path
     win = BatteryQtWindow(cfg)
     win.bind_controller(ctrl)
     ctrl.set_ui(win)
+    # Rendering thousands of virtual samples is not part of this worker and
+    # persistence regression; final status and CSV assertions remain real.
+    monkeypatch.setattr(win, "update_display", lambda *args, **kwargs: None)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(time, "perf_counter", lambda: hw.virtual_time)
     original_init = ChargeController.__init__
 
     def accelerated_init(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
-        self.poll_interval_s = 0.0001
+        # ChargeController supports a zero poll interval for deterministic unit
+        # tests.  Windows rounds a 100 µs real sleep to milliseconds, which made
+        # this virtual-time cycle take minutes despite its accelerated clock.
+        self.poll_interval_s = 0.0
         self.params.stage_timeout_s = 1e9
 
     monkeypatch.setattr(ChargeController, "__init__", accelerated_init)
@@ -358,8 +378,16 @@ def test_actual_eta_worker_completes_accelerated_boundary_matched_cycle(tmp_path
         win._char_running["eta"] = event
         worker = threading.Thread(target=tracked_worker, daemon=True)
         worker.start()
-        while worker.is_alive():
+        deadline = time.monotonic() + 10.0
+        while worker.is_alive() and time.monotonic() < deadline:
             app.processEvents(); time.sleep(0.0001)
+        worker.join(timeout=0.1)
+        assert not worker.is_alive(), (
+            "η worker exceeded its deterministic test deadline: "
+            f"charging={ctrl.is_charging}, charge_samples={hw.charge_samples}, "
+            f"load_cycles={hw.load_cycles}, load_samples={hw.load_samples}, "
+            f"event_set={event.is_set()}, phase={getattr(ctrl, '_charge_ctrl', None) and ctrl._charge_ctrl.stage}"
+        )
         app.processEvents()
 
         assert worker_threads and worker_threads[0] != main_thread_id
@@ -471,6 +499,7 @@ def test_eta_interruption_persistence_matrix(tmp_path, monkeypatch, scenario):
                     return 13.8, 0.5, 0.0
                 if n == 1246:
                     return 14.4, 0.5, 0.0
+                return 14.4, 0.10, 0.0
             return 12.0, 0.0, self._load_current
 
         def read_measurements(self, prefer_load_v=False):
@@ -489,18 +518,24 @@ def test_eta_interruption_persistence_matrix(tmp_path, monkeypatch, scenario):
     hw = InjectionMock()
     model = BatteryModel("LeadAcid", 5.0, 6, 1)
     data = DataHandler(throttle_redundant_rows=False)
+    # This fixture advances the controller clock by 30 virtual seconds for
+    # every sample.  Keep DataHandler's real durability cadence out of the
+    # synthetic tight loop; normal finalization still persists metadata and
+    # the integrity digest verified below.
+    data._clock = lambda: 0.0
     ctrl = AutoController(None, hw, data, StateEstimator(5.0, model), cfg)
     ctrl.save_recovery_state = lambda state: None
     win = BatteryQtWindow(cfg)
     win.bind_controller(ctrl)
     ctrl.set_ui(win)
+    monkeypatch.setattr(win, "update_display", lambda *args, **kwargs: None)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(time, "perf_counter", lambda: hw.virtual_time)
     original_init = ChargeController.__init__
 
     def accelerated_init(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
-        self.poll_interval_s = 0.0001
+        self.poll_interval_s = 0.0
         self.params.stage_timeout_s = 1e9
 
     monkeypatch.setattr(ChargeController, "__init__", accelerated_init)

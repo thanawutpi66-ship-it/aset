@@ -238,7 +238,13 @@ class ChargeController:
                         logger.info("ชาร์จเสร็จ (lead-acid เข้า float แล้ว)")
                         break
 
-                time.sleep(self.poll_interval_s)
+                # A zero interval is the documented deterministic-test mode.
+                # Do not turn it into ``sleep(0)``: on Windows that still yields
+                # to the scheduler and can add a full scheduling quantum to every
+                # virtual sample.  Physical charging retains its configured,
+                # positive polling interval.
+                if self.poll_interval_s > 0.0:
+                    time.sleep(self.poll_interval_s)
         finally:
             self._running = False
             try:
