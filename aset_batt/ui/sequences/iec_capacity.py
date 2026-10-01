@@ -219,6 +219,9 @@ class IecCapacityMixin:
             opts.update({"skip_charge": False, "skip_rest": False,
                          "rest_min": 60, "test_crate": "0.1C",
                          "validation_preset": "c10-reference-v1"})
+        opts["validation_force_charge"] = bool(
+            campaign.get("enabled")
+            and opts.get("validation_preset") == "c10-reference-v1")
         self._spawn_sequence_worker(self._auto_sequence_thread, kind="capacity", args=(opts,))
 
     def _auto_sequence_thread(self, opts: dict):
@@ -237,7 +240,12 @@ class IecCapacityMixin:
         seq_crate   = opts["seq_crate"]
         rest_min    = opts["rest_min"]
         test_crate  = opts["test_crate"]
+        validation_force_charge = bool(opts.get("validation_force_charge", False))
+        charge_decision_source = ("FORCED_BY_VALIDATION" if validation_force_charge
+                                  else "ROUTINE_SETTINGS_AND_SOC")
         completed_ok = False
+        charge_started = False
+        charge_completed = False
 
         try:
             # ── PHASE 0: OCV CALIBRATE ────────────────────────────────────
@@ -256,9 +264,22 @@ class IecCapacityMixin:
                     "purpose": "verified capacity and SoH measurement",
                     "phases": ["OCV_SETTLE", "CHARGE", "REST", "C10_DISCHARGE"],
                     "settings": dict(opts),
+                    "charge_required": validation_force_charge,
+                    "charge_decision_source": charge_decision_source,
+                    "charge_started": False,
+                    "charge_completed": False,
                     "grade_policy": "capacity grade only when full-charge, rest, reference-rate and cut-off evidence pass",
                 },
             )
+            try:
+                from aset_batt.storage.data_utils import update_session_metadata
+                path = getattr(getattr(self.controller, "data", None), "current_path", None)
+                update_session_metadata(path, {
+                    "charge_required": bool(validation_force_charge),
+                    "charge_decision_source": charge_decision_source,
+                })
+            except Exception as exc:
+                logger.warning("Could not record charge decision metadata: %s", exc)
             # Use ΔV/Δt criterion (Fick diffusion settling) instead of a fixed sleep.
             # calibrate_from_ocv_stable() enforces the chemistry-specific minimum rest
             # (Lead-Acid: 300 s min, ΔV < 10 mV over 60 s window) and then syncs
@@ -281,9 +302,9 @@ class IecCapacityMixin:
             self.sig_workflow.emit(0, "done")
 
             # ── PHASE 1: CHARGE ──────────────────────────────────────────
-            # actual runtime skip (user flag OR auto-skip on SoC) — the EN 50342-1
-            # verdict below needs what really happened, not just the checkbox.
-            _charge_ran = not (skip_charge or soc >= soc_thresh)
+            # Routine runs retain user/SoC skipping. Validation requires a
+            # controlled full-charge precondition regardless of estimated SoC.
+            _charge_ran = validation_force_charge or not (skip_charge or soc >= soc_thresh)
             if not _charge_ran:
                 reason = "skip-charge checked" if skip_charge else f"SoC={soc:.0f}% ≥ {soc_thresh}%"
                 self.sig_alarm.emit(f"[AUTO] Skipping charge ({reason})")
@@ -291,14 +312,41 @@ class IecCapacityMixin:
             else:
                 self.sig_workflow.emit(1, "active")
                 try:
+                    from aset_batt.storage.data_utils import update_session_metadata
+                    path = getattr(getattr(self.controller, "data", None), "current_path", None)
+                    update_session_metadata(path, {
+                        "charge_required": bool(validation_force_charge),
+                        "charge_started": False,
+                        "charge_completed": False,
+                        "charge_decision_source": charge_decision_source,
+                    })
+                except Exception as exc:
+                    logger.warning("Could not record charge start metadata: %s", exc)
+                try:
                     _c_rate_override = float(seq_crate.rstrip("C"))
                 except (ValueError, AttributeError):
                     _c_rate_override = None
                 status(f"CHARGE: SoC={soc:.0f}% → charging "
                        f"({seq_crate})...")
-                self.controller.start_charge(strategy=None,
-                                             bulk_c_rate_override=_c_rate_override,
-                                             reuse_session=True)
+                charge_accepted = self.controller.start_charge(
+                    strategy=None, bulk_c_rate_override=_c_rate_override,
+                    reuse_session=True)
+                if charge_accepted is not True:
+                    raise RuntimeError("Charge controller refused to start")
+                charge_started = True
+                # start_charge() can lazily open its own session if PREPARE's
+                # logging could not. Reapply the lifecycle checkpoint afterward.
+                try:
+                    from aset_batt.storage.data_utils import update_session_metadata
+                    path = getattr(getattr(self.controller, "data", None), "current_path", None)
+                    update_session_metadata(path, {
+                        "charge_required": bool(validation_force_charge),
+                        "charge_started": True,
+                        "charge_completed": False,
+                        "charge_decision_source": charge_decision_source,
+                    })
+                except Exception as exc:
+                    logger.warning("Could not record active charge metadata: %s", exc)
                 _ch_t0 = time.perf_counter()
                 _ch_est = self._estimate_charge_s(soc, _c_rate_override or 0.1)
                 _tail_t_hist, _tail_i_hist = [], []
@@ -326,6 +374,23 @@ class IecCapacityMixin:
                         break
                 if not self._seq_running.is_set():
                     return
+                charge_completed = not bool(
+                    getattr(self.controller, "safety_triggered", False)
+                    or getattr(self.controller, "last_charge_error", None)
+                    or getattr(self.controller, "last_charge_full_confirmed", None) is not True)
+                try:
+                    from aset_batt.storage.data_utils import update_session_metadata
+                    path = getattr(getattr(self.controller, "data", None), "current_path", None)
+                    update_session_metadata(path, {
+                        "charge_required": bool(validation_force_charge),
+                        "charge_started": charge_started,
+                        "charge_completed": charge_completed,
+                        "charge_decision_source": charge_decision_source,
+                    })
+                except Exception as exc:
+                    logger.warning("Could not record charge completion metadata: %s", exc)
+                if not charge_completed:
+                    raise RuntimeError("Charge ended without normal completion")
                 # start_charge() restarts the shared monitor loop (see its own
                 # "if not monitor_running" guard) — stop it again now that charge
                 # is done, or it keeps calling estimator.update() concurrently
@@ -537,6 +602,18 @@ class IecCapacityMixin:
             self.sig_alarm.emit(f"[AUTO] Error: {exc}")
             status(f"Error: {exc}")
         finally:
+            if not charge_completed:
+                try:
+                    from aset_batt.storage.data_utils import update_session_metadata
+                    path = getattr(getattr(self.controller, "data", None), "current_path", None)
+                    update_session_metadata(path, {
+                        "charge_required": bool(validation_force_charge),
+                        "charge_started": charge_started,
+                        "charge_completed": False,
+                        "charge_decision_source": charge_decision_source,
+                    })
+                except Exception as exc:
+                    logger.warning("Could not record incomplete charge metadata: %s", exc)
             self._seq_hw_safe_off()
             self._seq_running.clear()
             if self.controller:
