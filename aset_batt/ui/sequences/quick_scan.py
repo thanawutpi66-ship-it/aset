@@ -76,17 +76,6 @@ from aset_batt.ui.report_html import format_seq_result, build_results_html
 
 logger = logging.getLogger(__name__)
 
-# EN 50342-1 (SLI lead-acid) Cn capacity-test conditions this rig can verify.
-# The standard defines capacity at the n-hour reference rate In = Cn/n (this
-# project's lead-acid ratings are C10 — see ChemistryProfile.peukert_hr), with a
-# 1.75 V/cell end voltage, from a fully-charged, rested battery. Measuring AT
-# the reference rate is what makes the result a direct Ce-vs-Cn comparison with
-# Peukert correction mathematically a no-op — the number stands on its own
-# instead of leaning on a rate-conversion model.
-_EN50342_END_V_PER_CELL = 1.75
-_EN50342_RATE_TOL = 0.15       # ±15% around In still counts as the reference rate
-_EN50342_END_V_TOL = 0.06      # V/cell tolerance on the configured cutoff
-
 # Quick Scan mini-pulse (accuracy fix): the discharge-only record used to leave
 # every DCIR/ECM field as an unmeasured profile fallback whenever the discharge
 # edge landed stale (>0.5s post-edge latency) — a real run graded C and reported
@@ -127,40 +116,6 @@ def quick_scan_1c_current(reference_capacity_ah: float, safety_max_a: float) -> 
     target = max(0.0, float(reference_capacity_ah))
     limit = max(0.0, float(safety_max_a))
     return min(target, limit) if limit > 0.0 else target
-
-def en50342_capacity_conditions(chemistry: str, c_test: float, pack_min_v: float,
-                                cells_series: int, skip_charge: bool,
-                                skip_rest: bool):
-    """Check a capacity run's settings against EN 50342-1's Cn-test conditions.
-
-    Returns ``(applicable, violations)``: ``applicable`` False for non-lead-acid
-    chemistries (IEC 61960 applies there instead); ``violations`` lists every
-    condition this run does NOT satisfy — empty means the measured Ah is a
-    direct standard-basis Ce, reportable against the rated Cn as-is.
-    """
-    from aset_batt.core import battery_profiles
-    chem = battery_profiles.get_chemistry(chemistry)
-    if chem.name != "LeadAcid":
-        return False, []
-    violations = []
-    ref_hr = float(getattr(chem, "peukert_hr", 10.0) or 10.0)
-    ref_rate = 1.0 / ref_hr
-    if abs(c_test - ref_rate) > _EN50342_RATE_TOL * ref_rate:
-        violations.append(
-            f"discharge rate {c_test:g}C is not the I{ref_hr:.0f} reference rate "
-            f"({ref_rate:g}C)")
-    end_v_cell = pack_min_v / max(1, cells_series)
-    if abs(end_v_cell - _EN50342_END_V_PER_CELL) > _EN50342_END_V_TOL:
-        violations.append(
-            f"end voltage {end_v_cell:.2f} V/cell is not the standard "
-            f"{_EN50342_END_V_PER_CELL:.2f} V/cell")
-    if skip_charge:
-        violations.append("CHARGE phase skipped — standard requires a fully "
-                          "charged battery")
-    if skip_rest:
-        violations.append("REST phase skipped — standard requires a rested "
-                          "battery before discharge")
-    return True, violations
 
 class QuickScanMixin:
     # ---- Workflow guide slots -----------------------------------------------

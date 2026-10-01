@@ -65,6 +65,30 @@ class TestStandardConditions(unittest.TestCase):
             "LeadAcid", 0.108, 10.5, 6, False, False, temp_c=25.0)
         self.assertFalse(any("reference rate" in v for v in violations))
 
+    def test_temperature_below_range_is_named(self):
+        _, violations = en50342_capacity_conditions(
+            "LeadAcid", 0.1, 10.5, 6, False, False, temp_c=19.9)
+        self.assertTrue(any("temperature" in v and "outside" in v for v in violations))
+
+    def test_temperature_above_range_is_named(self):
+        _, violations = en50342_capacity_conditions(
+            "LeadAcid", 0.1, 10.5, 6, False, False, temp_c=30.1)
+        self.assertTrue(any("temperature" in v and "outside" in v for v in violations))
+
+    def test_missing_temperature_is_unverified_not_an_error(self):
+        # Missing telemetry does not crash and cannot count as a verified
+        # standard-condition run: it is explicitly reported as unverified.
+        applicable, violations = en50342_capacity_conditions(
+            "LeadAcid", 0.1, 10.5, 6, False, False, temp_c=None)
+        self.assertTrue(applicable)
+        self.assertTrue(any("temperature not verified" in v for v in violations))
+
+    def test_temperature_boundaries_are_inclusive(self):
+        for temp in (20.0, 30.0):
+            _, violations = en50342_capacity_conditions(
+                "LeadAcid", 0.1, 10.5, 6, False, False, temp_c=temp)
+            self.assertFalse(any("temperature" in v for v in violations))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,8 @@ non-standard by en50342_capacity_conditions() at the end rather than lying.
 """
 import os
 import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -56,6 +58,26 @@ class TestEn50342WorkflowItem(unittest.TestCase):
         for idx, page in ((1, 1), (2, 2), (3, 3), (0, 0)):
             self.win.cb_workflow_type.setCurrentIndex(idx)
             self.assertEqual(self.win._wf_stack.currentIndex(), page)
+
+    def test_pretest_invokes_shared_temp_aware_condition_checker(self):
+        from aset_batt.ui.sequences import base
+
+        self.win.hw = SimpleNamespace(is_connected=True, current_temp=25.0,
+                                      read_vi=lambda: (12.6, 0.0, 0.0))
+        self.win.controller = MagicMock()
+        self.win.controller.config = self.win.config
+        self.win.controller.estimator.soc = 90.0
+        self.win._busy_reason = lambda: None
+        self.win._show_pretest_dialog = lambda *args, **kwargs: True
+        self.win._seq_common_start = lambda *args, **kwargs: True
+        self.win._spawn_sequence_worker = MagicMock()
+
+        with patch("aset_batt.ui.sequences.iec_capacity.en50342_capacity_conditions",
+                   wraps=base.en50342_capacity_conditions) as checker:
+            self.win._on_auto_sequence()
+
+        checker.assert_called_once()
+        self.assertEqual(checker.call_args.kwargs["temp_c"], 25.0)
 
 
 if __name__ == "__main__":

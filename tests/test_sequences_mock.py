@@ -313,6 +313,32 @@ def test_iec_missing_validation_snapshot_defaults_to_routine_mode():
                               "validation_preset": "c10-reference-v1"})
     seq.controller.start_charge.assert_not_called()
 
+
+def test_iec_posttest_verdict_uses_shared_temp_aware_checker():
+    from aset_batt.ui.sequences import base
+    seq = MockSequence()
+    seq.controller.config.battery.battery_type = "LeadAcid"
+    seq.controller.config.battery.cells_series = 6
+    seq.controller.config.battery.rated_capacity = 5.3
+    seq.controller.config.battery.pack_min_voltage = 10.5
+    seq.controller.config.battery.product_name = ""
+    seq.controller.calibrate_from_ocv_stable.return_value = (99.0, 12.6, "settled")
+    seq.controller._auto_analyze.return_value = {
+        "temperature_median_c": 25.0, "capacity_ah": 5.0, "grade": "A"
+    }
+    seq._seq_running.is_set.return_value = True
+    seq._seq_check_load_trip = lambda: True
+    seq.hw.read_measurements.return_value = (10.5, 0.5)
+    opts = {"skip_charge": False, "skip_rest": True, "soc_thresh": 95,
+            "seq_crate": "0.1C", "rest_min": 1, "test_crate": "0.1C"}
+
+    with patch("aset_batt.ui.sequences.iec_capacity.en50342_capacity_conditions",
+               wraps=base.en50342_capacity_conditions) as checker:
+        seq._auto_sequence_thread(opts)
+
+    checker.assert_called_once()
+    assert checker.call_args.kwargs["temp_c"] == 25.0
+
 @patch.object(QEventLoop, 'exec')
 @patch('time.time')
 def test_quick_scan_full_run(mock_time, mock_exec):

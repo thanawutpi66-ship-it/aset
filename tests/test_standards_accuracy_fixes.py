@@ -178,16 +178,27 @@ class TestF5EnTemperatureCondition(unittest.TestCase):
         _, violations = self._call(None)
         self.assertTrue(any("not verified" in v for v in violations))
 
-    def test_duplicate_copies_removed(self):
-        """The sequences.py split left dead per-module copies that silently
-        diverged from base's — they must stay gone."""
+    def test_one_authoritative_condition_helper_is_shared_by_iec(self):
         import aset_batt.ui.sequences.base as base
+        import aset_batt.ui.sequences.iec_capacity as iec
+        self.assertIs(iec.en50342_capacity_conditions,
+                      base.en50342_capacity_conditions)
         for modname in ("quick_scan", "hppc", "cycle_life"):
             mod = __import__(f"aset_batt.ui.sequences.{modname}",
                              fromlist=[modname])
-            fn = getattr(mod, "en50342_capacity_conditions", None)
-            if fn is not None:
-                self.assertTrue(callable(fn), modname)
+            self.assertFalse(hasattr(mod, "en50342_capacity_conditions"), modname)
+
+    def test_pretest_and_final_verdict_call_the_shared_temp_aware_helper(self):
+        from aset_batt.ui.sequences.iec_capacity import IecCapacityMixin
+        from aset_batt.ui.sequences.base import en50342_capacity_conditions
+        self.assertIn("temp_c=temp_now", inspect.getsource(
+            IecCapacityMixin._on_auto_sequence))
+        source = inspect.getsource(IecCapacityMixin._auto_sequence_thread)
+        self.assertIn("temp_c=(res.get(\"temperature_median_c\") if res else None)",
+                      source)
+        import aset_batt.ui.sequences.iec_capacity as iec
+        self.assertIs(iec.en50342_capacity_conditions,
+                      en50342_capacity_conditions)
 
 
 class TestF6VerdictIntoResult(unittest.TestCase):
