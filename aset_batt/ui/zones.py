@@ -217,6 +217,22 @@ class ZonesMixin:
 
         return w
 
+    def _effective_workflow_rest_min(self, validation_enabled=None):
+        """Return the REST duration currently presented for the IEC/C10 path."""
+        if validation_enabled is None:
+            campaign = getattr(getattr(self.config, "system", None),
+                               "validation_campaign", {}) or {}
+            validation_enabled = bool(campaign.get("enabled"))
+        if validation_enabled:
+            return 60
+        return self.spn_rest_min.value()
+
+    def _refresh_wf_rest_description(self, _value=None, validation_enabled=None):
+        """Keep the Workflow Guide REST text aligned with the effective setting."""
+        if len(getattr(self, "_wf_desc_lbls", ())) > 2 and hasattr(self, "spn_rest_min"):
+            minutes = self._effective_workflow_rest_min(validation_enabled)
+            self._wf_desc_lbls[2].setText(f"{minutes} min rest")
+
     # ---- WORKFLOW GUIDE (5-step sequence with auto-run) ----------------------
     _WF_STEPS = [
         ("1", "PREPARE",  "OCV calibrate"),
@@ -420,7 +436,9 @@ class ZonesMixin:
         self.spn_rest_min.setSingleStep(5)
         self.spn_rest_min.setSuffix(" min")
         self.spn_rest_min.setToolTip("เวลา rest หลังชาร์จ ก่อนเริ่ม discharge test (5–120 นาที)")
+        self.spn_rest_min.valueChanged.connect(self._refresh_wf_rest_description)
         self.spn_rest_min.valueChanged.connect(lambda _v: self._refresh_step_time_estimates())
+        self._refresh_wf_rest_description()
         rest_row.addWidget(self.spn_rest_min)
         rest_row.addStretch(1)
         adv_lay.addLayout(rest_row)

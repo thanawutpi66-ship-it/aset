@@ -391,10 +391,12 @@ class BaseSequenceMixin:
         )
         card_lay = QVBoxLayout(card)
         card_lay.setSpacing(3)
+        plan_labels = []
         for line in plan_lines:
             lbl = QLabel(line)
             lbl.setStyleSheet(f"color:{theme.TEXT}; font-size:12px;")
             card_lay.addWidget(lbl)
+            plan_labels.append(lbl)
         lay.addWidget(card)
 
         # SN Input
@@ -416,6 +418,21 @@ class BaseSequenceMixin:
         validation_enabled = QCheckBox("Research validation campaign")
         validation_enabled.setChecked(campaign["enabled"])
         lay.addWidget(validation_enabled)
+        if "AUTO SEQUENCE" in title and hasattr(self, "_refresh_wf_rest_description"):
+            rest_plan_index = next(
+                (i for i, line in enumerate(plan_lines) if "REST " in line and " min" in line),
+                None,
+            )
+
+            def refresh_validation_rest_preview(enabled):
+                self._refresh_wf_rest_description(validation_enabled=enabled)
+                if rest_plan_index is not None:
+                    minutes = self._effective_workflow_rest_min(enabled)
+                    plan_labels[rest_plan_index].setText(re.sub(
+                        r"REST \d+ min", f"REST {minutes} min",
+                        plan_lines[rest_plan_index], count=1))
+
+            validation_enabled.toggled.connect(refresh_validation_rest_preview)
         campaign_form = QFormLayout()
         campaign_id = QLineEdit(campaign["campaign_id"])
         specimen_id = QLineEdit(campaign["specimen_id"])
@@ -480,11 +497,15 @@ class BaseSequenceMixin:
                                         "Campaign ID and specimen ID are required for validation sessions.")
                     return
                 self.config.system.validation_campaign = candidate
+                if hasattr(self, "_refresh_wf_rest_description"):
+                    self._refresh_wf_rest_description()
                 if hasattr(self, "lbl_validation_campaign"):
                     self.lbl_validation_campaign.setText(
                         f"Campaign: {candidate['campaign_id']} · {candidate['specimen_id']} · run {candidate['run_index']}")
             else:
                 self.config.system.validation_campaign = {"enabled": False}
+                if hasattr(self, "_refresh_wf_rest_description"):
+                    self._refresh_wf_rest_description()
                 if hasattr(self, "lbl_validation_campaign"):
                     self.lbl_validation_campaign.setText("Campaign: routine session (validation disabled)")
             if hasattr(self, "ed_sn"):
@@ -500,7 +521,10 @@ class BaseSequenceMixin:
         btn_row.addWidget(btn_conf, 2); btn_row.addWidget(btn_canc, 1)
         lay.addLayout(btn_row)
 
-        return dlg.exec() == QDialog.DialogCode.Accepted
+        accepted = dlg.exec() == QDialog.DialogCode.Accepted
+        if not accepted and hasattr(self, "_refresh_wf_rest_description"):
+            self._refresh_wf_rest_description()
+        return accepted
 
     def _capacity_standard_name(self) -> str:
         """Chemistry-correct capacity-test standard label. "IEC 61960" is a
