@@ -59,6 +59,49 @@ class TestEn50342WorkflowItem(unittest.TestCase):
             self.win.cb_workflow_type.setCurrentIndex(idx)
             self.assertEqual(self.win._wf_stack.currentIndex(), page)
 
+    def test_rest_workflow_description_tracks_configured_duration(self):
+        for minutes in (30, 60, 45):
+            self.win.spn_rest_min.setValue(minutes)
+            self.assertEqual(self.win._wf_desc_lbls[2].text(), f"{minutes} min rest")
+
+        self.win.cb_test_crate.setCurrentText("0.5C")
+        self.assertIn("Discharge 0.5C =", self.win._wf_desc_lbls[3].text())
+
+    def test_rest_label_refresh_does_not_change_runtime_widget_value(self):
+        self.win.spn_rest_min.setValue(45)
+        self.win._refresh_wf_rest_description()
+        self.assertEqual(self.win.spn_rest_min.value(), 45)
+        self.assertEqual(self.win._wf_desc_lbls[2].text(), "45 min rest")
+
+    def test_validation_preset_shows_effective_60_min_rest(self):
+        self.win.spn_rest_min.setValue(30)
+        self.win.chk_skip_charge.setChecked(True)
+        self.win.chk_skip_rest.setChecked(True)
+        self.win.config.system.validation_campaign = {
+            "enabled": True, "campaign_id": "campaign-test", "specimen_id": "specimen-test"
+        }
+        self.win.hw = SimpleNamespace(is_connected=True, current_temp=25.0,
+                                      read_vi=lambda: (12.6, 0.0, 0.0))
+        self.win.controller = MagicMock()
+        self.win.controller.config = self.win.config
+        self.win.controller.estimator.soc = 90.0
+        self.win._busy_reason = lambda: None
+        shown_plan = []
+        self.win._show_pretest_dialog = lambda _title, plan, **_kwargs: (shown_plan.extend(plan) or True)
+        self.win._seq_common_start = lambda *_args: True
+        spawned = {}
+        self.win._spawn_sequence_worker = lambda *args, **_kwargs: spawned.update(args=args, kwargs=_kwargs)
+
+        self.win._on_auto_sequence()
+
+        self.assertTrue(any("REST 60 min" in line for line in shown_plan))
+        self.assertEqual(self.win._wf_desc_lbls[2].text(), "60 min rest")
+        opts = spawned["kwargs"]["args"][0]
+        self.assertEqual(opts["rest_min"], 60)
+        self.assertEqual(opts["test_crate"], "0.1C")
+        self.assertFalse(opts["skip_charge"])
+        self.assertFalse(opts["skip_rest"])
+
     def test_pretest_invokes_shared_temp_aware_condition_checker(self):
         from aset_batt.ui.sequences import base
 

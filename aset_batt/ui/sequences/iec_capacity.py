@@ -109,6 +109,7 @@ class IecCapacityMixin:
             if not self._headless:
                 QMessageBox.warning(self, "Auto Sequence", f"{busy} — หยุดก่อนแล้วค่อยเริ่มใหม่")
             return
+        self._refresh_wf_rest_description()
         try:
             v_now, _, _ = self.hw.read_vi()
             temp_now = self.hw.current_temp
@@ -125,7 +126,7 @@ class IecCapacityMixin:
                 f"Battery: {self.controller.config.battery.battery_type}",
                 f"OCV: {v_now:.3f} V  ·  Temp: {temp_now:.1f} °C",
                 f"Charge: {crate} ({float(crate.rstrip('C'))*rated:.3f} A)  →  "
-                f"REST {self.spn_rest_min.value()} min  →  "
+                f"REST {self._effective_workflow_rest_min()} min  →  "
                 f"Discharge {test_crate_str}",
             ]
             
