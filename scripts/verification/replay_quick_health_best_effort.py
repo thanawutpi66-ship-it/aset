@@ -140,6 +140,7 @@ def run(archive: Path, session_dir: Path, outdir: Path, old_results: Path):
                     "quick_soh_estimate_pct": result.get("best_effort_quick_soh_pct"),
                     "quick_soh_estimate_status": result.get("best_effort_quick_soh_status"),
                     "quick_soh_score_valid": result.get("best_effort_quick_soh_scoring_valid"),
+                    "quick_soh_scoring_policy": health.get("soh_scoring_policy"),
                     "q_main_ah": result.get("q_interval_removed_ah"),
                     "mean_discharge_a": result.get("quick_mean_discharge_a"),
                     "peukert_k": result.get("quick_peukert_k"),
@@ -246,7 +247,13 @@ def run(archive: Path, session_dir: Path, outdir: Path, old_results: Path):
             "archive": str(archive), "archive_sha256_before": archive_sha_before,
             "archive_sha256_after": sha256(archive),
             "archive_unchanged": archive_sha_before == sha256(archive),
-            "csv_paths_found": len(input_manifest), "unique_csv_contents": len(sources),
+            "csv_paths_found": sum(row["file_type"] == "csv" for row in input_manifest),
+            "metadata_sidecars_found": sum(row["file_type"] == "metadata_sidecar"
+                                           for row in input_manifest),
+            "unique_csv_contents": len(sources),
+            "duplicate_csv_paths": sum(row["file_type"] == "csv"
+                                        and row["duplicate_status"] != "UNIQUE"
+                                        for row in input_manifest),
             "quick_scan_total": len(quick), "gradeable_runs": len(gradeable),
             "no_score_runs": len(no_score), "grade_distribution": dict(by_grade),
             "completion_status": dict(by_status), "evidence_basis": dict(basis),
