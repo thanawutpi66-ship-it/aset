@@ -469,6 +469,17 @@ class StateEstimator:
             logger.info(f"SoC synced with OCV: {voltage:.3f}V -> {self.soc:.1f}%")
             return self.soc
 
+    def set_soc_anchor(self, soc: float, *, start_settle_window: bool = False) -> float:
+        """Anchor the estimator to a known SoC endpoint and reset accumulated charge."""
+        value = float(soc)
+        if not math.isfinite(value):
+            raise ValueError("SoC anchor must be finite")
+        value = max(0.0, min(100.0, value))
+        with self._lock:
+            self._reset_to_soc(value, soc_var=1.0,
+                               start_settle_window=start_settle_window)
+        return self.soc
+
     def invalidate_soc(self) -> None:
         """Mark displayed/logged SoC unknown while a new OCV anchor is pending."""
         with self._lock:
@@ -650,7 +661,7 @@ class StateEstimator:
             # the smaller R under-stated v_ocv_est by ~46 mV and let the gate open a
             # sample early. See the F3 note in __init__.
             v_ocv_est = voltage + max(0.0, cur) * (r0_use + ekf.R1)
-            raw_surface = self.battery_model.ocv_out_of_range_mv(v_ocv_est, t_use) > 0.0
+            raw_surface = self.battery_model._is_above_ocv_curve_max(v_ocv_est, t_use)
             # (b) Hysteresis: once surface charge is detected, hold the gate closed
             # until the implied OCV has stayed in range for a sustained window (or a
             # genuine in-range rest is seen) — not the first frame it grazes the line.
@@ -719,7 +730,7 @@ class StateEstimator:
             periodic = (now - self.last_ocv_correction_time) >= self.ocv_correction_interval
             
             if (self._rested_s >= self._min_rest_s and slope >= self.min_ocv_slope
-                    and self.battery_model.ocv_out_of_range_mv(ocv_voltage, t_use) <= 0.0
+                    and not self.battery_model._is_above_ocv_curve_max(ocv_voltage, t_use)
                     and (steep or (periodic and drift > 3.0))):
                 w = 0.9 if steep else 0.8
                 corrected = w * ocv_soc + (1.0 - w) * soc_cc

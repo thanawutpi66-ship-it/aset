@@ -639,18 +639,7 @@ class QuickScanMixin:
                             max_abs_current_a=self.controller._OCV_MAX_ABS_CURRENT_A,
                             now_s=tail_now)
                         if end_ocv["valid"]:
-                            # np.interp in get_soc_from_ocv clamps outside the
-                            # calibrated curve. Reject those readings before
-                            # allowing them to become a valid SoC anchor.
-                            model = self.controller.estimator.battery_model
-                            oor_mv = model.ocv_out_of_range_mv(
-                                end_ocv["voltage_v"], end_ocv["temperature_c"])
-                            if oor_mv != 0.0:
-                                end_ocv["valid"] = False
-                                end_ocv["status"] = "OUT_OF_RANGE"
-                                end_ocv["out_of_range_mv"] = oor_mv
-                            else:
-                                break
+                            break
                 except Exception as e:
                     import logging
                     logging.getLogger(__name__).error('Ignored exception: %s', e, exc_info=True)

@@ -184,7 +184,11 @@ def test_new_acquisition_analysis_default_is_unchanged_for_legacy_basis(tmp_path
 def test_c10_equivalent_requires_validated_basis_and_uses_measured_loaded_current(tmp_path):
     path = tmp_path / "test_QuickScan_basis.csv"
     _write_quick(path)
-    profile = _profile()
+    # Explicitly model an unknown-rate profile instead of depending on whichever
+    # product ConfigManager currently selects by default.
+    profile = replace(_profile(), capacity_10h_ah=0.0,
+                      capacity_rating_basis="UNKNOWN",
+                      capacity_rating_validated=None)
     result_unknown = analyze_csv(str(path), profile, offline_legacy=True)
     assert result_unknown["capacity_basis_status"] == "C10_BASIS_UNAVAILABLE"
     assert math.isnan(result_unknown["c10_equivalent_interval_charge_ah"])

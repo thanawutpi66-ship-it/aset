@@ -393,7 +393,8 @@ class TestControlMixin:
         soh_final_lbl.setText("N/A" if soh != soh else f"{soh:.1f} {_soh_unit}")
         rin_final_lbl, _rin_unit = self.metric_labels_final["Rin"]
         rin_final_lbl.setText(f"{results['ri_mohm']:.1f} {_rin_unit}")
-        grade = results["grade"]
+        grade = (results.get("condition_grade", "INVALID")
+                 if results.get("is_quick_scan") else results["grade"])
         conf = results.get("confidence", 1.0)
         self.lbl_grade.setText(grade if grade == "REVIEW" else f"{grade}")
         if self.operation_state.state.value != "ESTOP_LATCHED":
@@ -425,10 +426,26 @@ class TestControlMixin:
         qsoh = results.get("quick_soh_est_pct", float("nan"))
         soh_label = (f"Quick SoH Estimate {qsoh:.1f}%" if results.get("is_quick_scan")
                      and qsoh == qsoh else f"SoH {soh_txt}%")
+        health_text = ""
+        if results.get("is_quick_scan"):
+            if results.get("health_assessment_valid"):
+                health_text = (
+                    f"Screening Health {results['health_score_quick']:.1f}/100 · "
+                    f"Grade {results['condition_grade']} · "
+                    f"SoH {results['score_soh']:.1f}×{results['weight_soh']:.2f} + "
+                    f"DCIR {results['score_dcir']:.1f}×{results['weight_dcir']:.2f} + "
+                    f"Recovery {results['score_recovery']:.1f}×{results['weight_recovery']:.2f}")
+            else:
+                health_reason = str(results.get(
+                    "health_assessment_reason", "required evidence unavailable"))
+                if len(health_reason) > 140:
+                    health_reason = health_reason[:137] + "..."
+                health_text = "Screening: INVALID / RETEST · " + health_reason
         self.lbl_analytics.setText(
             f"Grade {grade} (conf {conf*100:.0f}%) · {soh_label} · "
             f"{dcir_txt} · Sag {results.get('voltage_sag_v', 0.0):.3f} V · "
             f"CCA Proxy {results.get('cca_est_a', 0.0):.0f} A · "
+            f"{health_text + ' · ' if health_text else ''}"
             f"{cap_label} {results['capacity_ah']:.3f} Ah")
         # 5 Hz-measurable sorting features (see project pivot): SoH + DCIR + sag + CCA proxy
         if results.get("ecm_identified"):

@@ -110,6 +110,24 @@ def build_results_html(results: dict) -> str:
     parts.append(hdr("Summary"))
     parts.append(row("Quick Scan Grade", quick_grade, "",
                      quick_basis))
+    if results.get("is_quick_scan") or results.get("grading_algorithm_version"):
+        if results.get("health_assessment_valid"):
+            parts.append(row("Quick Scan Health Score",
+                             f"{results.get('health_score_quick', 0.0):.1f} / 100",
+                             "Screening Result",
+                             str(results.get("recommended_action", ""))))
+            for title, score_key, weight_key in (
+                    ("Capacity / Quick SoH", "score_soh", "weight_soh"),
+                    ("DCIR health", "score_dcir", "weight_dcir"),
+                    ("Voltage recovery (experimental)", "score_recovery", "weight_recovery")):
+                score = results.get(score_key)
+                weight = results.get(weight_key)
+                parts.append(row(title,
+                                 f"{score:.1f} × {weight:.2f}" if score is not None and weight is not None else "N/A",
+                                 "score × weight"))
+        else:
+            parts.append(row("Quick Scan Assessment", "INVALID / RETEST", "",
+                             str(results.get("health_assessment_reason", "required evidence unavailable"))))
     parts.append(row(
         "Verified Overall Grade",
         f'<span style="color:{gc};font-size:14px">{grade}</span>',

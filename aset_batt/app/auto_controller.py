@@ -366,26 +366,11 @@ class AutoController:
     }
     _OCV_MAX_ABS_CURRENT_A = 0.10  # accommodates instrument zero/noise; reject meaningful current
 
-    # Lead-acid surface-charge bleed-off: standard practice (Battery University
-    # BU-903, IEEE 450 guidance on stationary lead-acid maintenance testing) is to
-    # apply a brief, moderate discharge rather than wait hours for the surface
-    # charge layer to passively diffuse into the bulk electrolyte. Commonly cited
-    # range is C/20-C/10 for 5-10 minutes; C/20 for 5 minutes is the conservative
-    # end (~0.4% of rated capacity removed) — verify on the bench against a
-    # reference SG/OCV reading before trusting this on a specific product, same
-    # as scripts/self_calibration_test.py's own note for harness calibration.
-    _SURFACE_CHARGE_BLEED_C_RATE = 0.05        # C/20
-    _SURFACE_CHARGE_BLEED_DURATION_S = 300.0   # 5 min
-    _SURFACE_CHARGE_BLEED_POLL_S = 2.0
-    # Headroom above the pack's hard discharge cutoff — this is a courtesy
-    # accuracy step, not the actual test, so it must back off well before UVP
-    # even for a pack that turns out weaker than the "reads as ≥100%" OCV implied.
-    _SURFACE_CHARGE_BLEED_SAFETY_MARGIN = 1.05
-
     def calibrate_from_ocv_stable(self, on_progress=None, cancel_check=None,
-                                  allow_bleed_off=True, min_rest_override=None,
-                                  max_rest_override=None, interval_override=None,
-                                  window_override=None, spread_override=None):
+                                  min_rest_override=None, max_rest_override=None,
+                                  interval_override=None,
+                                  window_override=None, spread_override=None,
+                                  preserve_soc=False):
         """OCV calibration แบบ wait-for-settle ตามมาตรฐาน ΔV/Δt criterion.
 
         อ่านแรงดันทุก 5 วิ จนกว่าจะผ่านทั้งสองเงื่อนไข:
@@ -398,23 +383,11 @@ class AutoController:
         cancel_check: callable() → bool; คืน True เมื่อ sequence ยังทำงานอยู่
           (เช่น self._seq_running.is_set). ถ้าคืน False → หยุดรอทันที
 
-        allow_bleed_off: set False when the caller is about to run an
-        UNCONDITIONAL full CC-CV charge right after this anchor regardless of
-        the SoC/OCV reading (HPPC/CycleLife PREPARE) — bleeding off surface
-        charge only to have the charger immediately put it right back (plus
-        more, to termination current) wastes ~5-10 min for zero effect on the
-        test outcome. Keep True (default) whenever the reading feeds a real
-        decision: a skip-charge threshold (IEC/AUTO sequence), or an
-        immediately-following discharge/pulse test that needs an accurate
-        rested baseline (Quick Scan, GITT, HPPC's post-charge rest, manual
-        Calibrate button).
-
         คืน (soc, voltage, status)
         """
         import time as _t
         from aset_batt.acquisition.ocv_validation import (
             evaluate_ocv_window, OCV_STATUS_MEASUREMENT_INVALID,
-            OCV_STATUS_OUT_OF_RANGE,
         )
         if not self.hw.is_connected:
             return float("nan"), float("nan"), OCV_STATUS_MEASUREMENT_INVALID
@@ -430,7 +403,7 @@ class AutoController:
         # A previous SoC (or the estimator's internal 50% seed) is not evidence
         # for the pack currently settling. Keep it out of the UI/CSV until the
         # final OCV anchor is established.
-        if hasattr(self.estimator, "invalidate_soc"):
+        if not preserve_soc and hasattr(self.estimator, "invalidate_soc"):
             self.estimator.invalidate_soc()
 
         chemistry = getattr(self.config.battery, "battery_type", "LiPO")
@@ -532,43 +505,15 @@ class AutoController:
             max_spread_v=dv_thresh, max_abs_current_a=self._OCV_MAX_ABS_CURRENT_A,
             now_s=elapsed_final)
         final_status = result["status"]
-        # Surface-charge / not-actually-at-equilibrium check — see
-        # BatteryModel.ocv_out_of_range_mv's docstring. This settle window is
-        # tuned for coulomb-counting drift (seconds-to-minutes), not for lead-acid
-        # surface charge (hours) — a reading outside the curve's own calibrated
-        # range is flat/stable within the window without being at true rest.
-        oor_mv = (self.estimator.battery_model.ocv_out_of_range_mv(v_final, temp_final)
-                  if final_valid else 0.0)
-        if oor_mv != 0.0:
-            msg = (f"OCV {v_final:.3f}V is {abs(oor_mv):.0f} mV "
-                   f"{'above the 100%' if oor_mv > 0 else 'below the 0%'} point of the "
-                   f"calibrated curve — likely still settling (surface charge / fresh "
-                   f"polarisation), not a reliable rested reading despite passing the "
-                   f"{'settled' if settled else 'timeout'} ΔV/Δt check")
-            logger.warning(msg)
-            if self.event_handler:
-                self.event_handler.post_event(
-                    EventType.SHOW_MESSAGE, ("OCV Out of Range", msg, "warning"))
-            # Only bleed off for ABOVE-range (surface charge from a recent charge) —
-            # BELOW-range means the coulomb/OCV model already reads this pack as
-            # near-empty, and pulling MORE current out of a possibly genuinely
-            # depleted pack to "fix" that reading would be actively unsafe, not
-            # helpful. One attempt only (allow_bleed_off=False on the recursive
-            # re-check) — a pack still out of range after a real bleed-off is a
-            # genuine anomaly to surface, not something to keep retrying.
-            from aset_batt.core import battery_profiles
-            chem_name = battery_profiles.get_chemistry(chemistry).name
-            if oor_mv > 0.0 and allow_bleed_off and chem_name == "LeadAcid":
-                if self._bleed_off_surface_charge(on_progress=on_progress,
-                                                  cancel_check=cancel_check):
-                    return self.calibrate_from_ocv_stable(
-                        on_progress=on_progress, cancel_check=cancel_check,
-                        allow_bleed_off=False)
-            final_status = OCV_STATUS_OUT_OF_RANGE
-        if result["valid"] and final_status != OCV_STATUS_OUT_OF_RANGE:
-            soc = self.estimator.sync_with_ocv(v_final, temp_final)
+        if result["valid"]:
+            if preserve_soc and getattr(self.estimator, "soc_is_initialized", True):
+                soc = self.estimator.soc
+            else:
+                soc = self.estimator.sync_with_ocv(v_final, temp_final)
         else:
-            soc = float("nan")
+            soc = (self.estimator.soc
+                   if preserve_soc and getattr(self.estimator, "soc_is_initialized", True)
+                   else float("nan"))
             if elapsed_final >= timeout:
                 if max_rest_override is not None:
                     final_status = "OCV_TIMEOUT"
@@ -589,58 +534,6 @@ class AutoController:
             except TypeError:
                 on_progress(elapsed_final, v_final, 0.0, final_status)
         return soc, v_final, final_status
-
-    def _bleed_off_surface_charge(self, on_progress=None, cancel_check=None) -> bool:
-        """Apply a brief C/20 discharge to strip lead-acid surface charge (see the
-        constants above calibrate_from_ocv_stable) instead of waiting hours for it
-        to passively dissipate. Returns True if the bleed ran (to completion or a
-        safe early stop on low voltage) so the caller should re-settle and
-        re-check; False if hardware failed outright or was cancelled, in which
-        case the caller should just return the still-flagged original reading.
-        """
-        import time as _t
-        rated = self.config.battery.rated_capacity
-        i_bleed = min(max(0.05, rated * self._SURFACE_CHARGE_BLEED_C_RATE),
-                     self.config.battery.max_current)
-        safety_floor = self.config.battery.pack_min_voltage * self._SURFACE_CHARGE_BLEED_SAFETY_MARGIN
-        logger.info("Surface-charge bleed-off: %.3fA for %.0fs (safety floor %.3fV)",
-                    i_bleed, self._SURFACE_CHARGE_BLEED_DURATION_S, safety_floor)
-        if on_progress:
-            on_progress(0.0, 0.0, float("nan"), "bleeding")
-        ok = True
-        try:
-            if not self.hw.set_load(True, i_bleed):
-                return False
-            t0 = _t.perf_counter()
-            while _t.perf_counter() - t0 < self._SURFACE_CHARGE_BLEED_DURATION_S:
-                if cancel_check is not None and not cancel_check():
-                    ok = False
-                    break
-                try:
-                    v, i = self.hw.read_measurements(prefer_load_v=True)
-                except Exception as exc:
-                    logger.error("Surface-charge bleed-off read failed: %s", exc)
-                    ok = False
-                    break
-                self._log_sample(v, i)
-                if v <= safety_floor:
-                    logger.warning(
-                        "Surface-charge bleed-off stopped early: %.3fV ≤ safety floor %.3fV",
-                        v, safety_floor)
-                    break
-                if on_progress:
-                    on_progress(_t.perf_counter() - t0, v, float("nan"), "bleeding")
-                t_end = _t.perf_counter() + self._SURFACE_CHARGE_BLEED_POLL_S
-                while _t.perf_counter() < t_end:
-                    if cancel_check is not None and not cancel_check():
-                        ok = False
-                        break
-                    _t.sleep(0.2)
-                if not ok:
-                    break
-        finally:
-            self.hw.load_off()
-        return ok
 
     # Consecutive read failures tolerated before the monitor loop gives up for real.
     # A single VISA/USB hiccup (timeout, transient bus reset) used to kill the whole

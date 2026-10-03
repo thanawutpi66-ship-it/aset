@@ -57,7 +57,9 @@ class TestEvidenceGatedGrading(unittest.TestCase):
         result = _run(5.3)
         self.assertEqual(result["capacity_grade"], "N/A")
         self.assertEqual(result["grade"], "N/A")
-        self.assertEqual(result["quick_grade"], "N/A")
+        # Quick C1 data cannot be a C10 capacity grade; the separate gated
+        # Quick Health result must explicitly withhold an invalid assessment.
+        self.assertEqual(result["quick_grade"], "INVALID")
         self.assertFalse(result["quick_gradeable"])
         self.assertFalse(result["capacity_gradeable"])
         self.assertIn("not the C10 reference", " ".join(result["quality_warnings"]))

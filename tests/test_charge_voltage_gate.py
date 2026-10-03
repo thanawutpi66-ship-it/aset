@@ -191,22 +191,8 @@ class TestRinPlaceholderContinuity(unittest.TestCase):
         self.assertLess(abs(st["rin"] - rin_before) / rin_before, 0.30)
 
 
-class TestHppcSurfaceChargeAdvisory(unittest.TestCase):
-    def test_post_charge_rest_actively_bleeds_not_just_warns(self):
-        """hppc.py's PHASE 2 (post-charge rest, before HPPC pulses) must call
-        calibrate_from_ocv_stable() — which checks ocv_out_of_range_mv
-        internally and, for a surface-charged lead-acid pack, actually runs a
-        C/20 bleed-off and re-settles — instead of a fixed timer + a single
-        immediate calibrate_from_ocv() read with only a passive warning.
-
-        A real run (test_HPPC_20260708_152502) started its pulses 430 mV
-        surface-charged: the old code's advisory fired but the sequence
-        pulsed anyway, and the per-pulse R0 anchor drifted 37% across 5
-        cycles purely from that unresolved surface charge, not the battery.
-        PREPARE's own bleed-off (PHASE 0) had already stripped this once, but
-        the CHARGE phase in between re-creates it and nothing repeated the
-        bleed — see calibrate_from_ocv_stable's own bleed-off branch in
-        auto_controller.py for the correction this now reuses."""
+class TestHppcPostChargeOcvObservation(unittest.TestCase):
+    def test_post_charge_rest_keeps_settle_observation_without_range_alarm(self):
         from pathlib import Path
         src = (Path(__file__).resolve().parent.parent / "aset_batt" / "ui"
                / "sequences" / "hppc.py").read_text(encoding="utf-8")
@@ -214,52 +200,29 @@ class TestHppcSurfaceChargeAdvisory(unittest.TestCase):
         phase3 = src.index("PHASE 3", phase2)
         window = src[phase2:phase3]
         self.assertIn("calibrate_from_ocv_stable", window,
-                      "PHASE 2 must settle+bleed via calibrate_from_ocv_stable, "
-                      "not a fixed timer + one-shot calibrate_from_ocv")
+                      "PHASE 2 must retain the settled OCV observation")
+        self.assertNotIn("ocv_out_of_range", window)
+        self.assertNotIn("set_load", window)
         self.assertNotIn("_rest_total = 30 * 60", window,
                          "the old fixed 30-min timer should be gone")
 
 
-class TestPrepareSkipsPointlessBleedBeforeUnconditionalCharge(unittest.TestCase):
-    """HPPC/CycleLife PHASE 0's PREPARE anchor precedes an UNCONDITIONAL full
-    CC-CV charge (no skip-charge branch, unlike IEC/AUTO sequence) — bleeding
-    surface charge off there only for the charger to immediately put it right
-    back (plus more, to termination current) wastes ~5-10 min for zero effect
-    on the test outcome. Real bug: a pack charged the day before read 12.91V
-    (above the 100% point) at PREPARE, triggered a bleed-off, then charged
-    CC-CV anyway. PHASE 0 must now pass allow_bleed_off=False; PHASE 2 (HPPC's
-    post-charge rest, which precedes the pulses, not another charge) must
-    still allow it."""
+class TestNoAutomaticOcvBleedOff(unittest.TestCase):
 
-    def test_hppc_phase0_disables_bleed_off(self):
+    def test_hppc_has_no_automatic_bleed_off_path(self):
         from pathlib import Path
         src = (Path(__file__).resolve().parent.parent / "aset_batt" / "ui"
                / "sequences" / "hppc.py").read_text(encoding="utf-8")
-        phase0 = src.index("PHASE 0: PREPARE")
-        phase1 = src.index("PHASE 1: CHARGE", phase0)
-        window = src[phase0:phase1]
-        self.assertIn("allow_bleed_off=False", window,
-                      "PHASE 0 precedes an unconditional charge — bleeding here is wasted")
-
-    def test_hppc_phase2_still_allows_bleed_off(self):
-        from pathlib import Path
-        src = (Path(__file__).resolve().parent.parent / "aset_batt" / "ui"
-               / "sequences" / "hppc.py").read_text(encoding="utf-8")
+        self.assertNotIn("allow_bleed_off", src)
         phase2 = src.index("PHASE 2: REST")
         phase3 = src.index("PHASE 3", phase2)
-        window = src[phase2:phase3]
-        self.assertNotIn("allow_bleed_off=False", window,
-                         "PHASE 2 precedes the pulses, not another charge — bleed-off must stay active")
+        self.assertNotIn("set_load", src[phase2:phase3])
 
-    def test_cycle_life_phase0_disables_bleed_off(self):
+    def test_cycle_life_has_no_automatic_bleed_off_path(self):
         from pathlib import Path
         src = (Path(__file__).resolve().parent.parent / "aset_batt" / "ui"
                / "sequences" / "cycle_life.py").read_text(encoding="utf-8")
-        phase0 = src.index("PHASE 0: PREPARE")
-        for_cyc = src.index("for cyc in range", phase0)
-        window = src[phase0:for_cyc]
-        self.assertIn("allow_bleed_off=False", window,
-                      "PHASE 0 precedes cycle 1's unconditional charge — bleeding here is wasted")
+        self.assertNotIn("allow_bleed_off", src)
 
 
 if __name__ == "__main__":

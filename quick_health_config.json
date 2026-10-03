@@ -1,0 +1,35 @@
+{
+  "algorithm_version": "multi-parameter-rule-v1",
+  "assessment_type": "Quick Scan screening; project-defined condition classes",
+  "weights": {
+    "soh": 0.6,
+    "dcir": 0.3,
+    "recovery": 0.1
+  },
+  "grade_thresholds": {
+    "A": 90.0,
+    "B": 80.0,
+    "C": 70.0
+  },
+  "sensitivity_weight_sets": [
+    {"id": "W1", "soh": 0.5, "dcir": 0.4, "recovery": 0.1},
+    {"id": "W2", "soh": 0.6, "dcir": 0.3, "recovery": 0.1},
+    {"id": "W3", "soh": 0.7, "dcir": 0.2, "recovery": 0.1}
+  ],
+  "profiles": {
+    "YTZ6V (12V 5.3Ah VRLA)": {
+      "dcir_healthy_ohm": null,
+      "dcir_eol_ohm": null,
+      "recovery_metric": null,
+      "recovery_healthy": null,
+      "recovery_eol": null,
+      "valid_test_temperature_min_c": null,
+      "valid_test_temperature_max_c": null,
+      "reference_status": "UNCALIBRATED_NO_TRACEABLE_HEALTHY_EOL_PAIR",
+      "notes": "The supplied archive has no traceable Battery IDs, confirmed healthy/EOL DCIR reference pair, or repeated matched-condition recovery observations. Do not use the exploratory delta-V values as a calibrated score."
+    }
+  },
+  "threshold_basis": "Reuses the existing project Quick SoH class boundaries (90/80/70) as initial engineering thresholds; not IEC-defined.",
+  "weight_basis": "Initial engineering weights requested for evaluation; not trained or statistically optimized.",
+  "recovery_status": "EXPERIMENTAL_UNCALIBRATED"
+}

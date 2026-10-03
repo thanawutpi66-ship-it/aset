@@ -78,11 +78,11 @@ class TestSourcePatternWiresSocSweepIntoThread(unittest.TestCase):
         # per-level reset after the re-anchor
         self.assertEqual(self.hppc_src.count("_tau_fit = 0.0"), 2)
 
-    def test_reanchor_calls_calibrate_from_ocv_stable_with_no_bleed(self):
+    def test_reanchor_calls_calibrate_from_ocv_stable(self):
         reanchor_idx = self.hppc_src.index("Re-anchor after the step's rest")
         window = self.hppc_src[reanchor_idx:reanchor_idx + 1200]
         self.assertIn("calibrate_from_ocv_stable(", window)
-        self.assertIn("allow_bleed_off=False", window)
+        self.assertNotIn("allow_bleed_off", window)
 
     def test_stop_condition_uses_live_estimator_soc_not_ah_accumulator(self):
         self.assertIn('state_s["soc"] <= target_level_soc', self.hppc_src)

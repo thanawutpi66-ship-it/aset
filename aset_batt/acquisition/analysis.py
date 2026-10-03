@@ -627,7 +627,7 @@ def _ocv_ceiling(profile: BatteryProfile, temp_c: float):
     """The chemistry OCV curve's own 100% point (pack-level) at ``temp_c`` — the
     highest voltage that carries any real state-of-charge meaning. A rested
     reading above it is undissipated surface charge (see BatteryModel.
-    ocv_out_of_range_mv), not extra capacity. None if the model can't be built."""
+    above the model's 100% OCV point), not extra capacity. None if the model can't be built."""
     try:
         from aset_batt.core.battery_model import BatteryModel
         model = BatteryModel(profile.chemistry)          # series=1 → per-cell value
@@ -1082,6 +1082,26 @@ def _grade_from_soh(soh: float) -> str:
     if soh >= 70.0:
         return "C"
     return "REJECT"
+
+
+def _quick_recovery_delta_v(voltage_v, current_a, modes) -> float:
+    """Return an exploratory pulse-off-to-relax voltage rise in volts.
+
+    This is raw evidence only; it is not a health score until profile-specific
+    references are validated.
+    """
+    if modes is None or len(modes) != len(voltage_v):
+        return float("nan")
+    labels = np.asarray([str(mode or "").strip().upper() for mode in modes])
+    v = np.asarray(voltage_v, dtype=float)
+    i = np.asarray(current_a, dtype=float)
+    pulse = np.flatnonzero((labels == "MINI_PULSE") & (i > 0.05) & np.isfinite(v))
+    relax = np.flatnonzero((labels == "RELAX") & np.isfinite(v))
+    if pulse.size < 2 or relax.size < 4:
+        return float("nan")
+    pulse_v = float(np.median(v[pulse[-min(5, pulse.size):]]))
+    rest_v = float(np.median(v[relax[len(relax) // 2:]]))
+    return rest_v - pulse_v
 
 
 def _worst_grade(*grades: str) -> str:
@@ -1706,6 +1726,38 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         if quick_gradeable else "; ".join(quick_reasons)
     )
 
+    quick_recovery_delta_v = (_quick_recovery_delta_v(v, ia, modes)
+                              if is_quick_scan else float("nan"))
+    health_assessment = {}
+    if is_quick_scan:
+        from aset_batt.acquisition.health_assessment import (
+            assess_quick_health, load_config,
+        )
+        health_config = load_config()
+        health_profile = health_config.get("profiles", {}).get(
+            str(getattr(profile, "name", "")), {})
+        assessment_gates = list(quick_reasons)
+        if not measured:
+            assessment_gates.append("measured Quick Scan DCIR unavailable")
+        if not np.isfinite(dcir_latency) or not 0.0 < dcir_latency <= MAX_STEP_EDGE_LATENCY_S:
+            assessment_gates.append("Quick Scan DCIR timing gate failed")
+        if gaps_excessive:
+            assessment_gates.append("sampling/integration quality gate failed")
+        health_assessment = assess_quick_health(
+            quick_soh_pct=quick_soh_est,
+            dcir_ohm=dcir,
+            recovery_metric=quick_recovery_delta_v,
+            profile_config=health_profile,
+            temperature_c=t_med,
+            quality_flags=assessment_gates,
+            config=health_config,
+        )
+        # Quick Scan condition classes are now issued only by the gated
+        # multiparameter assessment. Keep legacy C10/electrical fields separate.
+        quick_grade = health_assessment["condition_grade"]
+        quick_gradeable = health_assessment["health_assessment_valid"]
+        quick_grade_basis = health_assessment["health_assessment_reason"]
+
     # ``grade`` remains the verified C10 headline for a phase-labelled Quick
     # Scan.  Preserve the historical safety behaviour for other test records:
     # a resolved electrical REJECT remains decisive there.
@@ -1725,6 +1777,10 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         grade = _worst_grade(capacity_grade, electrical_grade)
     else:
         grade = "REVIEW"
+    if is_quick_scan and health_assessment:
+        quick_grade = health_assessment["condition_grade"]
+        quick_gradeable = health_assessment["health_assessment_valid"]
+        quick_grade_basis = health_assessment["health_assessment_reason"]
     gradeable = capacity_gradeable and electrical_gradeable
 
     confidence = _confidence(dcir, dcir_std, n_steps, profile, len(warnings))
@@ -1837,6 +1893,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "quick_grade": quick_grade, "quick_gradeable": quick_gradeable,
         "is_quick_scan": is_quick_scan,
         "quick_grade_basis": quick_grade_basis, "quick_grade_confidence": quick_confidence,
+        "quick_recovery_delta_v_candidate": quick_recovery_delta_v,
+        **health_assessment,
         "capacity_grade": capacity_grade, "capacity_gradeable": capacity_gradeable,
         "electrical_grade": electrical_grade, "electrical_gradeable": electrical_gradeable,
         "confidence": confidence, "quality_warnings": warnings, "temp_drift_c": temp_drift,
@@ -2273,6 +2331,28 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
             hist_result.setdefault("quick_soh_est_pct", historical["historical_soh_pct"])
         if historical.get("historical_capacity_ah") is not None:
             hist_result.setdefault("capacity_ah", historical["historical_capacity_ah"])
+        legacy_health = {}
+        legacy_recovery = (_quick_recovery_delta_v(v, i, modes)
+                           if is_quick_scan else float("nan"))
+        if is_quick_scan:
+            from aset_batt.acquisition.health_assessment import (
+                assess_quick_health, load_config,
+            )
+            health_config = load_config()
+            health_profile = health_config.get("profiles", {}).get(
+                str(getattr(profile, "name", "")), {})
+            legacy_health = assess_quick_health(
+                quick_soh_pct=float("nan"),
+                dcir_ohm=(raw.get("dcir_reanalyzed_mohm") / 1000.0
+                          if np.isfinite(raw.get("dcir_reanalyzed_mohm", float("nan")))
+                          else None),
+                recovery_metric=legacy_recovery,
+                profile_config=health_profile,
+                temperature_c=(float(np.nanmedian(temp))
+                               if temp.size and not np.all(np.isnan(temp)) else None),
+                quality_flags=["legacy session lacks validated current Quick Scan/OCV evidence"],
+                config=health_config,
+            )
         return {
             **raw,
             "historical_peukert_k": historical_peukert_k,
@@ -2315,13 +2395,17 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
             "dataset_notes": (["Historical CSV reanalyzed from its recorded samples"]
                               + ([] if historical else ["No metadata sidecar; analyzed raw CSV only"])),
             "grade": "N/A", "overall_grade": "N/A", "gradeable": False,
-            "overall_gradeable": False, "capacity_grade": "N/A", "quick_grade": "N/A",
+            "overall_gradeable": False, "capacity_grade": "N/A",
+            "quick_grade": "INVALID" if is_quick_scan else "N/A",
+            "quick_gradeable": False,
             "electrical_grade": "N/A", "quality_warnings": [],
             "capacity_ah": raw["charge_removed_ah"],
             "dcir_mohm": raw["dcir_reanalyzed_mohm"],
             "dcir_measured": np.isfinite(raw["dcir_reanalyzed_mohm"]),
             "soh": float("nan"), "soh_est": float("nan"),
             "quick_soh_est_pct": float("nan"),
+            "quick_recovery_delta_v_candidate": legacy_recovery,
+            **legacy_health,
         }
     # Quick Scan's SoC anchor is the validated OCV-derived value before MINI_PULSE.
     # Other analyses retain the historical pre-main-discharge anchoring behavior.
@@ -2441,6 +2525,29 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
                        "overall_gradeable": False})
         result.setdefault("quality_warnings", []).append(
             "Quick Scan MINI_PULSE contains GAP samples; measured DCIR/ECM evidence withheld")
+    if is_quick_scan:
+        assessment_gates = []
+        terminal_status = str(session_meta.get("status") or "").strip().lower()
+        if terminal_status and terminal_status != "completed":
+            assessment_gates.append(f"session status is {terminal_status}")
+        if invalid_n:
+            assessment_gates.append(f"{invalid_n} invalid sample row(s) were excluded")
+        if critical_gaps:
+            assessment_gates.append("critical phase sampling gap: " + ", ".join(critical_gaps))
+        if assessment_gates:
+            previous = str(result.get("health_assessment_reason") or "")
+            combined = "; ".join(part for part in (previous, *assessment_gates) if part)
+            result.update({
+                "health_assessment_valid": False,
+                "health_assessment_status": "INVALID",
+                "health_assessment_reason": combined,
+                "health_score_quick": None,
+                "condition_grade": "INVALID",
+                "recommended_action": "RETEST: " + "; ".join(assessment_gates),
+                "quick_grade": "INVALID",
+                "quick_gradeable": False,
+                "quick_grade_basis": combined,
+            })
     # Offline inspection is diagnostic. An old terminal status must not erase
     # independently reconstructed electrical metrics or turn the page into a
     # generic REVIEW result.

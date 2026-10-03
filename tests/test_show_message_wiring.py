@@ -75,10 +75,10 @@ class TestUiUpdaterShowMessageMethod(unittest.TestCase):
             called = {}
             # headless guard short-circuits before QMessageBox is reached, but
             # confirm the alarm log still records the message either way.
-            win.show_message("OCV Out of Range", "13.4V exceeds the curve ceiling",
+            win.show_message("Sensor Warning", "sensor reading needs attention",
                              msg_type="warning")
             self.assertEqual(len(logged), 1)
-            self.assertIn("OCV Out of Range", logged[0])
+            self.assertIn("Sensor Warning", logged[0])
             self.assertIn("WARNING", logged[0])
         finally:
             win.close()

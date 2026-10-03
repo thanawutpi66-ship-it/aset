@@ -179,6 +179,8 @@ def test_iec_validation_preset_forces_charge_at_high_and_low_soc(soc):
     seq.controller.is_charging = True
     seq.controller.start_charge.return_value = True
     seq.controller.last_charge_full_confirmed = True
+    seq.controller.last_charge_error = None
+    seq.controller.safety_triggered = False
     seq._seq_sleep = lambda _seconds: setattr(seq.controller, "is_charging", False) or True
     seq.hw.read_measurements.return_value = (9.0, 10.0)
     opts = {"skip_charge": False, "skip_rest": True, "soc_thresh": 95,
@@ -190,8 +192,12 @@ def test_iec_validation_preset_forces_charge_at_high_and_low_soc(soc):
     seq._auto_sequence_thread(opts)
 
     seq.controller.start_charge.assert_called_once()
-    assert seq.controller._ensure_logging.call_args.kwargs["protocol"]["charge_required"] is True
-    assert seq.controller._ensure_logging.call_args.kwargs["protocol"]["charge_decision_source"] == "FORCED_BY_VALIDATION"
+    seq.controller.estimator.set_soc_anchor.assert_called_once_with(
+        100.0, start_settle_window=True)
+    protocol = next(c.kwargs["protocol"] for c in seq.controller._ensure_logging.call_args_list
+                    if "protocol" in c.kwargs)
+    assert protocol["charge_required"] is True
+    assert protocol["charge_decision_source"] == "FORCED_BY_VALIDATION"
 
 
 def test_iec_validation_protocol_metadata_starts_incomplete():

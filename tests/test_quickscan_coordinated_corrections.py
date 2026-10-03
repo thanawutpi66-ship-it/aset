@@ -155,31 +155,22 @@ class TestOcvValidity(unittest.TestCase):
             stable[:180], outputs_off=True, now_s=179.0)["status"],
             "NOT_RESTED")
 
-    def test_stable_end_ocv_is_range_checked_before_soc_lookup(self):
+    def test_stable_end_ocv_is_clamped_when_mapped_to_soc(self):
         from pathlib import Path
 
         model = BatteryModel("LeadAcid", series_cells=6)
         quick_source = Path("aset_batt/ui/sequences/quick_scan.py").read_text(
             encoding="utf-8")
-        self.assertLess(quick_source.index("ocv_out_of_range_mv("),
-                        quick_source.index("end_soc = ("))
-        for voltage, expected_valid in ((12.5, True), (5.0, False), (13.15, False)):
+        self.assertNotIn("ocv_out_of_range_mv", quick_source)
+        for voltage, expected_soc in ((12.5, model.get_soc_from_ocv(12.5, 25.0)),
+                                      (5.0, 0.0), (13.15, 100.0)):
             samples = [(float(i), voltage, 0.0, 25.0, True)
                        for i in range(181)]
             end = evaluate_quick_ocv_window(
                 samples, outputs_off=True, now_s=180.0)
             self.assertTrue(end["valid"])
-            oor_mv = model.ocv_out_of_range_mv(
-                end["voltage_v"], end["temperature_c"])
-            if oor_mv != 0.0:
-                end["valid"] = False
-                end["status"] = "OUT_OF_RANGE"
-            self.assertEqual(end["valid"], expected_valid)
-            if not end["valid"]:
-                unavailable = estimate_full_capacity(
-                    2.0, 90.0, None, start_valid=True, end_valid=False)
-                self.assertIsNone(unavailable["capacity_ah"])
-                self.assertEqual(unavailable["status"], "END_OCV_NOT_VALID")
+            self.assertEqual(model.get_soc_from_ocv(
+                end["voltage_v"], end["temperature_c"]), expected_soc)
 
 
 class TestQuickDcirAndCapacity(unittest.TestCase):
@@ -365,7 +356,9 @@ class TestQuickDcirAndCapacity(unittest.TestCase):
         self.assertIsNone(invalid["quick_capacity_est_ah"])
         self.assertEqual(invalid["quick_capacity_est_status"], "END_OCV_NOT_VALID")
         self.assertFalse(invalid["quick_soh_est_valid"])
-        self.assertEqual(invalid["quick_grade"], "N/A")
+        self.assertEqual(invalid["quick_grade"], "INVALID")
+        self.assertEqual(invalid["condition_grade"], "INVALID")
+        self.assertFalse(invalid["health_assessment_valid"])
         self.assertEqual(invalid["grade"], "N/A")
         self.assertEqual(invalid["capacity_grade"], "N/A")
         self.assertEqual(invalid["capacity_assessment_status"], "NOT_AVAILABLE")

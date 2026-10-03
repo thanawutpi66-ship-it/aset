@@ -77,7 +77,7 @@ python main.py                                  # เปิด GUI (PySide6 ISA-
 
 | อาการ | สาเหตุที่พบบ่อย | วิธีแก้ |
 |---|---|---|
-| SoC ต่ำผิดปกติเมื่อเริ่ม | PREPARE phase รอไม่ถึง 300s → terminal voltage ยังมี surface charge | ปล่อย PREPARE รอจนครบ (อย่ากด CANCEL กลางคัน) |
+| SoC เริ่มต้นยังไม่นิ่ง | PREPARE phase ยังไม่ผ่านเกณฑ์พัก/settling | ปล่อย PREPARE รอจนแสดงผล OCV เสร็จ |
 | SoC ไม่ขึ้นระหว่างชาร์จ CV | η near full = 0.75 (Faraday gassing) — ปกติ | ไม่ใช่ bug; กระแสจริงส่วนใหญ่ไปสร้าง H₂+O₂ |
 | Rin ≠ GBM-3080 | GBM วัด ACIR 1kHz; โปรแกรมวัด DCIR ที่ I < 0.5A ใช้ model | คนละนิยาม — ต่างกัน 5–15 mΩ เป็นเรื่องปกติ |
 | SoC drift ระหว่าง discharge | Peukert k=1.30 จาก default; ค่าจริงอาจต่าง | ทำ Peukert plot จากการ discharge หลาย C-rate เพื่อ fit k |

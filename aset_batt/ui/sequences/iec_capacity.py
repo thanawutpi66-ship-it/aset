@@ -356,6 +356,13 @@ class IecCapacityMixin:
                 # double-counts every sample (see _seq_common_start's comment).
                 if self.controller.monitor_running:
                     self.controller.stop_monitor()
+                if (charge_completed
+                        and getattr(self.controller, "last_charge_full_confirmed", None) is True):
+                    # Confirmed C10 completion is the full-capacity reference.
+                    # Preserve that anchor through the following rest; post-rest
+                    # OCV is an observation, not a replacement for this anchor.
+                    self.controller.estimator.set_soc_anchor(
+                        100.0, start_settle_window=True)
                 self.sig_phase_progress.emit(0, 0)
                 self.sig_workflow.emit(1, "done")
                 self.sig_alarm.emit("[AUTO] Charge complete")
@@ -411,6 +418,7 @@ class IecCapacityMixin:
                 soc2, v2, ocv_result2 = self.controller.calibrate_from_ocv_stable(
                     on_progress=_post_rest_progress,
                     cancel_check=self._seq_running.is_set,
+                    preserve_soc=charge_completed,
                 )
                 if not self._seq_running.is_set():
                     return
