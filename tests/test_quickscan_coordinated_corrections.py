@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 
 from aset_batt.acquisition.analysis import (
-    analyze_series, identify_dcir, profile_from_config, _main_discharge_capacity,
+    analyze_series, identify_dcir, identify_dcir_at_timepoints, profile_from_config, _main_discharge_capacity,
     _integration_gap_metrics, _quick_discharge_interval,
     _quick_mean_discharge_current,
     _quick_start_soc_from_metadata,
@@ -212,6 +212,17 @@ class TestQuickDcirAndCapacity(unittest.TestCase):
                                modes=modes, quick_scan=True)
         self.assertEqual(result[2], 1)
         self.assertAlmostEqual(result[0], 0.05, places=6)
+
+    def test_quick_dcir_without_mini_pulse_returns_unmeasured_fallback(self):
+        t = np.arange(4, dtype=float)
+        i = np.zeros(4)
+        v = np.full(4, 12.8)
+        result = identify_dcir(i, v, np.full(4, 25.0), _profile(), time_s=t,
+                               modes=["OCV"] * 4, quick_scan=True)
+        self.assertEqual(result, (0.03, 0.0, 0, False, 0, 0))
+        self.assertEqual(identify_dcir_at_timepoints(
+            i, v, np.full(4, 25.0), _profile(), time_s=t,
+            modes=["OCV"] * 4, quick_scan=True), {})
 
     def test_main_and_near_cutoff_intervals_count_once(self):
         t = np.array([0.0, 10.0, 20.0, 30.0])

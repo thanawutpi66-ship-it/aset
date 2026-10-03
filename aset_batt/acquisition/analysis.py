@@ -406,6 +406,10 @@ def identify_dcir(current_a, voltage_v, temp_c, profile: BatteryProfile, time_s=
     temp_mult = _dcir_temp_normalizer(profile)
     di = np.diff(ia)
     pulse_abs = (np.abs(ia[mode_arr == "MINI_PULSE"]) if phase_scoped else np.abs(ia))
+    if pulse_abs.size == 0:
+        # A partial Quick Scan may stop before MINI_PULSE begins. Preserve the
+        # profile fallback and mark DCIR unmeasured instead of reducing max([]).
+        return profile.internal_r, 0.0, 0, False, 0, 0
     thr = max(1e-3, 0.20 * float(np.max(pulse_abs)))     # a real load edge, not jitter
     r_base = float(profile.internal_r)
     vals = []
@@ -520,6 +524,8 @@ def identify_dcir_at_timepoints(current_a, voltage_v, temp_c, profile: BatteryPr
     temp_mult = _dcir_temp_normalizer(profile)
     di = np.diff(ia)
     pulse_abs = (np.abs(ia[mode_arr == "MINI_PULSE"]) if phase_scoped else np.abs(ia))
+    if pulse_abs.size == 0:
+        return {}
     thr = max(1e-3, 0.20 * float(np.max(pulse_abs)))
     r_base = float(profile.internal_r)
 
