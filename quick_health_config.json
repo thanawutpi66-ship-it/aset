@@ -1,6 +1,6 @@
 {
-  "algorithm_version": "multi-parameter-rule-v1",
-  "assessment_type": "Quick Scan screening; project-defined condition classes",
+  "algorithm_version": "available-evidence-screening-v2",
+  "assessment_type": "Best-effort Quick Scan screening grade; separate strict validation status",
   "weights": {
     "soh": 0.6,
     "dcir": 0.3,
@@ -29,7 +29,7 @@
       "notes": "The supplied archive has no traceable Battery IDs, confirmed healthy/EOL DCIR reference pair, or repeated matched-condition recovery observations. Do not use the exploratory delta-V values as a calibrated score."
     }
   },
-  "threshold_basis": "Reuses the existing project Quick SoH class boundaries (90/80/70) as initial engineering thresholds; not IEC-defined.",
+  "threshold_basis": "Project-defined Quick Scan screening thresholds (90/80/70); not IEC-defined or validated.",
   "weight_basis": "Initial engineering weights requested for evaluation; not trained or statistically optimized.",
   "recovery_status": "EXPERIMENTAL_UNCALIBRATED"
 }

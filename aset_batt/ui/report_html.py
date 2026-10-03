@@ -33,19 +33,31 @@ def format_seq_result(res: dict) -> str:
     soh_str = f"{soh:.1f}%" if not math.isnan(soh) else "N/A"
     cap_str = f"{cap:.2f} Ah" if not math.isnan(cap) else "N/A"
     dcir_str = f"{dcir:.1f} mΩ" if not math.isnan(dcir) else "N/A"
-    qsoh = res.get("quick_soh_est_pct", float("nan"))
+    qsoh = res.get("quick_soh_screening_est_pct", res.get("quick_soh_est_pct", float("nan")))
+    try:
+        qsoh = float(qsoh)
+    except (TypeError, ValueError):
+        qsoh = float("nan")
     qsoh_str = f"{qsoh:.1f}%" if math.isfinite(qsoh) else "N/A"
     qcap = res.get("quick_capacity_est_ah")
     qcap_str = f"{qcap:.2f} Ah" if qcap is not None else "N/A"
     dcir_label = ("Measured DCIR" if res.get("dcir_measured")
                   else "Profile Resistance (Fallback)")
     lines = [
-        f"<b>Quick Screening Grade: {quick_grade}</b>   Quick SoH Estimate: {qsoh_str}",
+        f"<b>Quick Screening Grade: {quick_grade}</b>   Screening SoH Estimate: {qsoh_str}",
         f"Verified Overall: {grade}   Verified C10 SoH: {soh_str}   Measured Removed Charge: {cap_str}",
         f"OCV-normalized Estimated Full Capacity: {qcap_str}",
         f"Capacity: {capacity_grade}   Electrical: {electrical_grade}",
         f"{dcir_label}: {dcir_str}   Confidence: {conf*100:.0f}%",
     ]
+    if res.get("health_assessment_valid"):
+        lines.append(
+            f"Health Score: {res.get('health_score_quick', float('nan')):.1f}/100 · "
+            f"Evidence: {escape(str(res.get('available_components', 'unavailable')))} · "
+            f"Evidence Confidence: {escape(str(res.get('confidence_level', 'LOW')))}"
+        )
+    elif res.get("is_quick_scan"):
+        lines.append("Health Score: NO_SCORE_COMPONENT")
     if ecm and not math.isnan(r0):
         lines.append(
             f"ECM — R0: {r0:.1f} mΩ  R1: {r1:.1f} mΩ  τ: {tau:.1f}s  R²: {r2:.3f}"
@@ -108,13 +120,13 @@ def build_results_html(results: dict) -> str:
 
     # ── Summary ──
     parts.append(hdr("Summary"))
-    parts.append(row("Quick Scan Grade", quick_grade, "",
+    parts.append(row("Quick Screening Grade", quick_grade, "Project-defined screening class",
                      quick_basis))
     if results.get("is_quick_scan") or results.get("grading_algorithm_version"):
         if results.get("health_assessment_valid"):
             parts.append(row("Quick Scan Health Score",
                              f"{results.get('health_score_quick', 0.0):.1f} / 100",
-                             "Screening Result",
+                             "Best-effort screening result",
                              str(results.get("recommended_action", ""))))
             for title, score_key, weight_key in (
                     ("Capacity / Quick SoH", "score_soh", "weight_soh"),
@@ -124,9 +136,18 @@ def build_results_html(results: dict) -> str:
                 weight = results.get(weight_key)
                 parts.append(row(title,
                                  f"{score:.1f} × {weight:.2f}" if score is not None and weight is not None else "N/A",
-                                 "score × weight"))
+                                 "normalized score × effective weight"))
+            parts.append(row("Evidence Coverage",
+                             f"{float(results.get('base_weight_coverage', 0.0)):.2f} base weight",
+                             str(results.get("available_components", "")),
+                             f"Confidence {results.get('confidence_level', 'LOW')}: "
+                             f"{results.get('confidence_reason', '')}"))
+            parts.append(row("Strict Validation",
+                             "Passed" if results.get("strict_validation_passed") else "Limited evidence",
+                             "diagnostic status only",
+                             str(results.get("strict_validation_reason", ""))))
         else:
-            parts.append(row("Quick Scan Assessment", "INVALID / RETEST", "",
+            parts.append(row("Quick Screening Grade", "NO_SCORE_COMPONENT", "",
                              str(results.get("health_assessment_reason", "required evidence unavailable"))))
     parts.append(row(
         "Verified Overall Grade",
@@ -137,6 +158,13 @@ def build_results_html(results: dict) -> str:
     if soh_est == soh_est and abs(soh_est - soh) > 1e-4:
         parts.append(row("Quick SoH Estimate", f"{soh_est:.1f}", "%",
                          "OCV-interval and Peukert normalized; screening only"))
+    best_effort_soh = results.get("best_effort_quick_soh_pct")
+    if best_effort_soh is not None:
+        parts.append(row("Best-effort Screening SoH Estimate",
+                         f"{float(best_effort_soh):.1f}", "%",
+                         f"{results.get('best_effort_quick_soh_status', 'unavailable')}; "
+                         f"source={results.get('best_effort_ocv_source', 'unknown')}; "
+                         f"strict OCV valid={bool(results.get('quick_ocv_start_valid')) and bool(results.get('quick_ocv_end_valid'))}"))
     if results.get("quick_soh_est_pct") is not None or results.get("quick_peukert_k") is not None:
         parts.append(row(
             "Quick Peukert basis",

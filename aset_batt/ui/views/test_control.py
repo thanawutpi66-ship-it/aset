@@ -423,24 +423,34 @@ class TestControlMixin:
         else:
             dcir_txt = f"Profile Resistance (Fallback) {dcir:.1f} mΩ"
         cap_label = "Charge Removed" if results.get("is_quick_scan") else "Observed capacity"
-        qsoh = results.get("quick_soh_est_pct", float("nan"))
-        soh_label = (f"Quick SoH Estimate {qsoh:.1f}%" if results.get("is_quick_scan")
+        qsoh = results.get("quick_soh_screening_est_pct",
+                           results.get("quick_soh_est_pct", float("nan")))
+        try:
+            qsoh = float(qsoh)
+        except (TypeError, ValueError):
+            qsoh = float("nan")
+        soh_label = (f"Screening SoH Estimate {qsoh:.1f}%" if results.get("is_quick_scan")
                      and qsoh == qsoh else f"SoH {soh_txt}%")
         health_text = ""
         if results.get("is_quick_scan"):
             if results.get("health_assessment_valid"):
+                component_labels = {"soh": "SoH", "dcir": "DCIR", "recovery": "Recovery"}
+                used = [f"{component_labels[key]} {results.get('score_' + key):.1f}×"
+                        f"{results.get('weight_' + key, 0.0):.2f}"
+                        for key in ("soh", "dcir", "recovery")
+                        if results.get("score_" + key) is not None]
                 health_text = (
-                    f"Screening Health {results['health_score_quick']:.1f}/100 · "
-                    f"Grade {results['condition_grade']} · "
-                    f"SoH {results['score_soh']:.1f}×{results['weight_soh']:.2f} + "
-                    f"DCIR {results['score_dcir']:.1f}×{results['weight_dcir']:.2f} + "
-                    f"Recovery {results['score_recovery']:.1f}×{results['weight_recovery']:.2f}")
+                    f"Quick Screening Grade {results['condition_grade']} · "
+                    f"Health {results['health_score_quick']:.1f}/100 · "
+                    f"Evidence {results.get('available_components', 'N/A')} · "
+                    f"Confidence {results.get('confidence_level', 'LOW')} · "
+                    + " + ".join(used))
             else:
                 health_reason = str(results.get(
                     "health_assessment_reason", "required evidence unavailable"))
                 if len(health_reason) > 140:
                     health_reason = health_reason[:137] + "..."
-                health_text = "Screening: INVALID / RETEST · " + health_reason
+                health_text = "Quick Screening: NO_SCORE_COMPONENT · " + health_reason
         self.lbl_analytics.setText(
             f"Grade {grade} (conf {conf*100:.0f}%) · {soh_label} · "
             f"{dcir_txt} · Sag {results.get('voltage_sag_v', 0.0):.3f} V · "

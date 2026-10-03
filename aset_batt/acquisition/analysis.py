@@ -1110,6 +1110,69 @@ def _quick_recovery_delta_v(voltage_v, current_a, modes) -> float:
     return rest_v - pulse_v
 
 
+def _best_effort_quick_ocv_soc(voltage_v, current_a, modes, temp_c, profile,
+                               sample_quality=None):
+    """Map recorded endpoint voltages to explicitly unvalidated screening SoC.
+
+    Prefer low-current endpoint samples, but allow a loaded endpoint as a
+    low-confidence candidate. Strict rested-OCV gates remain untouched.
+    """
+    try:
+        v = np.asarray(voltage_v, dtype=float)
+        i = np.asarray(current_a, dtype=float)
+        labels = np.asarray([str(x or "").strip().upper() for x in modes], dtype=object)
+        if v.size != i.size or labels.size != v.size or not v.size:
+            return {"start_soc": None, "end_soc": None, "start_v": None, "end_v": None,
+                    "source": "UNAVAILABLE"}
+        main = np.flatnonzero(labels == "MAIN_DISCHARGE")
+        if not main.size:
+            return {"start_soc": None, "end_soc": None, "start_v": None, "end_v": None,
+                    "source": "UNAVAILABLE_NO_MAIN_DISCHARGE"}
+        first, last = int(main[0]), int(main[-1])
+        start_region = np.arange(max(0, first - 20), first)
+        if not start_region.size:
+            start_region = np.arange(first, min(v.size, first + 10))
+        end_region = np.arange(first, last + 1)
+        from aset_batt.core.battery_model import BatteryModel
+        model = BatteryModel(profile.chemistry,
+                             profile.nominal_v / max(1, profile.series),
+                             profile.series)
+        try:
+            temp = float(np.nanmedian(np.asarray(temp_c, dtype=float)))
+            if not np.isfinite(temp):
+                temp = 25.0
+        except (TypeError, ValueError):
+            temp = 25.0
+        vlo, vhi = model.get_ocv_from_soc(0.0, temp), model.get_ocv_from_soc(100.0, temp)
+        lo, hi = min(vlo, vhi), max(vlo, vhi)
+        quality = (np.asarray([str(x or "").strip().upper() for x in sample_quality], dtype=object)
+                   if sample_quality is not None else np.full(v.size, "", dtype=object))
+        if quality.size != v.size:
+            quality = np.full(v.size, "INVALID", dtype=object)
+        def candidate(indices, take_last=False):
+            indices = indices[np.isfinite(v[indices]) & np.isfinite(i[indices])]
+            indices = indices[~np.isin(quality[indices], ("GAP", "INVALID"))]
+            indices = indices[(v[indices] >= lo) & (v[indices] <= hi)]
+            if not indices.size:
+                return None
+            if take_last:
+                indices = indices[-10:]
+            quiet = indices[np.abs(i[indices]) <= 0.15]
+            use = quiet if quiet.size else indices
+            return float(np.median(v[use]))
+        start_v, end_v = candidate(start_region), candidate(end_region, take_last=True)
+        def map_voltage(value):
+            if value is None or not np.isfinite(value) or value < lo or value > hi:
+                return None
+            soc = float(model.get_soc_from_ocv(value, temp))
+            return soc if np.isfinite(soc) and 0.0 <= soc <= 100.0 else None
+        start_soc, end_soc = map_voltage(start_v), map_voltage(end_v)
+        return {"start_soc": start_soc, "end_soc": end_soc,
+                "start_v": start_v, "end_v": end_v,
+                "source": "RECORDED_ENDPOINT_VOLTAGE_OCV_CURVE"}
+    except (TypeError, ValueError, IndexError, AttributeError):
+        return {"start_soc": None, "end_soc": None, "start_v": None, "end_v": None,
+                "source": "UNAVAILABLE_MAPPING_ERROR"}
 def _worst_grade(*grades: str) -> str:
     """Worst valid grade; REVIEW is handled by the evidence gate before use."""
     rank = {"A": 0, "B": 1, "C": 2, "REJECT": 3}
@@ -1473,6 +1536,46 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         soh_basis = ("OCV-normalized Quick screening estimate" if np.isfinite(quick_soh_est)
                      else quick_capacity_status)
 
+    # Separate screening estimate: raw recorded endpoint voltages are mapped
+    # through the selected profile curve without claiming rested-OCV validity.
+    best_effort_ocv = ({"start_soc": None, "end_soc": None, "start_v": None,
+                        "end_v": None, "source": "NOT_QUICK_SCAN"})
+    best_effort_quick_soh = float("nan")
+    best_effort_soh_score_input = float("nan")
+    best_effort_capacity = None
+    best_effort_status = "NOT_QUICK_SCAN"
+    if is_quick_scan:
+        best_effort_ocv = _best_effort_quick_ocv_soc(
+            v, ia, modes, temp_c, profile, sample_quality=sample_quality)
+        try:
+            q_main = float(q_interval_removed)
+            q_c10_best = q_main * float(peukert_factor)
+            rated = float(profile.capacity_ah)
+            s0, s1 = best_effort_ocv["start_soc"], best_effort_ocv["end_soc"]
+            if (np.isfinite(q_main) and q_main >= 0.0 and np.isfinite(q_c10_best)
+                    and q_c10_best >= 0.0 and np.isfinite(quick_mean_current)
+                    and np.isfinite(rated) and rated > 0.0 and s0 is not None and s1 is not None
+                    and np.isfinite(s0) and np.isfinite(s1) and s0 > s1):
+                span = (float(s0) - float(s1)) / 100.0
+                if span > 0.0:
+                    best_effort_capacity = q_c10_best / span
+                    raw_best_soh = 100.0 * best_effort_capacity / rated
+                    if np.isfinite(raw_best_soh):
+                        best_effort_quick_soh = raw_best_soh
+                        if 0.20 * rated <= best_effort_capacity <= 1.50 * rated:
+                            best_effort_soh_score_input = raw_best_soh
+                            best_effort_status = "BEST_EFFORT_OCV_ESTIMATE"
+                        else:
+                            best_effort_status = "BEST_EFFORT_OUT_OF_PHYSICAL_RANGE"
+                    else:
+                        best_effort_status = "NONFINITE_SOH"
+                else:
+                    best_effort_status = "INVALID_SOC_SPAN"
+            else:
+                best_effort_status = "BEST_EFFORT_INPUT_INVALID"
+        except (TypeError, ValueError, ZeroDivisionError):
+            best_effort_status = "BEST_EFFORT_INPUT_INVALID"
+
     # Polarity guard: reject a charge-only record, but do not misclassify an
     # HPPC sequence just because its regen leg has more samples than its
     # discharge pulses.  Throughput, rather than median current, preserves the
@@ -1743,6 +1846,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         health_profile = health_config.get("profiles", {}).get(
             str(getattr(profile, "name", "")), {})
         assessment_gates = list(quick_reasons)
+        if not bool(ocv_start_valid) or not bool(ocv_end_valid):
+            assessment_gates.append("best_effort_ocv: strict OCV anchor validity not established")
         if not measured:
             assessment_gates.append("measured Quick Scan DCIR unavailable")
         if not np.isfinite(dcir_latency) or not 0.0 < dcir_latency <= MAX_STEP_EDGE_LATENCY_S:
@@ -1750,7 +1855,8 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         if gaps_excessive:
             assessment_gates.append("sampling/integration quality gate failed")
         health_assessment = assess_quick_health(
-            quick_soh_pct=quick_soh_est,
+            quick_soh_pct=(best_effort_soh_score_input if np.isfinite(best_effort_soh_score_input)
+                           else quick_soh_est),
             dcir_ohm=dcir,
             recovery_metric=quick_recovery_delta_v,
             profile_config=health_profile,
@@ -1839,6 +1945,23 @@ def analyze_series(time_s, current_a, voltage_v, temp_c, capacity_series,
         "quick_soc_end_pct": soc_end,
         "quick_ocv_start_valid": bool(ocv_start_valid),
         "quick_ocv_end_valid": bool(ocv_end_valid),
+        "strict_validation_passed": bool(health_assessment.get("strict_validation_passed", False)),
+        "best_effort_ocv_start_v": best_effort_ocv["start_v"],
+        "best_effort_ocv_end_v": best_effort_ocv["end_v"],
+        "best_effort_soc_start_pct": best_effort_ocv["start_soc"],
+        "best_effort_soc_end_pct": best_effort_ocv["end_soc"],
+        "best_effort_ocv_source": best_effort_ocv["source"],
+        "best_effort_quick_capacity_est_ah": best_effort_capacity,
+        "best_effort_quick_soh_pct": (best_effort_quick_soh
+                                       if np.isfinite(best_effort_quick_soh) else None),
+        "best_effort_quick_soh_scoring_valid": bool(np.isfinite(best_effort_soh_score_input)),
+        "best_effort_quick_soh_status": best_effort_status,
+        "quick_soh_screening_est_pct": (best_effort_quick_soh
+                                         if np.isfinite(best_effort_quick_soh)
+                                         else quick_soh_est if np.isfinite(quick_soh_est) else None),
+        "soh_confidence": ("LOW" if best_effort_status == "BEST_EFFORT_OCV_ESTIMATE"
+                           and (not bool(ocv_start_valid) or not bool(ocv_end_valid))
+                           else "MEDIUM" if np.isfinite(quick_soh_est) else "UNAVAILABLE"),
         "quick_capacity_est_status": quick_capacity_status,
         "quick_capacity_est_ah": quick_capacity,
         "quick_full_capacity_est_ah": quick_capacity,
@@ -2340,7 +2463,47 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
         legacy_health = {}
         legacy_recovery = (_quick_recovery_delta_v(v, i, modes)
                            if is_quick_scan else float("nan"))
+        legacy_best_effort = {"start_soc": None, "end_soc": None, "start_v": None,
+                              "end_v": None, "source": "NOT_QUICK_SCAN"}
+        legacy_best_soh = None
+        legacy_best_capacity = None
+        legacy_best_status = "NOT_QUICK_SCAN"
         if is_quick_scan:
+            legacy_temp = (float(np.nanmedian(temp))
+                           if temp.size and not np.all(np.isnan(temp)) else 25.0)
+            legacy_best_effort = _best_effort_quick_ocv_soc(
+                v, i, modes, temp, profile, sample_quality=sample_quality)
+            try:
+                q_main = float(raw.get("q_main_ah"))
+                mean_i = float(raw.get("quick_mean_discharge_a"))
+                rated = float(profile.capacity_ah)
+                k = float(profile.peukert_k)
+                rated_hours = float(profile.peukert_hr)
+                i_ref = float(getattr(profile, "peukert_reference_current_a", None) or 0.0)
+                if not np.isfinite(i_ref) or i_ref <= 0.0:
+                    i_ref = rated / rated_hours if rated > 0.0 and rated_hours > 0.0 else float("nan")
+                kp = ((mean_i / i_ref) ** (k - 1.0)
+                      if np.isfinite(mean_i) and mean_i > 0.0 and np.isfinite(i_ref)
+                      and i_ref > 0.0 and np.isfinite(k) else float("nan"))
+                q_c10_best = q_main * kp
+                s0, s1 = legacy_best_effort["start_soc"], legacy_best_effort["end_soc"]
+                if (np.isfinite(q_main) and q_main >= 0.0 and np.isfinite(q_c10_best)
+                        and q_c10_best >= 0.0 and np.isfinite(rated) and rated > 0.0
+                        and s0 is not None and s1 is not None and s0 > s1):
+                    legacy_best_capacity = q_c10_best / ((float(s0) - float(s1)) / 100.0)
+                    estimate = 100.0 * legacy_best_capacity / rated
+                    if np.isfinite(estimate):
+                        legacy_best_soh = estimate
+                        if 0.20 * rated <= legacy_best_capacity <= 1.50 * rated:
+                            legacy_best_status = "BEST_EFFORT_OCV_ESTIMATE"
+                        else:
+                            legacy_best_status = "BEST_EFFORT_OUT_OF_PHYSICAL_RANGE"
+                    else:
+                        legacy_best_status = "NONFINITE_SOH"
+                else:
+                    legacy_best_status = "BEST_EFFORT_INPUT_INVALID"
+            except (TypeError, ValueError, ZeroDivisionError):
+                legacy_best_status = "BEST_EFFORT_INPUT_INVALID"
             from aset_batt.acquisition.health_assessment import (
                 assess_quick_health, load_config,
             )
@@ -2348,15 +2511,16 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
             health_profile = health_config.get("profiles", {}).get(
                 str(getattr(profile, "name", "")), {})
             legacy_health = assess_quick_health(
-                quick_soh_pct=float("nan"),
+                quick_soh_pct=(legacy_best_soh if legacy_best_status == "BEST_EFFORT_OCV_ESTIMATE"
+                               else float("nan")),
                 dcir_ohm=(raw.get("dcir_reanalyzed_mohm") / 1000.0
                           if np.isfinite(raw.get("dcir_reanalyzed_mohm", float("nan")))
                           else None),
                 recovery_metric=legacy_recovery,
                 profile_config=health_profile,
-                temperature_c=(float(np.nanmedian(temp))
-                               if temp.size and not np.all(np.isnan(temp)) else None),
-                quality_flags=["legacy session lacks validated current Quick Scan/OCV evidence"],
+                temperature_c=legacy_temp,
+                quality_flags=["legacy session lacks validated current Quick Scan/OCV evidence",
+                               "best_effort_ocv: strict OCV validity not established"],
                 config=health_config,
             )
         return {
@@ -2402,14 +2566,25 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
                               + ([] if historical else ["No metadata sidecar; analyzed raw CSV only"])),
             "grade": "N/A", "overall_grade": "N/A", "gradeable": False,
             "overall_gradeable": False, "capacity_grade": "N/A",
-            "quick_grade": "INVALID" if is_quick_scan else "N/A",
-            "quick_gradeable": False,
+            "quick_grade": legacy_health.get("condition_grade", "NO_SCORE_COMPONENT") if is_quick_scan else "N/A",
+            "quick_gradeable": bool(legacy_health.get("health_assessment_valid", False)),
             "electrical_grade": "N/A", "quality_warnings": [],
             "capacity_ah": raw["charge_removed_ah"],
             "dcir_mohm": raw["dcir_reanalyzed_mohm"],
             "dcir_measured": np.isfinite(raw["dcir_reanalyzed_mohm"]),
             "soh": float("nan"), "soh_est": float("nan"),
             "quick_soh_est_pct": float("nan"),
+            "quick_soh_screening_est_pct": legacy_best_soh,
+            "best_effort_quick_soh_pct": legacy_best_soh,
+            "best_effort_quick_soh_scoring_valid": legacy_best_status == "BEST_EFFORT_OCV_ESTIMATE",
+            "best_effort_quick_soh_status": legacy_best_status,
+            "best_effort_quick_capacity_est_ah": legacy_best_capacity,
+            "best_effort_ocv_start_v": legacy_best_effort["start_v"],
+            "best_effort_ocv_end_v": legacy_best_effort["end_v"],
+            "best_effort_soc_start_pct": legacy_best_effort["start_soc"],
+            "best_effort_soc_end_pct": legacy_best_effort["end_soc"],
+            "best_effort_ocv_source": legacy_best_effort["source"],
+            "strict_validation_passed": legacy_health.get("strict_validation_passed", False),
             "quick_recovery_delta_v_candidate": legacy_recovery,
             **legacy_health,
         }
@@ -2544,14 +2719,15 @@ def analyze_csv(csv_path: str, profile: BatteryProfile, force_hppc: bool = False
             previous = str(result.get("health_assessment_reason") or "")
             combined = "; ".join(part for part in (previous, *assessment_gates) if part)
             result.update({
-                "health_assessment_valid": False,
-                "health_assessment_status": "INVALID",
                 "health_assessment_reason": combined,
-                "health_score_quick": None,
-                "condition_grade": "INVALID",
-                "recommended_action": "RETEST: " + "; ".join(assessment_gates),
-                "quick_grade": "INVALID",
-                "quick_gradeable": False,
+                "strict_validation_passed": False,
+                "strict_validation_reason": combined,
+                "confidence_level": "LOW" if result.get("health_assessment_valid") else "NONE",
+                "confidence_reason": "strict session gate failed: " + "; ".join(assessment_gates),
+                "recommended_action": (
+                    "Quick Scan screening only; limited evidence: " + "; ".join(assessment_gates)
+                    if result.get("health_assessment_valid") else
+                    "NO_SCORE_COMPONENT: " + "; ".join(assessment_gates)),
                 "quick_grade_basis": combined,
             })
     # Offline inspection is diagnostic. An old terminal status must not erase

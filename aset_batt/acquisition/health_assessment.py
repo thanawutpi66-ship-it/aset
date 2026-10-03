@@ -1,8 +1,4 @@
-"""Transparent, configurable Quick Scan health assessment.
-
-References and grade thresholds are project-defined configuration. Missing
-reference evidence withholds the composite score and condition grade.
-"""
+"""Strict validation diagnostics and best-effort Quick Scan screening grades."""
 from __future__ import annotations
 
 import json
@@ -75,10 +71,10 @@ def assess_quick_health(
     quality_flags: list[str] | tuple[str, ...] = (),
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Calculate component scores and a weighted result, or withhold on any gate.
+    """Score only available normalized evidence; retain strict status separately.
 
-    Recovery is treated as higher-is-healthier only when profile config explicitly
-    supplies healthy/EOL references for the configured metric.
+    Missing references and quality flags affect strict validation and confidence,
+    but do not block a screening grade when at least one component is scoreable.
     """
     config = config or load_config()
     profile_config = profile_config or {}
@@ -123,32 +119,71 @@ def assess_quick_health(
     if recovery_score is None:
         reasons.append("Recovery score unavailable: metric or profile references missing")
     scores = {"soh": soh_score, "dcir": dcir_score, "recovery": recovery_score}
-    contributions = {key: (weights[key] * score if score is not None else None)
-                     for key, score in scores.items()}
-    valid = not reasons and all(value is not None for value in scores.values())
-    health = sum(contributions.values()) if valid else None
-    grade = classify_health(health, config["grade_thresholds"]) if health is not None else "INVALID"
+    available = [key for key, value in scores.items() if value is not None and weights[key] > 0.0]
+    available_weight = sum(weights[key] for key in available)
+    effective = {key: (weights[key] / available_weight if key in available else 0.0)
+                 for key in scores}
+    contributions = {key: (effective[key] * scores[key] if key in available else None)
+                     for key in scores}
+    strict_valid = not reasons and all(value is not None for value in scores.values())
+    health = (sum(contributions[key] for key in available)
+              if available and math.isfinite(available_weight) and available_weight > 0.0 else None)
+    grade = classify_health(health, config["grade_thresholds"]) if health is not None else "NO_SCORE_COMPONENT"
+    valid = health is not None
+    missing = [key for key, value in scores.items() if value is None]
+    if not valid:
+        confidence = "NONE"
+        confidence_reason = "no valid normalized health component is available"
+    elif "best_effort_ocv" in " ".join(str(x).lower() for x in quality_flags):
+        confidence = "LOW"
+        confidence_reason = "best-effort OCV anchors; strict OCV validation did not pass"
+    elif strict_valid and len(available) == 3:
+        confidence = "HIGH"
+        confidence_reason = "all components and strict validation evidence are available"
+    elif len(available) >= 2 and available_weight >= 0.60:
+        confidence = "MEDIUM"
+        confidence_reason = "multiple components available; some evidence or references are limited"
+    else:
+        confidence = "LOW"
+        confidence_reason = "screening relies on a single component or limited evidence"
     return {
         "health_assessment_valid": valid,
-        "health_assessment_status": "VALID" if valid else "INVALID",
+        "strict_validation_passed": strict_valid,
+        "health_assessment_status": "SCREENING_GRADE_AVAILABLE" if valid else "NO_SCORE_COMPONENT",
         "health_assessment_reason": "; ".join(reasons) if reasons else "All required components and quality gates passed",
+        "strict_validation_reason": "; ".join(reasons) if reasons else "All required components and quality gates passed",
         "health_score_quick": health,
         "condition_grade": grade,
+        "quick_screening_grade": grade,
+        "available_components": ",".join(available),
+        "missing_components": ",".join(missing),
+        "base_weight_coverage": available_weight,
+        "available_weight_sum": available_weight,
+        "confidence_level": confidence,
+        "confidence_reason": confidence_reason,
         "recommended_action": ("Full C10 Capacity Test recommended for verification"
                                if grade in {"C", "REJECT"} else
                                "Quick Scan screening only; reference capacity not yet verified"
-                               if valid else "RETEST: required measurement/reference or validity gate unavailable"),
+                               if valid else "NO_SCORE_COMPONENT: no valid health component is available"),
         "score_soh": soh_score,
+        "quick_soh_input_pct": raw_soh,
+        "soh_scoring_policy": "clip_to_0_100_for_screening_score; raw estimate retained",
         "score_dcir": dcir_score,
         "score_recovery": recovery_score,
-        "weight_soh": weights["soh"],
-        "weight_dcir": weights["dcir"],
-        "weight_recovery": weights["recovery"],
+        "base_weight_soh": weights["soh"],
+        "base_weight_dcir": weights["dcir"],
+        "base_weight_recovery": weights["recovery"],
+        "weight_soh": effective["soh"],
+        "weight_dcir": effective["dcir"],
+        "weight_recovery": effective["recovery"],
+        "effective_weight_soh": effective["soh"],
+        "effective_weight_dcir": effective["dcir"],
+        "effective_weight_recovery": effective["recovery"],
         "contribution_soh": contributions["soh"],
         "contribution_dcir": contributions["dcir"],
         "contribution_recovery": contributions["recovery"],
         "dcir_ratio": raw_dcir / dcir_healthy if raw_dcir is not None and dcir_healthy else None,
         "dcir_delta_pct": ((raw_dcir - dcir_healthy) / dcir_healthy * 100.0
                            if raw_dcir is not None and dcir_healthy else None),
-        "grading_algorithm_version": config.get("algorithm_version", "multi-parameter-rule-v1"),
+        "grading_algorithm_version": config.get("algorithm_version", "available-evidence-screening-v2"),
     }

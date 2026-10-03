@@ -55,23 +55,23 @@ def make_cases():
                           expected_score=target, expected_grade=expected_grade(target),
                           expected_reason=""))
     invalid = [
-        ("MISSING_SOH", None, 0.020, 0.5, [], "Quick SoH unavailable"),
-        ("MISSING_DCIR_VALUE", 85, None, 0.5, [], "DCIR score unavailable"),
+        ("MISSING_SOH", None, 0.020, 0.5, [], "Quick SoH unavailable", 50.0, "REJECT"),
+        ("MISSING_DCIR_VALUE", 85, None, 0.5, [], "DCIR score unavailable", 80.0, "B"),
         ("MISSING_DCIR_REFERENCE", 85, 0.020, 0.5,
-         [{"dcir_healthy_ohm": None}], "DCIR score unavailable"),
-        ("MISSING_RECOVERY_VALUE", 85, 0.020, None, [], "Recovery score unavailable"),
+         [{"dcir_healthy_ohm": None}], "DCIR score unavailable", 80.0, "B"),
+        ("MISSING_RECOVERY_VALUE", 85, 0.020, None, [], "Recovery score unavailable", 73.3333333333, "C"),
         ("MISSING_RECOVERY_REFERENCE", 85, 0.020, 0.5,
-         [{"recovery_healthy": None}], "Recovery score unavailable"),
+         [{"recovery_healthy": None}], "Recovery score unavailable", 73.3333333333, "C"),
         ("INVALID_OCV_ANCHOR", 85, 0.020, 0.5,
-         ["start OCV anchor invalid"], "start OCV anchor invalid"),
-        ("NAN_SOH", float("nan"), 0.020, 0.5, [], "Quick SoH unavailable"),
-        ("INFINITE_DCIR", 85, float("inf"), 0.5, [], "DCIR score unavailable"),
-        ("NEGATIVE_DCIR", 85, -0.001, 0.5, [], "DCIR score unavailable"),
-        ("INFINITE_RECOVERY", 85, 0.020, float("-inf"), [], "Recovery score unavailable"),
+         ["start OCV anchor invalid"], "start OCV anchor invalid", 71.0, "C"),
+        ("NAN_SOH", float("nan"), 0.020, 0.5, [], "Quick SoH unavailable", 50.0, "REJECT"),
+        ("INFINITE_DCIR", 85, float("inf"), 0.5, [], "DCIR score unavailable", 80.0, "B"),
+        ("NEGATIVE_DCIR", 85, -0.001, 0.5, [], "DCIR score unavailable", 80.0, "B"),
+        ("INFINITE_RECOVERY", 85, 0.020, float("-inf"), [], "Recovery score unavailable", 73.3333333333, "C"),
         ("INCOMPLETE_STATE", 85, 0.020, 0.5,
-         ["test status is incomplete"], "test status is incomplete"),
+         ["test status is incomplete"], "test status is incomplete", 71.0, "C"),
     ]
-    for cid, soh, dcir, recovery, mods, reason in invalid:
+    for cid, soh, dcir, recovery, mods, reason, score, grade in invalid:
         profile = dict(PROFILE)
         flags = []
         if mods and isinstance(mods[0], dict):
@@ -80,8 +80,13 @@ def make_cases():
             flags = mods
         cases.append(dict(case_id=cid, case_type="invalid_gate", soh=soh, dcir=dcir,
                           recovery=recovery, flags=flags, profile=profile,
-                          expected_valid=False, expected_score=None,
-                          expected_grade="INVALID", expected_reason=reason))
+                          expected_valid=True, expected_score=score,
+                          expected_grade=grade, expected_reason=reason))
+    cases.append(dict(case_id="NO_SCORE_COMPONENT", case_type="no_score_component",
+                      soh=None, dcir=None, recovery=None, flags=[],
+                      expected_valid=False, expected_score=None,
+                      expected_grade="NO_SCORE_COMPONENT",
+                      expected_reason="Quick SoH unavailable"))
     # Battery ID is not an input to this production API and is not a grading gate.
     return cases
 
@@ -149,7 +154,7 @@ def main():
     csv_write(OUT / "grading_invalid_gate_tests.csv", invalid_rows, fields)
 
     consistent = []
-    for grade in ("A", "B", "C", "REJECT", "INVALID"):
+    for grade in ("A", "B", "C", "REJECT", "NO_SCORE_COMPONENT"):
         case = next(c for c in cases if c["expected_grade"] == grade)
         result = assess(case)
         analysis_grade = result["condition_grade"]
@@ -163,8 +168,8 @@ def main():
         }
         html = build_results_html(report_result)
         ok = gui_grade == analysis_grade and analysis_grade in html
-        if grade == "INVALID":
-            ok = ok and "INVALID / RETEST" in html and result["health_assessment_reason"] in html
+        if grade == "NO_SCORE_COMPONENT":
+            ok = ok and "NO_SCORE_COMPONENT" in html and result["health_assessment_reason"] in html
         else:
             ok = ok and f'{result["health_score_quick"]:.1f} / 100' in html
         consistent.append({"case_id": case["case_id"], "analysis_grade": analysis_grade,
@@ -184,7 +189,7 @@ Scope: deterministic software execution only. All values are synthetic test vect
 - Passed / failed: {passed} / {failures}
 - Execution success rate: {passed}/{len(detailed)} = {rate:.2f}%
 - Boundary cases: {len(boundaries)}; exactly 90/80/70 map to A/B/C, and 89.999/79.999/69.999 map to B/C/REJECT.
-- Invalid gates: {len(invalid_rows)}; missing/non-finite evidence, invalid OCV anchor, and incomplete state withhold score and issue INVALID/RETEST.
+- Limited-evidence cases: {len(invalid_rows)}; missing/non-finite components and strict quality flags remain visible while remaining scoreable components are reweighted.
 - Battery ID: not an input or gate in the production `assess_quick_health()` API; no requirement was inferred.
 - GUI/report consistency: {sum(r['consistency'] == 'PASS' for r in consistent)}/{len(consistent)} cases checked.
 - Production code path: `analyze_series()` → `assess_quick_health()`; GUI reads `condition_grade` and validity/reason from analysis result; HTML uses `build_results_html()`.

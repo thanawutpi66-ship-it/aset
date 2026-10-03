@@ -367,9 +367,10 @@ class TestQuickDcirAndCapacity(unittest.TestCase):
         self.assertIsNone(invalid["quick_capacity_est_ah"])
         self.assertEqual(invalid["quick_capacity_est_status"], "END_OCV_NOT_VALID")
         self.assertFalse(invalid["quick_soh_est_valid"])
-        self.assertEqual(invalid["quick_grade"], "INVALID")
-        self.assertEqual(invalid["condition_grade"], "INVALID")
-        self.assertFalse(invalid["health_assessment_valid"])
+        self.assertIn(invalid["quick_grade"], {"A", "B", "C", "REJECT"})
+        self.assertEqual(invalid["condition_grade"], invalid["quick_grade"])
+        self.assertTrue(invalid["health_assessment_valid"])
+        self.assertFalse(invalid["strict_validation_passed"])
         self.assertEqual(invalid["grade"], "N/A")
         self.assertEqual(invalid["capacity_grade"], "N/A")
         self.assertEqual(invalid["capacity_assessment_status"], "NOT_AVAILABLE")
@@ -386,6 +387,20 @@ class TestQuickDcirAndCapacity(unittest.TestCase):
         self.assertEqual(valid["quick_scan_reference_capacity_ah"], 5.0)
         self.assertEqual(valid["peukert_reference_rate_hr"], 10.0)
         self.assertNotEqual(valid["grade"], "A")  # verified C10 evidence is still absent
+
+    def test_strict_ocv_failure_can_produce_labeled_best_effort_screening_grade(self):
+        result = self._analyze_partial_quick(False, False)
+        self.assertFalse(result["quick_ocv_start_valid"])
+        self.assertFalse(result["quick_ocv_end_valid"])
+        self.assertFalse(result["strict_validation_passed"])
+        self.assertEqual(result["best_effort_ocv_source"],
+                         "RECORDED_ENDPOINT_VOLTAGE_OCV_CURVE")
+        self.assertEqual(result["best_effort_quick_soh_status"],
+                         "BEST_EFFORT_OCV_ESTIMATE")
+        self.assertTrue(result["best_effort_quick_soh_scoring_valid"])
+        self.assertIn(result["condition_grade"], {"A", "B", "C", "REJECT"})
+        self.assertEqual(result["confidence_level"], "LOW")
+        self.assertIn("soh", result["available_components"])
 
     def test_stale_mini_pulse_is_fallback_not_measured(self):
         t, i, v, temp, modes = self._record(0.501)

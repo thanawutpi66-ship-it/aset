@@ -47,9 +47,9 @@ def test_real_html_renderer_and_gui_grade_selection_preserve_assessment():
                             and node.name == "_on_test_finished")
     gui_source = ast.get_source_segment(source, on_test_finished)
     assert 'results.get("condition_grade", "INVALID")' in gui_source
-    assert '"Screening: INVALID / RETEST · "' in gui_source
+    assert '"Quick Screening: NO_SCORE_COMPONENT · "' in gui_source
 
-    for grade in ("A", "B", "C", "REJECT", "INVALID"):
+    for grade in ("A", "B", "C", "REJECT", "NO_SCORE_COMPONENT"):
         case = next(c for c in verification.make_cases() if c["expected_grade"] == grade)
         result = verification.assess(case)
         report_data = {
@@ -60,8 +60,8 @@ def test_real_html_renderer_and_gui_grade_selection_preserve_assessment():
         }
         html = build_results_html(report_data)
         assert result["condition_grade"] in html
-        if grade == "INVALID":
-            assert "INVALID / RETEST" in html
+        if grade == "NO_SCORE_COMPONENT":
+            assert "NO_SCORE_COMPONENT" in html
             assert result["health_assessment_reason"] in html
         else:
             assert f'{result["health_score_quick"]:.1f} / 100' in html
